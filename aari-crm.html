@@ -1,0 +1,3203 @@
+<!doctype html>
+<!--
+  ============================================================================
+  AARI TRANSACTIONS · OPERATIONAL CRM (staff-only)
+  ============================================================================
+  Audience: Marlenyi (broker-owner) + TCs (Mile, Eileen, Silvia)
+  NOT for agents. Agents see portal.html instead.
+
+  Layer 1: Today · Pipeline · File detail
+  Layer 2 (this build): Leads · Inbox · Notes (notes integrated in file detail)
+  Layer 3 (next): Templates · Calendar
+  Layer 4: Payout · Payroll · Friday Disbursement
+  Layer 5: Directory · Contracts · Settings
+
+  Hybrid model: TC operational work happens in dotloop (or similar).
+  This CRM is the Aari-side "single pane of glass" for managing pipeline,
+  compliance review, and the agent-facing experience.
+
+  Supabase integration points are commented inline as AARI:WIRE.
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aari CRM &middot; Operational</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230f0f0f'/%3E%3Ctext x='32' y='46' text-anchor='middle' font-family='Georgia,serif' font-weight='600' font-size='38' fill='%23ffffff' letter-spacing='-1'%3EA%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #0f0f0f;
+  --ink-2: #262626;
+  --muted: #6b6b6b;
+  --muted-2: #9a9a9a;
+  --line: #e6e2d8;
+  --line-2: #d4d0c5;
+  --bg: #fafaf6;
+  --surface: #ffffff;
+  --tinted: #f6f3ec;
+  --serif: 'Cormorant Garamond', Georgia, serif;
+  --sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --r-sm: 4px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --focus: 3px solid #1e7ce8;
+}
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* ============== HEADER ============== */
+.top-bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  justify-content: space-between;
+}
+.brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
+.brand-mark { font-family: var(--serif); font-weight: 600; font-size: 16px; color: var(--ink); padding: 4px 10px; border: 1.5px solid var(--ink); border-radius: 5px; letter-spacing: 2px; }
+.brand-name { font-family: var(--sans); font-weight: 600; font-size: 12px; color: var(--ink); line-height: 1.15; }
+.brand-name small { display: block; font-family: var(--sans); font-size: 8px; font-weight: 500; letter-spacing: 1.2px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+.top-right { display: flex; align-items: center; gap: 14px; font-size: 12px; }
+.user-info { color: var(--ink); font-weight: 500; }
+.user-role { font-size: 10px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; }
+.signout-link { color: var(--muted); text-decoration: underline; font-size: 11px; cursor: pointer; }
+
+/* ============== AUTH GATE ============== */
+.gate { display: none; min-height: 70vh; align-items: center; justify-content: center; padding: 24px; }
+.gate.show { display: flex; }
+.gate-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 36px 32px; max-width: 440px; width: 100%; text-align: center; }
+.gate-card h2 { font-family: var(--serif); font-weight: 500; font-size: 24px; color: var(--ink); margin: 0 0 10px; }
+.gate-card p { font-size: 13px; color: var(--ink-2); line-height: 1.6; margin: 0 0 18px; }
+.gate-card .btn { display: inline-flex; align-items: center; gap: 8px; background: var(--ink); color: #fff; padding: 12px 22px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; text-decoration: none; min-height: 44px; box-sizing: border-box; }
+.gate-card .btn:focus-visible { outline: var(--focus); outline-offset: 3px; }
+
+/* ============== PAGE TITLE ============== */
+.page-title { padding: 22px 24px 4px; display: flex; align-items: baseline; gap: 12px; }
+.page-title h1 { font-family: var(--serif); font-weight: 500; font-size: 28px; color: var(--ink); letter-spacing: -0.01em; }
+.page-title .sub { font-size: 12px; color: var(--muted); }
+
+/* ============== TABS ============== */
+.tabs {
+  display: flex; gap: 0;
+  padding: 14px 24px 0;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+  background: var(--surface);
+  align-items: center;
+}
+.tab {
+  padding: 10px 14px;
+  font-size: 11px; font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  border: none; background: transparent;
+  font-family: var(--sans);
+  letter-spacing: 1.2px; text-transform: uppercase;
+  line-height: 1; white-space: nowrap;
+  position: relative;
+  margin-bottom: -1px;
+  min-height: 44px;
+}
+.tab:hover { color: var(--ink); }
+.tab.active { color: var(--ink); font-weight: 700; }
+.tab.active::after { content: ''; position: absolute; bottom: 0; left: 12px; right: 12px; height: 2px; background: var(--ink); }
+.tab:focus-visible { outline: var(--focus); outline-offset: -3px; }
+.tab-div { display: inline-block; width: 1px; height: 14px; background: var(--line-2); margin: 0 16px 12px; align-self: center; flex-shrink: 0; }
+
+/* ============== VIEWS ============== */
+.view { display: none; }
+.view.active { display: block; }
+
+/* ============== TODAY · DASHBOARD ============== */
+.dash-wrap { padding: 22px 24px 40px; }
+.stat-strip {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px; margin-bottom: 24px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 18px 20px;
+}
+.stat-lbl { font-size: 10px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; font-weight: 600; margin-bottom: 8px; }
+.stat-num { font-family: var(--serif); font-size: 32px; font-weight: 600; color: var(--ink); line-height: 1; }
+.stat-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 22px 24px; margin-bottom: 16px; }
+.panel-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
+.panel-title { font-family: var(--serif); font-size: 18px; font-weight: 600; color: var(--ink); }
+.panel-meta { font-size: 11px; color: var(--muted); letter-spacing: 0.3px; }
+
+.today-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.today-row:last-child { border-bottom: none; }
+.today-row:hover { background: var(--tinted); margin: 0 -10px; padding-left: 10px; padding-right: 10px; border-radius: var(--r-sm); }
+.today-row .addr { flex: 1; color: var(--ink); font-weight: 500; font-size: 13px; }
+.today-row .side { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+.today-row .due { font-size: 11px; color: var(--ink); }
+.today-row .due.soon { background: #fff4d6; color: #8a7030; padding: 2px 8px; border-radius: 3px; font-weight: 500; }
+.today-row .due.over { background: #cc3333; color: #fff; padding: 2px 8px; border-radius: 3px; font-weight: 500; }
+
+.empty-state { text-align: center; padding: 32px 20px; color: var(--muted); font-size: 13px; }
+.empty-state .label { font-family: var(--serif); font-size: 18px; color: var(--ink); margin-bottom: 6px; }
+
+/* ============== PIPELINE ============== */
+.pipe-wrap { padding: 0 24px 40px; }
+.pipe-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 0;
+  flex-wrap: wrap; gap: 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+.search-input {
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-family: var(--sans);
+  font-size: 12px;
+  width: 280px; max-width: 100%;
+  min-height: 44px;
+}
+.search-input:focus { outline: none; border-color: var(--ink); }
+.btn-new {
+  background: var(--ink); color: #fff;
+  padding: 10px 18px; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 1px; text-transform: uppercase;
+  border: 1px solid var(--ink); cursor: pointer;
+  font-family: var(--sans);
+  min-height: 44px;
+}
+.btn-new:hover { background: #fff; color: var(--ink); }
+.btn-new:focus-visible { outline: var(--focus); outline-offset: 3px; }
+
+.group-header { display: flex; align-items: center; gap: 10px; padding: 16px 0 8px; user-select: none; }
+.group-badge {
+  display: inline-flex; align-items: center;
+  padding: 3px 10px; border-radius: 4px;
+  font-size: 10px; font-weight: 500; letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+.gb-intake { background: #f0e6f9; color: #6a4a90; }
+.gb-inspection { background: #fce6f0; color: #a8627a; }
+.gb-financing { background: #fff4d6; color: #8a6630; }
+.gb-ctc { background: #e6f0e6; color: #4a7a4a; }
+.gb-scheduled { background: #d6edf5; color: #4a7090; }
+.group-count { font-size: 11px; color: var(--muted); }
+
+.pipe-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.pipe-table th {
+  text-align: left; padding: 10px 12px;
+  font-size: 10px; letter-spacing: 1px; font-weight: 700;
+  color: var(--ink); border-bottom: 2px solid var(--line-2);
+  text-transform: uppercase;
+  background: var(--surface);
+}
+.pipe-table td {
+  padding: 12px; border-bottom: 1px solid var(--line);
+  vertical-align: middle; background: var(--surface);
+}
+.pipe-table tbody tr { cursor: pointer; }
+.pipe-table tbody tr:hover td { background: var(--tinted); }
+.pipe-table .file-addr { font-weight: 500; color: var(--ink); }
+.pipe-table .file-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.pipe-pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 10px; font-weight: 500; letter-spacing: 0.3px; }
+.pipe-pill.tc-mp { background: #f0e6f9; color: #6a4a90; }
+.pipe-pill.tc-mv { background: #e6f0e6; color: #4a7a4a; }
+.pipe-pill.tc-eh { background: #fce6f0; color: #a8627a; }
+.pipe-pill.tc-sq { background: #d6edf5; color: #4a7090; }
+
+/* ============== FILE DETAIL MODAL ============== */
+.modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(15, 15, 15, 0.55);
+  z-index: 100; align-items: flex-start; justify-content: center;
+  padding: 24px; overflow-y: auto;
+}
+.modal-overlay.open { display: flex; }
+.modal-box {
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  width: 100%; max-width: 760px;
+  padding: 28px 32px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  margin: auto;
+}
+.modal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; margin-bottom: 18px; }
+.modal-head h2 { font-family: var(--serif); font-weight: 500; font-size: 22px; color: var(--ink); line-height: 1.25; }
+.modal-head .sub { font-size: 11px; color: var(--muted); margin-top: 4px; letter-spacing: 0.3px; }
+.modal-x {
+  background: transparent; border: none;
+  font-size: 22px; cursor: pointer; line-height: 1;
+  color: var(--ink); min-width: 44px; min-height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.modal-x:focus-visible { outline: var(--focus); outline-offset: 2px; }
+
+.section-eyebrow {
+  font-size: 10px; letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted); font-weight: 700;
+  margin: 22px 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.dl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; }
+.dl-label { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; font-weight: 500; }
+.dl-value { font-size: 13px; color: var(--ink); }
+.dl-value.muted { color: var(--muted); font-style: italic; }
+
+.doc-list { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; }
+.doc-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--tinted);
+  font-size: 12px;
+}
+.doc-name { flex: 1; color: var(--ink); }
+.doc-status {
+  padding: 3px 10px; border-radius: 3px;
+  font-size: 9px; font-weight: 600;
+  letter-spacing: 0.5px; text-transform: uppercase;
+  border: 1px solid var(--line-2); background: var(--surface);
+}
+.doc-status.ok { background: #e6f0e6; color: #4a7a4a; border-color: #c6e0c6; }
+.doc-status.todo { background: #fff4d6; color: #8a6630; border-color: #efd9aa; }
+
+.notes-area { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 14px; }
+.note {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.note:last-child { border-bottom: none; }
+.note-date { font-size: 10px; color: var(--muted); letter-spacing: 0.5px; text-transform: uppercase; }
+.note-txt { font-size: 12px; color: var(--ink); line-height: 1.5; margin-top: 2px; }
+.note-author { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.note-row { display: flex; gap: 8px; margin-top: 12px; }
+.note-input {
+  flex: 1; padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-family: var(--sans); font-size: 12px;
+  min-height: 44px;
+}
+.note-input:focus { outline: none; border-color: var(--ink); }
+.note-add {
+  padding: 0 18px; background: var(--ink); color: #fff;
+  border: none; border-radius: var(--r-sm);
+  font-family: var(--sans); font-size: 11px; font-weight: 600;
+  cursor: pointer; min-height: 44px;
+  letter-spacing: 0.5px; text-transform: uppercase;
+}
+
+/* ============== LEADS ============== */
+.leads-wrap { padding: 0 24px 40px; }
+.leads-filters {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 0; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line); margin-bottom: 12px;
+}
+.lead-filter {
+  padding: 8px 14px;
+  font-size: 11px; letter-spacing: 0.8px;
+  text-transform: uppercase; font-weight: 500;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface); color: var(--muted);
+  cursor: pointer; min-height: 36px;
+  font-family: var(--sans);
+}
+.lead-filter:hover { color: var(--ink); border-color: var(--ink); }
+.lead-filter.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+.lead-filter:focus-visible { outline: var(--focus); outline-offset: 2px; }
+.lead-filter .count { margin-left: 4px; opacity: 0.7; font-weight: 700; }
+
+.lead-row {
+  display: grid;
+  grid-template-columns: 130px 1.4fr 1fr 0.8fr 0.8fr 100px;
+  gap: 14px; align-items: center;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.lead-row:hover { border-color: var(--ink); background: var(--tinted); }
+.lead-row.new::before { content: ''; display: inline-block; width: 6px; height: 6px; background: #cc3333; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.lead-time { font-size: 11px; color: var(--muted); letter-spacing: 0.3px; }
+.lead-time .new-badge { background: #cc3333; color: #fff; padding: 2px 7px; border-radius: 3px; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin-right: 6px; }
+.lead-agent { font-size: 13px; color: var(--ink); font-weight: 500; }
+.lead-agent .brokerage { display: block; font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+.lead-service { font-size: 12px; color: var(--ink); }
+.lead-tc-pref { font-size: 11px; color: var(--muted); }
+.lead-status { font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; }
+.lead-action {
+  padding: 8px 14px;
+  background: var(--ink); color: #fff;
+  border: 1px solid var(--ink);
+  border-radius: 999px;
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.8px; text-transform: uppercase;
+  cursor: pointer; min-height: 36px;
+  font-family: var(--sans);
+  white-space: nowrap;
+}
+.lead-action:hover { background: #fff; color: var(--ink); }
+.lead-action:focus-visible { outline: var(--focus); outline-offset: 2px; }
+
+/* ============== INBOX ============== */
+.inbox-wrap { padding: 0 24px 40px; }
+.inbox-layout {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  margin: 14px 0 0;
+  min-height: 600px;
+}
+.thread-list {
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  max-height: 720px;
+}
+.thread-list-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--tinted);
+}
+.thread-list-head h3 { font-family: var(--sans); font-size: 12px; font-weight: 700; color: var(--ink); letter-spacing: 0.5px; }
+.thread-compose {
+  background: var(--ink); color: #fff;
+  border: none; padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.8px; text-transform: uppercase;
+  cursor: pointer; min-height: 36px;
+  font-family: var(--sans);
+}
+.thread-compose:hover { background: #333; }
+.thread-compose:focus-visible { outline: var(--focus); outline-offset: 2px; }
+
+.thread-row {
+  display: block;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer; text-decoration: none; color: var(--ink-2);
+  position: relative;
+}
+.thread-row:hover { background: var(--tinted); }
+.thread-row.active { background: var(--tinted); border-left: 3px solid var(--ink); padding-left: 13px; }
+.thread-row.unread { background: #faf8f0; }
+.thread-row.unread::after { content: ''; position: absolute; top: 18px; right: 14px; width: 7px; height: 7px; background: #cc3333; border-radius: 50%; }
+.thread-addr { font-size: 12px; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
+.thread-meta { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.thread-snippet { font-size: 11px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.thread-time { font-size: 10px; color: var(--muted); margin-top: 4px; letter-spacing: 0.3px; }
+
+.thread-pane {
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.thread-pane-empty { display: flex; align-items: center; justify-content: center; flex: 1; padding: 40px; }
+.thread-pane-empty .label { font-family: var(--serif); font-size: 20px; color: var(--ink); margin-bottom: 6px; }
+.thread-pane-empty p { font-size: 12px; color: var(--muted); }
+
+.thread-pane-head {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.thread-pane-head .h { font-family: var(--serif); font-size: 18px; color: var(--ink); margin-bottom: 4px; }
+.thread-pane-head .meta { font-size: 11px; color: var(--muted); }
+.thread-messages {
+  flex: 1; overflow-y: auto;
+  padding: 16px 20px;
+  max-height: 480px;
+}
+.message {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.message:last-child { border-bottom: none; }
+.message-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; gap: 8px; }
+.message-author { font-size: 12px; color: var(--ink); font-weight: 600; }
+.message-author .role { font-size: 10px; color: var(--muted); margin-left: 6px; letter-spacing: 0.5px; text-transform: uppercase; }
+.message-time { font-size: 10px; color: var(--muted); letter-spacing: 0.3px; }
+.message-body { font-size: 12px; color: var(--ink-2); line-height: 1.6; white-space: pre-wrap; }
+.message-attach { margin-top: 8px; font-size: 11px; color: var(--muted); }
+.message-attach a { color: var(--ink); text-decoration: underline; }
+
+.thread-reply {
+  border-top: 1px solid var(--line);
+  padding: 14px 20px;
+  background: var(--tinted);
+}
+.thread-reply textarea {
+  width: 100%; min-height: 80px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  font-family: var(--sans); font-size: 12px;
+  resize: vertical; line-height: 1.5;
+}
+.thread-reply textarea:focus { outline: none; border-color: var(--ink); }
+.thread-reply-actions {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 10px; gap: 10px;
+}
+.thread-reply-actions .left { font-size: 11px; color: var(--muted); }
+.thread-reply-send {
+  padding: 10px 18px;
+  background: var(--ink); color: #fff;
+  border: none; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0.8px; text-transform: uppercase;
+  cursor: pointer; min-height: 44px;
+  font-family: var(--sans);
+}
+.thread-reply-send:hover { background: #333; }
+.thread-reply-send:focus-visible { outline: var(--focus); outline-offset: 2px; }
+
+/* ============== TEMPLATES ============== */
+.tpl-wrap { padding: 0 24px 40px; max-width: 980px; }
+.tpl-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 0; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line); margin-bottom: 14px;
+}
+.tpl-stage-section { margin-bottom: 24px; }
+.tpl-stage-head {
+  display: flex; align-items: baseline; gap: 10px;
+  font-size: 11px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--ink);
+  font-weight: 700;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.tpl-stage-head .count { font-size: 10px; color: var(--muted); font-weight: 500; letter-spacing: 0.3px; }
+.tpl-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.tpl-card.open { border-color: var(--ink); }
+.tpl-card-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 18px; cursor: pointer;
+  background: var(--surface);
+  min-height: 44px;
+}
+.tpl-card-head:hover { background: var(--tinted); }
+.tpl-card.open .tpl-card-head { background: var(--tinted); border-bottom: 1px solid var(--line); }
+.tpl-card-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.tpl-card-meta { font-size: 10px; color: var(--muted); margin-top: 3px; letter-spacing: 0.3px; }
+.tpl-card-caret { font-size: 14px; color: var(--muted); transition: transform 0.18s; }
+.tpl-card.open .tpl-card-caret { transform: rotate(180deg); }
+
+.tpl-card-body { display: none; padding: 18px 20px; }
+.tpl-card.open .tpl-card-body { display: block; }
+.tpl-field { margin-bottom: 14px; }
+.tpl-field-lbl { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-bottom: 4px; }
+.tpl-subject {
+  font-family: var(--sans); font-size: 13px;
+  color: var(--ink); background: var(--tinted);
+  padding: 10px 12px; border-radius: var(--r-sm);
+  font-weight: 500;
+}
+.tpl-body {
+  font-family: var(--sans); font-size: 12px;
+  color: var(--ink-2); line-height: 1.65;
+  background: var(--tinted);
+  padding: 14px 16px; border-radius: var(--r-sm);
+  white-space: pre-wrap;
+}
+.tpl-merge-tag {
+  display: inline-block;
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-size: 11px; padding: 1px 6px;
+  background: #f0e6f9; color: #6a4a90;
+  border-radius: 3px; margin: 0 1px;
+}
+.tpl-vars { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.tpl-vars .tpl-var {
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-size: 10px; padding: 3px 8px;
+  background: var(--tinted); color: var(--ink-2);
+  border: 1px solid var(--line); border-radius: 3px;
+}
+.tpl-actions {
+  display: flex; gap: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.tpl-btn {
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.8px; text-transform: uppercase;
+  cursor: pointer; min-height: 40px;
+  font-family: var(--sans);
+}
+.tpl-btn.primary { background: var(--ink); color: #fff; border: 1px solid var(--ink); }
+.tpl-btn.primary:hover { background: #333; }
+.tpl-btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+.tpl-btn.ghost:hover { background: var(--ink); color: #fff; }
+.tpl-btn:focus-visible { outline: var(--focus); outline-offset: 2px; }
+
+/* ============== CALENDAR ============== */
+.cal-wrap { padding: 14px 24px 40px; }
+.cal-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 16px; flex-wrap: wrap; gap: 12px;
+}
+.cal-title { font-family: var(--serif); font-size: 22px; color: var(--ink); font-weight: 600; }
+.cal-nav { display: flex; gap: 8px; align-items: center; }
+.cal-nav-btn {
+  padding: 10px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 0.5px;
+  font-family: var(--sans);
+  color: var(--ink);
+  min-height: 44px;
+}
+.cal-nav-btn:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
+.cal-nav-btn:focus-visible { outline: var(--focus); outline-offset: 2px; }
+.cal-today-btn {
+  background: var(--ink); color: #fff; border-color: var(--ink);
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.cal-weekday {
+  background: var(--tinted);
+  padding: 10px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 10px; color: var(--ink);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.cal-day {
+  background: var(--surface);
+  min-height: 110px;
+  padding: 8px;
+  font-size: 11px;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.cal-day:hover { background: var(--tinted); }
+.cal-day.empty { background: #faf9f4; cursor: default; }
+.cal-day.empty:hover { background: #faf9f4; }
+.cal-day-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 500; color: var(--ink);
+  width: 22px; height: 22px;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.cal-day.today .cal-day-num {
+  background: var(--ink); color: #fff;
+  border-radius: 50%;
+  font-weight: 700;
+}
+.cal-event {
+  padding: 3px 6px;
+  border-radius: 3px;
+  margin-bottom: 2px;
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  font-weight: 500;
+}
+.cev-close { background: #e6f0e6; color: #4a7a4a; }
+.cev-inspection { background: #fce6f0; color: #a8627a; }
+.cev-financing { background: #fff4d6; color: #8a6630; }
+.cev-emd { background: #f0e6f9; color: #6a4a90; }
+.cev-appraisal { background: #d6edf5; color: #4a7090; }
+.cev-overdue { background: #cc3333; color: #fff; }
+.cal-legend {
+  display: flex; gap: 12px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+  font-size: 10px; color: var(--muted);
+  letter-spacing: 0.3px;
+}
+.cal-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.cal-legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
+
+/* ============== PAYOUT (TC-facing · submit pay) ============== */
+.payout-wrap { padding: 0 24px 40px; max-width: 1080px; }
+.payout-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 0; gap: 12px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--line); margin-bottom: 18px;
+}
+.payout-summary {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px; margin-bottom: 20px;
+}
+.payout-stat {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 16px 18px;
+}
+.payout-stat .lbl { font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+.payout-stat .val { font-family: var(--serif); font-size: 26px; font-weight: 600; color: var(--ink); line-height: 1; }
+.payout-stat .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.payout-stat.pending .val { color: #8a6630; }
+.payout-stat.paid .val { color: #4a7a4a; }
+
+.payout-section { margin-bottom: 22px; }
+.payout-section-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 12px;
+}
+.payout-section-head h3 {
+  font-family: var(--serif); font-size: 18px; font-weight: 600;
+  color: var(--ink);
+}
+.payout-section-head .meta { font-size: 11px; color: var(--muted); letter-spacing: 0.3px; }
+
+.payout-row {
+  display: grid;
+  grid-template-columns: 110px 1.4fr 0.8fr 0.6fr 0.7fr 100px;
+  gap: 14px; align-items: center;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.payout-date { color: var(--muted); font-size: 11px; }
+.payout-file { color: var(--ink); font-weight: 500; }
+.payout-file .sub { display: block; font-size: 11px; color: var(--muted); font-weight: 400; margin-top: 2px; }
+.payout-role { font-size: 11px; color: var(--ink-2); }
+.payout-amount { font-family: var(--serif); font-size: 16px; font-weight: 600; color: var(--ink); text-align: right; }
+.payout-status {
+  display: inline-block; padding: 3px 10px; border-radius: 999px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+.payout-status.pending { background: #fff4d6; color: #8a6630; }
+.payout-status.approved { background: #d6edf5; color: #4a7090; }
+.payout-status.paid { background: #e6f0e6; color: #4a7a4a; }
+.payout-status.rejected { background: #f0e0e0; color: #a86666; }
+
+/* Submit payout form */
+.payout-form {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 22px 24px;
+  margin-bottom: 22px;
+}
+.payout-form-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 14px 18px;
+}
+.payout-form-grid label {
+  display: block; font-size: 10px;
+  letter-spacing: 1px; text-transform: uppercase;
+  color: var(--muted); font-weight: 600;
+  margin-bottom: 4px;
+}
+.payout-form-grid input, .payout-form-grid select, .payout-form-grid textarea {
+  width: 100%; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--bg); color: var(--ink);
+  font-family: var(--sans); font-size: 13px;
+  min-height: 44px;
+}
+.payout-form-grid input:focus, .payout-form-grid select:focus, .payout-form-grid textarea:focus { outline: none; border-color: var(--ink); background: #fff; }
+.payout-form-grid textarea { min-height: 70px; resize: vertical; }
+.payout-form-grid .full { grid-column: 1 / -1; }
+.payout-form-submit {
+  margin-top: 16px; padding: 12px 22px;
+  background: var(--ink); color: #fff;
+  border: none; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 1px; text-transform: uppercase;
+  cursor: pointer; min-height: 44px;
+  font-family: var(--sans);
+}
+.payout-form-submit:hover { background: #333; }
+.payout-form-submit:focus-visible { outline: var(--focus); outline-offset: 2px; }
+
+/* ============== PAYROLL (broker-facing · Friday Disbursement) ============== */
+.payroll-wrap { padding: 0 24px 40px; }
+.payroll-banner {
+  background: var(--ink); color: #fff;
+  padding: 22px 26px; border-radius: var(--r-md);
+  margin: 18px 0;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 18px; flex-wrap: wrap;
+}
+.payroll-banner h2 {
+  font-family: var(--serif); font-size: 26px; font-weight: 500;
+  margin-bottom: 4px;
+}
+.payroll-banner .sub { font-size: 12px; color: #cfc8b8; letter-spacing: 0.3px; }
+.payroll-banner .totals { display: flex; gap: 22px; flex-wrap: wrap; }
+.payroll-banner .total-block .lbl { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #9a9588; font-weight: 600; }
+.payroll-banner .total-block .val { font-family: var(--serif); font-size: 28px; font-weight: 600; color: #fff; line-height: 1; }
+.payroll-banner .run-btn {
+  background: #fff; color: var(--ink);
+  padding: 14px 24px; border-radius: 999px;
+  font-size: 12px; font-weight: 700;
+  letter-spacing: 1px; text-transform: uppercase;
+  cursor: pointer; min-height: 48px;
+  font-family: var(--sans); border: none;
+}
+.payroll-banner .run-btn:hover { background: #f0e6f9; }
+.payroll-banner .run-btn:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+
+.payroll-tc-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 20px 24px;
+  margin-bottom: 14px;
+}
+.payroll-tc-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 14px;
+  flex-wrap: wrap; gap: 12px;
+}
+.payroll-tc-name { font-family: var(--serif); font-size: 20px; font-weight: 600; color: var(--ink); }
+.payroll-tc-name .role { font-size: 10px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin-left: 8px; }
+.payroll-tc-total { font-family: var(--serif); font-size: 24px; font-weight: 600; color: var(--ink); }
+.payroll-tc-mark {
+  padding: 10px 18px;
+  background: var(--ink); color: #fff;
+  border: 1px solid var(--ink); border-radius: 999px;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 1px; text-transform: uppercase;
+  cursor: pointer; min-height: 40px;
+  font-family: var(--sans);
+}
+.payroll-tc-mark:hover { background: #fff; color: var(--ink); }
+.payroll-tc-mark:focus-visible { outline: var(--focus); outline-offset: 2px; }
+.payroll-tc-mark.done { background: #e6f0e6; color: #4a7a4a; border-color: #c6e0c6; }
+
+.payroll-tc-list .payout-row {
+  grid-template-columns: 110px 1.4fr 0.8fr 0.6fr 0.7fr 100px;
+}
+
+.payroll-history-row {
+  display: grid; grid-template-columns: 120px 1fr 1fr 130px;
+  gap: 14px; align-items: center;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.payroll-history-row .date { color: var(--ink); font-weight: 600; }
+.payroll-history-row .info { color: var(--ink-2); }
+.payroll-history-row .total { font-family: var(--serif); font-size: 16px; font-weight: 600; color: var(--ink); text-align: right; }
+
+/* ============== DIRECTORY ============== */
+.dir-wrap { padding: 0 24px 40px; }
+.dir-subtabs {
+  display: flex; gap: 0; padding: 14px 0 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 18px;
+}
+.dir-subtab {
+  padding: 10px 16px;
+  font-size: 11px; font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  border: none; background: transparent;
+  font-family: var(--sans);
+  letter-spacing: 1px; text-transform: uppercase;
+  line-height: 1; min-height: 44px;
+  position: relative; margin-bottom: -1px;
+}
+.dir-subtab:hover { color: var(--ink); }
+.dir-subtab.active { color: var(--ink); font-weight: 700; }
+.dir-subtab.active::after { content:''; position:absolute; bottom:0; left:14px; right:14px; height:2px; background: var(--ink); }
+.dir-subtab:focus-visible { outline: var(--focus); outline-offset: -3px; }
+.dir-subtab .count { margin-left: 4px; color: var(--muted); font-weight: 500; }
+
+.dir-toolbar {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 14px; flex-wrap: wrap;
+}
+.dir-filter-pill {
+  padding: 8px 14px;
+  font-size: 10px; letter-spacing: 0.8px;
+  text-transform: uppercase; font-weight: 500;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface); color: var(--muted);
+  cursor: pointer; min-height: 36px;
+  font-family: var(--sans);
+}
+.dir-filter-pill:hover { color: var(--ink); border-color: var(--ink); }
+.dir-filter-pill.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+.dir-filter-pill:focus-visible { outline: var(--focus); outline-offset: 2px; }
+
+.dir-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+.dir-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 18px 20px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.dir-card:hover { border-color: var(--ink); transform: translateY(-1px); }
+.dir-card-head {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 12px;
+}
+.dir-avatar {
+  width: 44px; height: 44px; border-radius: 50%;
+  background: var(--tinted);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--serif); font-size: 16px; font-weight: 600;
+  color: var(--ink); flex-shrink: 0;
+}
+.dir-card-name { font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--ink); }
+.dir-card-role { font-size: 11px; color: var(--muted); margin-top: 2px; letter-spacing: 0.3px; }
+.dir-card-org { font-size: 12px; color: var(--ink-2); margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.dir-card-info { display: flex; flex-direction: column; gap: 4px; }
+.dir-card-info-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ink-2); }
+.dir-card-info-row .lbl { font-size: 9px; letter-spacing: 0.8px; text-transform: uppercase; color: var(--muted); min-width: 40px; }
+.dir-card-stats {
+  display: flex; gap: 14px; padding-top: 12px; margin-top: 12px;
+  border-top: 1px solid var(--line); font-size: 11px;
+}
+.dir-card-stat { flex: 1; }
+.dir-card-stat .v { font-family: var(--serif); font-size: 18px; font-weight: 600; color: var(--ink); display: block; }
+.dir-card-stat .l { font-size: 9px; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); }
+
+/* ============== AGENTS · analytics view (Phase 9 Gap 7b) ============== */
+.agents-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 22px; }
+.agents-stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 16px 18px; }
+.agents-stat .lbl { font-size: 9px; letter-spacing: 1px; color: var(--muted); text-transform: uppercase; font-weight: 600; margin-bottom: 4px; }
+.agents-stat .val { font-family: var(--serif); font-size: 26px; font-weight: 600; color: var(--ink); line-height: 1; }
+.agents-stat .val.green { color: #4a7a4a; }
+.agents-stat .val.amber { color: #8a6630; }
+
+.agents-table { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
+.agents-row { display: grid; grid-template-columns: 1.6fr 1fr 0.7fr 0.7fr 0.9fr 110px; gap: 12px; padding: 12px 18px; align-items: center; border-bottom: 1px solid var(--line); cursor: pointer; }
+.agents-row.header { background: var(--tinted); font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); font-weight: 600; cursor: default; }
+.agents-row:not(.header):hover { background: var(--tinted); }
+.agents-row.cooling { background: #fffaef; }
+.agents-row.cooling:hover { background: #fff5e0; }
+.agents-row:last-child { border-bottom: none; }
+.agents-row .name { font-size: 13px; font-weight: 600; color: var(--ink); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.agents-row .email { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.agents-row .brokerage { font-size: 12px; color: var(--ink); }
+.agents-row .market { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.agents-row .num { font-family: var(--serif); font-size: 18px; font-weight: 600; color: var(--ink); }
+.agents-row .when { font-size: 11px; color: var(--ink); }
+.agents-row .when.warn { color: #8a6630; font-weight: 500; }
+.agents-row .when.danger { color: #a86666; font-weight: 500; }
+
+.agent-tag { padding: 2px 7px; border-radius: 999px; font-size: 9px; font-weight: 700; letter-spacing: 0.3px; text-transform: uppercase; }
+.agent-tag.top { background: #faf6ec; color: #b89968; }
+.agent-tag.new { background: #d6edf5; color: #4a7090; }
+.agent-tag.starter { background: #f0e6f9; color: #6a4a90; }
+.agent-tag.producer { background: #f0e6f9; color: #6a4a90; }
+.agent-tag.realty { background: #faf6ec; color: #b89968; border: 1px solid #e0d2a8; }
+.agent-status { display: inline-block; padding: 4px 10px; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; border-radius: 999px; text-align: center; }
+.agent-status.active { background: #e6f0e6; color: #4a7a4a; }
+.agent-status.warming { background: #d6edf5; color: #4a7090; }
+.agent-status.cooling { background: #fff4d6; color: #8a6630; }
+.agent-status.dormant { background: #f0e0e0; color: #a86666; }
+
+.agents-rules { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 16px 20px; margin-top: 18px; }
+.agents-rules .lbl { font-size: 10px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; font-weight: 700; margin-bottom: 8px; }
+.agents-rules ul { margin: 0; padding-left: 18px; font-size: 11px; color: var(--ink-2); line-height: 1.7; }
+.agents-rules strong.green { color: #4a7a4a; }
+.agents-rules strong.blue { color: #4a7090; }
+.agents-rules strong.amber { color: #8a6630; }
+.agents-rules strong.red { color: #a86666; }
+.agents-rules strong.gold { color: #b89968; }
+
+@media (max-width: 700px) {
+  .agents-row { grid-template-columns: 1fr; gap: 6px; padding: 14px; }
+  .agents-row.header { display: none; }
+}
+
+/* ============== SETTINGS ============== */
+.set-wrap { padding: 0 24px 40px; max-width: 920px; }
+.set-section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.set-section-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--tinted);
+}
+.set-section-head h3 {
+  font-family: var(--serif); font-size: 18px;
+  font-weight: 600; color: var(--ink);
+}
+.set-section-head .meta { font-size: 11px; color: var(--muted); }
+.set-section-body { padding: 20px 22px; }
+
+.set-field { margin-bottom: 16px; }
+.set-field:last-child { margin-bottom: 0; }
+.set-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.set-field label {
+  display: block; font-size: 10px;
+  letter-spacing: 1px; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; margin-bottom: 4px;
+}
+.set-field input, .set-field select, .set-field textarea {
+  width: 100%; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--bg); color: var(--ink);
+  font-family: var(--sans); font-size: 13px;
+  min-height: 44px;
+}
+.set-field input:focus, .set-field select:focus, .set-field textarea:focus { outline: none; border-color: var(--ink); background: #fff; }
+.set-field textarea { min-height: 80px; resize: vertical; }
+.set-help { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+
+.set-team-row {
+  display: grid; grid-template-columns: 1fr 0.8fr 0.6fr 100px;
+  gap: 14px; align-items: center;
+  padding: 12px 14px;
+  background: var(--bg); border-radius: var(--r-sm);
+  margin-bottom: 8px;
+}
+.set-team-name { font-weight: 500; color: var(--ink); font-size: 12px; }
+.set-team-name .sub { display: block; font-size: 10px; color: var(--muted); margin-top: 2px; font-weight: 400; }
+.set-team-role { font-size: 10px; color: var(--muted); letter-spacing: 0.5px; text-transform: uppercase; }
+.set-team-status { font-size: 10px; }
+.set-team-action {
+  padding: 6px 12px;
+  background: transparent; color: var(--ink);
+  border: 1px solid var(--line); border-radius: 999px;
+  font-size: 9px; font-weight: 600;
+  letter-spacing: 0.5px; text-transform: uppercase;
+  cursor: pointer; font-family: var(--sans);
+  min-height: 36px;
+}
+.set-team-action:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+.set-toggle-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.set-toggle-row:last-child { border-bottom: none; }
+.set-toggle-row .text .name { font-size: 13px; color: var(--ink); font-weight: 500; }
+.set-toggle-row .text .help { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.set-toggle {
+  position: relative; display: inline-block;
+  width: 44px; height: 24px;
+  background: var(--line);
+  border-radius: 999px; cursor: pointer;
+  transition: background 0.18s;
+  flex-shrink: 0;
+}
+.set-toggle.on { background: var(--ink); }
+.set-toggle::after {
+  content: ''; position: absolute;
+  top: 2px; left: 2px;
+  width: 20px; height: 20px;
+  background: #fff; border-radius: 50%;
+  transition: left 0.18s;
+}
+.set-toggle.on::after { left: 22px; }
+
+.set-save {
+  margin-top: 18px;
+  padding: 12px 22px;
+  background: var(--ink); color: #fff;
+  border: none; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  letter-spacing: 1px; text-transform: uppercase;
+  cursor: pointer; min-height: 44px;
+  font-family: var(--sans);
+}
+.set-save:hover { background: #333; }
+.set-save:focus-visible { outline: var(--focus); outline-offset: 2px; }
+
+.set-pill {
+  display: inline-block; padding: 3px 10px;
+  border-radius: 999px; font-size: 10px; font-weight: 600;
+  letter-spacing: 0.3px; text-transform: uppercase;
+}
+.set-pill.connected { background: #e6f0e6; color: #4a7a4a; }
+.set-pill.disconnected { background: #f0e0e0; color: #a86666; }
+
+/* ============== RESPONSIVE ============== */
+@media (max-width: 700px) {
+  .inbox-layout { grid-template-columns: 1fr; min-height: auto; }
+  .thread-list { border-right: none; border-bottom: 1px solid var(--line); max-height: 360px; }
+  .lead-row { grid-template-columns: 1fr; gap: 6px; padding: 14px; }
+  .lead-row > * { padding: 0; }
+  .cal-day { min-height: 70px; padding: 4px; }
+  .cal-day-num { width: 18px; height: 18px; font-size: 10px; }
+  .cal-event { font-size: 9px; padding: 1px 4px; }
+  .tpl-card-head { padding: 12px 14px; }
+  .tpl-card-body { padding: 14px; }
+  .payout-row { grid-template-columns: 1fr; gap: 6px; }
+  .payroll-tc-list .payout-row { grid-template-columns: 1fr; gap: 6px; }
+  .payroll-history-row { grid-template-columns: 1fr; gap: 6px; }
+  .payout-form-grid { grid-template-columns: 1fr; }
+  .payroll-banner .totals { gap: 14px; }
+  .set-field-row { grid-template-columns: 1fr; }
+  .set-team-row { grid-template-columns: 1fr; gap: 6px; }
+  .pipe-table { font-size: 11px; }
+  .pipe-table th, .pipe-table td { padding: 8px 10px; }
+  .dl-grid { grid-template-columns: 1fr; }
+  .modal-box { padding: 20px; border-radius: var(--r-md); }
+  .top-bar { padding: 10px 14px; }
+  .page-title { padding: 16px 14px 4px; }
+  .dash-wrap, .pipe-wrap { padding-left: 14px; padding-right: 14px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ============== HEADER ============== -->
+<header class="top-bar">
+  <a href="index.html" class="brand">
+    <span class="brand-mark">AARI</span>
+    <span class="brand-name">CRM<small>STAFF &middot; OPERATIONAL</small></span>
+  </a>
+  <div class="top-right">
+    <div>
+      <div class="user-info" id="user-name">Loading...</div>
+      <div class="user-role" id="user-role">&nbsp;</div>
+    </div>
+    <a class="signout-link" id="signout">Sign out</a>
+  </div>
+</header>
+
+<!-- ============== AUTH GATE (shows if not signed in or not staff) ============== -->
+<div class="gate" id="auth-gate">
+  <div class="gate-card">
+    <h2 id="gate-title">Staff access only.</h2>
+    <p id="gate-message">This page is for Aari Transactions staff. Sign in with your staff account to continue.</p>
+    <a href="index.html" class="btn" id="gate-btn">Back to home</a>
+  </div>
+</div>
+
+<!-- ============== MAIN ============== -->
+<main id="crm-main" style="display:none">
+
+  <div class="page-title">
+    <h1 id="view-title">Today.</h1>
+    <span class="sub" id="view-sub">Files due, signatures pending, broker review needed.</span>
+  </div>
+
+  <!-- ============== TABS ============== -->
+  <nav class="tabs" role="tablist" aria-label="CRM views">
+    <button type="button" class="tab active" data-view="today" role="tab">Today</button>
+    <button type="button" class="tab" data-view="pipeline" role="tab">Pipeline</button>
+    <span class="tab-div" aria-hidden="true"></span>
+    <button type="button" class="tab" data-view="leads" role="tab">Leads</button>
+    <button type="button" class="tab" data-view="inbox" role="tab">Inbox</button>
+    <button type="button" class="tab" data-view="calendar" role="tab">Calendar</button>
+    <button type="button" class="tab" data-view="templates" role="tab">Templates</button>
+    <button type="button" class="tab" data-view="payout" role="tab">Payout</button>
+    <button type="button" class="tab" data-view="payroll" role="tab">Payroll</button>
+    <button type="button" class="tab" data-view="winback" role="tab">Win-back</button>
+    <button type="button" class="tab" data-view="directory" role="tab">Directory</button>
+    <button type="button" class="tab" data-view="settings" role="tab">Settings</button>
+  </nav>
+
+  <!-- ============== TODAY · DASHBOARD ============== -->
+  <section class="view active" id="view-today">
+    <div class="dash-wrap">
+
+      <div class="stat-strip">
+        <div class="stat-card">
+          <div class="stat-lbl">Active files</div>
+          <div class="stat-num" id="stat-active">&mdash;</div>
+          <div class="stat-sub" id="stat-active-sub">Across all TCs</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-lbl">Closing this week</div>
+          <div class="stat-num" id="stat-closing">&mdash;</div>
+          <div class="stat-sub" id="stat-closing-sub">Mon through Sat</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-lbl">Awaiting broker review</div>
+          <div class="stat-num" id="stat-review">&mdash;</div>
+          <div class="stat-sub" id="stat-review-sub">Pre-close compliance queue</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-lbl">Closed this month</div>
+          <div class="stat-num" id="stat-closed-mo">&mdash;</div>
+          <div class="stat-sub" id="stat-closed-mo-sub">YTD total: <span id="stat-ytd">&mdash;</span></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Files due today.</h2>
+          <span class="panel-meta" id="today-due-meta">&nbsp;</span>
+        </div>
+        <div id="today-due-body">
+          <div class="empty-state">
+            <p class="label">Nothing due today.</p>
+            <p>Everything that needs touching has been touched.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Awaiting broker review.</h2>
+          <span class="panel-meta" id="today-review-meta">&nbsp;</span>
+        </div>
+        <div id="today-review-body">
+          <div class="empty-state">
+            <p class="label">Queue is clear.</p>
+            <p>No files waiting on Marlenyi for pre-close compliance review.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">New intake (last 24 hours).</h2>
+          <span class="panel-meta" id="today-intake-meta">&nbsp;</span>
+        </div>
+        <div id="today-intake-body">
+          <div class="empty-state">
+            <p class="label">No new submissions.</p>
+            <p>The intake form on aaritransactions.com routes here when an agent submits.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============== PIPELINE ============== -->
+  <section class="view" id="view-pipeline">
+    <div class="pipe-wrap">
+
+      <div class="pipe-toolbar">
+        <input type="search" class="search-input" id="pipe-search" placeholder="Search address, agent, TC...">
+        <button type="button" class="btn-new" id="pipe-new">+ New file</button>
+      </div>
+
+      <!-- INTAKE group -->
+      <div class="group-header">
+        <span class="group-badge gb-intake">Intake</span>
+        <span class="group-count" id="grp-intake-count">0 files</span>
+      </div>
+      <div style="overflow-x:auto;margin-bottom:18px">
+        <table class="pipe-table">
+          <thead>
+            <tr>
+              <th>Address</th>
+              <th>Agent</th>
+              <th>TC</th>
+              <th>Service</th>
+              <th>Submitted</th>
+              <th>Due next</th>
+            </tr>
+          </thead>
+          <tbody id="grp-intake-body">
+            <tr><td colspan="6" class="empty-state" style="padding:18px;border:none">No files in intake.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- INSPECTION group -->
+      <div class="group-header">
+        <span class="group-badge gb-inspection">Inspection</span>
+        <span class="group-count" id="grp-inspection-count">0 files</span>
+      </div>
+      <div style="overflow-x:auto;margin-bottom:18px">
+        <table class="pipe-table">
+          <thead>
+            <tr>
+              <th>Address</th>
+              <th>Agent</th>
+              <th>TC</th>
+              <th>Service</th>
+              <th>Submitted</th>
+              <th>Due next</th>
+            </tr>
+          </thead>
+          <tbody id="grp-inspection-body">
+            <tr><td colspan="6" class="empty-state" style="padding:18px;border:none">No files in inspection.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- FINANCING group -->
+      <div class="group-header">
+        <span class="group-badge gb-financing">Financing</span>
+        <span class="group-count" id="grp-financing-count">0 files</span>
+      </div>
+      <div style="overflow-x:auto;margin-bottom:18px">
+        <table class="pipe-table">
+          <thead>
+            <tr>
+              <th>Address</th>
+              <th>Agent</th>
+              <th>TC</th>
+              <th>Service</th>
+              <th>Submitted</th>
+              <th>Due next</th>
+            </tr>
+          </thead>
+          <tbody id="grp-financing-body">
+            <tr><td colspan="6" class="empty-state" style="padding:18px;border:none">No files in financing.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- CTC group -->
+      <div class="group-header">
+        <span class="group-badge gb-ctc">Clear to close</span>
+        <span class="group-count" id="grp-ctc-count">0 files</span>
+      </div>
+      <div style="overflow-x:auto;margin-bottom:18px">
+        <table class="pipe-table">
+          <thead>
+            <tr>
+              <th>Address</th>
+              <th>Agent</th>
+              <th>TC</th>
+              <th>Service</th>
+              <th>Submitted</th>
+              <th>Due next</th>
+            </tr>
+          </thead>
+          <tbody id="grp-ctc-body">
+            <tr><td colspan="6" class="empty-state" style="padding:18px;border:none">No files in clear-to-close.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- SCHEDULED group -->
+      <div class="group-header">
+        <span class="group-badge gb-scheduled">Scheduled to close</span>
+        <span class="group-count" id="grp-scheduled-count">0 files</span>
+      </div>
+      <div style="overflow-x:auto;margin-bottom:18px">
+        <table class="pipe-table">
+          <thead>
+            <tr>
+              <th>Address</th>
+              <th>Agent</th>
+              <th>TC</th>
+              <th>Service</th>
+              <th>Submitted</th>
+              <th>Closing</th>
+            </tr>
+          </thead>
+          <tbody id="grp-scheduled-body">
+            <tr><td colspan="6" class="empty-state" style="padding:18px;border:none">No files scheduled to close.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============== LEADS · incoming intake submissions awaiting assignment ============== -->
+  <section class="view" id="view-leads">
+    <div class="leads-wrap">
+
+      <div class="leads-filters">
+        <button type="button" class="lead-filter active" data-lead-filter="new">New <span class="count" id="lead-count-new">0</span></button>
+        <button type="button" class="lead-filter" data-lead-filter="review">In review <span class="count" id="lead-count-review">0</span></button>
+        <button type="button" class="lead-filter" data-lead-filter="converted">Converted <span class="count" id="lead-count-converted">0</span></button>
+        <button type="button" class="lead-filter" data-lead-filter="rejected">Rejected <span class="count" id="lead-count-rejected">0</span></button>
+        <span style="flex:1"></span>
+        <input type="search" class="search-input" id="leads-search" placeholder="Search lead..." style="width:240px">
+      </div>
+
+      <div id="leads-list">
+        <div class="empty-state" style="padding:40px 20px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);margin-top:8px">
+          <p class="label">No new leads.</p>
+          <p>When an agent submits the intake form on aaritransactions.com, the submission lands here for triage.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============== CALENDAR · Layer 3 · deadlines, closings, inspections ============== -->
+  <section class="view" id="view-calendar">
+    <div class="cal-wrap">
+
+      <div class="cal-head">
+        <div class="cal-title" id="cal-month-label">Loading...</div>
+        <div class="cal-nav">
+          <button type="button" class="cal-nav-btn" id="cal-prev" aria-label="Previous month">&larr;</button>
+          <button type="button" class="cal-nav-btn cal-today-btn" id="cal-today">Today</button>
+          <button type="button" class="cal-nav-btn" id="cal-next" aria-label="Next month">&rarr;</button>
+        </div>
+      </div>
+
+      <div class="cal-grid" id="cal-grid">
+        <!-- Weekday headers + day cells injected by JS -->
+      </div>
+
+      <div class="cal-legend">
+        <span class="cal-legend-item"><span class="cal-legend-dot" style="background:#e6f0e6"></span>Closing</span>
+        <span class="cal-legend-item"><span class="cal-legend-dot" style="background:#fce6f0"></span>Inspection</span>
+        <span class="cal-legend-item"><span class="cal-legend-dot" style="background:#fff4d6"></span>Financing</span>
+        <span class="cal-legend-item"><span class="cal-legend-dot" style="background:#f0e6f9"></span>EMD</span>
+        <span class="cal-legend-item"><span class="cal-legend-dot" style="background:#d6edf5"></span>Appraisal</span>
+        <span class="cal-legend-item"><span class="cal-legend-dot" style="background:#cc3333"></span>Overdue</span>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============== TEMPLATES · Layer 3 · email templates by stage ============== -->
+  <section class="view" id="view-templates">
+    <div class="tpl-wrap">
+
+      <div class="tpl-toolbar">
+        <input type="search" class="search-input" id="tpl-search" placeholder="Search template name or body..." style="flex:1;max-width:380px">
+        <button type="button" class="btn-new" id="tpl-new">+ New template</button>
+      </div>
+
+      <!-- INTAKE stage -->
+      <div class="tpl-stage-section" data-stage="intake">
+        <div class="tpl-stage-head">Intake <span class="count" id="tpl-count-intake">0 templates</span></div>
+        <div id="tpl-list-intake">
+          <div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+            <p style="font-size:12px;color:var(--muted)">No intake templates yet. Use New template to add.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ACTIVE stage -->
+      <div class="tpl-stage-section" data-stage="active">
+        <div class="tpl-stage-head">Active file <span class="count" id="tpl-count-active">0 templates</span></div>
+        <div id="tpl-list-active">
+          <div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+            <p style="font-size:12px;color:var(--muted)">No active-file templates yet.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- CTC stage -->
+      <div class="tpl-stage-section" data-stage="ctc">
+        <div class="tpl-stage-head">Clear to close <span class="count" id="tpl-count-ctc">0 templates</span></div>
+        <div id="tpl-list-ctc">
+          <div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+            <p style="font-size:12px;color:var(--muted)">No CTC templates yet.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- POST-CLOSE stage -->
+      <div class="tpl-stage-section" data-stage="postclose">
+        <div class="tpl-stage-head">Post-close <span class="count" id="tpl-count-postclose">0 templates</span></div>
+        <div id="tpl-list-postclose">
+          <div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+            <p style="font-size:12px;color:var(--muted)">No post-close templates yet.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ADMIN stage (late fees, refunds, etc.) -->
+      <div class="tpl-stage-section" data-stage="admin">
+        <div class="tpl-stage-head">Admin &amp; billing <span class="count" id="tpl-count-admin">0 templates</span></div>
+        <div id="tpl-list-admin">
+          <div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+            <p style="font-size:12px;color:var(--muted)">No admin templates yet.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============== PAYOUT · Layer 4 · TC-facing · submit pay request ============== -->
+  <section class="view" id="view-payout">
+    <div class="payout-wrap">
+
+      <div class="payout-header">
+        <div>
+          <h2 style="font-family:var(--serif);font-size:22px;color:var(--ink);font-weight:600;margin-bottom:4px">Submit your pay.</h2>
+          <p style="font-size:12px;color:var(--muted)">Log work on a file. Marlenyi approves on the Friday Disbursement run.</p>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="payout-summary">
+        <div class="payout-stat pending">
+          <div class="lbl">Pending review</div>
+          <div class="val" id="po-pending">$0</div>
+          <div class="sub" id="po-pending-count">0 entries</div>
+        </div>
+        <div class="payout-stat">
+          <div class="lbl">Approved this week</div>
+          <div class="val" id="po-approved">$0</div>
+          <div class="sub" id="po-approved-count">0 entries</div>
+        </div>
+        <div class="payout-stat paid">
+          <div class="lbl">Paid this month</div>
+          <div class="val" id="po-paid">$0</div>
+          <div class="sub" id="po-paid-count">0 entries</div>
+        </div>
+        <div class="payout-stat">
+          <div class="lbl">Year to date</div>
+          <div class="val" id="po-ytd">$0</div>
+          <div class="sub" id="po-ytd-count">0 entries</div>
+        </div>
+      </div>
+
+      <!-- Submit new -->
+      <div class="payout-form">
+        <h3 style="font-family:var(--serif);font-size:18px;font-weight:600;color:var(--ink);margin-bottom:14px">+ Submit new payout</h3>
+        <div class="payout-form-grid">
+          <div>
+            <label for="po-file">File</label>
+            <select id="po-file"><option value="">Select file...</option></select>
+          </div>
+          <div>
+            <label for="po-role">Role on file</label>
+            <select id="po-role">
+              <option value="coordinator">Coordinator</option>
+              <option value="listing">Listing</option>
+              <option value="add-on">Add-on</option>
+              <option value="compliance">Compliance review</option>
+            </select>
+          </div>
+          <div>
+            <label for="po-amount">Amount (USD)</label>
+            <input type="number" id="po-amount" placeholder="0.00" step="0.01" min="0">
+          </div>
+          <div>
+            <label for="po-method">Preferred payment method</label>
+            <select id="po-method">
+              <option value="zelle">Zelle</option>
+              <option value="ach">ACH</option>
+              <option value="check">Check</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="full">
+            <label for="po-notes">Notes (optional)</label>
+            <textarea id="po-notes" placeholder="Anything Marlenyi should know about this payout..."></textarea>
+          </div>
+        </div>
+        <button type="button" class="payout-form-submit" id="po-submit">Submit for review</button>
+      </div>
+
+      <!-- Pending list -->
+      <div class="payout-section">
+        <div class="payout-section-head">
+          <h3>Your pending submissions.</h3>
+          <span class="meta" id="po-list-pending-meta">0 entries</span>
+        </div>
+        <div id="po-list-pending">
+          <div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+            <p style="font-size:12px;color:var(--muted)">Nothing pending. Submit a payout above when you're ready.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- History list -->
+      <div class="payout-section">
+        <div class="payout-section-head">
+          <h3>Your history.</h3>
+          <span class="meta" id="po-list-history-meta">Approved + paid</span>
+        </div>
+        <div id="po-list-history">
+          <div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+            <p style="font-size:12px;color:var(--muted)">No approved or paid payouts yet.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============== PAYROLL · Layer 4 · broker-facing · Friday Disbursement ============== -->
+  <section class="view" id="view-payroll">
+    <div class="payroll-wrap">
+
+      <!-- Friday Disbursement banner -->
+      <div class="payroll-banner">
+        <div>
+          <h2>Friday Disbursement.</h2>
+          <p class="sub" id="payroll-week-label">Week of &mdash;</p>
+        </div>
+        <div class="totals">
+          <div class="total-block">
+            <div class="lbl">Approved to pay</div>
+            <div class="val" id="payroll-total-approved">$0</div>
+          </div>
+          <div class="total-block">
+            <div class="lbl">TCs receiving pay</div>
+            <div class="val" id="payroll-tc-count">0</div>
+          </div>
+        </div>
+        <button type="button" class="run-btn" id="payroll-run-btn">Mark all paid &rarr;</button>
+      </div>
+
+      <!-- Pending approval queue -->
+      <div class="payout-section">
+        <div class="payout-section-head">
+          <h3>Pending approval.</h3>
+          <span class="meta" id="payroll-pending-meta">0 entries awaiting your review</span>
+        </div>
+        <div id="payroll-pending-list">
+          <div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+            <p style="font-size:12px;color:var(--muted)">No payouts waiting for approval. TC submissions land here for your review.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Approved · grouped by TC for this week's run -->
+      <div class="payout-section">
+        <div class="payout-section-head">
+          <h3>This week's run.</h3>
+          <span class="meta">Approved · ready to disburse</span>
+        </div>
+        <div id="payroll-tc-cards">
+          <div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+            <p style="font-size:12px;color:var(--muted)">No approved payouts this week. Approve pending entries above to add them to the run.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Run history -->
+      <div class="payout-section">
+        <div class="payout-section-head">
+          <h3>Past runs.</h3>
+          <span class="meta">Friday Disbursement history</span>
+        </div>
+        <div id="payroll-history">
+          <div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+            <p style="font-size:12px;color:var(--muted)">No past runs yet. First Friday Disbursement will appear here.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============== WIN-BACK · Phase 9 · cancelled member re-engagement ============== -->
+  <section class="view" id="view-winback">
+    <div class="dir-wrap">
+
+      <div class="dir-subtabs">
+        <button type="button" class="dir-subtab active" data-winback="day30">Day 30 <span class="count" id="wb-count-day30">0</span></button>
+        <button type="button" class="dir-subtab" data-winback="day60">Day 60 <span class="count" id="wb-count-day60">0</span></button>
+        <button type="button" class="dir-subtab" data-winback="day90">Day 90 <span class="count" id="wb-count-day90">0</span></button>
+        <button type="button" class="dir-subtab" data-winback="won">Won back <span class="count" id="wb-count-won" style="color:#4a7a4a">0</span></button>
+        <button type="button" class="dir-subtab" data-winback="gone">Gone <span class="count" id="wb-count-gone">0</span></button>
+      </div>
+
+      <div id="wb-list-day30">
+        <div class="empty-state" style="padding:40px 20px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+          <p class="label">No members at Day 30.</p>
+          <p>Cancelled members appear here 30 days after their cancellation date. Use the Day 30 email template to bring them back with a soft check-in.</p>
+        </div>
+      </div>
+      <div id="wb-list-day60" style="display:none">
+        <div class="empty-state" style="padding:40px 20px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+          <p class="label">No members at Day 60.</p>
+          <p>Day 30 sends that didn't convert advance here. Day 60 template makes a concrete offer.</p>
+        </div>
+      </div>
+      <div id="wb-list-day90" style="display:none">
+        <div class="empty-state" style="padding:40px 20px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+          <p class="label">No members at Day 90.</p>
+          <p>Last call. Day 90 template is a personal note from Marlenyi + one free TC offer.</p>
+        </div>
+      </div>
+      <div id="wb-list-won" style="display:none">
+        <div class="empty-state" style="padding:40px 20px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+          <p class="label">No win-backs yet.</p>
+          <p>Members who re-subscribed after a cancellation land here.</p>
+        </div>
+      </div>
+      <div id="wb-list-gone" style="display:none">
+        <div class="empty-state" style="padding:40px 20px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">
+          <p class="label">No churned members.</p>
+          <p>Members who didn't convert after Day 90 are archived here for reference.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============== DIRECTORY · Layer 5 · agents and vendors ============== -->
+  <section class="view" id="view-directory">
+    <div class="dir-wrap">
+
+      <div class="dir-subtabs">
+        <button type="button" class="dir-subtab active" data-dir="agents">Agents <span class="count" id="dir-count-agents">0</span></button>
+        <button type="button" class="dir-subtab" data-dir="vendors">Vendors <span class="count" id="dir-count-vendors">0</span></button>
+      </div>
+
+      <div class="dir-toolbar">
+        <input type="search" class="search-input" id="dir-search" placeholder="Search name, brokerage, email..." style="flex:1;max-width:380px">
+        <button type="button" class="btn-new" id="dir-new">+ Add contact</button>
+      </div>
+
+      <!-- Agents · analytics view -->
+      <div id="dir-agents-pane">
+
+        <!-- Stats strip -->
+        <div class="agents-stats">
+          <div class="agents-stat"><div class="lbl">Total agents</div><div class="val" id="ag-total">0</div></div>
+          <div class="agents-stat"><div class="lbl">Active this month</div><div class="val green" id="ag-active">0</div></div>
+          <div class="agents-stat"><div class="lbl">Cooling</div><div class="val amber" id="ag-cooling">0</div></div>
+          <div class="agents-stat"><div class="lbl">Revenue YTD</div><div class="val" id="ag-ytd">$0</div></div>
+        </div>
+
+        <!-- Filter pills -->
+        <div class="dir-toolbar" style="border-bottom:none;padding-bottom:0;margin-bottom:14px">
+          <button type="button" class="dir-filter-pill active" data-agent-filter="all">All <span class="count" id="ag-count-all">0</span></button>
+          <button type="button" class="dir-filter-pill" data-agent-filter="active" style="background:#e6f0e6;color:#4a7a4a;border-color:#c6e0c6">&#9679; Active <span class="count" id="ag-count-active">0</span></button>
+          <button type="button" class="dir-filter-pill" data-agent-filter="warming" style="background:#d6edf5;color:#4a7090;border-color:#b5d5e5">Warming <span class="count" id="ag-count-warming">0</span></button>
+          <button type="button" class="dir-filter-pill" data-agent-filter="cooling" style="background:#fff4d6;color:#8a6630;border-color:#e0c376">Cooling <span class="count" id="ag-count-cooling">0</span></button>
+          <button type="button" class="dir-filter-pill" data-agent-filter="dormant" style="background:#f0e0e0;color:#a86666;border-color:#e0c0c0">Dormant <span class="count" id="ag-count-dormant">0</span></button>
+          <button type="button" class="dir-filter-pill" data-agent-filter="top" style="background:#fff;color:#b89968;border-color:#e0d2a8">Top earners <span class="count" id="ag-count-top">0</span></button>
+          <button type="button" class="dir-filter-pill" data-agent-filter="member" style="background:#f0e6f9;color:#6a4a90;border-color:#d4c0e8">Member <span class="count" id="ag-count-member">0</span></button>
+          <button type="button" class="dir-filter-pill" data-agent-filter="upgrade" style="background:#faf6ec;color:#b89968;border-color:#e0d2a8">&uarr; Upgrade eligible <span class="count" id="ag-count-upgrade">0</span></button>
+        </div>
+
+        <!-- Table -->
+        <div class="agents-table" id="ag-table">
+          <div class="agents-row header">
+            <span>Agent</span>
+            <span>Brokerage / Market</span>
+            <span>Files YTD</span>
+            <span>LTV</span>
+            <span>Last file</span>
+            <span>Status</span>
+          </div>
+          <div id="ag-rows">
+            <div class="empty-state" style="padding:40px 20px">
+              <p class="label">No agents yet.</p>
+              <p>Agents who register or submit a file appear here automatically with engagement status calculated nightly.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Status rules -->
+        <div class="agents-rules">
+          <p class="lbl">Status rules</p>
+          <ul>
+            <li><strong class="green">&#9679; Active</strong> &middot; File submitted in last 30 days</li>
+            <li><strong class="blue">Warming</strong> &middot; First file in last 60 days OR 2+ files in last 90 days</li>
+            <li><strong class="amber">Cooling</strong> &middot; No file in 30-89 days (was previously active)</li>
+            <li><strong class="red">Dormant</strong> &middot; No file in 90+ days</li>
+            <li><strong class="gold">Top</strong> &middot; Top 10 by LTV</li>
+            <li><strong style="color:#b89968">&uarr; Upgrade eligible</strong> &middot; Starter member who ran 3+ TC files in last 30 days. Producer would save them $20/file.</li>
+          </ul>
+        </div>
+
+      </div>
+
+      <!-- Vendors grid -->
+      <div id="dir-vendors-pane" style="display:none">
+        <div class="dir-toolbar" style="border-bottom:none;padding-bottom:0;margin-bottom:14px">
+          <button type="button" class="dir-filter-pill active" data-vendor-filter="all">All</button>
+          <button type="button" class="dir-filter-pill" data-vendor-filter="title">Title</button>
+          <button type="button" class="dir-filter-pill" data-vendor-filter="lender">Lender</button>
+          <button type="button" class="dir-filter-pill" data-vendor-filter="inspector">Inspector</button>
+          <button type="button" class="dir-filter-pill" data-vendor-filter="hoa">HOA</button>
+          <button type="button" class="dir-filter-pill" data-vendor-filter="attorney">Attorney</button>
+          <button type="button" class="dir-filter-pill" data-vendor-filter="other">Other</button>
+        </div>
+        <div class="dir-grid" id="dir-vendors-grid">
+          <div class="empty-state" style="padding:40px 20px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);grid-column:1/-1">
+            <p class="label">No vendors yet.</p>
+            <p>Add title companies, lenders, inspectors, HOAs, attorneys with the + Add contact button.</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============== SETTINGS · Layer 5 · admin configuration ============== -->
+  <section class="view" id="view-settings">
+    <div class="set-wrap">
+
+      <!-- Brokerage profile -->
+      <div class="set-section">
+        <div class="set-section-head">
+          <h3>Brokerage profile.</h3>
+          <span class="meta">Public-facing org info</span>
+        </div>
+        <div class="set-section-body">
+          <div class="set-field">
+            <label>Legal entity name</label>
+            <input type="text" value="Aari Transactions LLC" id="set-entity">
+          </div>
+          <div class="set-field-row">
+            <div class="set-field">
+              <label>Broker of record</label>
+              <input type="text" value="Marlenyi Paredes" id="set-broker">
+            </div>
+            <div class="set-field">
+              <label>License number</label>
+              <input type="text" value="BK3530153" id="set-license">
+            </div>
+          </div>
+          <div class="set-field-row">
+            <div class="set-field">
+              <label>Phone</label>
+              <input type="tel" value="239.688.1770" id="set-phone">
+            </div>
+            <div class="set-field">
+              <label>Email</label>
+              <input type="email" value="hello@aaritransactions.com" id="set-email">
+            </div>
+          </div>
+          <div class="set-field">
+            <label>Service area</label>
+            <input type="text" value="Florida" id="set-area">
+            <p class="set-help">Aari services Florida files only. Out-of-state files not accepted.</p>
+          </div>
+          <button type="button" class="set-save" data-save="brokerage">Save brokerage profile</button>
+        </div>
+      </div>
+
+      <!-- Team -->
+      <div class="set-section">
+        <div class="set-section-head">
+          <h3>Team.</h3>
+          <span class="meta">TCs and staff with CRM access</span>
+        </div>
+        <div class="set-section-body">
+          <div id="set-team-list">
+            <div class="set-team-row">
+              <div class="set-team-name">Marlenyi Paredes<span class="sub">marlenyi@aaritransactions.com</span></div>
+              <div class="set-team-role">Broker-owner</div>
+              <div class="set-team-status"><span class="set-pill connected">Active</span></div>
+              <button type="button" class="set-team-action">Edit</button>
+            </div>
+            <div class="set-team-row">
+              <div class="set-team-name">Milennys Valdez<span class="sub">mile@aaritransactions.com</span></div>
+              <div class="set-team-role">TC</div>
+              <div class="set-team-status"><span class="set-pill connected">Active</span></div>
+              <button type="button" class="set-team-action">Edit</button>
+            </div>
+            <div class="set-team-row">
+              <div class="set-team-name">Eileen Hernandez<span class="sub">eileen@aaritransactions.com</span></div>
+              <div class="set-team-role">TC</div>
+              <div class="set-team-status"><span class="set-pill connected">Active</span></div>
+              <button type="button" class="set-team-action">Edit</button>
+            </div>
+            <div class="set-team-row">
+              <div class="set-team-name">Silvia Quintero<span class="sub">silvia@aaritransactions.com</span></div>
+              <div class="set-team-role">TC</div>
+              <div class="set-team-status"><span class="set-pill connected">Active</span></div>
+              <button type="button" class="set-team-action">Edit</button>
+            </div>
+          </div>
+          <button type="button" class="set-save" id="set-team-add" style="margin-top:14px">+ Add team member</button>
+        </div>
+      </div>
+
+      <!-- Service catalog -->
+      <div class="set-section">
+        <div class="set-section-head">
+          <h3>Service catalog.</h3>
+          <span class="meta">Pricing source of truth</span>
+        </div>
+        <div class="set-section-body">
+          <p class="set-help" style="margin-bottom:14px">Catalog is locked to match the homepage and Stripe products. Edit cascades to public site, intake modal, and Stripe checkout copy reference. Audit-stamped.</p>
+          <div class="set-team-row" style="grid-template-columns:1.4fr 0.6fr 0.6fr 100px">
+            <div class="set-team-name">Transaction Coordination &middot; One Side</div>
+            <div class="set-team-role">Pay at close</div>
+            <div class="set-team-status"><strong style="color:var(--ink);font-family:var(--serif);font-size:16px">$399</strong></div>
+            <button type="button" class="set-team-action">Edit</button>
+          </div>
+          <div class="set-team-row" style="grid-template-columns:1.4fr 0.6fr 0.6fr 100px">
+            <div class="set-team-name">Transaction Coordination &middot; Both Sides</div>
+            <div class="set-team-role">Pay at close</div>
+            <div class="set-team-status"><strong style="color:var(--ink);font-family:var(--serif);font-size:16px">$599</strong></div>
+            <button type="button" class="set-team-action">Edit</button>
+          </div>
+          <div class="set-team-row" style="grid-template-columns:1.4fr 0.6fr 0.6fr 100px">
+            <div class="set-team-name">Listing Coordinator</div>
+            <div class="set-team-role">Pay upfront</div>
+            <div class="set-team-status"><strong style="color:var(--ink);font-family:var(--serif);font-size:16px">$225</strong></div>
+            <button type="button" class="set-team-action">Edit</button>
+          </div>
+          <div class="set-team-row" style="grid-template-columns:1.4fr 0.6fr 0.6fr 100px">
+            <div class="set-team-name">Offer Prep &middot; Basic</div>
+            <div class="set-team-role">Pay upfront</div>
+            <div class="set-team-status"><strong style="color:var(--ink);font-family:var(--serif);font-size:16px">$69</strong></div>
+            <button type="button" class="set-team-action">Edit</button>
+          </div>
+          <div class="set-team-row" style="grid-template-columns:1.4fr 0.6fr 0.6fr 100px">
+            <div class="set-team-name">Offer Prep &middot; Complete</div>
+            <div class="set-team-role">Pay upfront</div>
+            <div class="set-team-status"><strong style="color:var(--ink);font-family:var(--serif);font-size:16px">$149</strong></div>
+            <button type="button" class="set-team-action">Edit</button>
+          </div>
+          <div class="set-team-row" style="grid-template-columns:1.4fr 0.6fr 0.6fr 100px">
+            <div class="set-team-name">Listing Docs</div>
+            <div class="set-team-role">Pay upfront</div>
+            <div class="set-team-status"><strong style="color:var(--ink);font-family:var(--serif);font-size:16px">$99</strong></div>
+            <button type="button" class="set-team-action">Edit</button>
+          </div>
+          <div class="set-team-row" style="grid-template-columns:1.4fr 0.6fr 0.6fr 100px">
+            <div class="set-team-name">MLS Setup</div>
+            <div class="set-team-role">Pay upfront</div>
+            <div class="set-team-status"><strong style="color:var(--ink);font-family:var(--serif);font-size:16px">$149</strong></div>
+            <button type="button" class="set-team-action">Edit</button>
+          </div>
+          <div class="set-team-row" style="grid-template-columns:1.4fr 0.6fr 0.6fr 100px">
+            <div class="set-team-name">File Organization</div>
+            <div class="set-team-role">Pay upfront</div>
+            <div class="set-team-status"><strong style="color:var(--ink);font-family:var(--serif);font-size:16px">$99</strong></div>
+            <button type="button" class="set-team-action">Edit</button>
+          </div>
+          <div class="set-team-row" style="grid-template-columns:1.4fr 0.6fr 0.6fr 100px">
+            <div class="set-team-name">Starter Membership</div>
+            <div class="set-team-role">Recurring</div>
+            <div class="set-team-status"><strong style="color:var(--ink);font-family:var(--serif);font-size:16px">$79/mo</strong></div>
+            <button type="button" class="set-team-action">Edit</button>
+          </div>
+          <div class="set-team-row" style="grid-template-columns:1.4fr 0.6fr 0.6fr 100px">
+            <div class="set-team-name">Producer Membership</div>
+            <div class="set-team-role">Recurring</div>
+            <div class="set-team-status"><strong style="color:var(--ink);font-family:var(--serif);font-size:16px">$129/mo</strong></div>
+            <button type="button" class="set-team-action">Edit</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Integrations -->
+      <div class="set-section">
+        <div class="set-section-head">
+          <h3>Integrations.</h3>
+          <span class="meta">External services connected to Aari</span>
+        </div>
+        <div class="set-section-body">
+          <div class="set-toggle-row">
+            <div class="text">
+              <div class="name">Stripe <span class="set-pill connected">Connected</span></div>
+              <div class="help">Payment processing for add-ons and memberships.</div>
+            </div>
+            <button type="button" class="set-team-action">Manage</button>
+          </div>
+          <div class="set-toggle-row">
+            <div class="text">
+              <div class="name">Supabase <span class="set-pill connected">Connected</span></div>
+              <div class="help">Auth + database for the CRM and agent portal.</div>
+            </div>
+            <button type="button" class="set-team-action">Manage</button>
+          </div>
+          <div class="set-toggle-row">
+            <div class="text">
+              <div class="name">dotloop <span class="set-pill disconnected">Not connected</span></div>
+              <div class="help">TC operational workflow tool. Connect to sync file status into Aari.</div>
+            </div>
+            <button type="button" class="set-team-action">Connect</button>
+          </div>
+          <div class="set-toggle-row">
+            <div class="text">
+              <div class="name">Resend (transactional email) <span class="set-pill disconnected">Not connected</span></div>
+              <div class="help">Send templated emails from Aari (intake confirmation, TC assignment, etc.).</div>
+            </div>
+            <button type="button" class="set-team-action">Connect</button>
+          </div>
+          <div class="set-toggle-row">
+            <div class="text">
+              <div class="name">Google Maps API <span class="set-pill disconnected">Not connected</span></div>
+              <div class="help">Address autocomplete on the intake form. Optional.</div>
+            </div>
+            <button type="button" class="set-team-action">Connect</button>
+          </div>
+          <div class="set-toggle-row">
+            <div class="text">
+              <div class="name">biBERK E&amp;O policy <span class="set-pill disconnected">Verification pending</span></div>
+              <div class="help">$1M E&amp;O policy referenced on public site. Upload declarations page to verify.</div>
+            </div>
+            <button type="button" class="set-team-action">Upload</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notification preferences -->
+      <div class="set-section">
+        <div class="set-section-head">
+          <h3>Notifications.</h3>
+          <span class="meta">When the CRM pings you</span>
+        </div>
+        <div class="set-section-body">
+          <div class="set-toggle-row">
+            <div class="text">
+              <div class="name">New lead submitted</div>
+              <div class="help">Email when an agent submits the intake form on aaritransactions.com.</div>
+            </div>
+            <span class="set-toggle on" data-toggle="notify-lead"></span>
+          </div>
+          <div class="set-toggle-row">
+            <div class="text">
+              <div class="name">Broker review queue alert</div>
+              <div class="help">Daily summary when files are awaiting your pre-close compliance review.</div>
+            </div>
+            <span class="set-toggle on" data-toggle="notify-review"></span>
+          </div>
+          <div class="set-toggle-row">
+            <div class="text">
+              <div class="name">Closing reminders</div>
+              <div class="help">Email 3 business days before any scheduled closing.</div>
+            </div>
+            <span class="set-toggle on" data-toggle="notify-closing"></span>
+          </div>
+          <div class="set-toggle-row">
+            <div class="text">
+              <div class="name">Friday Disbursement summary</div>
+              <div class="help">Friday morning email with the week's approved payout total.</div>
+            </div>
+            <span class="set-toggle on" data-toggle="notify-payroll"></span>
+          </div>
+          <div class="set-toggle-row">
+            <div class="text">
+              <div class="name">Agent review submitted</div>
+              <div class="help">Email when an agent leaves a review for a TC.</div>
+            </div>
+            <span class="set-toggle on" data-toggle="notify-review-sub"></span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============== INBOX · threaded messages per file ============== -->
+  <section class="view" id="view-inbox">
+    <div class="inbox-wrap">
+
+      <div class="inbox-layout">
+
+        <!-- LEFT: thread list -->
+        <div class="thread-list">
+          <div class="thread-list-head">
+            <h3>Threads</h3>
+            <button type="button" class="thread-compose" id="thread-compose-btn">+ Compose</button>
+          </div>
+          <div id="thread-list-body">
+            <div class="empty-state" style="padding:32px 20px">
+              <p class="label" style="font-size:16px">No messages yet.</p>
+              <p style="font-size:11px">When a TC sends a message on a file, the thread appears here.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT: thread detail (empty by default until a thread is selected) -->
+        <div class="thread-pane" id="thread-pane">
+          <div class="thread-pane-empty">
+            <div style="text-align:center">
+              <p class="label">Select a thread.</p>
+              <p>Or compose a new message to an agent, TC, or external party.</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </section>
+
+</main>
+
+<!-- ============== FILE DETAIL MODAL ============== -->
+<div class="modal-overlay" id="file-modal" role="dialog" aria-modal="true" aria-labelledby="file-modal-title">
+  <div class="modal-box">
+    <div class="modal-head">
+      <div>
+        <h2 id="file-modal-title">File detail.</h2>
+        <p class="sub" id="file-modal-sub">&nbsp;</p>
+      </div>
+      <button type="button" class="modal-x" id="file-modal-close" aria-label="Close">&times;</button>
+    </div>
+
+    <div id="file-modal-body">
+
+      <p class="section-eyebrow">Property &amp; parties</p>
+      <div class="dl-grid">
+        <div><p class="dl-label">Address</p><p class="dl-value" id="fd-addr">&mdash;</p></div>
+        <div><p class="dl-label">Client</p><p class="dl-value" id="fd-client">&mdash;</p></div>
+        <div><p class="dl-label">Agent</p><p class="dl-value" id="fd-agent">&mdash;</p></div>
+        <div><p class="dl-label">Brokerage</p><p class="dl-value" id="fd-brokerage">&mdash;</p></div>
+        <div><p class="dl-label">TC assigned</p><p class="dl-value" id="fd-tc">&mdash;</p></div>
+        <div><p class="dl-label">Service</p><p class="dl-value" id="fd-service">&mdash;</p></div>
+      </div>
+
+      <p class="section-eyebrow">Key dates</p>
+      <div class="dl-grid">
+        <div><p class="dl-label">Submitted</p><p class="dl-value" id="fd-submitted">&mdash;</p></div>
+        <div><p class="dl-label">Closing</p><p class="dl-value" id="fd-closing">&mdash;</p></div>
+        <div><p class="dl-label">Inspection</p><p class="dl-value muted" id="fd-inspection">Not set</p></div>
+        <div><p class="dl-label">Financing</p><p class="dl-value muted" id="fd-financing">Not set</p></div>
+      </div>
+
+      <p class="section-eyebrow">Documents</p>
+      <div class="doc-list" id="fd-docs">
+        <div class="doc-item"><span class="doc-name">Sales Contract</span><span class="doc-status todo">Pending</span></div>
+        <div class="doc-item"><span class="doc-name">Service Agreement (signed)</span><span class="doc-status ok">Received</span></div>
+        <div class="doc-item"><span class="doc-name">Lender contact info</span><span class="doc-status todo">Pending</span></div>
+        <div class="doc-item"><span class="doc-name">HOA docs</span><span class="doc-status todo">Pending</span></div>
+        <div class="doc-item"><span class="doc-name">Closing disclosure</span><span class="doc-status todo">Pending</span></div>
+      </div>
+
+      <p class="section-eyebrow">Broker review</p>
+      <div class="dl-grid">
+        <div><p class="dl-label">Status</p><p class="dl-value muted" id="fd-review-status">Not yet submitted for broker review</p></div>
+        <div><p class="dl-label">Reviewed by</p><p class="dl-value muted" id="fd-review-by">&mdash;</p></div>
+      </div>
+
+      <div class="notes-area">
+        <p class="section-eyebrow" style="margin-top:0">Notes &amp; activity</p>
+        <div id="fd-notes">
+          <div class="empty-state" style="padding:16px">No notes yet on this file.</div>
+        </div>
+        <div class="note-row">
+          <input type="text" class="note-input" id="fd-note-input" placeholder="Add a note. Audit-stamped with your name + timestamp.">
+          <button type="button" class="note-add" id="fd-note-add">Add</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ============== SCRIPTS ============== -->
+<!-- AARI:WIRE · Supabase auth. Same pattern as portal.html. -->
+<script src="js/supabase-config.js" defer></script>
+<script src="js/auth.js" defer></script>
+<script src="js/login-modal.js" defer></script>
+<script src="js/aari-analytics.js" defer></script>
+
+<script>
+(function() {
+  'use strict';
+
+  // ============== AUTH GATE ==============
+  // Staff role gating. Until Supabase role/is_staff column is wired,
+  // this gate accepts ANY logged-in user. Update once role column exists.
+  // AARI:WIRE · replace the is_staff check with your real role logic.
+  async function initAuth() {
+    if (typeof window.AariAuth === 'undefined') {
+      // Auth bundle not loaded yet. Retry.
+      setTimeout(initAuth, 120);
+      return;
+    }
+    try {
+      await window.AariAuth.ensureClient();
+      const session = await window.AariAuth.getCurrentSession();
+      if (!session) {
+        showGate('Sign in required.', 'Sign in with your Aari staff account to access the CRM.');
+        return;
+      }
+      const profile = await window.AariAuth.getAgentProfile();
+      if (!profile) {
+        showGate('No staff profile found.', 'This account does not have CRM access. Contact hello@aaritransactions.com.');
+        return;
+      }
+      // AARI:WIRE · staff role check
+      // const isStaff = profile.is_staff === true || profile.role === 'tc' || profile.role === 'broker';
+      // if (!isStaff) { showGate('Staff only.', 'This account does not have CRM access.'); return; }
+      showApp(profile);
+    } catch (err) {
+      console.error('[AariCRM auth]', err);
+      showGate('Sign-in error.', (err && err.message) || 'Try again or contact hello@aaritransactions.com.');
+    }
+  }
+  function showGate(title, msg) {
+    document.getElementById('crm-main').style.display = 'none';
+    const g = document.getElementById('auth-gate');
+    g.classList.add('show');
+    document.getElementById('gate-title').textContent = title;
+    document.getElementById('gate-message').textContent = msg;
+  }
+  function showApp(profile) {
+    document.getElementById('auth-gate').classList.remove('show');
+    document.getElementById('crm-main').style.display = 'block';
+    const name = ((profile.first_name || '') + ' ' + (profile.last_name || '')).trim() || 'Staff';
+    document.getElementById('user-name').textContent = name;
+    document.getElementById('user-role').textContent = profile.role || 'staff';
+  }
+  initAuth();
+
+  // ============== SIGN OUT ==============
+  document.getElementById('signout').addEventListener('click', async function(e) {
+    e.preventDefault();
+    try { await window.AariAuth.signOut(); } catch (err) {}
+    window.location.href = 'index.html';
+  });
+
+  // ============== TAB SWITCHING ==============
+  const tabs = document.querySelectorAll('.tab[data-view]');
+  const views = document.querySelectorAll('.view');
+  const titleEl = document.getElementById('view-title');
+  const subEl = document.getElementById('view-sub');
+  const TITLE_MAP = {
+    today: { title: 'Today.', sub: 'Files due, signatures pending, broker review needed.' },
+    pipeline: { title: 'Pipeline.', sub: 'Every active file. Grouped by stage.' },
+    leads: { title: 'Leads.', sub: 'Incoming intake submissions. Triage, assign, convert.' },
+    inbox: { title: 'Inbox.', sub: 'Threaded messages by file. Agents, TCs, external parties.' },
+    calendar: { title: 'Calendar.', sub: 'Closings, inspections, financing, EMD, appraisal deadlines.' },
+    templates: { title: 'Templates.', sub: 'Email templates by stage. Merge tags. One-click send to agent or external.' },
+    payout: { title: 'Payout.', sub: 'Log your pay per file. Submit for review. Track approved and paid history.' },
+    payroll: { title: 'Payroll.', sub: 'Friday Disbursement. Approve pending. Mark paid. Run history.' },
+    winback: { title: 'Win-back.', sub: 'Cancelled members. 30 / 60 / 90 day re-engagement sequence.' },
+    directory: { title: 'Directory.', sub: 'Agents and vendors. The people you run files with.' },
+    settings: { title: 'Settings.', sub: 'Brokerage profile, team, catalog, integrations, notifications.' }
+  };
+  tabs.forEach(t => {
+    t.addEventListener('click', function() {
+      if (t.disabled) return;
+      const v = t.getAttribute('data-view');
+      const target = document.getElementById('view-' + v);
+      if (!target) return;
+      tabs.forEach(x => x.classList.toggle('active', x === t));
+      views.forEach(x => x.classList.toggle('active', x === target));
+      const meta = TITLE_MAP[v];
+      if (meta) {
+        titleEl.textContent = meta.title;
+        subEl.textContent = meta.sub;
+      }
+    });
+  });
+
+  // ============== FILE DETAIL MODAL ==============
+  const modal = document.getElementById('file-modal');
+  const modalClose = document.getElementById('file-modal-close');
+  function openFile(fileId) {
+    // AARI:WIRE · fetch file detail from Supabase by id, populate fields below.
+    // For now, opens with placeholder data so the UI can be validated.
+    document.getElementById('file-modal-title').textContent = 'File detail.';
+    document.getElementById('file-modal-sub').textContent = 'File ' + (fileId || 'unknown');
+    modal.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeFile() {
+    modal.classList.remove('open');
+    document.body.style.overflow = '';
+  }
+  modalClose.addEventListener('click', closeFile);
+  modal.addEventListener('click', function(e) {
+    if (e.target === modal) closeFile();
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && modal.classList.contains('open')) closeFile();
+  });
+
+  // ============== PIPELINE ROW CLICK (placeholder) ==============
+  document.querySelectorAll('.pipe-table tbody').forEach(tbody => {
+    tbody.addEventListener('click', function(e) {
+      const tr = e.target.closest('tr[data-file-id]');
+      if (tr) openFile(tr.getAttribute('data-file-id'));
+    });
+  });
+
+  // ============== ADD NOTE (placeholder) ==============
+  document.getElementById('fd-note-add').addEventListener('click', function() {
+    const input = document.getElementById('fd-note-input');
+    const txt = (input.value || '').trim();
+    if (!txt) return;
+    // AARI:WIRE · POST note to Supabase notes table with file_id + author_id + timestamp.
+    // For now, just clears the input.
+    input.value = '';
+    console.info('[AariCRM] Note ready to send to Supabase:', txt);
+  });
+
+  // ============== LOAD DATA ==============
+  // AARI:WIRE · Replace with Supabase queries.
+  // Example queries needed:
+  //   - SELECT count FROM files WHERE status IN ('intake','inspection','financing','ctc','scheduled')  → stat-active
+  //   - SELECT count FROM files WHERE closing_date BETWEEN this_monday AND this_saturday               → stat-closing
+  //   - SELECT count FROM files WHERE broker_review_status = 'pending'                                 → stat-review
+  //   - SELECT count FROM files WHERE status = 'closed' AND closed_at >= this_month                    → stat-closed-mo
+  //   - SELECT * FROM files WHERE status = '{stage}' ORDER BY due_next ASC                             → pipeline groups
+  //   - SELECT * FROM files WHERE due_next = today                                                     → today-due-body
+  //   - SELECT * FROM files WHERE broker_review_status = 'pending'                                     → today-review-body
+  //   - SELECT * FROM files WHERE created_at >= now() - interval '24 hours'                            → today-intake-body
+  async function loadDashboard() {
+    // Placeholder until Supabase wiring.
+  }
+  async function loadPipeline() {
+    // Placeholder until Supabase wiring.
+  }
+  loadDashboard();
+  loadPipeline();
+
+  // ============== LEADS · Layer 2 ==============
+  // AARI:WIRE · Replace placeholders with Supabase queries.
+  //   leads table (id, submitted_at, agent_name, agent_email, brokerage,
+  //                service_requested, preferred_tc, status, raw_payload)
+  //   Query: SELECT * FROM leads WHERE status = '{filter}' ORDER BY submitted_at DESC
+  //   Filter values: new · review · converted · rejected
+  //
+  // Renders into #leads-list. Each lead is a row with:
+  //   - Submitted timestamp + "NEW" badge if status=new
+  //   - Agent name + brokerage
+  //   - Service requested
+  //   - Preferred TC (or "Auto-assign")
+  //   - Status pill
+  //   - Action button (Assign / Review / Convert / Reject)
+  let leadFilter = 'new';
+  document.querySelectorAll('.lead-filter').forEach(btn => {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.lead-filter').forEach(b => b.classList.toggle('active', b === btn));
+      leadFilter = btn.getAttribute('data-lead-filter');
+      loadLeads(leadFilter);
+    });
+  });
+  async function loadLeads(status) {
+    // AARI:WIRE · const { data } = await supabase.from('leads').select('*').eq('status', status);
+    // renderLeads(data || []);
+  }
+  function renderLeads(leads) {
+    const list = document.getElementById('leads-list');
+    if (!leads || leads.length === 0) {
+      list.innerHTML = '<div class="empty-state" style="padding:40px 20px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);margin-top:8px">' +
+        '<p class="label">No ' + (leadFilter === 'new' ? 'new' : leadFilter) + ' leads.</p>' +
+        '<p>When an agent submits the intake form on aaritransactions.com, the submission lands here for triage.</p></div>';
+      return;
+    }
+    list.innerHTML = leads.map(l => {
+      return '<div class="lead-row' + (l.status === 'new' ? ' new' : '') + '" data-lead-id="' + l.id + '">' +
+        '<div class="lead-time">' + (l.status === 'new' ? '<span class="new-badge">NEW</span>' : '') + (l.submitted_at_display || '') + '</div>' +
+        '<div class="lead-agent">' + (l.agent_name || '') + '<span class="brokerage">' + (l.brokerage || '') + '</span></div>' +
+        '<div class="lead-service">' + (l.service_requested || '') + '</div>' +
+        '<div class="lead-tc-pref">' + (l.preferred_tc || 'Auto-assign') + '</div>' +
+        '<div class="lead-status">' + (l.status || '') + '</div>' +
+        '<button type="button" class="lead-action" data-lead-action="open">Open</button>' +
+        '</div>';
+    }).join('');
+  }
+  // Click handler on leads list
+  document.getElementById('leads-list').addEventListener('click', function(e) {
+    const row = e.target.closest('.lead-row');
+    if (!row) return;
+    const leadId = row.getAttribute('data-lead-id');
+    // AARI:WIRE · open lead detail modal · load full lead payload
+    console.info('[AariCRM] Lead clicked:', leadId);
+  });
+
+  // ============== INBOX · Layer 2 ==============
+  // AARI:WIRE · Replace placeholders with Supabase queries.
+  //   threads table (id, file_id, subject, last_message_at, unread_count_for_user)
+  //   messages table (id, thread_id, author_id, body, created_at, attachments_jsonb)
+  //   Query (thread list): SELECT t.*, f.address FROM threads t JOIN files f ON t.file_id = f.id ORDER BY last_message_at DESC
+  //   Query (thread detail): SELECT * FROM messages WHERE thread_id = $1 ORDER BY created_at ASC
+  //   Insert (reply): INSERT INTO messages (thread_id, author_id, body) VALUES (...)
+  let activeThreadId = null;
+  async function loadThreads() {
+    // AARI:WIRE · const { data } = await supabase.from('threads').select('*, files(address, agent_name)').order('last_message_at', { ascending: false });
+    // renderThreadList(data || []);
+  }
+  function renderThreadList(threads) {
+    const body = document.getElementById('thread-list-body');
+    if (!threads || threads.length === 0) return;
+    body.innerHTML = threads.map(t => {
+      return '<a class="thread-row' + (t.unread_count_for_user ? ' unread' : '') + '" data-thread-id="' + t.id + '">' +
+        '<div class="thread-addr">' + (t.file_address || 'No address') + '</div>' +
+        '<div class="thread-meta">' + (t.file_agent || '') + ' · ' + (t.subject || '(no subject)') + '</div>' +
+        '<div class="thread-snippet">' + (t.last_snippet || '') + '</div>' +
+        '<div class="thread-time">' + (t.last_message_at_display || '') + '</div>' +
+        '</a>';
+    }).join('');
+  }
+  // Click handler: open a thread
+  document.getElementById('thread-list-body').addEventListener('click', function(e) {
+    const row = e.target.closest('.thread-row');
+    if (!row) return;
+    e.preventDefault();
+    const threadId = row.getAttribute('data-thread-id');
+    document.querySelectorAll('.thread-row').forEach(r => r.classList.toggle('active', r === row));
+    openThread(threadId);
+  });
+  async function openThread(threadId) {
+    activeThreadId = threadId;
+    // AARI:WIRE · const { data: messages } = await supabase.from('messages').select('*, profile:author_id(*)').eq('thread_id', threadId).order('created_at');
+    // const { data: thread } = await supabase.from('threads').select('*, files(*)').eq('id', threadId).single();
+    // renderThread(thread, messages);
+    console.info('[AariCRM] Thread opened:', threadId);
+  }
+  function renderThread(thread, messages) {
+    const pane = document.getElementById('thread-pane');
+    pane.innerHTML =
+      '<div class="thread-pane-head">' +
+        '<div class="h">' + (thread.subject || '(no subject)') + '</div>' +
+        '<div class="meta">File · ' + (thread.file_address || '') + ' · ' + (thread.file_agent || '') + '</div>' +
+      '</div>' +
+      '<div class="thread-messages" id="thread-messages-body"></div>' +
+      '<div class="thread-reply">' +
+        '<textarea id="thread-reply-text" placeholder="Reply..."></textarea>' +
+        '<div class="thread-reply-actions">' +
+          '<span class="left">Audit-stamped with your name + timestamp on send.</span>' +
+          '<button type="button" class="thread-reply-send" id="thread-reply-send-btn">Send</button>' +
+        '</div>' +
+      '</div>';
+    const msgBody = document.getElementById('thread-messages-body');
+    msgBody.innerHTML = (messages || []).map(m => {
+      return '<div class="message">' +
+        '<div class="message-head">' +
+          '<div class="message-author">' + (m.author_name || 'Unknown') + '<span class="role">' + (m.author_role || '') + '</span></div>' +
+          '<div class="message-time">' + (m.created_at_display || '') + '</div>' +
+        '</div>' +
+        '<div class="message-body">' + (m.body || '').replace(/</g, '&lt;') + '</div>' +
+        (m.attachments && m.attachments.length ? '<div class="message-attach">Attachments: ' + m.attachments.map(a => '<a href="' + a.url + '">' + a.name + '</a>').join(' · ') + '</div>' : '') +
+        '</div>';
+    }).join('');
+    // Wire the Send button
+    document.getElementById('thread-reply-send-btn').addEventListener('click', function() {
+      const txt = (document.getElementById('thread-reply-text').value || '').trim();
+      if (!txt || !activeThreadId) return;
+      // AARI:WIRE · await supabase.from('messages').insert({ thread_id: activeThreadId, body: txt, author_id: current_user_id });
+      // Then reload the thread to show the new message.
+      console.info('[AariCRM] Reply to send:', { thread: activeThreadId, body: txt });
+      document.getElementById('thread-reply-text').value = '';
+    });
+  }
+  document.getElementById('thread-compose-btn').addEventListener('click', function() {
+    // AARI:WIRE · open compose modal · select file, recipient, subject, body
+    console.info('[AariCRM] Compose new message');
+  });
+
+  // Initial Layer 2 loads
+  loadLeads(leadFilter);
+  loadThreads();
+
+  // ============== CALENDAR · Layer 3 ==============
+  // AARI:WIRE · Replace placeholder events with Supabase queries.
+  //   Aggregate events from files table where relevant date columns fall in the visible month:
+  //     - closing_date         → cev-close
+  //     - inspection_date      → cev-inspection
+  //     - financing_due_date   → cev-financing
+  //     - emd_due_date         → cev-emd
+  //     - appraisal_due_date   → cev-appraisal
+  //   Any past-due date for an active file → cev-overdue
+  //
+  //   Query example:
+  //     SELECT id, address, closing_date, inspection_date, financing_due_date,
+  //            emd_due_date, appraisal_due_date, status
+  //     FROM files
+  //     WHERE status NOT IN ('closed','cancelled')
+  //       AND (closing_date BETWEEN $start AND $end
+  //         OR inspection_date BETWEEN $start AND $end
+  //         OR financing_due_date BETWEEN $start AND $end
+  //         OR emd_due_date BETWEEN $start AND $end
+  //         OR appraisal_due_date BETWEEN $start AND $end)
+  let calYear = new Date().getFullYear();
+  let calMonth = new Date().getMonth(); // 0-indexed
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+  function renderCalendar() {
+    const grid = document.getElementById('cal-grid');
+    const label = document.getElementById('cal-month-label');
+    if (!grid || !label) return;
+    label.textContent = MONTHS[calMonth] + ' ' + calYear + '.';
+    const first = new Date(calYear, calMonth, 1);
+    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+    const firstWeekday = first.getDay();
+    const today = new Date();
+    const isCurrentMonth = (today.getFullYear() === calYear && today.getMonth() === calMonth);
+    const todayDay = isCurrentMonth ? today.getDate() : -1;
+
+    // AARI:WIRE · fetch events for this month and group by day-of-month into eventsByDay[1..31]
+    const eventsByDay = window.__calEventsByDay || {};
+
+    let html = WEEKDAYS.map(w => '<div class="cal-weekday">' + w + '</div>').join('');
+    // Leading empty cells
+    for (let i = 0; i < firstWeekday; i++) {
+      html += '<div class="cal-day empty"></div>';
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      const isToday = (d === todayDay) ? ' today' : '';
+      const events = eventsByDay[d] || [];
+      const eventsHtml = events.slice(0, 3).map(ev => {
+        return '<div class="cal-event cev-' + (ev.type || 'other') + '" data-file-id="' + (ev.file_id || '') + '" title="' + (ev.label || '') + '">' + (ev.label || '') + '</div>';
+      }).join('');
+      const more = events.length > 3 ? '<div style="font-size:9px;color:var(--muted);margin-top:2px">+' + (events.length - 3) + ' more</div>' : '';
+      html += '<div class="cal-day' + isToday + '" data-date="' + calYear + '-' + String(calMonth + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0') + '">' +
+        '<span class="cal-day-num">' + d + '</span>' +
+        eventsHtml + more +
+        '</div>';
+    }
+    // Trailing empty cells to fill last week
+    const totalCells = firstWeekday + daysInMonth;
+    const trailing = (7 - (totalCells % 7)) % 7;
+    for (let i = 0; i < trailing; i++) {
+      html += '<div class="cal-day empty"></div>';
+    }
+    grid.innerHTML = html;
+  }
+  document.getElementById('cal-prev').addEventListener('click', function() {
+    calMonth--;
+    if (calMonth < 0) { calMonth = 11; calYear--; }
+    renderCalendar();
+  });
+  document.getElementById('cal-next').addEventListener('click', function() {
+    calMonth++;
+    if (calMonth > 11) { calMonth = 0; calYear++; }
+    renderCalendar();
+  });
+  document.getElementById('cal-today').addEventListener('click', function() {
+    const t = new Date();
+    calYear = t.getFullYear(); calMonth = t.getMonth();
+    renderCalendar();
+  });
+  document.getElementById('cal-grid').addEventListener('click', function(e) {
+    const ev = e.target.closest('.cal-event');
+    if (ev) {
+      const fid = ev.getAttribute('data-file-id');
+      if (fid) openFile(fid);
+    }
+  });
+  renderCalendar();
+
+  // ============== TEMPLATES · Layer 3 ==============
+  // AARI:WIRE · Replace seeded templates with Supabase queries.
+  //   email_templates table (id, stage, name, subject, body, vars_jsonb, created_at, updated_at)
+  //   Query: SELECT * FROM email_templates WHERE stage = $1 ORDER BY name
+  //
+  //   Merge tags supported: {{agent_name}}, {{agent_first_name}}, {{file_address}},
+  //                          {{tc_name}}, {{tc_email}}, {{closing_date}}, {{service_name}},
+  //                          {{broker_name}}, {{aari_phone}}, {{aari_email}}
+  //   On send: replace tags with file/agent context, open mailto: or copy to clipboard.
+
+  // Seed templates so the view shows real structure on first load.
+  // Replace this entire object with a Supabase query result in production.
+  const SEED_TEMPLATES = [
+    {
+      id: 't-intake-1', stage: 'intake', name: 'Intake confirmation',
+      subject: 'We received your file · {{file_address}}',
+      body: 'Hi {{agent_first_name}},\n\nWe received your intake for {{file_address}}. Your TC is being assigned and will reach out the same business day.\n\nService: {{service_name}}\nClosing target: {{closing_date}}\n\nReply to this email with the executed contract if you have not already sent it.\n\n{{tc_name}} will follow up shortly.\n\nMarlenyi Paredes\nAari Transactions',
+      vars: ['agent_first_name', 'file_address', 'service_name', 'closing_date', 'tc_name']
+    },
+    {
+      id: 't-intake-2', stage: 'intake', name: 'TC assignment',
+      subject: 'Your TC for {{file_address}}: {{tc_name}}',
+      body: 'Hi {{agent_first_name}},\n\n{{tc_name}} has been assigned to your file at {{file_address}}.\n\nDirect contact: {{tc_email}}\n\nThey will reach out within the same business day to walk through next steps and gather any remaining documents.\n\nMarlenyi Paredes\nAari Transactions',
+      vars: ['agent_first_name', 'file_address', 'tc_name', 'tc_email']
+    },
+    {
+      id: 't-active-1', stage: 'active', name: 'Document request',
+      subject: 'Documents needed · {{file_address}}',
+      body: 'Hi {{agent_first_name}},\n\nTo keep {{file_address}} on track for {{closing_date}}, please send the following:\n\n- [List specific documents here]\n\nUpload to the secure link or reply to this email.\n\n{{tc_name}}\nAari Transactions',
+      vars: ['agent_first_name', 'file_address', 'closing_date', 'tc_name']
+    },
+    {
+      id: 't-active-2', stage: 'active', name: 'Inspection scheduled',
+      subject: 'Inspection scheduled · {{file_address}}',
+      body: 'Hi {{agent_first_name}},\n\nThe inspection for {{file_address}} is scheduled. The buyer or buyer\'s agent will receive the report directly from the inspector.\n\nWe will track the response deadline and coordinate any required addenda.\n\n{{tc_name}}\nAari Transactions',
+      vars: ['agent_first_name', 'file_address', 'tc_name']
+    },
+    {
+      id: 't-ctc-1', stage: 'ctc', name: 'Clear to close',
+      subject: 'Clear to close · {{file_address}}',
+      body: 'Hi {{agent_first_name}},\n\nLender has cleared {{file_address}} to close. We are coordinating the closing time with title and will confirm shortly.\n\nFinal CD will be circulated 3 business days before closing.\n\n{{tc_name}}\nAari Transactions',
+      vars: ['agent_first_name', 'file_address', 'tc_name']
+    },
+    {
+      id: 't-postclose-1', stage: 'postclose', name: 'Post-close · review request',
+      subject: 'Quick favor · review {{tc_name}}',
+      body: 'Hi {{agent_first_name}},\n\nThanks for trusting Aari with {{file_address}}. The file closed cleanly thanks in part to {{tc_name}}.\n\nIf you have 30 seconds, would you leave a review for {{tc_name}}? It helps the next agent pick her.\n\n{{review_link}}\n\nMarlenyi Paredes\nAari Transactions',
+      vars: ['agent_first_name', 'file_address', 'tc_name', 'review_link']
+    },
+    {
+      id: 't-postclose-2', stage: 'postclose', name: 'Post-close · file archive',
+      subject: 'File archive · {{file_address}}',
+      body: 'Hi {{agent_first_name}},\n\n{{file_address}} is closed and archived. Florida brokerage rules require we retain the file for 5 years from closing.\n\nIf you need a copy of any document, reply to this email.\n\nMarlenyi Paredes\nAari Transactions',
+      vars: ['agent_first_name', 'file_address']
+    },
+    {
+      id: 't-admin-1', stage: 'admin', name: 'Late fee notice',
+      subject: 'Past due · {{invoice_number}}',
+      body: 'Hi {{agent_first_name}},\n\nInvoice {{invoice_number}} for {{service_name}} is past due. A $25 late fee has been applied (one-time, no daily accrual).\n\nPay link: {{pay_link}}\n\nMarlenyi Paredes\nAari Transactions',
+      vars: ['agent_first_name', 'invoice_number', 'service_name', 'pay_link']
+    },
+    {
+      id: 't-winback-30', stage: 'admin', name: 'Win-back · Day 30 · soft check-in',
+      subject: 'How\'s the workload been, {{agent_first_name}}?',
+      body: 'Hi {{agent_first_name}},\n\nIt\'s been 30 days since your Aari membership wrapped up. How has the file load been? Still running everything in-house?\n\nMost agents who pause come back when the calendar fills up again. If that\'s where you\'re at, your old benefits are one click away:\n\n- $30 off every TC file (auto-applied at close)\n- 2 service credits each month for add-ons\n- Same TC team. Same broker. Same standard.\n\nNo pressure. Just here when you need us.\n\nMarlenyi Paredes\nFlorida Broker BK3530153',
+      vars: ['agent_first_name']
+    },
+    {
+      id: 't-winback-60', stage: 'admin', name: 'Win-back · Day 60 · concrete offer',
+      subject: 'Come back to Aari · first month 50% off',
+      body: 'Hi {{agent_first_name}},\n\nIt\'s been 60 days. You ran {{lifetime_files}} files with us before. We\'d like another shot.\n\nReturn this month and your first month back is 50% off. That\'s {{tier_name}} at {{discounted_price}} (regular {{regular_price}}).\n\nClick to resume: {{resume_link}}\n\nIf you\'re running fewer files this quarter, you can pause again anytime. No pressure to stay.\n\nMarlenyi Paredes\nFlorida Broker BK3530153',
+      vars: ['agent_first_name', 'lifetime_files', 'tier_name', 'discounted_price', 'regular_price', 'resume_link']
+    },
+    {
+      id: 't-winback-90', stage: 'admin', name: 'Win-back · Day 90 · personal note',
+      subject: 'Personal note from Marlenyi',
+      body: 'Hi {{agent_first_name}},\n\nThis is Marlenyi. Personal email, not a sequence.\n\n{{lifetime_files}} files we ran together. {{ltv_display}} in fees. Real work. Real outcomes.\n\nIf there\'s a reason you walked away beyond workload, I want to hear it. Reply directly. I read every one.\n\nIf there isn\'t, here\'s my offer to bring you back: one TC file on us. No catch, no membership required. Just submit your next file with the code WELCOME-BACK and we\'ll cover the $399 fee at close.\n\nGood agents leave Aari for good reasons. I want to know yours.\n\nMarlenyi',
+      vars: ['agent_first_name', 'lifetime_files', 'ltv_display']
+    }
+  ];
+
+  function highlightMergeTags(s) {
+    return (s || '').replace(/\{\{([^}]+)\}\}/g, function(m, p) {
+      return '<span class="tpl-merge-tag">{{' + p + '}}</span>';
+    });
+  }
+  function renderTemplates(templates) {
+    const grouped = {};
+    (templates || []).forEach(t => {
+      grouped[t.stage] = grouped[t.stage] || [];
+      grouped[t.stage].push(t);
+    });
+    ['intake', 'active', 'ctc', 'postclose', 'admin'].forEach(stage => {
+      const list = grouped[stage] || [];
+      const container = document.getElementById('tpl-list-' + stage);
+      const countEl = document.getElementById('tpl-count-' + stage);
+      if (countEl) countEl.textContent = list.length + (list.length === 1 ? ' template' : ' templates');
+      if (!container) return;
+      if (list.length === 0) {
+        container.innerHTML = '<div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)">' +
+          '<p style="font-size:12px;color:var(--muted)">No ' + stage + ' templates yet.</p></div>';
+        return;
+      }
+      container.innerHTML = list.map(t => {
+        return '<div class="tpl-card" data-tpl-id="' + t.id + '">' +
+          '<div class="tpl-card-head">' +
+            '<div>' +
+              '<div class="tpl-card-title">' + t.name + '</div>' +
+              '<div class="tpl-card-meta">Subject: ' + (t.subject || '').replace(/</g, '&lt;') + '</div>' +
+            '</div>' +
+            '<span class="tpl-card-caret">&#9662;</span>' +
+          '</div>' +
+          '<div class="tpl-card-body">' +
+            '<div class="tpl-field"><div class="tpl-field-lbl">Subject</div><div class="tpl-subject">' + highlightMergeTags(t.subject) + '</div></div>' +
+            '<div class="tpl-field"><div class="tpl-field-lbl">Body</div><div class="tpl-body">' + highlightMergeTags((t.body || '').replace(/</g, '&lt;')) + '</div></div>' +
+            (t.vars && t.vars.length ? '<div class="tpl-field"><div class="tpl-field-lbl">Merge tags used</div><div class="tpl-vars">' + t.vars.map(v => '<span class="tpl-var">{{' + v + '}}</span>').join('') + '</div></div>' : '') +
+            '<div class="tpl-actions">' +
+              '<button type="button" class="tpl-btn primary" data-tpl-action="copy">Copy body</button>' +
+              '<button type="button" class="tpl-btn ghost" data-tpl-action="edit">Edit</button>' +
+              '<button type="button" class="tpl-btn ghost" data-tpl-action="send">Send to agent</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    });
+  }
+  // Expand/collapse on card header click
+  document.querySelectorAll('.tpl-stage-section').forEach(section => {
+    section.addEventListener('click', function(e) {
+      const head = e.target.closest('.tpl-card-head');
+      if (!head) return;
+      const card = head.closest('.tpl-card');
+      if (card) card.classList.toggle('open');
+    });
+  });
+  // Action button clicks
+  document.querySelectorAll('.tpl-stage-section').forEach(section => {
+    section.addEventListener('click', function(e) {
+      const btn = e.target.closest('[data-tpl-action]');
+      if (!btn) return;
+      e.stopPropagation();
+      const action = btn.getAttribute('data-tpl-action');
+      const card = btn.closest('.tpl-card');
+      const tplId = card ? card.getAttribute('data-tpl-id') : null;
+      if (action === 'copy') {
+        const body = card.querySelector('.tpl-body');
+        if (body && navigator.clipboard) {
+          navigator.clipboard.writeText(body.textContent || '').then(() => {
+            btn.textContent = 'Copied';
+            setTimeout(() => { btn.textContent = 'Copy body'; }, 1400);
+          });
+        }
+      } else if (action === 'edit') {
+        // AARI:WIRE · open edit modal · save back to email_templates table
+        console.info('[AariCRM] Edit template:', tplId);
+      } else if (action === 'send') {
+        // AARI:WIRE · open send modal · pick file (for merge context) → render → mailto: or send via transactional email API
+        console.info('[AariCRM] Send template:', tplId);
+      }
+    });
+  });
+  // Search filter (simple client-side)
+  document.getElementById('tpl-search').addEventListener('input', function(e) {
+    const q = (e.target.value || '').toLowerCase().trim();
+    document.querySelectorAll('.tpl-card').forEach(card => {
+      const text = card.textContent.toLowerCase();
+      card.style.display = (!q || text.indexOf(q) !== -1) ? '' : 'none';
+    });
+  });
+  document.getElementById('tpl-new').addEventListener('click', function() {
+    // AARI:WIRE · open new template modal · save to email_templates table
+    console.info('[AariCRM] New template');
+  });
+
+  // Initial Layer 3 load · using seeded templates so the view ships functional today
+  renderTemplates(SEED_TEMPLATES);
+
+  // ============== PAYOUT + PAYROLL · Layer 4 ==============
+  // AARI:WIRE · Schema needed:
+  //   payouts (
+  //     id, file_id, tc_id, role, amount_cents, notes,
+  //     status, payment_method,
+  //     submitted_at, approved_at, approved_by, paid_at, paid_by,
+  //     payment_reference, run_id
+  //   )
+  //   payroll_runs (
+  //     id, run_date, total_paid_cents, tc_count, payout_count, created_by
+  //   )
+  //
+  //   Status enum: pending_review · approved · paid · rejected
+  //
+  // Query examples:
+  //   Payout (TC view, current user):
+  //     SELECT * FROM payouts WHERE tc_id = $current_user_id AND status = 'pending_review'
+  //   Payroll pending queue (broker view):
+  //     SELECT p.*, files.address, profiles.first_name AS tc_first FROM payouts p
+  //       JOIN files ON p.file_id = files.id
+  //       JOIN profiles ON p.tc_id = profiles.id
+  //       WHERE p.status = 'pending_review'
+  //   Friday Disbursement run:
+  //     UPDATE payouts SET status='paid', paid_at=now(), paid_by=$broker_id, run_id=$run_id
+  //       WHERE status='approved'
+  //     INSERT INTO payroll_runs (...) RETURNING id
+  //
+  //   Helper formatters used below:
+  function formatUsd(cents) {
+    const n = (cents || 0) / 100;
+    return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  function formatDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  // ---- PAYOUT (TC view) ----
+  async function loadPayoutTcView() {
+    // AARI:WIRE · const { data: pending } = await supabase.from('payouts')
+    //   .select('*, files(address, client_name)')
+    //   .eq('tc_id', currentUserId).eq('status', 'pending_review').order('submitted_at', { ascending: false });
+    // AARI:WIRE · same for approved + paid history.
+    // For now, render empty state. View ships functional.
+  }
+  function renderPayoutPending(rows) {
+    const container = document.getElementById('po-list-pending');
+    const metaEl = document.getElementById('po-list-pending-meta');
+    if (metaEl) metaEl.textContent = (rows ? rows.length : 0) + ' entries';
+    if (!rows || !rows.length) return;
+    container.innerHTML = rows.map(r => renderPayoutRow(r, false)).join('');
+  }
+  function renderPayoutHistory(rows) {
+    const container = document.getElementById('po-list-history');
+    if (!rows || !rows.length) return;
+    container.innerHTML = rows.map(r => renderPayoutRow(r, true)).join('');
+  }
+  function renderPayoutRow(p, showStatus) {
+    const addr = (p.files && p.files.address) || p.file_address || '—';
+    const sub = (p.files && p.files.client_name) || '';
+    return '<div class="payout-row" data-payout-id="' + p.id + '">' +
+      '<div class="payout-date">' + formatDate(p.submitted_at) + '</div>' +
+      '<div class="payout-file">' + addr + (sub ? '<span class="sub">' + sub + '</span>' : '') + '</div>' +
+      '<div class="payout-role">' + (p.role || '') + '</div>' +
+      '<div class="payout-amount">' + formatUsd(p.amount_cents) + '</div>' +
+      '<div><span class="payout-status ' + (p.status || 'pending') + '">' + (p.status || 'pending') + '</span></div>' +
+      '<div style="text-align:right">' + (p.payment_method || '') + '</div>' +
+    '</div>';
+  }
+
+  // Submit new payout
+  document.getElementById('po-submit').addEventListener('click', function() {
+    const file = document.getElementById('po-file').value;
+    const role = document.getElementById('po-role').value;
+    const amount = parseFloat(document.getElementById('po-amount').value || '0');
+    const method = document.getElementById('po-method').value;
+    const notes = document.getElementById('po-notes').value;
+    if (!file || !amount) {
+      console.warn('[AariCRM] Missing required payout fields');
+      return;
+    }
+    // AARI:WIRE · await supabase.from('payouts').insert({
+    //   file_id: file, tc_id: currentUserId, role,
+    //   amount_cents: Math.round(amount * 100),
+    //   payment_method: method, notes, status: 'pending_review'
+    // });
+    console.info('[AariCRM] Payout submitted:', { file, role, amount, method, notes });
+    // Reset form
+    document.getElementById('po-amount').value = '';
+    document.getElementById('po-notes').value = '';
+    loadPayoutTcView();
+  });
+
+  // ---- PAYROLL (broker view) ----
+  async function loadPayrollBrokerView() {
+    // AARI:WIRE · const { data: pending } = await supabase.from('payouts')
+    //   .select('*, files(address), profiles!tc_id(first_name, last_name)')
+    //   .eq('status', 'pending_review').order('submitted_at', { ascending: true });
+    // AARI:WIRE · const { data: approved } = await supabase.from('payouts')
+    //   .select('*, files(address), profiles!tc_id(first_name, last_name)')
+    //   .eq('status', 'approved');
+    // AARI:WIRE · const { data: history } = await supabase.from('payroll_runs')
+    //   .select('*').order('run_date', { ascending: false }).limit(12);
+    // renderPayrollPending(pending); renderPayrollApprovedByTc(approved); renderPayrollHistory(history);
+    setWeekLabel();
+  }
+  function setWeekLabel() {
+    const now = new Date();
+    const day = now.getDay();
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((day + 6) % 7));
+    const friday = new Date(monday);
+    friday.setDate(monday.getDate() + 4);
+    const fmt = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const label = document.getElementById('payroll-week-label');
+    if (label) label.textContent = 'Week of ' + fmt(monday) + ' through ' + fmt(friday) + '.';
+  }
+  function renderPayrollPending(rows) {
+    const container = document.getElementById('payroll-pending-list');
+    const meta = document.getElementById('payroll-pending-meta');
+    if (meta) meta.textContent = (rows ? rows.length : 0) + ' entries awaiting your review';
+    if (!rows || !rows.length) return;
+    container.innerHTML = rows.map(r => {
+      const tcName = r.profiles ? ((r.profiles.first_name || '') + ' ' + (r.profiles.last_name || '')).trim() : '';
+      const addr = (r.files && r.files.address) || '—';
+      return '<div class="payout-row" data-payout-id="' + r.id + '">' +
+        '<div class="payout-date">' + formatDate(r.submitted_at) + '</div>' +
+        '<div class="payout-file">' + addr + '<span class="sub">' + tcName + '</span></div>' +
+        '<div class="payout-role">' + (r.role || '') + '</div>' +
+        '<div class="payout-amount">' + formatUsd(r.amount_cents) + '</div>' +
+        '<div><span class="payout-status pending">Pending</span></div>' +
+        '<div style="text-align:right">' +
+          '<button type="button" class="payroll-tc-mark" data-action="approve" data-payout-id="' + r.id + '">Approve</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+  function renderPayrollApprovedByTc(rows) {
+    const container = document.getElementById('payroll-tc-cards');
+    if (!rows || !rows.length) return;
+    // Group by TC
+    const byTc = {};
+    rows.forEach(r => {
+      const tcId = r.tc_id;
+      if (!byTc[tcId]) byTc[tcId] = { tcId: tcId, profiles: r.profiles, total: 0, rows: [] };
+      byTc[tcId].rows.push(r);
+      byTc[tcId].total += (r.amount_cents || 0);
+    });
+    let approvedTotal = 0;
+    Object.values(byTc).forEach(g => approvedTotal += g.total);
+    document.getElementById('payroll-total-approved').textContent = formatUsd(approvedTotal);
+    document.getElementById('payroll-tc-count').textContent = Object.keys(byTc).length;
+
+    container.innerHTML = Object.values(byTc).map(g => {
+      const name = g.profiles ? ((g.profiles.first_name || '') + ' ' + (g.profiles.last_name || '')).trim() : 'Unknown TC';
+      const inner = g.rows.map(r => {
+        const addr = (r.files && r.files.address) || '—';
+        return '<div class="payout-row" data-payout-id="' + r.id + '">' +
+          '<div class="payout-date">' + formatDate(r.approved_at || r.submitted_at) + '</div>' +
+          '<div class="payout-file">' + addr + '</div>' +
+          '<div class="payout-role">' + (r.role || '') + '</div>' +
+          '<div class="payout-amount">' + formatUsd(r.amount_cents) + '</div>' +
+          '<div><span class="payout-status approved">Approved</span></div>' +
+          '<div style="text-align:right;font-size:11px;color:var(--muted)">' + (r.payment_method || '') + '</div>' +
+        '</div>';
+      }).join('');
+      return '<div class="payroll-tc-card" data-tc-id="' + g.tcId + '">' +
+        '<div class="payroll-tc-head">' +
+          '<div class="payroll-tc-name">' + name + ' <span class="role">TC</span></div>' +
+          '<div class="payroll-tc-total">' + formatUsd(g.total) + '</div>' +
+          '<button type="button" class="payroll-tc-mark" data-action="mark-tc-paid" data-tc-id="' + g.tcId + '">Mark paid</button>' +
+        '</div>' +
+        '<div class="payroll-tc-list">' + inner + '</div>' +
+      '</div>';
+    }).join('');
+  }
+  function renderPayrollHistory(runs) {
+    const container = document.getElementById('payroll-history');
+    if (!runs || !runs.length) return;
+    container.innerHTML = runs.map(r => {
+      return '<div class="payroll-history-row">' +
+        '<div class="date">' + formatDate(r.run_date) + '</div>' +
+        '<div class="info">' + (r.payout_count || 0) + ' payouts</div>' +
+        '<div class="info">' + (r.tc_count || 0) + ' TCs</div>' +
+        '<div class="total">' + formatUsd(r.total_paid_cents) + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  // Action handlers for payroll buttons
+  document.getElementById('payroll-pending-list').addEventListener('click', function(e) {
+    const btn = e.target.closest('[data-action="approve"]');
+    if (!btn) return;
+    const id = btn.getAttribute('data-payout-id');
+    // AARI:WIRE · await supabase.from('payouts').update({ status:'approved', approved_at: new Date().toISOString(), approved_by: brokerId }).eq('id', id);
+    console.info('[AariCRM] Approve payout:', id);
+    loadPayrollBrokerView();
+  });
+  document.getElementById('payroll-tc-cards').addEventListener('click', function(e) {
+    const btn = e.target.closest('[data-action="mark-tc-paid"]');
+    if (!btn) return;
+    const tcId = btn.getAttribute('data-tc-id');
+    // AARI:WIRE · await supabase.from('payouts').update({ status:'paid', paid_at: new Date().toISOString(), paid_by: brokerId, run_id: currentRunId }).eq('tc_id', tcId).eq('status', 'approved');
+    btn.textContent = 'Paid';
+    btn.classList.add('done');
+    console.info('[AariCRM] Mark TC paid:', tcId);
+  });
+  document.getElementById('payroll-run-btn').addEventListener('click', function() {
+    if (!confirm('Mark all approved payouts as paid? This creates a Friday Disbursement run record.')) return;
+    // AARI:WIRE · run the full Friday Disbursement transaction:
+    //   1. INSERT INTO payroll_runs (...)
+    //   2. UPDATE payouts SET status='paid', paid_at=now(), run_id=<new run id> WHERE status='approved'
+    //   3. Refresh views
+    console.info('[AariCRM] Friday Disbursement run executed');
+    loadPayrollBrokerView();
+  });
+
+  // Initial Layer 4 loads
+  loadPayoutTcView();
+  loadPayrollBrokerView();
+
+  // ============== DIRECTORY · Layer 5 ==============
+  // AARI:WIRE · Schema needed:
+  //   agents (id, first_name, last_name, brokerage, email, phone, license, market,
+  //           is_member, member_tier, vip_flag, files_count, last_activity_at)
+  //   vendors (id, name, type, company, email, phone, notes, files_count, last_used_at)
+  //   type enum: title · lender · inspector · hoa · attorney · other
+  //
+  // Queries:
+  //   SELECT * FROM agents [WHERE filters apply] ORDER BY last_activity_at DESC
+  //   SELECT * FROM vendors [WHERE type = $1] ORDER BY last_used_at DESC
+
+  // Subtab switching (Directory: Agents / Vendors)
+  document.querySelectorAll('.dir-subtab[data-dir]').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const target = btn.getAttribute('data-dir');
+      document.querySelectorAll('.dir-subtab[data-dir]').forEach(b => b.classList.toggle('active', b === btn));
+      document.getElementById('dir-agents-pane').style.display = (target === 'agents') ? 'block' : 'none';
+      document.getElementById('dir-vendors-pane').style.display = (target === 'vendors') ? 'block' : 'none';
+    });
+  });
+
+  // Subtab switching (Win-back: day30 / day60 / day90 / won / gone)
+  // AARI:WIRE · Replace empty-state placeholders with real data from Supabase.
+  //   winback_queue table:
+  //     SELECT * FROM winback_queue WHERE stage = $1 ORDER BY canceled_at DESC
+  //   winback_queue rows:
+  //     id, agent_id, tier_before, brokerage, market, canceled_at, cancel_reason,
+  //     lifetime_files, ltv_cents, last_file_at, stage, last_email_sent_at, next_email_due_at
+  //   Stage progression: day30 → (send template t-winback-30) → day60 → (send t-winback-60) → day90 → (send t-winback-90) → gone | won
+  //   Status transitions to 'won' when agent re-subscribes; 'gone' if no conversion after day90.
+  document.querySelectorAll('.dir-subtab[data-winback]').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const target = btn.getAttribute('data-winback');
+      document.querySelectorAll('.dir-subtab[data-winback]').forEach(b => b.classList.toggle('active', b === btn));
+      ['day30', 'day60', 'day90', 'won', 'gone'].forEach(k => {
+        const el = document.getElementById('wb-list-' + k);
+        if (el) el.style.display = (k === target) ? 'block' : 'none';
+      });
+    });
+  });
+
+  // Agent filter pills · trigger re-render with active filter
+  let agentFilter = 'all';
+  document.querySelectorAll('[data-agent-filter]').forEach(btn => {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('[data-agent-filter]').forEach(b => b.classList.toggle('active', b === btn));
+      agentFilter = btn.getAttribute('data-agent-filter');
+      loadAgents(agentFilter);
+    });
+  });
+  // Vendor filter pills
+  document.querySelectorAll('[data-vendor-filter]').forEach(btn => {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('[data-vendor-filter]').forEach(b => b.classList.toggle('active', b === btn));
+      // AARI:WIRE · loadVendors(btn.getAttribute('data-vendor-filter'));
+    });
+  });
+
+  async function loadAgents(filter) {
+    // AARI:WIRE · Replace placeholder with Supabase query.
+    //   agents view (derived from files + agent_profiles):
+    //     SELECT a.id, a.first_name, a.last_name, a.email, a.brokerage, a.market,
+    //            a.member_tier, a.member_since, a.is_aari_realty,
+    //            COUNT(f.id) AS files_ytd,
+    //            SUM(f.fee_cents) AS ltv_cents,
+    //            MAX(f.closed_at) AS last_file_at,
+    //            COUNT(f.id) FILTER (WHERE f.created_at > now() - interval '30 days') AS files_30d,
+    //            COUNT(f.id) FILTER (WHERE f.created_at > now() - interval '60 days') AS files_60d,
+    //            COUNT(f.id) FILTER (WHERE f.created_at > now() - interval '90 days') AS files_90d
+    //     FROM agent_profiles a LEFT JOIN files f ON f.agent_id = a.id
+    //     WHERE f.created_at >= date_trunc('year', now())
+    //     GROUP BY a.id
+    //     ORDER BY ltv_cents DESC NULLS LAST
+    //
+    //   Then compute status client-side via computeStatus() below so the UI logic is transparent.
+    //   For nightly precompute, run the same logic in a Supabase Edge Function and store status_calculated on agent_profiles.
+    renderAgents([], filter);
+  }
+
+  // Status calculation rules (source of truth)
+  function computeStatus(a) {
+    const daysSince = a.last_file_at ? Math.floor((Date.now() - new Date(a.last_file_at).getTime()) / 86400000) : null;
+    if (a.files_30d > 0) return 'active';
+    if (a.first_file_within_60d && a.files_lifetime <= 2) return 'warming';
+    if (a.files_90d >= 2 && daysSince !== null && daysSince <= 90 && daysSince > 30) return 'warming';
+    if (daysSince === null) return 'dormant';
+    if (daysSince <= 89) return 'cooling';
+    return 'dormant';
+  }
+
+  function fmtUsd(cents) {
+    const n = (cents || 0) / 100;
+    if (n >= 1000) return '$' + (n / 1000).toFixed(1) + 'K';
+    return '$' + Math.round(n);
+  }
+  function fmtRelative(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso); const days = Math.floor((Date.now() - d.getTime()) / 86400000);
+    if (days < 1) return 'Today';
+    if (days < 7) return days + ' day' + (days !== 1 ? 's' : '') + ' ago';
+    if (days < 30) return Math.floor(days / 7) + ' week' + (days >= 14 ? 's' : '') + ' ago';
+    if (days < 365) return Math.floor(days / 30) + ' month' + (days >= 60 ? 's' : '') + ' ago';
+    return Math.floor(days / 365) + ' year' + (days >= 730 ? 's' : '') + ' ago';
+  }
+
+  function renderAgents(agents, filter) {
+    const rows = document.getElementById('ag-rows');
+    const buckets = { all: agents.length, active: 0, warming: 0, cooling: 0, dormant: 0, top: 0, member: 0 };
+    let revenueYtdCents = 0;
+    const enriched = (agents || []).map(a => {
+      const status = computeStatus(a);
+      buckets[status] = (buckets[status] || 0) + 1;
+      if (a.member_tier && a.member_tier !== null) buckets.member++;
+      revenueYtdCents += (a.ltv_cents || 0);
+      return Object.assign({}, a, { _status: status });
+    });
+    // Top 10 by LTV → tagged
+    enriched.sort((a, b) => (b.ltv_cents || 0) - (a.ltv_cents || 0));
+    enriched.slice(0, 10).forEach(a => { a._is_top = true; });
+    buckets.top = Math.min(10, enriched.length);
+
+    // Upgrade-eligible flag: Starter members who ran 3+ TC files in last 30 days
+    // AARI:WIRE · tc_files_30d should be a computed column or derived in query (count of files where created_at >= now - interval '30 days')
+    enriched.forEach(a => {
+      a._upgrade_eligible = a.member_tier === 'starter' && (a.tc_files_30d || 0) >= 3;
+      if (a._upgrade_eligible) buckets.upgrade = (buckets.upgrade || 0) + 1;
+    });
+
+    // Apply filter
+    const filtered = enriched.filter(a => {
+      if (!filter || filter === 'all') return true;
+      if (filter === 'top') return a._is_top;
+      if (filter === 'member') return !!a.member_tier;
+      if (filter === 'upgrade') return a._upgrade_eligible;
+      return a._status === filter;
+    });
+
+    // Update stats + counts
+    document.getElementById('ag-total').textContent = enriched.length;
+    document.getElementById('ag-active').textContent = buckets.active;
+    document.getElementById('ag-cooling').textContent = buckets.cooling;
+    document.getElementById('ag-ytd').textContent = fmtUsd(revenueYtdCents);
+    Object.keys(buckets).forEach(k => {
+      const el = document.getElementById('ag-count-' + k);
+      if (el) el.textContent = buckets[k];
+    });
+
+    // Update Directory subtab count for Agents
+    const sub = document.getElementById('dir-count-agents');
+    if (sub) sub.textContent = '(' + enriched.length + ')';
+
+    // Render rows
+    if (!filtered.length) {
+      rows.innerHTML = '<div class="empty-state" style="padding:40px 20px">' +
+        '<p class="label">No agents matching this filter.</p>' +
+        '<p>Try a different filter or wait for new submissions to come in.</p></div>';
+      return;
+    }
+    rows.innerHTML = filtered.map(a => {
+      const fullName = ((a.first_name || '') + ' ' + (a.last_name || '')).trim() || (a.email || 'Unknown');
+      const tier = a.member_tier;
+      const tags = [];
+      if (a._is_top) tags.push('<span class="agent-tag top">Top</span>');
+      if (a.is_aari_realty) tags.push('<span class="agent-tag realty">Realty</span>');
+      else if (tier === 'producer') tags.push('<span class="agent-tag producer">Producer</span>');
+      else if (tier === 'starter') tags.push('<span class="agent-tag starter">Starter</span>');
+      if (a._status === 'warming' && a.files_lifetime <= 2) tags.push('<span class="agent-tag new">New</span>');
+      if (a._upgrade_eligible) tags.push('<span class="agent-tag" style="background:#faf6ec;color:#b89968;border:1px solid #e0d2a8">&uarr; Upgrade</span>');
+      const daysSince = a.last_file_at ? Math.floor((Date.now() - new Date(a.last_file_at).getTime()) / 86400000) : null;
+      const whenClass = daysSince === null ? 'danger' : (daysSince > 89 ? 'danger' : (daysSince > 29 ? 'warn' : ''));
+      const statusLabel = a._status === 'active' ? '&#9679; Active' : (a._status.charAt(0).toUpperCase() + a._status.slice(1));
+      const rowTint = a._upgrade_eligible ? ' style="background:#fdfaf2"' : '';
+      return '<div class="agents-row ' + (a._status === 'cooling' ? 'cooling' : '') + '" data-agent-id="' + a.id + '"' + rowTint + '>' +
+        '<div>' +
+          '<div class="name">' + fullName + ' ' + tags.join(' ') + '</div>' +
+          '<div class="email">' + (a.email || '') + '</div>' +
+        '</div>' +
+        '<div>' +
+          '<div class="brokerage">' + (a.brokerage || '') + '</div>' +
+          '<div class="market">' + (a.market || '') + '</div>' +
+        '</div>' +
+        '<span class="num">' + (a.files_ytd || 0) + '</span>' +
+        '<span class="num">' + fmtUsd(a.ltv_cents || 0) + '</span>' +
+        '<span class="when ' + whenClass + '">' + fmtRelative(a.last_file_at) + '</span>' +
+        '<span class="agent-status ' + a._status + '">' + statusLabel + '</span>' +
+      '</div>';
+    }).join('');
+  }
+
+  async function loadVendors(filter) {
+    // AARI:WIRE · const { data } = await supabase.from('vendors').select('*').eq(filter !== 'all' ? 'type' : 'id', filter !== 'all' ? filter : 'id');
+    // renderVendors(data || []);
+  }
+  function renderVendors(vendors) {
+    const grid = document.getElementById('dir-vendors-grid');
+    const count = document.getElementById('dir-count-vendors');
+    if (count) count.textContent = '(' + (vendors.length || 0) + ')';
+    if (!vendors || !vendors.length) return;
+    grid.innerHTML = vendors.map(v => {
+      const initials = (v.name || '').split(' ').slice(0, 2).map(w => w.charAt(0)).join('').toUpperCase();
+      return '<div class="dir-card" data-vendor-id="' + v.id + '">' +
+        '<div class="dir-card-head">' +
+          '<div class="dir-avatar">' + initials + '</div>' +
+          '<div>' +
+            '<div class="dir-card-name">' + (v.name || '') + '</div>' +
+            '<div class="dir-card-role">' + (v.type || '') + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="dir-card-org">' + (v.company || '') + '</div>' +
+        '<div class="dir-card-info">' +
+          '<div class="dir-card-info-row"><span class="lbl">Email</span><span>' + (v.email || '') + '</span></div>' +
+          '<div class="dir-card-info-row"><span class="lbl">Phone</span><span>' + (v.phone || '') + '</span></div>' +
+        '</div>' +
+        (v.notes ? '<div class="dir-card-stats"><div style="font-size:11px;color:var(--muted);line-height:1.5">' + v.notes + '</div></div>' : '') +
+      '</div>';
+    }).join('');
+  }
+
+  document.getElementById('dir-new').addEventListener('click', function() {
+    // AARI:WIRE · open add-contact modal (agent or vendor)
+    console.info('[AariCRM] Add contact');
+  });
+  document.getElementById('dir-search').addEventListener('input', function(e) {
+    const q = (e.target.value || '').toLowerCase().trim();
+    document.querySelectorAll('.dir-card').forEach(card => {
+      card.style.display = (!q || card.textContent.toLowerCase().indexOf(q) !== -1) ? '' : 'none';
+    });
+  });
+
+  loadAgents('all');
+  loadVendors('all');
+
+  // ============== SETTINGS · Layer 5 ==============
+  // AARI:WIRE · Schema needed:
+  //   org_settings (id, key, value, updated_at, updated_by)
+  //   team_members (id, profile_id, role, status, joined_at)
+  //   integrations (id, key, status, credentials_ref, last_verified_at)
+  //   notification_prefs (user_id, channel, enabled)
+
+  // Toggle switches
+  document.querySelectorAll('.set-toggle').forEach(toggle => {
+    toggle.addEventListener('click', function() {
+      toggle.classList.toggle('on');
+      const key = toggle.getAttribute('data-toggle');
+      const enabled = toggle.classList.contains('on');
+      // AARI:WIRE · await supabase.from('notification_prefs').upsert({ user_id, channel: key, enabled });
+      console.info('[AariCRM] Toggle ' + key + ' →', enabled);
+    });
+  });
+
+  // Save buttons
+  document.querySelectorAll('[data-save]').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const section = btn.getAttribute('data-save');
+      // AARI:WIRE · gather fields by section name, write to org_settings table
+      btn.textContent = 'Saved';
+      setTimeout(() => { btn.textContent = btn.dataset.original || 'Save'; }, 1400);
+      btn.dataset.original = 'Save brokerage profile';
+      console.info('[AariCRM] Save section:', section);
+    });
+  });
+
+  // Team edit buttons (placeholder)
+  document.getElementById('set-team-list').addEventListener('click', function(e) {
+    const btn = e.target.closest('.set-team-action');
+    if (!btn) return;
+    // AARI:WIRE · open team-member edit modal
+    console.info('[AariCRM] Edit team member');
+  });
+
+  document.getElementById('set-team-add').addEventListener('click', function() {
+    // AARI:WIRE · open add-team-member modal (invite by email)
+    console.info('[AariCRM] Invite team member');
+  });
+
+})();
+</script>
+
+</body>
+</html>

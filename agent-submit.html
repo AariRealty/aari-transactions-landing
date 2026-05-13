@@ -1,197 +1,672 @@
 <!doctype html>
+<!--
+  ============================================================================
+  AARI TRANSACTIONS · Agent Final File Submission
+  ============================================================================
+  Where agents confirm final transaction details once their file reaches the
+  Closed stage. Supabase-backed, RLS-protected (agents can only access their
+  own files via auth.uid()).
+
+  Previous version used a public Firebase Realtime DB URL with no auth — full
+  PII exposure. That has been removed. This rebuild moves the entire flow to
+  Supabase with proper row-level security.
+
+  URL: /agent-submit.html?file=<uuid>
+  Email links pointing here should be signed and time-limited (handled by
+  the email automation system in supabase/functions/).
+
+  Noindex via robots.txt + meta.
+  ============================================================================
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Aari Transactions · Agent Submission</title>
+<title>Confirm File Details &middot; Aari Transactions</title>
+<meta name="description" content="Confirm the final details on your Aari Transactions file before close.">
+<meta name="robots" content="noindex, nofollow">
+<link rel="canonical" href="https://aaritransactions.com/agent-submit.html">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230f0f0f'/%3E%3Ctext x='32' y='46' text-anchor='middle' font-family='Georgia,serif' font-weight='600' font-size='38' fill='%23ffffff' letter-spacing='-1'%3EA%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root{--serif:'Cormorant Garamond',Georgia,serif;--sans:'Montserrat',sans-serif;--ink:#1a1a1a;--paper:#ffffff;--soft:#f5f5f5;--line:#e0e0e0;--muted:#666666}
-  *{box-sizing:border-box;margin:0;padding:0}
-  html,body{background:var(--soft);font-family:var(--sans);color:var(--ink);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh}
-  .page{max-width:720px;margin:0 auto;padding:32px 20px 60px}
-  .header{background:var(--ink);color:#fff;padding:28px 32px;margin-bottom:24px;border-radius:6px 6px 0 0}
-  .header .brand{font-family:var(--serif);font-size:20px;font-weight:600;letter-spacing:0.4px}
-  .header .brand small{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:#aaa;font-weight:600;display:block;margin-top:3px}
-  .header h1{font-family:var(--serif);font-size:30px;font-weight:600;line-height:1.05;margin-top:18px;color:#fff}
-  .header h1 em{font-style:italic;font-weight:500}
-  .header p{color:#cfcfcf;margin-top:8px;font-size:13px;max-width:90%}
-  .card{background:var(--paper);border:1px solid var(--line);padding:24px 28px;margin-bottom:16px;border-radius:6px}
-  .card h2{font-family:var(--serif);font-size:20px;font-weight:600;margin-bottom:14px}
-  .meta{background:var(--soft);border:1px solid var(--line);padding:16px 18px;border-radius:5px;margin-bottom:18px;font-size:13px;line-height:1.6}
-  .meta .row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--line)}
-  .meta .row:last-child{border-bottom:none}
-  .meta .row .label{color:var(--muted);font-weight:600;font-size:11px;letter-spacing:0.5px;text-transform:uppercase}
-  .meta .row .val{color:var(--ink);font-weight:500;text-align:right}
-  label{display:block;font-size:11px;letter-spacing:0.5px;text-transform:uppercase;color:var(--ink);font-weight:600;margin:14px 0 5px}
-  input[type=text],input[type=email],input[type=tel],input[type=date],input[type=number],textarea,select{width:100%;padding:10px 12px;font-size:14px;font-family:var(--sans);border:1px solid var(--line);border-radius:4px;background:var(--paper);color:var(--ink)}
-  input:focus,textarea:focus,select:focus{outline:2px solid var(--ink);outline-offset:-1px;border-color:var(--ink)}
-  textarea{resize:vertical;min-height:80px}
-  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-  @media(max-width:520px){.grid-2{grid-template-columns:1fr}}
-  .stage-banner{padding:14px 18px;border-radius:5px;margin-bottom:18px;font-size:13px;line-height:1.5;font-weight:500}
-  .stage-banner.in-flight{background:#fff8e6;border:1px solid #ebdec8;color:#8a6a00}
-  .stage-banner.closed{background:#eaf3ec;border:1px solid #c4dec9;color:#2d5a3a}
-  .submit-btn{width:100%;padding:14px;background:var(--ink);color:#fff;border:none;border-radius:4px;font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;font-family:var(--sans);margin-top:18px}
-  .submit-btn:hover{background:#000}
-  .submit-btn:disabled{background:#ccc;cursor:not-allowed}
-  .save-draft-btn{width:100%;padding:11px;background:var(--paper);color:var(--ink);border:1px solid var(--ink);border-radius:4px;font-size:11px;font-weight:600;letter-spacing:0.6px;text-transform:uppercase;cursor:pointer;font-family:var(--sans);margin-top:10px}
-  .save-draft-btn:hover{background:var(--soft)}
-  .success{background:#eaf3ec;border:1px solid #c4dec9;color:#2d5a3a;padding:24px;border-radius:6px;text-align:center;margin-bottom:16px}
-  .success h2{color:#2d5a3a;font-family:var(--serif);font-size:24px;margin-bottom:8px}
-  .error{background:#fbeaea;border:1px solid #e6c4c4;color:#7a2d2d;padding:16px 18px;border-radius:5px;margin-bottom:16px;font-size:13px}
-  .footer{text-align:center;font-size:11px;color:var(--muted);margin-top:24px;padding-top:18px;border-top:1px solid var(--line);line-height:1.6}
-  .footer strong{color:var(--ink);font-weight:600}
-  .loading{text-align:center;padding:60px 20px;color:var(--muted)}
+  :root {
+    --ink: #0f0f0f; --ink-2: #444; --muted: #6b6b6b; --line: #e6e2d8;
+    --bg: #fafaf6; --surface: #ffffff; --tinted: #f6f3ec;
+    --gold-bg: #faf6ec; --gold-line: #e0d2a8; --gold-ink: #b89968;
+    --sage-bg: #eef2ec; --sage-line: #c8d8c4; --sage-ink: #6a8a6a;
+    --amber-bg: #fff4d6; --amber-line: #e8d28a; --amber-ink: #8a6630;
+    --red-bg: #fdf0ec; --red-line: #f0c8c0; --red-ink: #a64c33;
+    --serif: 'Cormorant Garamond', Georgia, serif;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: var(--sans); background: var(--bg); color: var(--ink-2); line-height: 1.55; min-height: 100vh; -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; }
+  a { color: inherit; text-decoration: none; }
+
+  .skip-link { position: absolute; top: -44px; left: 8px; background: var(--ink); color: #fff; padding: 12px 18px; z-index: 1000; font-weight: 600; font-size: 14px; border-radius: 6px; }
+  .skip-link:focus { top: 8px; }
+
+  /* Nav · matches reviews.html / book.html / portal.html */
+  .nav { position: sticky; top: 0; z-index: 90; background: rgba(255,255,255,0.96); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); padding: 14px 0; }
+  .nav .wrap { display: flex; justify-content: space-between; align-items: center; gap: 20px; max-width: 1180px; margin: 0 auto; padding: 0 22px; }
+  .brand { display: inline-flex; align-items: center; gap: 10px; }
+  .brand-mark { font-family: var(--serif); font-weight: 600; font-size: 18px; color: var(--ink); padding: 6px 12px; border: 1.5px solid var(--ink); border-radius: 6px; letter-spacing: 2px; }
+  .brand-name { font-family: var(--sans); font-weight: 600; font-size: 13px; color: var(--ink); line-height: 1.15; }
+  .brand-name small { display: block; font-size: 9px; font-weight: 500; letter-spacing: 1.2px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+  .nav-links { display: flex; align-items: center; gap: 18px; font-size: 13px; }
+  .nav-links a { color: var(--ink-2); }
+  .btn-primary { background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; min-height: 44px; display: inline-flex; align-items: center; gap: 8px; }
+  @media (max-width: 720px) { .nav-links a:not(.btn-primary) { display: none; } }
+
+  main { flex: 1; max-width: 820px; margin: 0 auto; padding: 48px 22px 56px; width: 100%; }
+
+  /* Hero */
+  .eyebrow { display: inline-block; font-size: 10px; letter-spacing: 1.8px; text-transform: uppercase; color: var(--gold-ink); font-weight: 700; padding: 6px 12px; background: var(--gold-bg); border: 1px solid var(--gold-line); border-radius: 999px; margin-bottom: 18px; }
+  h1 { font-family: var(--serif); font-weight: 500; font-size: clamp(34px, 5vw, 46px); line-height: 1.05; color: var(--ink); margin-bottom: 14px; letter-spacing: -0.015em; }
+  h1 em { font-style: italic; font-weight: 500; }
+  .lede { font-size: 16px; color: var(--ink-2); line-height: 1.6; margin-bottom: 28px; max-width: 600px; }
+
+  /* Loading skeleton */
+  .loading { display: flex; align-items: center; justify-content: center; padding: 80px 20px; color: var(--muted); font-size: 14px; }
+  .loading .dot { width: 8px; height: 8px; background: var(--ink); border-radius: 50%; margin: 0 3px; animation: bounce 1.4s infinite ease-in-out; }
+  .loading .dot:nth-child(2) { animation-delay: 0.2s; }
+  .loading .dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes bounce { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.6; } 40% { transform: scale(1); opacity: 1; } }
+
+  /* Auth gate */
+  .auth-gate { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 36px 36px; text-align: center; max-width: 540px; margin: 60px auto; }
+  .auth-gate h2 { font-family: var(--serif); font-size: 26px; font-weight: 500; color: var(--ink); margin-bottom: 10px; }
+  .auth-gate p { font-size: 14px; color: var(--ink-2); line-height: 1.6; margin-bottom: 22px; }
+  .auth-gate .actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .btn-ghost { background: transparent; color: var(--ink); padding: 11px 20px; border: 1px solid var(--ink); border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; min-height: 44px; display: inline-flex; align-items: center; }
+  .btn-ghost:hover { background: var(--ink); color: #fff; }
+
+  /* Stage banner · in-flight or closed */
+  .stage-banner { padding: 14px 18px; border-radius: 10px; margin-bottom: 24px; font-size: 13.5px; line-height: 1.55; display: flex; gap: 12px; align-items: flex-start; }
+  .stage-banner .lbl { font-size: 10px; letter-spacing: 1.4px; text-transform: uppercase; font-weight: 700; margin-bottom: 4px; display: block; }
+  .stage-banner.in-flight { background: var(--amber-bg); border: 1px solid var(--amber-line); border-left: 3px solid var(--amber-ink); }
+  .stage-banner.in-flight .lbl { color: var(--amber-ink); }
+  .stage-banner.in-flight p { color: var(--amber-ink); margin: 0; }
+  .stage-banner.closed { background: var(--sage-bg); border: 1px solid var(--sage-line); border-left: 3px solid var(--sage-ink); }
+  .stage-banner.closed .lbl { color: var(--sage-ink); }
+  .stage-banner.closed p { color: var(--sage-ink); margin: 0; }
+
+  /* File meta card */
+  .file-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px 26px; margin-bottom: 22px; }
+  .file-card h2 { font-family: var(--serif); font-size: 22px; font-weight: 500; color: var(--ink); margin-bottom: 14px; letter-spacing: -0.005em; }
+  .meta-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px 18px; }
+  .meta-item { padding: 8px 0; }
+  .meta-item .lbl { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 3px; }
+  .meta-item .val { font-size: 14px; color: var(--ink); font-weight: 600; }
+  .meta-item .val.mono { font-family: 'SF Mono', Menlo, monospace; font-size: 12px; }
+
+  /* Form card */
+  .form-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 26px 28px; margin-bottom: 22px; }
+  .form-card h2 { font-family: var(--serif); font-size: 22px; font-weight: 500; color: var(--ink); margin-bottom: 4px; letter-spacing: -0.005em; }
+  .form-card .sub { font-size: 13px; color: var(--muted); margin-bottom: 22px; }
+
+  .form-section { padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--line); }
+  .form-section:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+  .section-lbl { font-size: 10px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--gold-ink); font-weight: 700; margin-bottom: 14px; }
+
+  .form-group { margin-bottom: 14px; }
+  .form-group label { display: block; font-size: 11px; letter-spacing: 0.8px; text-transform: uppercase; color: var(--muted); font-weight: 700; margin-bottom: 6px; }
+  .form-group input, .form-group textarea { width: 100%; padding: 11px 14px; border: 1px solid var(--line); border-radius: 8px; font-family: var(--sans); font-size: 14px; color: var(--ink); background: #fff; transition: border-color 0.18s; }
+  .form-group input:focus, .form-group textarea:focus { outline: 3px solid #1e7ce8; outline-offset: 0; border-color: var(--ink); }
+  .form-group textarea { min-height: 88px; resize: vertical; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 540px) { .form-row { grid-template-columns: 1fr; } }
+
+  /* Action row */
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--line); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; padding: 13px 22px; font-size: 12px; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; border-radius: 999px; cursor: pointer; border: 1px solid var(--ink); min-height: 44px; line-height: 22px; transition: all 0.18s; font-family: var(--sans); }
+  .btn-save-draft { background: transparent; color: var(--ink); }
+  .btn-save-draft:hover { background: var(--ink); color: #fff; }
+  .btn-submit { background: var(--ink); color: #fff; flex: 1; min-width: 240px; }
+  .btn-submit:hover { background: #1c1c1c; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-submit:disabled { background: #ccc; border-color: #ccc; }
+  .btn-submit:disabled:hover { background: #ccc; }
+
+  /* Alert */
+  .alert { padding: 12px 16px; border-radius: 8px; font-size: 13px; line-height: 1.55; margin-bottom: 14px; }
+  .alert-error { background: var(--red-bg); border: 1px solid var(--red-line); border-left: 3px solid var(--red-ink); color: var(--red-ink); }
+  .alert-success { background: var(--sage-bg); border: 1px solid var(--sage-line); border-left: 3px solid var(--sage-ink); color: var(--sage-ink); }
+  .alert-info { background: var(--gold-bg); border: 1px solid var(--gold-line); border-left: 3px solid var(--gold-ink); color: var(--ink); }
+
+  /* Toast */
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--ink); color: #fff; padding: 12px 22px; border-radius: 8px; font-size: 13px; font-weight: 500; z-index: 9999; box-shadow: 0 4px 18px rgba(0,0,0,0.18); opacity: 0; transform: translateY(8px); transition: all 0.22s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  /* Spinner inside button */
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Compliance note */
+  .compliance-note { font-size: 11px; color: var(--muted); line-height: 1.6; margin-top: 20px; padding: 14px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+  .compliance-note strong { color: var(--ink-2); font-weight: 600; }
+
+  /* Already-submitted state */
+  .submitted-card { background: var(--sage-bg); border: 1px solid var(--sage-line); border-left: 3px solid var(--sage-ink); border-radius: 14px; padding: 36px 36px; text-align: center; }
+  .submitted-card h2 { font-family: var(--serif); font-size: 28px; font-weight: 500; color: var(--ink); margin-bottom: 12px; line-height: 1.15; }
+  .submitted-card p { font-size: 14px; color: var(--ink-2); line-height: 1.6; margin-bottom: 8px; max-width: 480px; margin-left: auto; margin-right: auto; }
+  .submitted-card .actions { justify-content: center; border: none; padding-top: 18px; }
+
+  /* Footer · matches site */
+  footer { background: var(--ink); color: #cfc8b8; padding: 36px 22px 24px; font-size: 12px; margin-top: 56px; }
+  footer .wrap { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 22px; }
+  @media (max-width: 700px) { footer .wrap { grid-template-columns: 1fr; gap: 22px; } }
+  footer h5 { font-size: 10px; letter-spacing: 1.4px; text-transform: uppercase; color: #9a9588; font-weight: 600; margin-bottom: 10px; }
+  footer a { color: #cfc8b8; display: block; margin-bottom: 6px; font-size: 12px; }
+  footer .legal { grid-column: 1 / -1; padding-top: 22px; margin-top: 22px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: 11px; color: #9a9588; }
 </style>
 </head>
 <body>
-<div class="page">
-  <div id="loading" class="loading"><p>Loading file…</p></div>
+
+<a href="#main-content" class="skip-link">Skip to main content</a>
+
+<nav class="nav" aria-label="Primary">
+  <div class="wrap">
+    <a href="index.html" class="brand">
+      <span class="brand-mark">AARI</span>
+      <span class="brand-name">Aari Transactions<small>FLORIDA TC &middot; BROKER-OWNED</small></span>
+    </a>
+    <div class="nav-links">
+      <a href="index.html#how">Process</a>
+      <a href="index.html#pricing">Pricing</a>
+      <a href="portal.html">Portal</a>
+      <a href="book.html">Book a call</a>
+      <a href="index.html#apply" class="btn-primary">Submit a File &rarr;</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+
+  <!-- ============ LOADING ============ -->
+  <div id="loading-state" class="loading" role="status" aria-live="polite">
+    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+    &nbsp;&nbsp;Loading your file&hellip;
+  </div>
+
+  <!-- ============ AUTH GATE ============ -->
+  <div id="auth-gate" class="auth-gate" style="display:none">
+    <h2 id="auth-gate-title">Sign in to view this file.</h2>
+    <p id="auth-gate-msg">Files are tied to your agent account. Sign in with the email Aari has on record.</p>
+    <div class="actions">
+      <a data-aari-login class="btn-primary" style="cursor:pointer">Sign in</a>
+      <a href="index.html" class="btn-ghost">Back to home</a>
+    </div>
+  </div>
+
+  <!-- ============ ACCESS DENIED ============ -->
+  <div id="denied-state" class="auth-gate" style="display:none">
+    <h2>This file isn't yours.</h2>
+    <p>The file ID you followed belongs to a different agent's account, or the link is invalid. If you think this is a mistake, email <a href="mailto:hello@aaritransactions.com" style="color:var(--ink);text-decoration:underline">hello@aaritransactions.com</a>.</p>
+    <div class="actions">
+      <a href="portal.html" class="btn-primary">Go to your portal</a>
+      <a href="index.html" class="btn-ghost">Back to home</a>
+    </div>
+  </div>
+
+  <!-- ============ ALREADY SUBMITTED ============ -->
+  <div id="already-submitted" class="submitted-card" style="display:none">
+    <h2>Already submitted.</h2>
+    <p>You finalized this file on <strong id="prev-submit-date">a previous date</strong>. There's nothing more to do here.</p>
+    <p>Your Aari coordinator will reach out if there are any open items.</p>
+    <div class="actions">
+      <a href="portal.html" class="btn-primary">Open your portal</a>
+      <a href="index.html" class="btn-ghost">Back to home</a>
+    </div>
+  </div>
+
+  <!-- ============ MAIN CONTENT ============ -->
   <div id="content" style="display:none">
-    <header class="header">
-      <div class="brand">AARI TRANSACTIONS<small>Florida Transaction Coordination</small></div>
-      <h1>Agent <em>Submission.</em></h1>
-      <p>Confirm and finalize the details of your transaction. Submission to Aari Transactions is automatically blocked until your file reaches Closed stage.</p>
-    </header>
-    <div id="stage-banner"></div>
-    <div class="card">
-      <h2>Your file</h2>
-      <div class="meta" id="file-meta"></div>
-    </div>
-    <div class="card">
-      <h2>Confirm and complete</h2>
-      <p style="font-size:12px;color:var(--muted);margin-bottom:14px;line-height:1.5">Update any field below. We'll save your changes whether or not the file has closed yet.</p>
-      <form id="agent-form" onsubmit="submitAgentForm(event)">
-        <div id="form-error" class="error" style="display:none"></div>
-        <label>Property Address</label>
-        <input type="text" id="address" required>
-        <div class="grid-2">
-          <div><label>MLS #</label><input type="text" id="mls"></div>
-          <div><label>Sale Price</label><input type="text" id="price" placeholder="$350,000"></div>
+
+    <span class="eyebrow">Final file confirmation</span>
+    <h1>Confirm your <em>file details.</em></h1>
+    <p class="lede">Review the information below. Update anything that has changed since intake. Submit when your file is at Closed stage.</p>
+
+    <!-- Stage banner · in-flight or closed -->
+    <div id="stage-banner" class="stage-banner" role="status" aria-live="polite"></div>
+
+    <!-- File meta card -->
+    <section class="file-card" aria-label="File summary">
+      <h2>Your file at a glance</h2>
+      <div class="meta-grid" id="file-meta"></div>
+    </section>
+
+    <!-- Form card -->
+    <section class="form-card" aria-label="Confirm details">
+      <h2>Confirm and complete.</h2>
+      <p class="sub">Update any field that has changed. We save your draft anytime; submitting locks the file for closeout.</p>
+
+      <div id="form-alert"></div>
+
+      <form id="agent-form" novalidate>
+
+        <div class="form-section">
+          <p class="section-lbl">Property + transaction</p>
+          <div class="form-group">
+            <label for="address">Property address</label>
+            <input type="text" id="address" name="address" autocomplete="off" required>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="mls">MLS number</label>
+              <input type="text" id="mls" name="mls" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label for="price">Sale price</label>
+              <input type="text" id="price" name="price" placeholder="$350,000" autocomplete="off">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="effective_date">Effective date</label>
+              <input type="date" id="effective_date" name="effective_date">
+            </div>
+            <div class="form-group">
+              <label for="closing_date">Closing date</label>
+              <input type="date" id="closing_date" name="closing_date">
+            </div>
+          </div>
         </div>
-        <label>Client Name(s)</label>
-        <input type="text" id="client" placeholder="Buyer and/or seller names">
-        <div class="grid-2">
-          <div><label>Client Phone</label><input type="tel" id="client_phone"></div>
-          <div><label>Client Email</label><input type="email" id="client_email"></div>
+
+        <div class="form-section">
+          <p class="section-lbl">Client</p>
+          <div class="form-group">
+            <label for="client">Client name(s)</label>
+            <input type="text" id="client" name="client" placeholder="Buyer and/or seller names" autocomplete="off">
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="client_phone">Client phone</label>
+              <input type="tel" id="client_phone" name="client_phone" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label for="client_email">Client email</label>
+              <input type="email" id="client_email" name="client_email" autocomplete="off">
+            </div>
+          </div>
         </div>
-        <div class="grid-2">
-          <div><label>Effective Date</label><input type="date" id="effective_date"></div>
-          <div><label>Closing Date</label><input type="date" id="closing_date"></div>
+
+        <div class="form-section">
+          <p class="section-lbl">Vendors</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="title_co">Title company</label>
+              <input type="text" id="title_co" name="title_co" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label for="lender">Lender</label>
+              <input type="text" id="lender" name="lender" autocomplete="off">
+            </div>
+          </div>
         </div>
-        <label>Title Company</label><input type="text" id="title_co">
-        <label>Lender</label><input type="text" id="lender">
-        <label>Notes for Aari</label><textarea id="notes" placeholder="Anything we should know? Special requests, vendor preferences, deadlines, contacts…"></textarea>
-        <button type="button" class="save-draft-btn" onclick="saveAgentDraft()">Save Draft (don't submit yet)</button>
-        <button type="submit" class="submit-btn" id="submit-btn" disabled>Submit to Aari Transactions</button>
+
+        <div class="form-section">
+          <p class="section-lbl">Anything else</p>
+          <div class="form-group">
+            <label for="notes">Notes for Aari</label>
+            <textarea id="notes" name="notes" placeholder="Special requests, vendor preferences, deadlines, contacts &hellip;"></textarea>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="button" class="btn btn-save-draft" id="btn-draft">Save draft</button>
+          <button type="submit" class="btn btn-submit" id="btn-submit">Submit to Aari</button>
+        </div>
+
+        <p class="compliance-note">
+          <strong>Florida Real Estate Broker</strong> &middot; Marlenyi Paredes &middot; License BK3530153.
+          Your submission is encrypted in transit and stored with row-level access controls. Only Aari coordinators assigned to your file can see this data.
+        </p>
       </form>
+    </section>
+
+  </div>
+
+  <!-- Toast for save-draft confirmation -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <a href="index.html" class="brand" style="margin-bottom:14px">
+        <span class="brand-mark" style="color:#fff;border-color:#fff">AARI</span>
+        <span style="font-size: 13px; font-weight: 600; color: #fff;">Aari Transactions<br><span style="font-size: 8px; font-weight: 500; letter-spacing: 1.2px; color: #9a9588; text-transform: uppercase;">FLORIDA TC &middot; BROKER-OWNED</span></span>
+      </a>
+      <p style="margin-top: 12px; font-size: 12px; color: #cfc8b8; line-height: 1.55;">Compliance first. Deadlines tracked. Clean handoffs. Every file.</p>
     </div>
-    <div class="footer">
-      <strong>Aari Transactions LLC</strong><br>
-      239.688.1770 · hello@aaritransactions.com · aaritransactions.com<br>
-      9160 Forum Corporate Pkwy, Ste 350 PMB 17078022, Fort Myers, FL 33905
+    <div><h5>Site</h5><a href="index.html">Home</a><a href="index.html#pricing">Pricing</a><a href="reviews.html">Reviews</a><a href="blog/">Blog</a><a href="about.html">About</a></div>
+    <div><h5>Connect</h5><a href="tel:2396881770">239.688.1770</a><a href="mailto:hello@aaritransactions.com">hello@aaritransactions.com</a><a href="book.html">Book a call</a></div>
+    <div><h5>For agents</h5><a href="portal.html">Your portal</a><a href="index.html#apply">Submit a file</a><a href="index.html#faq">FAQ</a></div>
+    <div><h5>Legal</h5><a href="privacy.html">Privacy Policy</a><a href="terms.html">Terms of Service</a></div>
+    <div class="legal">
+      <span>&copy; <span id="yr"></span> Aari Transactions LLC. All rights reserved.</span>
+      <span>Independent of any single brokerage. Built in Florida.</span>
     </div>
   </div>
-  <div id="success" class="success" style="display:none">
-    <h2>Submission received.</h2>
-    <p>Thank you. Aari Transactions has been notified that your file is ready for final review. We'll be in touch within 24 hours.</p>
-    <p style="margin-top:12px;font-size:12px;color:var(--muted)">You may close this page.</p>
-  </div>
-</div>
+</footer>
+
+<!-- Supabase auth scripts (existing site infrastructure) -->
+<script src="js/supabase-config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/login-modal.js"></script>
+
 <script>
-const SYNC_URL='https://aari-transactions-default-rtdb.firebaseio.com/aari-data.json';
-const params=new URLSearchParams(window.location.search);
-const fileId=params.get('file');
-let fileData=null,allData=null;
-async function loadFile(){
-  if(!fileId){showError('Missing file ID. Ask Aari Transactions for a fresh link.');return;}
-  try{
-    const res=await fetch(SYNC_URL,{cache:'no-store'});
-    if(!res.ok)throw new Error('HTTP '+res.status);
-    const data=await res.json();
-    if(!data||!Array.isArray(data.files)){showError('Unable to load your file.');return;}
-    allData=data;
-    fileData=data.files.find(f=>f.id===fileId);
-    if(!fileData){showError('File not found. Contact Aari Transactions for a fresh link.');return;}
+(function () {
+  'use strict';
+
+  // ============================================================================
+  // AARI:WIRE
+  // ----------------------------------------------------------------------------
+  // This page expects:
+  //   - window.AariAuth.ensureClient() returns a Supabase JS client
+  //   - window.AariAuth.getCurrentSession() returns auth session or null
+  //   - A 'files' table (RLS enabled) with at minimum:
+  //       id (UUID), agent_id (UUID -> auth.users), status (text),
+  //       address, mls, price, client, client_phone, client_email,
+  //       effective_date, closing_date, title_co, lender, notes,
+  //       file_no (text), service (text), side (text), tc_fee (text or numeric),
+  //       agent_submitted_at (timestamptz nullable),
+  //       agent_draft_saved_at (timestamptz nullable),
+  //       created_at, updated_at
+  //   - RLS policy on 'files':
+  //       USING (agent_id = auth.uid())
+  //   - (Optional) edge function 'send-agent-final-submission' fires when
+  //     agent_submitted_at gets set. Already covered by the existing files
+  //     UPDATE trigger if dev wires it.
+  //
+  // Column name notes: if the actual schema uses different names
+  // (e.g. property_address instead of address, sale_price_cents instead of price),
+  // adjust the field mapping in `renderFile()` and `collectFormData()` below.
+  // ============================================================================
+
+  const params = new URLSearchParams(window.location.search);
+  const fileId = params.get('file');
+
+  const loadingEl = document.getElementById('loading-state');
+  const authGate = document.getElementById('auth-gate');
+  const deniedState = document.getElementById('denied-state');
+  const alreadySubmitted = document.getElementById('already-submitted');
+  const content = document.getElementById('content');
+  const toastEl = document.getElementById('toast');
+
+  let client = null;
+  let userId = null;
+  let fileRow = null;
+
+  // ----- Utilities -----
+  function show(el) { el.style.display = ''; }
+  function hide(el) { el.style.display = 'none'; }
+  function hideAllStates() {
+    hide(loadingEl); hide(authGate); hide(deniedState);
+    hide(alreadySubmitted); hide(content);
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g,
+      c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  }
+  function fmtDate(s) {
+    if (!s) return '—';
+    try {
+      const d = new Date(typeof s === 'string' && s.length === 10 ? s + 'T00:00:00' : s);
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch (e) { return s; }
+  }
+  function showAlert(kind, msg) {
+    const slot = document.getElementById('form-alert');
+    slot.innerHTML = '<div class="alert alert-' + kind + '">' + esc(msg) + '</div>';
+    if (kind !== 'error') setTimeout(() => { slot.innerHTML = ''; }, 4000);
+  }
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    setTimeout(() => toastEl.classList.remove('show'), 2200);
+  }
+  function setVal(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.value = val == null ? '' : val;
+  }
+  function getVal(id) {
+    const el = document.getElementById(id);
+    return el ? el.value.trim() : '';
+  }
+
+  // ----- Load file from Supabase -----
+  async function loadFile() {
+    if (!fileId) {
+      hideAllStates();
+      authGate.querySelector('h2').textContent = 'No file ID in the link.';
+      authGate.querySelector('p').textContent = 'The link is missing a file reference. Check your email for the original message from Aari, or contact us.';
+      show(authGate);
+      return;
+    }
+
+    try {
+      client = await window.AariAuth.ensureClient();
+    } catch (e) {
+      console.error('[agent-submit] auth client failed:', e);
+      hideAllStates();
+      show(authGate);
+      return;
+    }
+
+    const session = await window.AariAuth.getCurrentSession();
+    if (!session) {
+      hideAllStates();
+      show(authGate);
+      return;
+    }
+    userId = session.user.id;
+
+    // Query the file. RLS ensures agent can only fetch their own files.
+    // AARI:WIRE · table name and column names per your actual schema
+    const { data, error } = await client
+      .from('files')
+      .select('*')
+      .eq('id', fileId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('[agent-submit] query failed:', error);
+      hideAllStates();
+      show(authGate);
+      authGate.querySelector('h2').textContent = 'Something went wrong.';
+      authGate.querySelector('p').textContent = 'We could not load the file. Try refreshing, or email hello@aaritransactions.com.';
+      return;
+    }
+
+    if (!data) {
+      // RLS filtered it out OR the file doesn't exist. Either way, denied.
+      hideAllStates();
+      show(deniedState);
+      return;
+    }
+
+    fileRow = data;
+
+    // Already submitted?
+    if (fileRow.agent_submitted_at) {
+      hideAllStates();
+      document.getElementById('prev-submit-date').textContent = fmtDate(fileRow.agent_submitted_at);
+      show(alreadySubmitted);
+      return;
+    }
+
+    // Render
     renderFile();
-  }catch(e){showError('Unable to load: '+e.message);}
-}
-function showError(msg){document.getElementById('loading').innerHTML='<div class="error">'+msg+'</div>';}
-function fmtDate(s){if(!s)return '—';try{return new Date(s+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}catch(e){return s;}}
-function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function renderFile(){
-  document.getElementById('loading').style.display='none';
-  document.getElementById('content').style.display='block';
-  const stage=fileData.stage||'Intake';
-  const isClosed=stage==='Closed';
-  const banner=document.getElementById('stage-banner');
-  if(isClosed){banner.className='stage-banner closed';banner.innerHTML='<strong>Stage: Closed.</strong> You can submit this file to Aari for final review.';}
-  else{banner.className='stage-banner in-flight';banner.innerHTML='<strong>Stage: '+esc(stage)+'.</strong> Submit button will unlock when your transaction reaches Closed stage. You can save a draft anytime before then.';}
-  if(fileData.agent_submitted_at){
-    document.getElementById('content').style.display='none';
-    const success=document.getElementById('success');success.style.display='block';
-    success.querySelector('h2').textContent='Already submitted.';
-    success.querySelector('p').textContent='This file was submitted to Aari Transactions on '+fmtDate(new Date(fileData.agent_submitted_at).toISOString().slice(0,10))+'.';
-    return;
+    hideAllStates();
+    show(content);
   }
-  document.getElementById('file-meta').innerHTML=`
-    <div class="row"><span class="label">File #</span><span class="val">${esc(fileData.file_no||'—')}</span></div>
-    <div class="row"><span class="label">Service</span><span class="val">${esc(fileData.service||'—')}</span></div>
-    <div class="row"><span class="label">Side</span><span class="val">${esc(fileData.side||'—')}</span></div>
-    <div class="row"><span class="label">Stage</span><span class="val">${esc(stage)}</span></div>
-    <div class="row"><span class="label">Service Fee</span><span class="val">${esc(fileData.tc_fee||'—')}</span></div>
-  `;
-  const set=(id,val)=>{const e=document.getElementById(id);if(e)e.value=val||'';};
-  set('address',fileData.address);set('mls',fileData.mls);set('price',fileData.price);
-  set('client',fileData.client);set('client_phone',fileData.client_phone);set('client_email',fileData.client_email);
-  set('effective_date',fileData.effective_date);set('closing_date',fileData.closing_date);
-  set('title_co',fileData.title_co);set('lender',fileData.lender);
-  const submitBtn=document.getElementById('submit-btn');
-  submitBtn.disabled=!isClosed;
-  submitBtn.textContent=isClosed?'Submit to Aari Transactions':'Submit to Aari (locked until Closed)';
-}
-function collectFormData(){
-  const get=id=>{const e=document.getElementById(id);return e?e.value:'';};
-  return {address:get('address'),mls:get('mls'),price:get('price'),client:get('client'),client_phone:get('client_phone'),client_email:get('client_email'),effective_date:get('effective_date'),closing_date:get('closing_date'),title_co:get('title_co'),lender:get('lender'),notes:get('notes')};
-}
-async function saveAgentDraft(){
-  const updates=collectFormData();Object.assign(fileData,updates);
-  if(!fileData.notes)fileData.notes=[];
-  fileData.notes.push({ts:Date.now(),txt:'Agent saved draft. Notes: '+(updates.notes||'(none)')});
-  fileData.agent_draft_saved_at=Date.now();
-  await pushUpdate();showToast('Draft saved.');
-}
-async function submitAgentForm(e){
-  e.preventDefault();
-  if((fileData.stage||'')!=='Closed'){
-    document.getElementById('form-error').style.display='block';
-    document.getElementById('form-error').textContent='Submission is locked until the file reaches Closed stage. Save a draft for now.';return;
+
+  // ----- Render -----
+  function renderFile() {
+    const stage = (fileRow.status || 'intake').toLowerCase();
+    const isClosed = stage === 'closed';
+
+    // Stage banner
+    const banner = document.getElementById('stage-banner');
+    if (isClosed) {
+      banner.className = 'stage-banner closed';
+      banner.innerHTML =
+        '<div>' +
+          '<span class="lbl">Stage &middot; Closed</span>' +
+          '<p>Your file is at Closed stage. Confirm the details below and submit to lock the file for final review.</p>' +
+        '</div>';
+    } else {
+      banner.className = 'stage-banner in-flight';
+      banner.innerHTML =
+        '<div>' +
+          '<span class="lbl">Stage &middot; ' + esc(stage.charAt(0).toUpperCase() + stage.slice(1)) + '</span>' +
+          '<p>Submit button unlocks when your file reaches Closed stage. You can save a draft anytime before then.</p>' +
+        '</div>';
+    }
+
+    // File meta
+    const metaEl = document.getElementById('file-meta');
+    const fileNo = fileRow.file_no || fileRow.id.slice(0, 8);
+    metaEl.innerHTML =
+      '<div class="meta-item"><div class="lbl">File</div><div class="val mono">#' + esc(fileNo) + '</div></div>' +
+      '<div class="meta-item"><div class="lbl">Service</div><div class="val">' + esc(fileRow.service || '—') + '</div></div>' +
+      '<div class="meta-item"><div class="lbl">Side</div><div class="val">' + esc(fileRow.side || '—') + '</div></div>' +
+      '<div class="meta-item"><div class="lbl">Stage</div><div class="val">' + esc(stage.charAt(0).toUpperCase() + stage.slice(1)) + '</div></div>' +
+      '<div class="meta-item"><div class="lbl">Service fee</div><div class="val">' + esc(fileRow.tc_fee || '—') + '</div></div>';
+
+    // Pre-fill form
+    setVal('address', fileRow.address);
+    setVal('mls', fileRow.mls);
+    setVal('price', fileRow.price);
+    setVal('client', fileRow.client);
+    setVal('client_phone', fileRow.client_phone);
+    setVal('client_email', fileRow.client_email);
+    setVal('effective_date', fileRow.effective_date);
+    setVal('closing_date', fileRow.closing_date);
+    setVal('title_co', fileRow.title_co);
+    setVal('lender', fileRow.lender);
+    setVal('notes', fileRow.notes || '');
+
+    // Gate submit button
+    const submitBtn = document.getElementById('btn-submit');
+    submitBtn.disabled = !isClosed;
+    submitBtn.textContent = isClosed ? 'Submit to Aari' : 'Submit to Aari (locked until Closed)';
   }
-  const updates=collectFormData();Object.assign(fileData,updates);
-  fileData.agent_submitted_at=Date.now();
-  if(!fileData.notes)fileData.notes=[];
-  fileData.notes.push({ts:Date.now(),txt:'Agent submitted final info. Notes: '+(updates.notes||'(none)')});
-  await pushUpdate();
-  document.getElementById('content').style.display='none';
-  document.getElementById('success').style.display='block';
-}
-async function pushUpdate(){
-  if(!allData||!allData.files)return;
-  const idx=allData.files.findIndex(f=>f.id===fileId);
-  if(idx>=0)allData.files[idx]=fileData;
-  allData._updated=Date.now();
-  try{await fetch(SYNC_URL,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(allData)});}
-  catch(e){alert('Could not save: '+e.message);throw e;}
-}
-function showToast(msg){
-  const t=document.createElement('div');t.textContent=msg;
-  t.style.cssText='position:fixed;bottom:20px;right:20px;background:#1a1a1a;color:#fff;padding:10px 18px;border-radius:4px;font-size:12px;font-weight:600;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.2)';
-  document.body.appendChild(t);setTimeout(()=>t.remove(),2000);
-}
-loadFile();
+
+  function collectFormData() {
+    return {
+      address: getVal('address'),
+      mls: getVal('mls'),
+      price: getVal('price'),
+      client: getVal('client'),
+      client_phone: getVal('client_phone'),
+      client_email: getVal('client_email'),
+      effective_date: getVal('effective_date') || null,
+      closing_date: getVal('closing_date') || null,
+      title_co: getVal('title_co'),
+      lender: getVal('lender'),
+      notes: getVal('notes'),
+    };
+  }
+
+  // ----- Save draft -----
+  async function saveDraft() {
+    const btn = document.getElementById('btn-draft');
+    btn.disabled = true;
+    const oldLabel = btn.textContent;
+    btn.innerHTML = '<span class="spinner"></span> Saving';
+
+    try {
+      const updates = collectFormData();
+      updates.agent_draft_saved_at = new Date().toISOString();
+      updates.updated_at = new Date().toISOString();
+
+      const { error } = await client
+        .from('files')
+        .update(updates)
+        .eq('id', fileId);
+
+      if (error) throw error;
+
+      // Refresh local copy
+      Object.assign(fileRow, updates);
+      showToast('Draft saved.');
+    } catch (e) {
+      console.error('[agent-submit] saveDraft failed:', e);
+      showAlert('error', 'Could not save draft. ' + (e.message || 'Please try again.'));
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldLabel;
+    }
+  }
+
+  // ----- Submit -----
+  async function submitFinal(e) {
+    e.preventDefault();
+
+    // Double-check stage gate client-side (RLS + server logic should also enforce)
+    const stage = (fileRow.status || '').toLowerCase();
+    if (stage !== 'closed') {
+      showAlert('error', 'Submission is locked until your file reaches Closed stage. Save a draft for now.');
+      return;
+    }
+
+    const updates = collectFormData();
+    if (!updates.address) {
+      showAlert('error', 'Property address is required before submitting.');
+      return;
+    }
+
+    const btn = document.getElementById('btn-submit');
+    btn.disabled = true;
+    const oldLabel = btn.textContent;
+    btn.innerHTML = '<span class="spinner"></span> Submitting';
+
+    try {
+      updates.agent_submitted_at = new Date().toISOString();
+      updates.updated_at = new Date().toISOString();
+
+      const { error } = await client
+        .from('files')
+        .update(updates)
+        .eq('id', fileId);
+
+      if (error) throw error;
+
+      // AARI:WIRE · Optional: fire send-agent-final-submission edge function here.
+      //   await client.functions.invoke('send-agent-final-submission', { body: { file_id: fileId } });
+      // Or rely on the existing files UPDATE trigger if your dev wires one for
+      // agent_submitted_at transitions.
+
+      // Route to thank-you page with the agent_final_submission type
+      window.location.href = 'thank-you.html?type=agent_final_submission&file=' + encodeURIComponent(fileId.slice(0, 8));
+    } catch (e) {
+      console.error('[agent-submit] submitFinal failed:', e);
+      showAlert('error', 'Could not submit. ' + (e.message || 'Please try again or contact hello@aaritransactions.com.'));
+      btn.disabled = false;
+      btn.textContent = oldLabel;
+    }
+  }
+
+  // ----- Init -----
+  document.getElementById('btn-draft').addEventListener('click', saveDraft);
+  document.getElementById('agent-form').addEventListener('submit', submitFinal);
+  document.getElementById('yr').textContent = new Date().getFullYear();
+
+  loadFile().catch(err => {
+    console.error('[agent-submit] init failed:', err);
+    hideAllStates();
+    show(authGate);
+    authGate.querySelector('h2').textContent = 'Something went wrong.';
+    authGate.querySelector('p').textContent = 'We could not load this page. Email hello@aaritransactions.com and we will help.';
+  });
+})();
 </script>
+
 </body>
 </html>
