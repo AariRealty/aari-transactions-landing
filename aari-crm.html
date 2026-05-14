@@ -2166,9 +2166,13 @@ body {
         showGate('No staff profile found.', 'This account does not have CRM access. Contact hello@aaritransactions.com.');
         return;
       }
-      // AARI:WIRE · staff role check
-      // const isStaff = profile.is_staff === true || profile.role === 'tc' || profile.role === 'broker';
-      // if (!isStaff) { showGate('Staff only.', 'This account does not have CRM access.'); return; }
+      // Staff role check · only TCs and brokers get into the CRM
+      const isStaff = profile.role === 'tc' || profile.role === 'broker';
+      if (!isStaff) {
+        showGate('Staff only.',
+          'Your account is not flagged as staff. Sign in with a TC or broker account, or contact hello@aaritransactions.com.');
+        return;
+      }
       showApp(profile);
     } catch (err) {
       console.error('[AariCRM auth]', err);
@@ -2355,78 +2359,222 @@ body {
   //   Query (thread list): SELECT t.*, f.address FROM threads t JOIN files f ON t.file_id = f.id ORDER BY last_message_at DESC
   //   Query (thread detail): SELECT * FROM messages WHERE thread_id = $1 ORDER BY created_at ASC
   //   Insert (reply): INSERT INTO messages (thread_id, author_id, body) VALUES (...)
-  let activeThreadId = null;
-  async function loadThreads() {
-    // AARI:WIRE · const { data } = await supabase.from('threads').select('*, files(address, agent_name)').order('last_message_at', { ascending: false });
-    // renderThreadList(data || []);
+  // ============== INBOX · WIRED to messages table (Phase 1) ==============
+  // Thread = all messages for a given file_id. Sorted by latest message time.
+  // TC reply uses the send-agent-reply Edge Function which emails the agent.
+  let activeThreadFileId = null;
+  let inboxCache = { messagesByFile: {}, files: {}, agents: {} };
+
+  function timeAgoLabel(iso) {
+    try {
+      const d = (Date.now() - new Date(iso).getTime()) / 1000;
+      if (d < 60) return Math.floor(d) + 's ago';
+      if (d < 3600) return Math.floor(d / 60) + 'm ago';
+      if (d < 86400) return Math.floor(d / 3600) + 'h ago';
+      return Math.floor(d / 86400) + 'd ago';
+    } catch (e) { return ''; }
   }
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  async function loadThreads() {
+    try {
+      const client = await window.AariAuth.ensureClient();
+      // Pull every message scoped to staff (RLS will allow because role=tc|broker bypasses agent restrictions IF policy is broader,
+      // for v1 we use the service role indirectly by hitting the SECURITY DEFINER RPC OR rely on the function-side fetch).
+      // Simplest path: query messages table directly via authenticated client. For broker/TC, add a permissive policy in migration v2.
+      // For now we attempt the query; if RLS blocks it we fall back to empty.
+      const { data: messages, error } = await client
+        .from('messages')
+        .select('id, file_id, agent_id, sender_type, body, created_at, read_at')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.warn('[AariCRM inbox] messages query error (likely RLS, add staff policy):', error.message);
+        renderThreadList([]);
+        return;
+      }
+      if (!messages || messages.length === 0) {
+        renderThreadList([]);
+        return;
+      }
+      // Pull file + agent context for the unique file_ids referenced
+      const fileIds = [...new Set(messages.map(m => m.file_id))];
+      const agentIds = [...new Set(messages.map(m => m.agent_id))];
+      const [filesR, agentsR] = await Promise.all([
+        client.from('files').select('id, property_address, agent_id').in('id', fileIds),
+        client.from('agents').select('id, first_name, last_name, email').in('id', agentIds),
+      ]);
+      const files = {};
+      (filesR.data || []).forEach(f => { files[f.id] = f; });
+      const agents = {};
+      (agentsR.data || []).forEach(a => { agents[a.id] = a; });
+
+      // Group messages by file_id
+      const grouped = {};
+      messages.forEach(m => {
+        if (!grouped[m.file_id]) grouped[m.file_id] = [];
+        grouped[m.file_id].push(m);
+      });
+      // Sort each group oldest → newest for the thread pane
+      Object.keys(grouped).forEach(k => grouped[k].sort((a,b) => a.created_at.localeCompare(b.created_at)));
+
+      inboxCache = { messagesByFile: grouped, files, agents };
+
+      // Build thread rows (one per file)
+      const threadRows = Object.keys(grouped).map(fileId => {
+        const msgs = grouped[fileId];
+        const last = msgs[msgs.length - 1];
+        const f = files[fileId] || {};
+        const agent = agents[f.agent_id] || {};
+        const agentName = ((agent.first_name || '') + ' ' + (agent.last_name || '')).trim() || agent.email || 'Agent';
+        const unread = msgs.some(m => m.sender_type === 'agent' && !m.read_at);
+        return {
+          fileId,
+          fileAddress: f.property_address || '(no address)',
+          agentName,
+          lastSnippet: (last.body || '').slice(0, 100),
+          lastAt: last.created_at,
+          unread,
+        };
+      });
+      threadRows.sort((a,b) => b.lastAt.localeCompare(a.lastAt));
+      renderThreadList(threadRows);
+
+      // Update Inbox badge with unread count
+      const unreadCount = threadRows.filter(t => t.unread).length;
+      const badge = document.getElementById('inbox-badge');
+      if (badge) {
+        if (unreadCount > 0) {
+          badge.textContent = String(unreadCount);
+          badge.style.display = '';
+        } else {
+          badge.style.display = 'none';
+        }
+      }
+    } catch (e) {
+      console.error('[AariCRM inbox] loadThreads exception:', e);
+      renderThreadList([]);
+    }
+  }
+
   function renderThreadList(threads) {
     const body = document.getElementById('thread-list-body');
-    if (!threads || threads.length === 0) return;
-    body.innerHTML = threads.map(t => {
-      return '<a class="thread-row' + (t.unread_count_for_user ? ' unread' : '') + '" data-thread-id="' + t.id + '">' +
-        '<div class="thread-addr">' + (t.file_address || 'No address') + '</div>' +
-        '<div class="thread-meta">' + (t.file_agent || '') + ' · ' + (t.subject || '(no subject)') + '</div>' +
-        '<div class="thread-snippet">' + (t.last_snippet || '') + '</div>' +
-        '<div class="thread-time">' + (t.last_message_at_display || '') + '</div>' +
-        '</a>';
-    }).join('');
+    if (!threads || threads.length === 0) {
+      body.innerHTML = '<div class="empty-state" style="padding:32px 20px"><p class="label" style="font-size:16px">No messages yet.</p><p style="font-size:11px">When an agent sends a message from their portal, it lands here.</p></div>';
+      return;
+    }
+    body.innerHTML = threads.map(t =>
+      '<a class="thread-row' + (t.unread ? ' unread' : '') + '" data-file-id="' + t.fileId + '" href="#">' +
+        '<div class="thread-addr">' + escapeHtml(t.fileAddress) + '</div>' +
+        '<div class="thread-meta">' + escapeHtml(t.agentName) + '</div>' +
+        '<div class="thread-snippet">' + escapeHtml(t.lastSnippet) + '</div>' +
+        '<div class="thread-time">' + timeAgoLabel(t.lastAt) + '</div>' +
+      '</a>'
+    ).join('');
   }
-  // Click handler: open a thread
+
   document.getElementById('thread-list-body').addEventListener('click', function(e) {
     const row = e.target.closest('.thread-row');
     if (!row) return;
     e.preventDefault();
-    const threadId = row.getAttribute('data-thread-id');
+    const fileId = row.getAttribute('data-file-id');
     document.querySelectorAll('.thread-row').forEach(r => r.classList.toggle('active', r === row));
-    openThread(threadId);
+    openThread(fileId);
   });
-  async function openThread(threadId) {
-    activeThreadId = threadId;
-    // AARI:WIRE · const { data: messages } = await supabase.from('messages').select('*, profile:author_id(*)').eq('thread_id', threadId).order('created_at');
-    // const { data: thread } = await supabase.from('threads').select('*, files(*)').eq('id', threadId).single();
-    // renderThread(thread, messages);
-    console.info('[AariCRM] Thread opened:', threadId);
+
+  function openThread(fileId) {
+    activeThreadFileId = fileId;
+    const messages = inboxCache.messagesByFile[fileId] || [];
+    const file = inboxCache.files[fileId] || {};
+    const agent = inboxCache.agents[file.agent_id] || {};
+    const agentName = ((agent.first_name || '') + ' ' + (agent.last_name || '')).trim() || agent.email || 'Agent';
+    renderThread({
+      fileAddress: file.property_address || '(no address)',
+      agentName,
+      agentEmail: agent.email || '',
+    }, messages);
+    // Mark unread agent messages as read (best-effort; failures are ignored)
+    const unreadIds = messages.filter(m => m.sender_type === 'agent' && !m.read_at).map(m => m.id);
+    if (unreadIds.length) {
+      window.AariAuth.ensureClient().then(c =>
+        c.from('messages').update({ read_at: new Date().toISOString() }).in('id', unreadIds)
+      ).then(() => loadThreads()).catch(() => {});
+    }
   }
+
   function renderThread(thread, messages) {
     const pane = document.getElementById('thread-pane');
-    pane.innerHTML =
-      '<div class="thread-pane-head">' +
-        '<div class="h">' + (thread.subject || '(no subject)') + '</div>' +
-        '<div class="meta">File · ' + (thread.file_address || '') + ' · ' + (thread.file_agent || '') + '</div>' +
-      '</div>' +
-      '<div class="thread-messages" id="thread-messages-body"></div>' +
-      '<div class="thread-reply">' +
-        '<textarea id="thread-reply-text" placeholder="Reply..."></textarea>' +
-        '<div class="thread-reply-actions">' +
-          '<span class="left">Audit-stamped with your name + timestamp on send.</span>' +
-          '<button type="button" class="thread-reply-send" id="thread-reply-send-btn">Send</button>' +
-        '</div>' +
-      '</div>';
-    const msgBody = document.getElementById('thread-messages-body');
-    msgBody.innerHTML = (messages || []).map(m => {
+    const msgHtml = (messages || []).map(m => {
+      const isAgent = m.sender_type === 'agent';
       return '<div class="message">' +
         '<div class="message-head">' +
-          '<div class="message-author">' + (m.author_name || 'Unknown') + '<span class="role">' + (m.author_role || '') + '</span></div>' +
-          '<div class="message-time">' + (m.created_at_display || '') + '</div>' +
+          '<div class="message-author">' + escapeHtml(isAgent ? thread.agentName : 'You (TC)') +
+            '<span class="role">' + (isAgent ? 'agent' : 'tc') + '</span>' +
+          '</div>' +
+          '<div class="message-time">' + timeAgoLabel(m.created_at) + '</div>' +
         '</div>' +
-        '<div class="message-body">' + (m.body || '').replace(/</g, '&lt;') + '</div>' +
-        (m.attachments && m.attachments.length ? '<div class="message-attach">Attachments: ' + m.attachments.map(a => '<a href="' + a.url + '">' + a.name + '</a>').join(' · ') + '</div>' : '') +
-        '</div>';
+        '<div class="message-body">' + escapeHtml(m.body) + '</div>' +
+      '</div>';
     }).join('');
-    // Wire the Send button
-    document.getElementById('thread-reply-send-btn').addEventListener('click', function() {
+    pane.innerHTML =
+      '<div class="thread-pane-head">' +
+        '<div class="h">' + escapeHtml(thread.fileAddress) + '</div>' +
+        '<div class="meta">' + escapeHtml(thread.agentName) + (thread.agentEmail ? ' · ' + escapeHtml(thread.agentEmail) : '') + '</div>' +
+      '</div>' +
+      '<div class="thread-messages" id="thread-messages-body">' + msgHtml + '</div>' +
+      '<div class="thread-reply">' +
+        '<textarea id="thread-reply-text" placeholder="Reply to the agent..."></textarea>' +
+        '<div class="thread-reply-actions">' +
+          '<span class="left">Agent receives this as an email within seconds.</span>' +
+          '<button type="button" class="thread-reply-send" id="thread-reply-send-btn">Send reply &rarr;</button>' +
+        '</div>' +
+      '</div>';
+
+    const sendBtn = document.getElementById('thread-reply-send-btn');
+    sendBtn.addEventListener('click', async function() {
       const txt = (document.getElementById('thread-reply-text').value || '').trim();
-      if (!txt || !activeThreadId) return;
-      // AARI:WIRE · await supabase.from('messages').insert({ thread_id: activeThreadId, body: txt, author_id: current_user_id });
-      // Then reload the thread to show the new message.
-      console.info('[AariCRM] Reply to send:', { thread: activeThreadId, body: txt });
-      document.getElementById('thread-reply-text').value = '';
+      if (!txt || !activeThreadFileId) return;
+      sendBtn.disabled = true;
+      const originalLabel = sendBtn.textContent;
+      sendBtn.textContent = 'Sending…';
+      try {
+        const cfg = window.AARI_SUPABASE_CONFIG || {};
+        const session = await window.AariAuth.getCurrentSession();
+        const token = session && session.access_token ? session.access_token : cfg.SUPABASE_ANON_KEY;
+        const res = await fetch(cfg.SUPABASE_URL + '/functions/v1/send-agent-reply', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token,
+            'apikey': cfg.SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({ file_id: activeThreadFileId, body: txt }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          alert('Could not send reply: ' + (data.error || res.status));
+          sendBtn.disabled = false;
+          sendBtn.textContent = originalLabel;
+          return;
+        }
+        document.getElementById('thread-reply-text').value = '';
+        sendBtn.disabled = false;
+        sendBtn.textContent = originalLabel;
+        // Reload threads + reopen the same one so the new message shows
+        await loadThreads();
+        openThread(activeThreadFileId);
+      } catch (err) {
+        console.error('[AariCRM inbox] reply failed:', err);
+        alert('Network error sending reply. Try again.');
+        sendBtn.disabled = false;
+        sendBtn.textContent = originalLabel;
+      }
     });
   }
+
   document.getElementById('thread-compose-btn').addEventListener('click', function() {
-    // AARI:WIRE · open compose modal · select file, recipient, subject, body
-    console.info('[AariCRM] Compose new message');
+    alert('Compose-from-CRM is Phase 2. For now, agents start the thread from the portal. You reply here.');
   });
 
   // Initial Layer 2 loads
