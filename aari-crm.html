@@ -2662,6 +2662,51 @@ body {
   </div>
 </div>
 
+<!-- ============== LOG CONTRACT SUB-MODAL (Phase D.2 · opens from file detail) ============== -->
+<div class="overlay" id="log-contract-overlay" onclick="if(event.target===this)closeLogContractModal()">
+  <div class="modal" id="log-contract-box" style="max-width:520px">
+    <div class="modal-head">
+      <div>
+        <div class="modal-title" id="log-contract-title">Log Contract</div>
+        <div class="modal-sub" id="log-contract-sub">&nbsp;</div>
+      </div>
+      <button type="button" class="modal-x" onclick="closeLogContractModal()">×</button>
+    </div>
+    <div class="modal-body" style="padding:0 24px 24px">
+      <label>Contract template <span style="color:#cc3333">*</span></label>
+      <select id="lc-contract-id">
+        <option value="">Select from library…</option>
+      </select>
+      <p style="font-size:10px;color:#888;margin-top:4px">10 templates seeded. Add more in the Contracts → Library tab.</p>
+
+      <label>Status</label>
+      <div style="display:flex;gap:14px;margin-top:6px">
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:12px;color:#000;font-weight:500;margin:0"><input type="radio" name="lc-status" value="pending" checked style="width:auto"> Pending</label>
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:12px;color:#000;font-weight:500;margin:0"><input type="radio" name="lc-status" value="signed" style="width:auto"> Signed</label>
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:12px;color:#000;font-weight:500;margin:0"><input type="radio" name="lc-status" value="voided" style="width:auto"> Voided</label>
+      </div>
+
+      <label>Signed on <span style="font-size:9px;color:#888">(only if Signed)</span></label>
+      <input type="date" id="lc-signed-at">
+
+      <label>Signers <span style="font-size:9px;color:#888">(comma-separated)</span></label>
+      <input type="text" id="lc-signers" placeholder="John Smith, Anna Buyer">
+
+      <label>External URL <span style="font-size:9px;color:#888">(Dotloop / DocuSign / Drive)</span></label>
+      <input type="url" id="lc-url" placeholder="https://app.dotloop.com/...">
+
+      <label>Notes <span style="font-size:9px;color:#888">(optional)</span></label>
+      <textarea id="lc-notes" rows="2" placeholder="Optional · audit notes"></textarea>
+
+      <div id="log-contract-error" style="display:none;background:#fbe2e2;border:1px solid #e6c4c4;color:#cc3333;padding:9px 11px;border-radius:5px;font-size:12px;margin-top:14px"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+        <button type="button" class="btn-act subtle" onclick="closeLogContractModal()">Cancel</button>
+        <button type="button" class="btn-new" onclick="saveFileContract()">Save Contract</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ============== TEMPLATE EDIT MODAL (Phase 3.5 · replaces prompt()) ============== -->
 <div class="modal-overlay" id="tpl-modal" role="dialog" aria-modal="true" aria-labelledby="tpl-modal-title" style="display:none">
   <div class="modal-box" style="max-width:600px">
@@ -3966,9 +4011,11 @@ body {
   loadLeads = function () { renderLeadsPhase3(); };
 
   // -------- B · File detail modal · populate from crmCache --------
+  let _openFileId = null;
   function openFile(fileId) {
     const f = (crmCache.files || []).find(x => x.id === fileId);
     if (!f) return;
+    _openFileId = fileId;
     const ag = crmCache.agents[f.agent_id] || {};
     const modal = document.getElementById('file-modal');
     document.getElementById('file-modal-title').textContent = f.property_address || '(no address)';
@@ -3985,9 +4032,110 @@ body {
     document.getElementById('fd-financing').textContent = f.financing_due_date ? fmtDateShort(f.financing_due_date) : 'Not set';
     document.getElementById('fd-review-status').textContent = f.broker_review_status === 'pending' ? 'Pending broker review' : (f.broker_review_status || 'Not yet submitted for broker review');
     document.getElementById('fd-review-by').textContent = f.broker_review_by ? (nameFor(crmCache.agents[f.broker_review_by]) || '—') : '—';
+    renderFileContractsInModal(fileId);
     modal.classList.add('show');
     modal.style.display = 'flex';
   }
+
+  // -------- D.2 · File-detail Contracts section + Log Contract sub-modal --------
+  function renderFileContractsInModal(fileId) {
+    const body = document.getElementById('fd-contracts-body');
+    const meta = document.getElementById('fd-contracts-meta');
+    if (!body) return;
+    const libById = {};
+    (contractsLibraryCache || []).forEach(c => { libById[c.id] = c; });
+    const fileContracts = (fileContractsCache || []).filter(fc => fc.file_id === fileId);
+    if (!fileContracts.length) {
+      body.innerHTML = '<div class="empty-state" style="padding:14px;border:1px dashed #eee;border-radius:5px;background:#fafafa"><p style="font-size:11px;color:#888;margin:0">No contracts logged for this file yet. Click + Log Contract to add one from the library.</p></div>';
+      if (meta) meta.textContent = '';
+      return;
+    }
+    const signed = fileContracts.filter(fc => fc.status === 'signed').length;
+    if (meta) meta.textContent = signed + ' of ' + fileContracts.length + ' signed';
+    body.innerHTML = fileContracts.map(fc => {
+      const lib = libById[fc.contract_id] || { name: '(unknown)', version: '' };
+      const statusPill = fc.status === 'signed'
+        ? '<span class="pill pill-green">SIGNED</span>'
+        : fc.status === 'voided'
+          ? '<span class="pill pill-red">VOIDED</span>'
+          : '<span class="pill pill-yellow">PENDING</span>';
+      const meta = [];
+      if (fc.signed_at) meta.push('Signed ' + fmtDateShort(fc.signed_at));
+      if (fc.signers && fc.signers.length) meta.push(fc.signers.join(', '));
+      const link = fc.external_url
+        ? ' · <a href="' + escapeHtml(fc.external_url) + '" target="_blank" rel="noopener" style="color:#8a6ab0;text-decoration:none;font-weight:600">Open ↗</a>'
+        : '';
+      return '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid #eee;border-radius:5px;background:#fff">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:#000">' + escapeHtml(lib.name) + (lib.version ? ' <span style="color:#888;font-weight:400">· v' + escapeHtml(lib.version) + '</span>' : '') + '</div>' +
+        '<div style="font-size:11px;color:#666;margin-top:2px">' + (meta.length ? meta.join(' · ') : (fc.notes ? escapeHtml(fc.notes) : 'No details')) + link + '</div></div>' +
+        statusPill +
+      '</div>';
+    }).join('');
+  }
+
+  function openLogContractModal() {
+    if (!_openFileId) return;
+    const f = (crmCache.files || []).find(x => x.id === _openFileId);
+    document.getElementById('log-contract-sub').textContent = 'Against · ' + ((f && f.property_address) || '(file)');
+    document.getElementById('log-contract-error').style.display = 'none';
+    // Populate template dropdown from library
+    const sel = document.getElementById('lc-contract-id');
+    sel.innerHTML = '<option value="">Select from library…</option>' + (contractsLibraryCache || [])
+      .filter(c => c.active !== false)
+      .map(c => '<option value="' + c.id + '">' + escapeHtml(c.name) + ' · v' + escapeHtml(c.version || '1.0') + '</option>').join('');
+    document.getElementById('lc-signed-at').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('lc-signers').value = '';
+    document.getElementById('lc-url').value = '';
+    document.getElementById('lc-notes').value = '';
+    Array.from(document.getElementsByName('lc-status')).forEach(r => r.checked = r.value === 'pending');
+    document.getElementById('log-contract-overlay').classList.add('open');
+  }
+  window.openLogContractModal = openLogContractModal;
+  window.closeLogContractModal = function () {
+    document.getElementById('log-contract-overlay').classList.remove('open');
+  };
+
+  async function saveFileContract() {
+    const errEl = document.getElementById('log-contract-error');
+    errEl.style.display = 'none';
+    const contractId = document.getElementById('lc-contract-id').value;
+    if (!contractId) {
+      errEl.textContent = 'Please pick a contract template from the library.';
+      errEl.style.display = 'block';
+      return;
+    }
+    const status = (Array.from(document.getElementsByName('lc-status')).find(r => r.checked) || {}).value || 'pending';
+    const signedAtRaw = document.getElementById('lc-signed-at').value;
+    const signersRaw = document.getElementById('lc-signers').value.trim();
+    const signers = signersRaw ? signersRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const payload = {
+      file_id: _openFileId,
+      contract_id: contractId,
+      status,
+      signed_at: status === 'signed' && signedAtRaw ? signedAtRaw : null,
+      signers,
+      external_url: document.getElementById('lc-url').value.trim() || null,
+      notes: document.getElementById('lc-notes').value.trim() || null,
+      created_by: window.__currentUserId || null,
+    };
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { error } = await client.from('file_contracts').insert(payload);
+      if (error) {
+        errEl.textContent = 'Save failed: ' + error.message;
+        errEl.style.display = 'block';
+        return;
+      }
+      window.closeLogContractModal();
+      await loadContracts();
+      renderFileContractsInModal(_openFileId);
+      if (typeof v2Toast === 'function') v2Toast('Contract logged.', 'success');
+    } catch (e) {
+      errEl.textContent = 'Save error: ' + e.message;
+      errEl.style.display = 'block';
+    }
+  }
+  window.saveFileContract = saveFileContract;
   document.getElementById('file-modal-close')?.addEventListener('click', () => {
     const m = document.getElementById('file-modal');
     m.classList.remove('show');
