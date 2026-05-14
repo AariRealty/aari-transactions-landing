@@ -22,8 +22,11 @@ window.AARI_SUPABASE_CONFIG = {
 
   // Where Supabase sends users after they click the email confirm / reset link.
   // Must be added to the Supabase project's "Redirect URLs" allow-list.
-  AUTH_REDIRECT_URL: 'https://aaritransactions.com/portal',
-  PASSWORD_RESET_REDIRECT_URL: 'https://aaritransactions.com/reset-password.html',
+  // Switched to the working Netlify URL because aaritransactions.com is not yet
+  // wired to the new Netlify deploy. Switch back to aaritransactions.com
+  // once the custom domain is connected.
+  AUTH_REDIRECT_URL: 'https://aari-transactions.netlify.app/portal',
+  PASSWORD_RESET_REDIRECT_URL: 'https://aari-transactions.netlify.app/reset-password.html',
 
   // Used by login rate-limiter (client-side; server-side enforcement is in
   // Supabase Auth's built-in throttling and the rate_limits RLS table).
