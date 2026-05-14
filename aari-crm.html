@@ -2581,12 +2581,17 @@ body {
         const name = nameFor(a);
         const role = (a.role || 'agent').toUpperCase();
         const initials = ((a.first_name || '?')[0] + (a.last_name || '?')[0]).toUpperCase();
+        // Eileen gets her own BD Pilot cockpit link
+        const isEileen = (a.role === 'tc') && String(a.first_name || '').toLowerCase() === 'eileen';
+        const cockpitLink = isEileen
+          ? '<a href="eileen.html" target="_blank" style="font-size:11px;color:var(--ink);background:var(--soft-bg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:600;margin-right:6px">BD cockpit &rarr;</a>'
+          : '';
         return '<div class="dir-row" style="display:grid;grid-template-columns:42px 2fr 2fr 1fr auto;gap:14px;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface)">' +
           '<div style="width:36px;height:36px;border-radius:50%;background:var(--ink);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center">' + escapeHtml(initials) + '</div>' +
           '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + escapeHtml(name) + '</div><div style="font-size:11px;color:var(--muted)">' + escapeHtml(a.email || '') + '</div></div>' +
           '<div style="font-size:12px;color:var(--ink-2)">' + escapeHtml(a.brokerage_name || '') + '</div>' +
           '<div><span style="font-size:9px;letter-spacing:1px;font-weight:700;padding:3px 8px;border-radius:99px;background:' + (role === 'BROKER' ? 'var(--ink)' : (role === 'TC' ? '#0f6e30' : 'var(--soft-bg)')) + ';color:' + (role === 'AGENT' ? 'var(--muted)' : '#fff') + '">' + role + '</span></div>' +
-          '<a href="mailto:' + escapeHtml(a.email || '') + '" style="font-size:11px;color:var(--ink);text-decoration:underline;font-weight:600">Email</a>' +
+          '<div style="display:flex;align-items:center">' + cockpitLink + '<a href="mailto:' + escapeHtml(a.email || '') + '" style="font-size:11px;color:var(--ink);text-decoration:underline;font-weight:600">Email</a></div>' +
         '</div>';
       }).join('') +
     '</div>';
@@ -2992,6 +2997,207 @@ body {
   }
   // Override the placeholder Leads loader so the lead-filter pills also re-render
   loadLeads = function () { renderLeadsPhase3(); };
+
+  // -------- B · File detail modal · populate from crmCache --------
+  function openFile(fileId) {
+    const f = (crmCache.files || []).find(x => x.id === fileId);
+    if (!f) return;
+    const ag = crmCache.agents[f.agent_id] || {};
+    const modal = document.getElementById('file-modal');
+    document.getElementById('file-modal-title').textContent = f.property_address || '(no address)';
+    document.getElementById('file-modal-sub').textContent = 'File #' + fileId.slice(0, 8).toUpperCase() + ' · ' + (f.status || '');
+    document.getElementById('fd-addr').textContent = f.property_address || '—';
+    document.getElementById('fd-client').textContent = f.client_name || '—';
+    document.getElementById('fd-agent').textContent = nameFor(ag);
+    document.getElementById('fd-brokerage').textContent = ag.brokerage_name || '—';
+    document.getElementById('fd-tc').textContent = f.tc_id ? (nameFor(crmCache.agents[f.tc_id]) || 'TC') : 'Unassigned';
+    document.getElementById('fd-service').textContent = f.service_type || '—';
+    document.getElementById('fd-submitted').textContent = fmtDateShort(f.created_at);
+    document.getElementById('fd-closing').textContent = f.closing_date ? fmtDateShort(f.closing_date) : '—';
+    document.getElementById('fd-inspection').textContent = f.inspection_date ? fmtDateShort(f.inspection_date) : 'Not set';
+    document.getElementById('fd-financing').textContent = f.financing_due_date ? fmtDateShort(f.financing_due_date) : 'Not set';
+    document.getElementById('fd-review-status').textContent = f.broker_review_status === 'pending' ? 'Pending broker review' : (f.broker_review_status || 'Not yet submitted for broker review');
+    document.getElementById('fd-review-by').textContent = f.broker_review_by ? (nameFor(crmCache.agents[f.broker_review_by]) || '—') : '—';
+    modal.classList.add('show');
+    modal.style.display = 'flex';
+  }
+  document.getElementById('file-modal-close')?.addEventListener('click', () => {
+    const m = document.getElementById('file-modal');
+    m.classList.remove('show');
+    m.style.display = 'none';
+  });
+  document.getElementById('file-modal')?.addEventListener('click', e => {
+    if (e.target.id === 'file-modal') {
+      e.target.classList.remove('show');
+      e.target.style.display = 'none';
+    }
+  });
+  // Hook row clicks across Today, Pipeline, Leads, Calendar
+  document.addEventListener('click', e => {
+    const row = e.target.closest('[data-file-id]');
+    if (!row) return;
+    // Ignore clicks on inner buttons that have their own handlers
+    if (e.target.closest('.thread-row, .tpl-copy, .tpl-edit, .payroll-approve, .payroll-reject, .wb-send')) return;
+    const fid = row.getAttribute('data-file-id');
+    if (fid) openFile(fid);
+  });
+
+  // -------- E · Compose new thread modal --------
+  function openComposeModal() {
+    const sel = document.getElementById('compose-file');
+    const active = (crmCache.files || []).filter(f => ACTIVE_STATUSES.includes(f.status));
+    sel.innerHTML = active.length
+      ? '<option value="">Pick a file…</option>' + active.map(f => '<option value="' + f.id + '">' + escapeHtml(f.property_address || 'File ' + f.id.slice(0,8)) + ' · ' + escapeHtml(nameFor(crmCache.agents[f.agent_id])) + '</option>').join('')
+      : '<option value="">No active files</option>';
+    document.getElementById('compose-body').value = '';
+    document.getElementById('compose-error').style.display = 'none';
+    document.getElementById('compose-modal').style.display = 'flex';
+  }
+  function closeComposeModal() { document.getElementById('compose-modal').style.display = 'none'; }
+  document.getElementById('thread-compose-btn')?.removeEventListener && document.getElementById('thread-compose-btn')?.removeEventListener('click', () => {});
+  // Re-bind the compose button to the new modal (overrides the earlier alert handler)
+  const composeBtn = document.getElementById('thread-compose-btn');
+  if (composeBtn) {
+    const fresh = composeBtn.cloneNode(true);
+    composeBtn.parentNode.replaceChild(fresh, composeBtn);
+    fresh.addEventListener('click', openComposeModal);
+  }
+  document.getElementById('compose-modal-close')?.addEventListener('click', closeComposeModal);
+  document.getElementById('compose-cancel')?.addEventListener('click', closeComposeModal);
+  document.getElementById('compose-send')?.addEventListener('click', async () => {
+    const fileId = document.getElementById('compose-file').value;
+    const body = (document.getElementById('compose-body').value || '').trim();
+    const err = document.getElementById('compose-error');
+    err.style.display = 'none';
+    if (!fileId) { err.textContent = 'Pick a file.'; err.style.display = 'block'; return; }
+    if (body.length < 2) { err.textContent = 'Type a message.'; err.style.display = 'block'; return; }
+    const sendBtn = document.getElementById('compose-send');
+    sendBtn.disabled = true;
+    sendBtn.textContent = 'Sending…';
+    try {
+      const cfg = window.AARI_SUPABASE_CONFIG || {};
+      const session = await window.AariAuth.getCurrentSession();
+      const token = session && session.access_token ? session.access_token : cfg.SUPABASE_ANON_KEY;
+      const res = await fetch(cfg.SUPABASE_URL + '/functions/v1/send-agent-reply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, 'apikey': cfg.SUPABASE_ANON_KEY },
+        body: JSON.stringify({ file_id: fileId, body: body }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        err.textContent = data.error || ('Send failed · ' + res.status);
+        err.style.display = 'block';
+        sendBtn.disabled = false;
+        sendBtn.textContent = 'Send to agent →';
+        return;
+      }
+      closeComposeModal();
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send to agent →';
+      // Refresh inbox so the new thread surfaces
+      if (typeof loadThreads === 'function') loadThreads();
+    } catch (e) {
+      err.textContent = 'Network error · try again.';
+      err.style.display = 'block';
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send to agent →';
+    }
+  });
+
+  // -------- A · Win-back batch trigger --------
+  // Adds a "Run batch now" button at the top of the win-back tab. Calls send-win-back.
+  const wbHost = document.querySelector('#view-winback .dir-wrap');
+  if (wbHost && !document.getElementById('wb-run-batch')) {
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:var(--soft-bg);border:1px solid var(--line);border-radius:8px;margin-bottom:16px';
+    bar.innerHTML = '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">Win-back batch</div><div style="font-size:11px;color:var(--muted)">Manually run the Day 30 / 60 / 90 send sequence. Normally runs on cron at 13:00 UTC daily.</div></div>' +
+      '<button type="button" id="wb-run-batch" style="font-size:12px;padding:10px 16px;background:var(--ink);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Run batch now</button>';
+    wbHost.insertBefore(bar, wbHost.firstChild);
+    document.getElementById('wb-run-batch').addEventListener('click', async () => {
+      if (!confirm('Trigger the win-back send sequence now? This emails every agent in the 30/60/90 buckets.')) return;
+      const btn = document.getElementById('wb-run-batch');
+      btn.disabled = true; btn.textContent = 'Running…';
+      try {
+        const cfg = window.AARI_SUPABASE_CONFIG || {};
+        const session = await window.AariAuth.getCurrentSession();
+        const token = session && session.access_token ? session.access_token : cfg.SUPABASE_ANON_KEY;
+        const res = await fetch(cfg.SUPABASE_URL + '/functions/v1/send-win-back', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, 'apikey': cfg.SUPABASE_ANON_KEY },
+          body: '{}',
+        });
+        const data = await res.json().catch(() => ({}));
+        btn.disabled = false; btn.textContent = 'Run batch now';
+        alert('Win-back batch complete · sent: Day30 ' + (data.day30 || 0) + ' · Day60 ' + (data.day60 || 0) + ' · Day90 ' + (data.day90 || 0));
+        loadWinback();
+      } catch (e) {
+        btn.disabled = false; btn.textContent = 'Run batch now';
+        alert('Batch failed: ' + e.message);
+      }
+    });
+  }
+
+  // -------- D · Org settings panel --------
+  async function loadOrgSettings() {
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { data, error } = await client.from('org_settings').select('*').eq('id', 1).maybeSingle();
+      if (error) { console.warn('[CRM org settings]', error.message); return; }
+      const host = document.querySelector('#view-settings .set-wrap');
+      if (!host || document.getElementById('org-settings-panel')) return;
+      const panel = document.createElement('div');
+      panel.id = 'org-settings-panel';
+      panel.style.cssText = 'padding:18px 20px;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin-bottom:18px';
+      const s = data || {};
+      panel.innerHTML =
+        '<h3 style="font-family:var(--serif);font-size:18px;font-weight:600;color:var(--ink);margin-bottom:14px">Organization</h3>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">' +
+          settingsFieldHtml('os-brand', 'Brand name', s.brand_name || 'Aari Transactions') +
+          settingsFieldHtml('os-tc-inbox', 'Default TC inbox email', s.default_tc_inbox || 'hello@aaritransactions.com') +
+          settingsFieldMoneyHtml('os-pay-one', 'Default payout · One side', s.default_payout_one_side_cents) +
+          settingsFieldMoneyHtml('os-pay-both', 'Default payout · Both sides', s.default_payout_both_sides_cents) +
+          settingsFieldMoneyHtml('os-pay-list', 'Default payout · Listing', s.default_payout_listing_cents) +
+          settingsToggleHtml('os-friday', 'Friday Disbursement enabled', s.friday_disbursement_enabled !== false) +
+        '</div>' +
+        '<button type="button" id="os-save" style="font-size:12px;padding:11px 22px;background:var(--ink);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600;margin-top:16px">Save org settings</button>' +
+        '<span id="os-save-confirm" style="margin-left:12px;font-size:11px;color:var(--status-green);display:none">Saved ✓</span>';
+      host.insertBefore(panel, host.firstChild);
+      document.getElementById('os-save').addEventListener('click', async () => {
+        const c = await window.AariAuth.ensureClient();
+        const payload = {
+          brand_name: document.getElementById('os-brand').value.trim(),
+          default_tc_inbox: document.getElementById('os-tc-inbox').value.trim(),
+          default_payout_one_side_cents: Math.round(parseFloat(document.getElementById('os-pay-one').value || '0') * 100),
+          default_payout_both_sides_cents: Math.round(parseFloat(document.getElementById('os-pay-both').value || '0') * 100),
+          default_payout_listing_cents: Math.round(parseFloat(document.getElementById('os-pay-list').value || '0') * 100),
+          friday_disbursement_enabled: document.getElementById('os-friday').checked,
+          updated_at: new Date().toISOString(),
+          updated_by: window.__currentUserId,
+        };
+        const { error } = await c.from('org_settings').update(payload).eq('id', 1);
+        const ok = document.getElementById('os-save-confirm');
+        if (error) { alert('Save failed: ' + error.message); return; }
+        ok.style.display = 'inline'; setTimeout(() => { ok.style.display = 'none'; }, 1600);
+      });
+    } catch (e) { console.error('[CRM org settings]', e); }
+  }
+  function settingsFieldHtml(id, label, value) {
+    return '<div><label style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);font-weight:700;display:block;margin-bottom:6px">' + label + '</label>' +
+      '<input type="text" id="' + id + '" value="' + (value == null ? '' : String(value).replace(/"/g,'&quot;')) + '" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:6px;font-family:var(--sans);font-size:13px"></div>';
+  }
+  function settingsFieldMoneyHtml(id, label, cents) {
+    const val = ((cents || 0) / 100).toFixed(2);
+    return '<div><label style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);font-weight:700;display:block;margin-bottom:6px">' + label + ' ($)</label>' +
+      '<input type="number" step="0.01" min="0" id="' + id + '" value="' + val + '" style="width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:6px;font-family:var(--sans);font-size:13px"></div>';
+  }
+  function settingsToggleHtml(id, label, checked) {
+    return '<div><label style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);font-weight:700;display:block;margin-bottom:6px">' + label + '</label>' +
+      '<label style="display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);cursor:pointer"><input type="checkbox" id="' + id + '"' + (checked ? ' checked' : '') + '> Enabled</label></div>';
+  }
+
+  // -------- Orchestration: load org settings + ensure userId is fetched even on revisit --------
+  loadOrgSettings();
+
   loadDashboard().then(loadPipeline);
 
   // ============== LEADS · Layer 2 ==============
