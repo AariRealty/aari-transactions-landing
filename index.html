@@ -949,6 +949,26 @@
   .modal-foot{justify-content:space-between;gap:12px}
   .modal-foot .btn-step.next,.modal-foot .btn-step.submit{margin-left:auto}
 
+  /* === Auth gate · shown when visitor clicks Submit without an active session === */
+  .intake-auth-gate{padding:48px 38px 40px;text-align:center}
+  .intake-auth-gate .ag-eyebrow{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:10px}
+  .intake-auth-gate h2{font-family:var(--serif);font-weight:500;font-size:30px;line-height:1.08;letter-spacing:-0.5px;color:var(--ink);margin:0 0 10px}
+  .intake-auth-gate .ag-sub{font-size:13.5px;color:var(--muted);line-height:1.55;margin:0 0 26px}
+  .intake-auth-gate .ag-actions{display:flex;flex-direction:column;gap:10px;max-width:340px;margin:0 auto}
+  .intake-auth-gate .ag-btn{display:block;width:100%;padding:13px 18px;border-radius:8px;font-family:var(--sans);font-size:13.5px;font-weight:600;cursor:pointer;letter-spacing:.2px;text-align:center;text-decoration:none;border:none;min-height:46px}
+  .intake-auth-gate .ag-btn.primary{background:#0f0f0f;color:#fff}
+  .intake-auth-gate .ag-btn.secondary{background:#fff;color:#0f0f0f;border:1.5px solid #0f0f0f}
+  .intake-auth-gate .ag-btn:hover{opacity:.92}
+  .intake-auth-gate .ag-file{border-top:1px solid var(--line);margin-top:24px;padding-top:18px}
+  .intake-auth-gate .ag-file-label{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:4px}
+  .intake-auth-gate .ag-file-name{font-size:13.5px;color:var(--ink);font-weight:600}
+  .modal-box.auth-gate-active .intake-head,
+  .modal-box.auth-gate-active .intake-body,
+  .modal-box.auth-gate-active .modal-foot,
+  .modal-box.auth-gate-active .intake-resume{display:none !important}
+  .intake-auth-gate{display:none}
+  .modal-box.auth-gate-active .intake-auth-gate{display:block}
+
   /* === Validation error highlight === */
   .intake-body input.invalid,.intake-body select.invalid,.intake-body textarea.invalid{border-color:#c54;box-shadow:0 0 0 3px rgba(204,85,68,0.12)}
 
@@ -2860,8 +2880,23 @@ Password:"></textarea>
 
 <!-- ============== INTAKE MODAL . 5-STEP REBUILD ============== -->
 <div class="modal-overlay" id="intake-modal" hidden>
-  <div class="modal-box intake-v2">
+  <div class="modal-box intake-v2" id="intake-modal-box">
     <button class="modal-close" id="intake-close" aria-label="Close intake">×</button>
+
+    <!-- ========== Phase 2 · AUTH GATE · shown when visitor hits Submit without an active Supabase session ========== -->
+    <div class="intake-auth-gate" id="intakeAuthGate">
+      <p class="ag-eyebrow">Submit a file</p>
+      <h2>Log in to continue.</h2>
+      <p class="ag-sub">Returning agent? Sign in. New here? Create an account.<br>Takes under a minute either way.</p>
+      <div class="ag-actions">
+        <button type="button" class="ag-btn primary" id="agLoginBtn">Log in &rarr;</button>
+        <button type="button" class="ag-btn secondary" id="agRegisterBtn">Create an account</button>
+      </div>
+      <div class="ag-file" id="agFileBlock" hidden>
+        <div class="ag-file-label">Your file</div>
+        <div class="ag-file-name" id="agFileName"></div>
+      </div>
+    </div>
 
     <!-- Resume banner (shown only when valid in-session progress exists) -->
     <div class="intake-resume" id="intakeResumeBanner" hidden>
@@ -3967,11 +4002,97 @@ Password:"></textarea>
       const firstInput = overlay.querySelector('.intake-step[data-step="1"] button, .intake-step[data-step="1"] input');
       if(firstInput) firstInput.focus();
     });
+    /* Phase 2 · Auth gate · check Supabase session before the visitor sees the intake form.
+       If logged in: silent skip straight into intake (file details).
+       If not: show the two-button gate (Log in / Create account). */
+    const modalBox = document.getElementById('intake-modal-box');
+    const authGate = document.getElementById('intakeAuthGate');
+    const agLoginBtn = document.getElementById('agLoginBtn');
+    const agRegisterBtn = document.getElementById('agRegisterBtn');
+    const agFileBlock = document.getElementById('agFileBlock');
+    const agFileName = document.getElementById('agFileName');
+
+    function showAuthGate(){
+      if(!modalBox || !authGate) return;
+      // Persist the chosen service across the auth redirect so we can resume on return.
+      if(state.serviceId){
+        try { sessionStorage.setItem('aari-pending-service', state.serviceId); } catch(_){}
+        const svc = SERVICES.find(s => s.id === state.serviceId);
+        if(svc && agFileName && agFileBlock){
+          agFileName.textContent = svc.name + ' · ' + svc.tier + ' · $' + svc.price;
+          agFileBlock.hidden = false;
+        }
+      } else if(agFileBlock){
+        agFileBlock.hidden = true;
+      }
+      modalBox.classList.add('auth-gate-active');
+    }
+
+    function hideAuthGate(){
+      if(modalBox) modalBox.classList.remove('auth-gate-active');
+    }
+
+    async function hasSession(){
+      try {
+        if(window.AariAuth && typeof window.AariAuth.getCurrentSession === 'function'){
+          const session = await window.AariAuth.getCurrentSession();
+          return !!session;
+        }
+      } catch(_){}
+      return false;
+    }
+
+    if(agLoginBtn){
+      agLoginBtn.addEventListener('click', () => {
+        // Tell login-modal where to return after a successful sign-in.
+        try { sessionStorage.setItem('aari-after-auth', '/index.html#apply'); } catch(_){}
+        if(window.AariLogin && typeof window.AariLogin.open === 'function'){
+          window.AariLogin.open();
+        } else {
+          window.location.href = 'register.html';
+        }
+      });
+    }
+    if(agRegisterBtn){
+      agRegisterBtn.addEventListener('click', () => {
+        try { sessionStorage.setItem('aari-after-auth', '/index.html#apply'); } catch(_){}
+        window.location.href = 'register.html';
+      });
+    }
+
     function open(opts){
       opts = opts || {};
       overlay.removeAttribute('hidden');
       overlay.classList.add('open');
       document.body.style.overflow = 'hidden';
+
+      // Phase 2 · Auth gate · runs before everything else.
+      // Async session check; render gate immediately on no-session, hide on session.
+      hideAuthGate();
+      hasSession().then(authed => {
+        if(authed){
+          // Logged in · silent skip · proceed with normal open flow.
+          proceedOpen(opts);
+        } else {
+          // No session · show gate, do not render any step yet.
+          showAuthGate();
+        }
+      });
+    }
+
+    function proceedOpen(opts){
+      opts = opts || {};
+      // Post-auth return · rehydrate the pending service the visitor picked before login.
+      if(!state.serviceId){
+        let pending = null;
+        try { pending = sessionStorage.getItem('aari-pending-service'); } catch(_){}
+        if(pending){
+          state.serviceId = pending;
+          state.intakeSvcTab = SVC_CATEGORY_BY_ID[pending] || 'tc';
+          try { sessionStorage.removeItem('aari-pending-service'); } catch(_){}
+          opts.skipToStep = opts.skipToStep || 2;
+        }
+      }
       // Prefill flow · service already selected from a pricing CTA, skip the picker
       if(opts.skipToStep && state.serviceId){
         suspendSave = true;
@@ -3998,6 +4119,8 @@ Password:"></textarea>
       document.body.style.overflow = '';
       markClosed();
       hideResumeBanner();
+      // Phase 2 · clear auth gate state so next open() re-checks session cleanly.
+      hideAuthGate();
       if(window.location.hash === '#apply'){
         history.replaceState(null, '', window.location.pathname);
       }

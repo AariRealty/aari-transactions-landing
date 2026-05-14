@@ -110,8 +110,15 @@
       submitBtn.innerHTML = '<span class="aari-spinner"></span> Signing in…';
       try {
         await global.AariAuth.signIn(email, pw);
-        // Redirect to portal on success.
-        window.location.href = '/portal';
+        // Phase 2 · Honor an intake-driven return path before falling back to the portal.
+        let next = null;
+        try { next = sessionStorage.getItem('aari-after-auth'); } catch (_) {}
+        if (next) {
+          try { sessionStorage.removeItem('aari-after-auth'); } catch (_) {}
+          window.location.href = next;
+        } else {
+          window.location.href = '/portal';
+        }
       } catch (err) {
         submitBtn.disabled = false;
         submitBtn.innerHTML = 'Sign in';
