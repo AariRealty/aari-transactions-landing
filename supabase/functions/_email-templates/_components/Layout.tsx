@@ -2,7 +2,7 @@
 // Every template wraps content in <Layout> for consistent header/footer/brand.
 
 import * as React from "react";
-import { Body, Container, Head, Html, Preview, Section, Tailwind } from "@react-email/components";
+import { Body, Container, Head, Html, Preview, Section } from "@react-email/components";
 import { BrandHeader } from "./BrandHeader.tsx";
 import { BrandFooter } from "./BrandFooter.tsx";
 
@@ -13,19 +13,20 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
+// Note: Tailwind wrapper removed (May 2026) · was crashing silently in Deno
+// edge runtime, causing every email to render as empty <template> tags.
+// All templates use inline React.CSSProperties styles so Tailwind is unused.
 export const Layout: React.FC<LayoutProps> = ({ preview, category = "transactional", unsubscribeUrl, children }) => (
   <Html lang="en">
     <Head />
     <Preview>{preview}</Preview>
-    <Tailwind>
-      <Body style={bodyStyle}>
-        <Container style={containerStyle}>
-          <BrandHeader />
-          <Section style={contentStyle}>{children}</Section>
-          <BrandFooter category={category} unsubscribeUrl={unsubscribeUrl} />
-        </Container>
-      </Body>
-    </Tailwind>
+    <Body style={bodyStyle}>
+      <Container style={containerStyle}>
+        <BrandHeader />
+        <Section style={contentStyle}>{children}</Section>
+        <BrandFooter category={category} unsubscribeUrl={unsubscribeUrl} />
+      </Container>
+    </Body>
   </Html>
 );
 
