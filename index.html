@@ -4524,18 +4524,32 @@ Password:"></textarea>
     form.addEventListener('submit', function(e) {
       e.preventDefault();
       const data = new FormData(form);
+      const email = (data.get('email') || '').toString();
+      // Show success state immediately · do not block UI on the network call.
+      contentEl.style.display = 'none';
+      successEl.classList.add('show');
+      window.AariAnalytics && window.AariAnalytics.fire && window.AariAnalytics.fire('lead_capture_submitted', { source: 'exit_intent', email: email });
+      // POST 1 · Netlify Forms (capture/storage backup, spam filter)
       fetch('/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams(data).toString()
-      }).then(function() {
-        contentEl.style.display = 'none';
-        successEl.classList.add('show');
-        window.AariAnalytics && window.AariAnalytics.fire && window.AariAnalytics.fire('lead_capture_submitted', { source: 'exit_intent', email: data.get('email') });
-        // Bug fix · do NOT auto-hide. User dismisses manually via X, or opens/prints the checklist.
-      }).catch(function() {
-        alert('Something went wrong. Email hello@aaritransactions.com directly to get the checklist.');
-      });
+      }).catch(function () { /* Netlify Forms is best-effort, swallow failures */ });
+      // POST 2 · Supabase Edge Function · sends the checklist via Resend + stores the lead
+      try {
+        var cfg = window.AARI_SUPABASE_CONFIG || {};
+        if (cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY) {
+          fetch(cfg.SUPABASE_URL + '/functions/v1/send-checklist', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + cfg.SUPABASE_ANON_KEY,
+              'apikey': cfg.SUPABASE_ANON_KEY
+            },
+            body: JSON.stringify({ email: email, source: 'exit_intent_florida_checklist' })
+          }).catch(function () { /* user already saw success state · log silently */ });
+        }
+      } catch (e) { /* no-op */ }
     });
 
     // Print button on success state · opens the checklist in a new window with print dialog
