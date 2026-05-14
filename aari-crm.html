@@ -2710,10 +2710,12 @@ body {
     crmCache.viewerId = v || 'all';
     try { localStorage.setItem('aari-crm-viewer', crmCache.viewerId); } catch (_) {}
     applyViewerFilter();
-    // Re-render every visible data view.
+    // Re-render every visible data view · Phase C scopes files + payouts + inbox.
     try { renderToday && renderToday(); } catch (_) {}
     try { renderPipeline && renderPipeline(); } catch (_) {}
     try { renderClosed && renderClosed(); } catch (_) {}
+    try { renderPayroll && renderPayroll(); } catch (_) {}
+    try { loadThreads && loadThreads(); } catch (_) {}
   };
   // Wire the dropdown
   (function bindViewerSelect() {
@@ -3169,8 +3171,11 @@ body {
 
   // -------------------- PAYROLL (Phase 3 · broker-facing) --------------------
   function renderPayroll() {
-    const pending = payoutsCache.filter(p => p.status === 'pending');
-    const approved = payoutsCache.filter(p => p.status === 'approved');
+    // Phase C2 · scope to selected viewer (broker can filter by TC)
+    const v = (crmCache && crmCache.viewerId) || 'all';
+    const scoped = v === 'all' ? payoutsCache : payoutsCache.filter(p => p.tc_id === v);
+    const pending = scoped.filter(p => p.status === 'pending');
+    const approved = scoped.filter(p => p.status === 'approved');
     const money = c => '$' + ((c || 0) / 100).toFixed(2);
     const sum = arr => arr.reduce((a, p) => a + (p.amount_cents || 0), 0);
     document.getElementById('payroll-total-approved').textContent = money(sum(approved));
@@ -3227,7 +3232,10 @@ body {
     }
   });
   document.getElementById('payroll-run-btn')?.addEventListener('click', async () => {
-    const approved = payoutsCache.filter(p => p.status === 'approved');
+    // Phase C2 · respect viewer scope so broker can disburse a single TC if filtered
+    const v = (crmCache && crmCache.viewerId) || 'all';
+    const scoped = v === 'all' ? payoutsCache : payoutsCache.filter(p => p.tc_id === v);
+    const approved = scoped.filter(p => p.status === 'approved');
     if (!approved.length) { alert('No approved payouts to disburse.'); return; }
     if (!confirm('Mark ' + approved.length + ' payout' + (approved.length === 1 ? '' : 's') + ' as paid? This logs the Friday Disbursement.')) return;
     const client = await window.AariAuth.ensureClient();
@@ -3759,6 +3767,7 @@ body {
         return {
           fileId,
           fileAddress: f.property_address || '(no address)',
+          tcId: f.tc_id || null,
           agentName,
           lastSnippet: (last.body || '').slice(0, 100),
           lastAt: last.created_at,
@@ -3766,10 +3775,13 @@ body {
         };
       });
       threadRows.sort((a,b) => b.lastAt.localeCompare(a.lastAt));
-      renderThreadList(threadRows);
+      // Phase C2 · scope to viewer (broker can filter inbox to a single TC's threads)
+      const v = (crmCache && crmCache.viewerId) || 'all';
+      const scopedRows = v === 'all' ? threadRows : threadRows.filter(t => t.tcId === v);
+      renderThreadList(scopedRows);
 
-      // Update Inbox badge with unread count
-      const unreadCount = threadRows.filter(t => t.unread).length;
+      // Update Inbox badge with unread count (respects viewer scope)
+      const unreadCount = scopedRows.filter(t => t.unread).length;
       const badge = document.getElementById('inbox-badge');
       if (badge) {
         if (unreadCount > 0) {
