@@ -3195,10 +3195,79 @@ body {
       '<label style="display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--ink-2);cursor:pointer"><input type="checkbox" id="' + id + '"' + (checked ? ' checked' : '') + '> Enabled</label></div>';
   }
 
+  // -------- BD PIPELINE VISIBILITY (Eileen + future BD users) --------
+  async function loadBdPipeline() {
+    try {
+      const client = await window.AariAuth.ensureClient();
+      // Find Eileen's agent record (or any TC-role with a bd_contacts row)
+      const tcs = (crmCache.agentsList || []).filter(a => a.role === 'tc');
+      if (!tcs.length) return;
+      const ids = tcs.map(a => a.id);
+      const [contactsR, logsR] = await Promise.all([
+        client.from('bd_contacts').select('*').in('owner_id', ids).order('last_touch_at', { ascending: false }),
+        client.from('bd_daily_logs').select('*').in('owner_id', ids).order('log_date', { ascending: false }).limit(60),
+      ]);
+      const contacts = contactsR.data || [];
+      const logs = logsR.data || [];
+      if (!contacts.length && !logs.length) return;
+
+      // Render a panel in the Directory tab
+      const dirHost = document.getElementById('view-directory');
+      if (!dirHost || document.getElementById('bd-pipeline-panel')) return;
+      const panel = document.createElement('div');
+      panel.id = 'bd-pipeline-panel';
+      panel.style.cssText = 'margin-top:28px;padding:20px 22px;border:1px solid var(--line);border-radius:8px;background:var(--surface)';
+
+      // Group contacts by owner + stage
+      const byOwner = {};
+      contacts.forEach(c => {
+        if (!byOwner[c.owner_id]) byOwner[c.owner_id] = { contacts: [], stages: {} };
+        byOwner[c.owner_id].contacts.push(c);
+        byOwner[c.owner_id].stages[c.stage] = (byOwner[c.owner_id].stages[c.stage] || 0) + 1;
+      });
+      const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+      const recent7Day = logs.filter(l => l.log_date >= sevenDaysAgo);
+      const dmTotal = recent7Day.reduce((s, l) => s + (l.dms_sent || 0), 0);
+      const replyTotal = recent7Day.reduce((s, l) => s + (l.replies || 0), 0);
+      const discoTotal = recent7Day.reduce((s, l) => s + (l.discos_booked || 0), 0);
+      const signedTotal = recent7Day.reduce((s, l) => s + (l.signed_files || 0), 0);
+
+      const ownerBlocks = Object.keys(byOwner).map(oid => {
+        const ag = crmCache.agents[oid] || {};
+        const name = nameFor(ag);
+        const stages = byOwner[oid].stages;
+        const total = byOwner[oid].contacts.length;
+        const stagePills = ['Contacted','In Conversation','Added to AC','Hand Raise','Discovery Booked','Signed'].map(s => {
+          const n = stages[s] || 0;
+          return '<span style="font-size:10px;letter-spacing:0.5px;padding:4px 9px;border-radius:99px;background:var(--soft-bg);color:var(--ink-2);margin-right:5px;margin-bottom:4px;display:inline-block">' + escapeHtml(s) + ' · <strong>' + n + '</strong></span>';
+        }).join('');
+        return '<div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--line)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="font-size:14px;font-weight:600;color:var(--ink)">' + escapeHtml(name) + ' · <span style="color:var(--muted);font-weight:500">' + total + ' contacts</span></div>' +
+            '<a href="eileen.html" target="_blank" style="font-size:11px;color:var(--ink);text-decoration:underline;font-weight:600">Open cockpit &rarr;</a></div>' +
+          '<div>' + stagePills + '</div>' +
+        '</div>';
+      }).join('');
+
+      panel.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:14px">' +
+          '<div><h3 style="font-family:var(--serif);font-size:20px;font-weight:600;color:var(--ink);margin-bottom:2px">BD Tracker.</h3>' +
+            '<p style="font-size:12px;color:var(--muted)">Last 7 days · Eileen + any other BD-active TCs</p></div>' +
+          '<div style="display:flex;gap:18px"><div><div style="font-size:9px;letter-spacing:1px;color:var(--muted);font-weight:700">DMs</div><div style="font-family:var(--serif);font-size:22px;font-weight:600;color:var(--ink)">' + dmTotal + '</div></div>' +
+            '<div><div style="font-size:9px;letter-spacing:1px;color:var(--muted);font-weight:700">Replies</div><div style="font-family:var(--serif);font-size:22px;font-weight:600;color:var(--ink)">' + replyTotal + '</div></div>' +
+            '<div><div style="font-size:9px;letter-spacing:1px;color:var(--muted);font-weight:700">Discos</div><div style="font-family:var(--serif);font-size:22px;font-weight:600;color:var(--ink)">' + discoTotal + '</div></div>' +
+            '<div><div style="font-size:9px;letter-spacing:1px;color:var(--muted);font-weight:700">Signed</div><div style="font-family:var(--serif);font-size:22px;font-weight:600;color:var(--ink)">' + signedTotal + '</div></div></div>' +
+        '</div>' +
+        '<div>' + ownerBlocks + '</div>';
+
+      dirHost.appendChild(panel);
+    } catch (e) {
+      console.warn('[CRM BD pipeline]', e);
+    }
+  }
+
   // -------- Orchestration: load org settings + ensure userId is fetched even on revisit --------
   loadOrgSettings();
-
-  loadDashboard().then(loadPipeline);
+  loadDashboard().then(function () { loadPipeline(); loadBdPipeline(); });
 
   // ============== LEADS · Layer 2 ==============
   // AARI:WIRE · Replace placeholders with Supabase queries.

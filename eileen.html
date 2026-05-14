@@ -311,7 +311,7 @@ body{background:var(--off);color:var(--black);font-family:'DM Sans',sans-serif;f
 <div class="nav">
   <button class="nav-btn active" onclick="go('today',this)">Today</button>
   <button class="nav-btn" onclick="go('log',this)">Log</button>
-  <button class="nav-btn" onclick="go('database',this)">Database</button>
+  <button class="nav-btn" onclick="go('database',this)">Tracker</button>
   <button class="nav-btn" onclick="go('pay',this)">My Pay</button>
   <button class="nav-btn" onclick="go('goals',this)">Goals</button>
 </div>
@@ -443,8 +443,13 @@ body{background:var(--off);color:var(--black);font-family:'DM Sans',sans-serif;f
     <div class="live-cell"><div class="live-cell-lbl">In AC</div><div class="live-cell-val" id="dl-s3">0</div></div>
     <div class="live-cell"><div class="live-cell-lbl">Signed</div><div class="live-cell-val" id="dl-s4">0</div></div>
   </div>
-  <div class="db-intro"><h3>Your Contact Database</h3><p>Everyone you DM goes here — all 15 per day. <strong>Only "In Conversation" or beyond gets added to ActiveCampaign.</strong></p></div>
-  <div class="db-hdr-row"><h3>All Contacts <span class="db-count" id="dbCount">(0 active · 0 in AC)</span></h3><button class="btn-outline" onclick="toggleAdd()">+ Add</button></div>
+  <div class="db-intro"><h3>Your Contact Tracker</h3><p>Everyone you DM goes here — all 15 per day. <strong>Only "In Conversation" or beyond gets added to ActiveCampaign.</strong></p></div>
+  <div class="db-hdr-row"><h3>All Contacts <span class="db-count" id="dbCount">(0 active · 0 in AC)</span></h3>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-outline" onclick="openMergeModal()" id="mergeBtn" style="font-size:11px;padding:6px 12px;border:1px solid var(--g600);background:transparent;color:var(--g600);border-radius:var(--rs);cursor:pointer;font-family:'DM Sans',sans-serif">Merge Duplicates <span id="dupCount" style="margin-left:4px;background:var(--amber);color:#fff;padding:1px 6px;border-radius:8px;font-size:9px;font-weight:600;display:none">0</span></button>
+      <button class="btn-outline" onclick="toggleAdd()">+ Add</button>
+    </div>
+  </div>
   <div class="add-form" id="addForm">
     <h4>New Contact</h4><p class="form-note">Add everyone you DM — replied or not.</p>
     <div class="add-grid">
@@ -621,42 +626,114 @@ body{background:var(--off);color:var(--black);font-family:'DM Sans',sans-serif;f
 
 <div class="toast" id="toast"></div>
 
+<!-- Duplicate alert banner · auto-appears on load when duplicates detected -->
+<div id="dupBanner" style="display:none;position:fixed;top:14px;left:50%;transform:translateX(-50%);background:var(--amber);color:#fff;padding:12px 18px;border-radius:var(--rs);box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:400;display:none;align-items:center;gap:14px;max-width:520px;width:calc(100% - 32px);font-family:'DM Sans',sans-serif">
+  <div style="font-size:22px;line-height:1">⚠</div>
+  <div style="flex:1;min-width:0">
+    <div style="font-size:13px;font-weight:600;line-height:1.3" id="dupBannerTitle">Duplicate contacts detected.</div>
+    <div style="font-size:11px;opacity:.9;margin-top:2px" id="dupBannerSub">Review and merge to keep your tracker clean.</div>
+  </div>
+  <button onclick="openMergeModal();dismissDupBanner();" style="background:#fff;color:var(--amber);border:none;border-radius:var(--rs);padding:8px 14px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap">Review →</button>
+  <button onclick="dismissDupBanner()" aria-label="Dismiss" style="background:transparent;border:none;color:#fff;font-size:18px;line-height:1;cursor:pointer;opacity:.7;padding:0 4px">&times;</button>
+</div>
+
+<!-- Merge Duplicates modal -->
+<div id="mergeOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto" onclick="if(event.target===this)closeMergeModal()">
+  <div style="background:var(--white);border-radius:var(--r);max-width:680px;width:100%;display:flex;flex-direction:column;max-height:calc(100vh - 80px);overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:18px 22px;border-bottom:1px solid var(--g200)">
+      <div>
+        <div style="font-family:'Playfair Display',serif;font-size:20px;font-weight:600;color:var(--black)">Merge Duplicates</div>
+        <div style="font-size:11px;color:var(--g600);margin-top:2px" id="mergeSubtitle">Scanning your tracker...</div>
+      </div>
+      <button onclick="closeMergeModal()" style="background:transparent;border:none;font-size:22px;color:var(--g600);cursor:pointer;line-height:1">&times;</button>
+    </div>
+    <div id="mergeBody" style="padding:18px 22px;overflow-y:auto;flex:1">
+      <p style="font-size:12px;color:var(--g600);text-align:center;padding:30px 0">Loading...</p>
+    </div>
+    <div id="mergeFooter" style="padding:14px 22px;border-top:1px solid var(--g200);display:flex;justify-content:space-between;align-items:center;background:var(--off);gap:10px">
+      <span id="mergeFooterMsg" style="font-size:11px;color:var(--g600)"></span>
+      <div style="display:flex;gap:8px">
+        <button onclick="closeMergeModal()" style="font-size:11px;padding:9px 14px;background:transparent;border:1px solid var(--g200);border-radius:var(--rs);color:var(--g600);cursor:pointer;font-family:'DM Sans',sans-serif">Done</button>
+        <button onclick="mergeAllDuplicates()" id="mergeAllBtn" style="font-size:11px;padding:9px 16px;background:var(--black);color:var(--white);border:none;border-radius:var(--rs);cursor:pointer;font-weight:600;font-family:'DM Sans',sans-serif" disabled>Merge All</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
-// ── SUPABASE CONFIG ──
-var SUPABASE_URL = 'https://herwvvfwfvqnwfnjtyhh.supabase.co';
-var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhlcnd2dmZ3ZnZxbndmbmp0eWhoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxMDY0MDUsImV4cCI6MjA5MzY4MjQwNX0.OAN8GtZcgQNLMh8uz11D2KPqW47mqgzZz7_5qANIgCI';
-var STORAGE_KEY  = 'eileen_pilot_v1';
+// ── SUPABASE · main Aari project (replaces the old cockpit_state side-project) ──
+// Uses the same window.AARI_SUPABASE_CONFIG that powers /portal and /aari-crm.
+// All reads/writes are scoped via RLS to the logged-in user (Eileen) — broker can read all.
 
 // ── STATE ──
 var START = new Date('2026-05-05');
 var S = {contacts:[],dailyLogs:[],weeklyLogs:[],daily:{},weekly:{},payments:[]};
 var cf = 'all';
 var saveTimer = null;
+var ownerId = null;            // populated after auth gate clears
+var supabaseClient = null;     // populated after AariAuth.ensureClient()
 
-// ── SUPABASE HELPERS ──
-function sbHeaders() {
-  return {
-    'Content-Type': 'application/json',
-    'apikey': SUPABASE_KEY,
-    'Authorization': 'Bearer ' + SUPABASE_KEY,
-    'Prefer': 'resolution=merge-duplicates'
-  };
+// ── SUPABASE HELPERS · normalized writes via supabase-js ──
+async function ensureSupabaseReady() {
+  if (supabaseClient) return supabaseClient;
+  if (typeof window.AariAuth === 'undefined') return null;
+  supabaseClient = await window.AariAuth.ensureClient();
+  return supabaseClient;
 }
 
 async function dbSave(data) {
   setSyncStatus('syncing');
   try {
-    var res = await fetch(SUPABASE_URL + '/rest/v1/cockpit_state', {
-      method: 'POST',
-      headers: sbHeaders(),
-      body: JSON.stringify({ key: STORAGE_KEY, value: JSON.stringify(data) })
-    });
-    if (res.ok) {
-      setSyncStatus('synced');
-    } else {
-      throw new Error('save failed');
+    var c = await ensureSupabaseReady();
+    if (!c || !ownerId) { setSyncStatus('error'); return; }
+
+    // Upsert every contact in S.contacts. We key on id so re-saves replace.
+    if (Array.isArray(data.contacts) && data.contacts.length) {
+      var contactRows = data.contacts.map(function (ct) {
+        return {
+          id: ct.id || undefined,
+          owner_id: ownerId,
+          name: ct.name || '(unnamed)',
+          handle: ct.handle || null,
+          source: ct.source || null,
+          stage: ct.stage || 'Contacted',
+          notes: ct.notes || null,
+          dm_sent_at: ct.dm_sent_at || null,
+          last_touch_at: ct.last_touch_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+      });
+      var { error: cerr } = await c.from('bd_contacts').upsert(contactRows, { onConflict: 'id' });
+      if (cerr) throw cerr;
     }
-  } catch(e) {
+
+    // Upsert daily logs. Composite unique on (owner_id, log_date) does the dedup.
+    if (Array.isArray(data.dailyLogs) && data.dailyLogs.length) {
+      var logRows = data.dailyLogs.map(function (lg) {
+        // lg.date is like "May 13" · convert to ISO date using the current year
+        var iso = (function () {
+          if (lg.log_date) return lg.log_date;
+          try { return new Date(lg.date + ', ' + new Date().getFullYear()).toISOString().slice(0, 10); }
+          catch (e) { return new Date().toISOString().slice(0, 10); }
+        })();
+        return {
+          owner_id: ownerId,
+          log_date: iso,
+          dms_sent: lg.dms || 0,
+          replies: lg.replies || 0,
+          hand_raises: lg.handRaises || lg.hand_raises || 0,
+          discos_booked: lg.disco || lg.discos_booked || 0,
+          signed_files: lg.signed || lg.signed_files || 0,
+          notes: lg.notes || null,
+        };
+      });
+      var { error: lerr } = await c.from('bd_daily_logs').upsert(logRows, { onConflict: 'owner_id,log_date' });
+      if (lerr) throw lerr;
+    }
+
+    setSyncStatus('synced');
+  } catch (e) {
+    console.error('[Eileen dbSave]', e);
     setSyncStatus('error');
   }
 }
@@ -664,22 +741,43 @@ async function dbSave(data) {
 async function dbLoad() {
   setSyncStatus('syncing');
   try {
-    var res = await fetch(
-      SUPABASE_URL + '/rest/v1/cockpit_state?key=eq.' + encodeURIComponent(STORAGE_KEY) + '&select=value',
-      { headers: sbHeaders() }
-    );
-    if (res.ok) {
-      var rows = await res.json();
-      if (rows && rows.length && rows[0].value) {
-        var loaded = JSON.parse(rows[0].value);
-        S = Object.assign({contacts:[],dailyLogs:[],weeklyLogs:[],daily:{},weekly:{},payments:[]}, loaded);
-      }
-      setSyncStatus('synced');
-      return true;
-    }
-  } catch(e) {}
-  setSyncStatus('error');
-  return false;
+    var c = await ensureSupabaseReady();
+    if (!c || !ownerId) { setSyncStatus('error'); return false; }
+
+    var contactsR = await c.from('bd_contacts').select('*').eq('owner_id', ownerId).order('last_touch_at', { ascending: false });
+    var logsR = await c.from('bd_daily_logs').select('*').eq('owner_id', ownerId).order('log_date', { ascending: false });
+
+    S.contacts = (contactsR.data || []).map(function (row) {
+      return {
+        id: row.id,
+        name: row.name,
+        handle: row.handle,
+        source: row.source,
+        stage: row.stage,
+        notes: row.notes,
+        dm_sent_at: row.dm_sent_at,
+        last_touch_at: row.last_touch_at,
+      };
+    });
+    S.dailyLogs = (logsR.data || []).map(function (row) {
+      return {
+        log_date: row.log_date,
+        date: new Date(row.log_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        dms: row.dms_sent,
+        replies: row.replies,
+        handRaises: row.hand_raises,
+        disco: row.discos_booked,
+        signed: row.signed_files,
+        notes: row.notes,
+      };
+    });
+    setSyncStatus('synced');
+    return true;
+  } catch (e) {
+    console.error('[Eileen dbLoad]', e);
+    setSyncStatus('error');
+    return false;
+  }
 }
 
 function setSyncStatus(s) {
@@ -731,7 +829,7 @@ function updateLiveStats(){
   setEl('lv-contacts',totalContacts);setEl('lv-raises',handRaises);
   // Log
   setEl('ll-total-dms',totalDMs);setEl('ll-disco',totalDisco);setEl('ll-signed',totalSigned);
-  // Database
+  // Tracker
   setEl('dl-s1',contacted);setEl('dl-s2',inConvo);setEl('dl-s3',inAC);setEl('dl-s4',signed);
   // Pay
   setEl('pl-signed',signed);setEl('pl-disco',disco);setEl('pl-raises',handRaises);
@@ -852,6 +950,172 @@ function renderWeekSummary(){
 
 // ── DATABASE ──
 function toggleAdd(){document.getElementById('addForm').classList.toggle('open');}
+// ── MERGE DUPLICATES ──
+function findDuplicateGroups() {
+  // Group S.contacts by lowercase(trim(name))
+  var groups = {};
+  (S.contacts || []).forEach(function (c) {
+    if (!c || !c.name) return;
+    var key = String(c.name).trim().toLowerCase();
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(c);
+  });
+  // Only keep groups with 2+ rows
+  return Object.keys(groups)
+    .filter(function (k) { return groups[k].length > 1; })
+    .map(function (k) { return { key: k, name: groups[k][0].name, rows: groups[k] }; });
+}
+
+function updateDupCountBadge() {
+  var groups = findDuplicateGroups();
+  var totalDups = groups.reduce(function (a, g) { return a + (g.rows.length - 1); }, 0);
+  var badge = document.getElementById('dupCount');
+  if (badge) {
+    if (totalDups > 0) { badge.textContent = totalDups; badge.style.display = 'inline-block'; }
+    else { badge.style.display = 'none'; }
+  }
+  // Auto-popup banner · only shows if not dismissed this session
+  var dismissed = false;
+  try { dismissed = sessionStorage.getItem('eileen-dup-banner-dismissed') === '1'; } catch (e) {}
+  var banner = document.getElementById('dupBanner');
+  if (!banner) return;
+  if (totalDups > 0 && !dismissed) {
+    document.getElementById('dupBannerTitle').textContent =
+      totalDups + ' duplicate contact' + (totalDups === 1 ? '' : 's') + ' detected.';
+    document.getElementById('dupBannerSub').textContent =
+      groups.length + ' name' + (groups.length === 1 ? '' : 's') + ' have multiple entries. Review and merge to keep your tracker clean.';
+    banner.style.display = 'flex';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
+function dismissDupBanner() {
+  try { sessionStorage.setItem('eileen-dup-banner-dismissed', '1'); } catch (e) {}
+  var banner = document.getElementById('dupBanner');
+  if (banner) banner.style.display = 'none';
+}
+
+function openMergeModal() {
+  var overlay = document.getElementById('mergeOverlay');
+  overlay.style.display = 'flex';
+  renderMergeModalBody();
+}
+
+function closeMergeModal() {
+  document.getElementById('mergeOverlay').style.display = 'none';
+}
+
+function renderMergeModalBody() {
+  var groups = findDuplicateGroups();
+  var subtitleEl = document.getElementById('mergeSubtitle');
+  var bodyEl = document.getElementById('mergeBody');
+  var allBtn = document.getElementById('mergeAllBtn');
+  var footerMsg = document.getElementById('mergeFooterMsg');
+
+  if (groups.length === 0) {
+    subtitleEl.textContent = 'No duplicates found.';
+    bodyEl.innerHTML = '<div style="text-align:center;padding:40px 20px"><div style="font-size:32px;margin-bottom:8px">✓</div><div style="font-size:14px;font-weight:600;color:var(--black)">Tracker is clean.</div><div style="font-size:11px;color:var(--g600);margin-top:4px">No duplicate contact names detected.</div></div>';
+    allBtn.disabled = true;
+    footerMsg.textContent = '';
+    return;
+  }
+  var totalDups = groups.reduce(function (a, g) { return a + (g.rows.length - 1); }, 0);
+  subtitleEl.textContent = groups.length + ' duplicate group' + (groups.length === 1 ? '' : 's') + ' · ' + totalDups + ' extra row' + (totalDups === 1 ? '' : 's') + ' will be removed on merge';
+  allBtn.disabled = false;
+  footerMsg.textContent = 'Merge keeps the oldest record. Notes from duplicates are appended.';
+
+  bodyEl.innerHTML = groups.map(function (g) {
+    var rowsHtml = g.rows.map(function (r, i) {
+      var when = r.last_touch_at ? new Date(r.last_touch_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:' + (i === 0 ? 'var(--gl)' : 'var(--off)') + ';border-radius:6px;margin-bottom:4px">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;color:var(--black)">' + escapeMergeHtml(r.name) + (i === 0 ? ' <span style="color:var(--green);font-size:9px;letter-spacing:1px;font-weight:700;margin-left:6px">KEEP</span>' : ' <span style="color:var(--amber);font-size:9px;letter-spacing:1px;font-weight:700;margin-left:6px">REMOVE</span>') + '</div>' +
+        '<div style="font-size:10px;color:var(--g600)">' + escapeMergeHtml(r.handle || '—') + ' · stage: ' + escapeMergeHtml(r.stage || '') + ' · ' + when + '</div></div>' +
+      '</div>';
+    }).join('');
+    return '<div style="border:1px solid var(--g200);border-radius:8px;padding:12px;margin-bottom:10px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
+        '<div style="font-size:13px;font-weight:600;color:var(--black)">' + escapeMergeHtml(g.name) + '</div>' +
+        '<button onclick="mergeGroup(\'' + g.key.replace(/'/g, "\\'") + '\')" style="font-size:11px;padding:6px 12px;background:var(--black);color:var(--white);border:none;border-radius:var(--rs);cursor:pointer;font-weight:600;font-family:\'DM Sans\',sans-serif">Merge this</button>' +
+      '</div>' +
+      rowsHtml +
+    '</div>';
+  }).join('');
+}
+
+function escapeMergeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+async function mergeGroup(groupKey) {
+  var groups = findDuplicateGroups();
+  var group = groups.find(function (g) { return g.key === groupKey; });
+  if (!group) return;
+  await _mergeOne(group);
+  toastMsg('Merged ' + group.name + '.');
+  await dbLoad();
+  renderContacts();
+  updateLiveStats();
+  updateDupCountBadge();
+  renderMergeModalBody();
+}
+
+async function mergeAllDuplicates() {
+  var groups = findDuplicateGroups();
+  if (!groups.length) return;
+  if (!confirm('Merge all ' + groups.length + ' duplicate group' + (groups.length === 1 ? '' : 's') + '? Keeps the oldest row in each, appends notes from duplicates, deletes the rest.')) return;
+  var btn = document.getElementById('mergeAllBtn');
+  btn.disabled = true; btn.textContent = 'Merging…';
+  for (var i = 0; i < groups.length; i++) {
+    try { await _mergeOne(groups[i]); } catch (e) { console.error('[merge group]', groups[i].name, e); }
+  }
+  toastMsg('Merged ' + groups.length + ' duplicate groups.');
+  await dbLoad();
+  renderContacts();
+  updateLiveStats();
+  updateDupCountBadge();
+  renderMergeModalBody();
+  btn.disabled = false; btn.textContent = 'Merge All';
+}
+
+async function _mergeOne(group) {
+  var c = await ensureSupabaseReady();
+  if (!c || !ownerId) return;
+  // Sort by created_at ascending · keep the oldest
+  var sorted = group.rows.slice().sort(function (a, b) {
+    var aa = a.created_at || a.last_touch_at || '';
+    var bb = b.created_at || b.last_touch_at || '';
+    return String(aa).localeCompare(String(bb));
+  });
+  var keeper = sorted[0];
+  var dups = sorted.slice(1);
+  // Build merged notes
+  var notesParts = [];
+  if (keeper.notes) notesParts.push(keeper.notes);
+  dups.forEach(function (d) { if (d.notes && notesParts.indexOf(d.notes) < 0) notesParts.push(d.notes); });
+  var mergedNotes = notesParts.join(' || ') || null;
+  // Pick stage from most-advanced dup (if more progressed than keeper)
+  var STAGE_RANK = { 'Contacted': 1, 'In Conversation': 2, 'Added to AC': 3, 'Hand Raise': 4, 'Discovery Booked': 5, 'Signed': 6, 'Not Interested': 0 };
+  var bestStage = keeper.stage;
+  group.rows.forEach(function (r) {
+    if ((STAGE_RANK[r.stage] || 0) > (STAGE_RANK[bestStage] || 0)) bestStage = r.stage;
+  });
+  // Update keeper
+  await c.from('bd_contacts').update({
+    notes: mergedNotes,
+    stage: bestStage,
+    handle: keeper.handle || dups.map(function (d) { return d.handle; }).filter(Boolean)[0] || null,
+    source: keeper.source || dups.map(function (d) { return d.source; }).filter(Boolean)[0] || null,
+    last_touch_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }).eq('id', keeper.id);
+  // Delete dups
+  var dupIds = dups.map(function (d) { return d.id; }).filter(Boolean);
+  if (dupIds.length) await c.from('bd_contacts').delete().in('id', dupIds);
+}
+
 function addContact(){
   var name=document.getElementById('c-name').value.trim();if(!name)return;
   if(!S.contacts)S.contacts=[];
@@ -868,6 +1132,7 @@ function renderContacts(){
   var total=cs.filter(function(c){return c.stage!=='Not Interested';}).length;
   var inAC=cs.filter(function(c){return ['Added to AC','Hand Raise','Discovery Booked','Signed'].indexOf(c.stage)>=0;}).length;
   document.getElementById('dbCount').textContent='('+total+' active · '+inAC+' in AC)';
+  updateDupCountBadge();
   var b=document.getElementById('contactList');
   if(!filtered.length){b.innerHTML='<div class="db-empty">No contacts in this stage yet.</div>';return;}
   b.innerHTML=filtered.map(function(c){
@@ -953,16 +1218,35 @@ var SEED_CONTACTS = [{"id":1746648001,"name":"Crystal Negron","ig":"@crystal_neg
 var SEED_LOGS = [{"date":"May 7","dms":3,"posts":0,"disco":0,"signed":0},{"date":"May 6","dms":15,"posts":0,"disco":0,"signed":0},{"date":"May 5","dms":15,"posts":0,"disco":0,"signed":0}];
 
 document.getElementById('dayNum').textContent = pilotDay();
-dbLoad().then(function(){
-  // Force seed with correct data
-  S.contacts = SEED_CONTACTS;
-  S.dailyLogs = SEED_LOGS;
-  save();
+
+// Expose hooks for the auth gate script to drive the data load.
+window.__setOwnerId = function (id) { ownerId = id; };
+window.__triggerEileenLoad = async function () {
+  await dbLoad();
+  // Seed only on a fresh account · don't clobber existing contacts/logs.
+  if ((!S.contacts || S.contacts.length === 0) && (!S.dailyLogs || S.dailyLogs.length === 0)) {
+    S.contacts = SEED_CONTACTS.map(function (s) {
+      return {
+        id: undefined, // let Supabase assign uuids
+        name: s.name,
+        handle: s.ig,
+        source: s.how,
+        stage: s.stage === 'Replied' ? 'In Conversation' : (s.stage || 'Contacted'),
+        notes: s.brok ? 'Brokerage: ' + s.brok : null,
+        dm_sent_at: null,
+        last_touch_at: new Date().toISOString(),
+      };
+    });
+    S.dailyLogs = SEED_LOGS.map(function (l) { return {
+      date: l.date, dms: l.dms, replies: 0, handRaises: 0, disco: l.disco, signed: l.signed,
+    }; });
+    save();
+  }
   renderToday();
   renderWeekSummary();
   renderContacts();
   updateLiveStats();
-});
+};
 </script>
 </div>
 
@@ -992,11 +1276,18 @@ dbLoad().then(function(){
       if (!profile) { showGate('No profile found for this account.', true); return; }
       const isBroker = profile.role === 'broker';
       const isEileen = (profile.role === 'tc') && (String(profile.first_name || '').toLowerCase() === 'eileen');
-      if (isBroker || isEileen) {
-        reveal();
-      } else {
+      if (!(isBroker || isEileen)) {
         showGate('This cockpit is for Eileen and the broker only.', true);
+        return;
       }
+      // Set the owner id for db reads/writes.
+      // Broker viewing → still uses session user id; data is filtered by RLS.
+      // For broker visibility into Eileen specifically, use the BD Pipeline view in /aari-crm.
+      window.__currentOwnerId = profile.id;
+      if (typeof window.__setOwnerId === 'function') window.__setOwnerId(profile.id);
+      reveal();
+      // Kick off the data load now that auth is settled.
+      if (typeof window.__triggerEileenLoad === 'function') window.__triggerEileenLoad();
     } catch (e) {
       showGate('Sign-in error: ' + (e.message || 'unknown'), true);
     }
