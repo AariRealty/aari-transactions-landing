@@ -3237,6 +3237,15 @@ Password:"></textarea>
 
       <!-- ========== STEP 2: Service-specific form ========== -->
       <section class="intake-step" data-step="2" hidden>
+        <!-- Phase 2 (May 2026) · Service confirmation chip · auto-shown when picker was skipped -->
+        <div id="intakeServiceChip" class="intake-service-chip" hidden style="display:none;background:#faf6ec;border:1px solid #e6e2d8;border-left:3px solid #b89968;padding:10px 14px;border-radius:6px;margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div style="font-size:13px;color:#0f0f0f;line-height:1.4">
+            <span style="font-weight:700">Service:</span>
+            <span id="intakeServiceChipName" style="font-weight:500">TC · One Side</span>
+            <span id="intakeServiceChipPrice" style="color:#6b6b6b;font-size:12px"></span>
+          </div>
+          <button type="button" id="intakeServiceChange" style="background:transparent;border:none;color:#8a6ab0;font-size:12px;font-weight:600;cursor:pointer;text-decoration:underline;padding:4px 8px;font-family:var(--sans)">Change service</button>
+        </div>
         <!-- Shared agent block . every service needs this -->
         <fieldset class="form-block">
           <legend>Agent</legend>
@@ -3484,11 +3493,14 @@ Password:"></textarea>
             <input type="checkbox" id="saAckCheckbox" name="sa_acknowledged">
             <span>I have read and agree to the Aari Transactions Service Agreement (v4.6).</span>
           </label>
-          <div class="sa-sigpad-wrap" id="saSigPadWrap">
+          <!-- Phase 3 (May 2026) · drawn signature pad removed. Typed legal name below
+               is legally equivalent under FL Electronic Signature Act § 668.50. Audit
+               record includes typed name + timestamp + IP. -->
+          <div class="sa-sigpad-wrap" id="saSigPadWrap" hidden style="display:none">
             <canvas id="intakeSigPad" class="sa-sigpad"></canvas>
             <div class="sa-sigpad-placeholder">Sign here with your finger, mouse, or stylus</div>
           </div>
-          <div class="sa-sigpad-actions">
+          <div class="sa-sigpad-actions" hidden style="display:none">
             <span>Signature, timestamp, and IP captured for audit-readiness.</span>
             <button type="button" class="btn-text-link" id="saSigClear">Clear signature</button>
           </div>
@@ -4009,6 +4021,31 @@ Password:"></textarea>
       });
     }
 
+    /* Phase 2 (May 2026) · service confirmation chip on Step 2 · shows when picker was skipped */
+    function renderServiceChip(){
+      const chip = document.getElementById('intakeServiceChip');
+      if (!chip) return;
+      const svc = SERVICE_BY_ID[state.serviceId];
+      if (!svc) {
+        chip.hidden = true;
+        chip.style.display = 'none';
+        return;
+      }
+      const nameEl = document.getElementById('intakeServiceChipName');
+      const priceEl = document.getElementById('intakeServiceChipPrice');
+      if (nameEl) nameEl.textContent = svc.name + (svc.tier ? ' · ' + svc.tier : '');
+      if (priceEl) priceEl.textContent = svc.price ? '· $' + svc.price : '';
+      chip.hidden = false;
+      chip.style.display = 'flex';
+    }
+    /* Change service button · sends user back to Step 1 picker */
+    document.addEventListener('click', function(e){
+      if (e.target && e.target.id === 'intakeServiceChange') {
+        e.preventDefault();
+        showStep(1);
+      }
+    });
+
     /* --- Render Step 3 TC picker --- */
     function renderTcStep(){
       const preselectedView = document.getElementById('tcPreselectedView');
@@ -4183,7 +4220,7 @@ Password:"></textarea>
 
       // Step-specific setup
       if(n === 1) { bindIntakeServiceTabs(); renderServiceGrid(); }
-      if(n === 2) syncStep2Forms();
+      if(n === 2) { syncStep2Forms(); renderServiceChip(); }
       if(n === 3) renderTcStep();
       if(n === 4) setTimeout(initSigPad, 100);
       if(n === 5) renderSummary();
@@ -4238,15 +4275,15 @@ Password:"></textarea>
         if(!state.preferredTc){ alert('Pick a TC or choose "No preference" to continue.'); return false; }
         return true;
       }
-      // Step 4: signing must be complete
+      // Step 4: signing must be complete · typed name only (Phase 3 May 2026 · drawn sig removed)
       if(state.step === 4){
         const ackChecked = document.getElementById('saAckCheckbox').checked;
         const typed = document.getElementById('saTypedNameInput').value.trim();
         if(!ackChecked){ alert('Please check the acknowledgment box.'); return false; }
-        if(!sigPad || sigPad.isEmpty()){ alert('Please sign in the signature box.'); return false; }
         if(typed.length < 2){ alert('Please type your full legal name.'); return false; }
         document.getElementById('intakeSaSigned').value = 'yes';
         document.getElementById('intakeSaTyped').value = typed;
+        document.getElementById('intakeSaTimestamp').value = new Date().toISOString();
         return true;
       }
       return true;
@@ -4434,7 +4471,19 @@ Password:"></textarea>
       }
     }
 
-    document.querySelectorAll('[data-intake-trigger]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); open(); }));
+    document.querySelectorAll('[data-intake-trigger]').forEach(b => b.addEventListener('click', e => {
+      e.preventDefault();
+      // Phase 2 (May 2026) · generic triggers without data-prefill-service default to TC One Side
+      // so the agent skips the service picker. Step 1 still reachable via Back / Change service link.
+      const hasPrefill = b.hasAttribute('data-prefill-service');
+      if (!hasPrefill && !state.serviceId) {
+        state.serviceId = 'tc_one_side';
+        state.intakeSvcTab = SVC_CATEGORY_BY_ID['tc_one_side'] || 'tc';
+        open({ skipToStep: 2 });
+      } else {
+        open();
+      }
+    }));
     closeBtn.addEventListener('click', close);
     overlay.addEventListener('click', e => { if(e.target === overlay) close(); });
     document.addEventListener('keydown', e => { if(e.key === 'Escape' && !overlay.hasAttribute('hidden')) close(); });
