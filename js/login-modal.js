@@ -110,15 +110,23 @@
       submitBtn.innerHTML = '<span class="aari-spinner"></span> Signing in…';
       try {
         await global.AariAuth.signIn(email, pw);
-        // Phase 2 · Honor an intake-driven return path before falling back to the portal.
+        // Phase 2 · Honor an intake-driven return path before anything else.
         let next = null;
         try { next = sessionStorage.getItem('aari-after-auth'); } catch (_) {}
         if (next) {
           try { sessionStorage.removeItem('aari-after-auth'); } catch (_) {}
           window.location.href = next;
-        } else {
-          window.location.href = '/portal';
+          return;
         }
+        // Role-based routing · staff lands in CRM, agents in portal.
+        try {
+          const profile = await global.AariAuth.getAgentProfile();
+          if (profile && (profile.role === 'tc' || profile.role === 'broker')) {
+            window.location.href = '/aari-crm';
+            return;
+          }
+        } catch (_) { /* profile lookup failure → fall through to /portal */ }
+        window.location.href = '/portal';
       } catch (err) {
         submitBtn.disabled = false;
         submitBtn.innerHTML = 'Sign in';

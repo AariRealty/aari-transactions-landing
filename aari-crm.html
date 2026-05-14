@@ -2278,25 +2278,620 @@ body {
     console.info('[AariCRM] Note ready to send to Supabase:', txt);
   });
 
-  // ============== LOAD DATA ==============
-  // AARI:WIRE · Replace with Supabase queries.
-  // Example queries needed:
-  //   - SELECT count FROM files WHERE status IN ('intake','inspection','financing','ctc','scheduled')  → stat-active
-  //   - SELECT count FROM files WHERE closing_date BETWEEN this_monday AND this_saturday               → stat-closing
-  //   - SELECT count FROM files WHERE broker_review_status = 'pending'                                 → stat-review
-  //   - SELECT count FROM files WHERE status = 'closed' AND closed_at >= this_month                    → stat-closed-mo
-  //   - SELECT * FROM files WHERE status = '{stage}' ORDER BY due_next ASC                             → pipeline groups
-  //   - SELECT * FROM files WHERE due_next = today                                                     → today-due-body
-  //   - SELECT * FROM files WHERE broker_review_status = 'pending'                                     → today-review-body
-  //   - SELECT * FROM files WHERE created_at >= now() - interval '24 hours'                            → today-intake-body
+  // ============== LOAD DATA · WIRED (Phase 2) ==============
+  // All tabs scoped to staff role · staff RLS policies let TC/broker read every
+  // file + agent. Date columns referenced: closing_date (always present),
+  // optional inspection_date / financing_due_date / emd_due_date / appraisal_due_date.
+
+  // Status mapping · the existing files.status values are mapped into the
+  // 5 pipeline groups + the broker review queue. Adjust if your schema differs.
+  const PIPELINE_GROUPS = {
+    intake:     ['intake_received'],
+    inspection: ['awaiting_docs'],
+    financing:  ['in_coordination'],
+    ctc:        ['awaiting_signatures'],
+    scheduled:  ['pending_closing'],
+  };
+  function groupForStatus(status) {
+    for (const [grp, list] of Object.entries(PIPELINE_GROUPS)) {
+      if (list.includes(status)) return grp;
+    }
+    return null;
+  }
+  const ACTIVE_STATUSES = ['intake_received','awaiting_docs','in_coordination','awaiting_signatures','pending_closing'];
+  const CLOSED_STATUSES = ['closed','archived'];
+
+  function fmtDateShort(s) {
+    if (!s) return '';
+    try {
+      const d = new Date(s.length === 10 ? s + 'T00:00:00' : s);
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    } catch (e) { return s; }
+  }
+  function nameFor(agent) {
+    if (!agent) return '—';
+    const n = ((agent.first_name || '') + ' ' + (agent.last_name || '')).trim();
+    return n || agent.email || '—';
+  }
+
+  // Shared cache so the four tabs read the same data
+  let crmCache = { files: [], agents: {}, loadedAt: null };
+
+  async function loadCrmData() {
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const [filesR, agentsR] = await Promise.all([
+        client.from('files').select('*').order('created_at', { ascending: false }),
+        client.from('agents').select('id, first_name, last_name, email, role, brokerage_name, phone, created_at'),
+      ]);
+      const agentsById = {};
+      (agentsR.data || []).forEach(a => { agentsById[a.id] = a; });
+      crmCache = {
+        files: filesR.data || [],
+        agents: agentsById,
+        agentsList: agentsR.data || [],
+        loadedAt: Date.now(),
+      };
+    } catch (e) {
+      console.error('[AariCRM] loadCrmData failed:', e);
+      crmCache = { files: [], agents: {}, agentsList: [], loadedAt: Date.now() };
+    }
+  }
+
+  // -------------------- TODAY --------------------
+  function renderToday() {
+    const files = crmCache.files || [];
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const day = today.getDay();
+    const monday = new Date(today); monday.setDate(today.getDate() - ((day + 6) % 7));
+    const saturday = new Date(monday); saturday.setDate(monday.getDate() + 5);
+
+    const active = files.filter(f => ACTIVE_STATUSES.includes(f.status));
+    const closingThisWeek = active.filter(f => {
+      if (!f.closing_date) return false;
+      const d = new Date(f.closing_date + 'T00:00:00');
+      return d >= monday && d <= saturday;
+    });
+    const pendingReview = active.filter(f => (f.broker_review_status || '') === 'pending');
+    const closedThisMonth = files.filter(f => CLOSED_STATUSES.includes(f.status) && new Date(f.updated_at || f.created_at) >= monthStart);
+    const closedYtd = files.filter(f => CLOSED_STATUSES.includes(f.status) && new Date(f.updated_at || f.created_at) >= yearStart);
+
+    document.getElementById('stat-active').textContent = active.length;
+    document.getElementById('stat-closing').textContent = closingThisWeek.length;
+    document.getElementById('stat-review').textContent = pendingReview.length;
+    document.getElementById('stat-closed-mo').textContent = closedThisMonth.length;
+    document.getElementById('stat-ytd').textContent = closedYtd.length;
+
+    // Files due today (closing today)
+    const dueToday = active.filter(f => f.closing_date === today.toISOString().slice(0,10));
+    const dueBody = document.getElementById('today-due-body');
+    document.getElementById('today-due-meta').textContent = dueToday.length ? dueToday.length + ' file' + (dueToday.length === 1 ? '' : 's') : '';
+    dueBody.innerHTML = dueToday.length
+      ? dueToday.map(f => fileRowHtml(f)).join('')
+      : '<div class="empty-state"><p class="label">Nothing due today.</p><p>Everything that needs touching has been touched.</p></div>';
+
+    // Awaiting broker review
+    const reviewBody = document.getElementById('today-review-body');
+    document.getElementById('today-review-meta').textContent = pendingReview.length ? pendingReview.length + ' waiting' : '';
+    reviewBody.innerHTML = pendingReview.length
+      ? pendingReview.map(f => fileRowHtml(f)).join('')
+      : '<div class="empty-state"><p class="label">Queue is clear.</p><p>No files waiting on Marlenyi for pre-close compliance review.</p></div>';
+
+    // New intake in the last 24 hours
+    const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const newIntake = files.filter(f => new Date(f.created_at) >= dayAgo);
+    const intakeBody = document.getElementById('today-intake-body');
+    document.getElementById('today-intake-meta').textContent = newIntake.length ? newIntake.length + ' new' : '';
+    intakeBody.innerHTML = newIntake.length
+      ? newIntake.map(f => fileRowHtml(f)).join('')
+      : '<div class="empty-state"><p class="label">No new submissions.</p><p>The intake form on aaritransactions.com routes here when an agent submits.</p></div>';
+  }
+
+  function fileRowHtml(f) {
+    const agent = crmCache.agents[f.agent_id];
+    return '<div class="file-mini" data-file-id="' + f.id + '" style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;cursor:pointer">' +
+      '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + escapeHtml(f.property_address || '(no address)') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted)">' + escapeHtml(nameFor(agent)) + ' · ' + escapeHtml(f.status || '') + (f.closing_date ? ' · closing ' + fmtDateShort(f.closing_date) : '') + '</div></div>' +
+      '<button type="button" class="btn-mini" style="font-size:11px;padding:6px 10px;border:1px solid var(--ink);background:transparent;color:var(--ink);border-radius:6px;cursor:pointer">Open</button>' +
+    '</div>';
+  }
+
+  // -------------------- PIPELINE --------------------
+  function renderPipeline() {
+    const files = crmCache.files || [];
+    const search = (document.getElementById('pipe-search')?.value || '').toLowerCase();
+    const groups = { intake: [], inspection: [], financing: [], ctc: [], scheduled: [] };
+    files.forEach(f => {
+      if (!ACTIVE_STATUSES.includes(f.status)) return;
+      const grp = groupForStatus(f.status);
+      if (!grp) return;
+      if (search) {
+        const agent = crmCache.agents[f.agent_id];
+        const hay = (f.property_address || '') + ' ' + nameFor(agent);
+        if (!hay.toLowerCase().includes(search)) return;
+      }
+      groups[grp].push(f);
+    });
+    for (const [grp, list] of Object.entries(groups)) {
+      const countEl = document.getElementById('grp-' + grp + '-count');
+      const bodyEl = document.getElementById('grp-' + grp + '-body');
+      if (countEl) countEl.textContent = list.length + ' file' + (list.length === 1 ? '' : 's');
+      if (bodyEl) {
+        bodyEl.innerHTML = list.length
+          ? list.map(f => pipelineRowHtml(f, grp)).join('')
+          : '<tr><td colspan="6" class="empty-state" style="padding:18px;border:none">No files in ' + grp + '.</td></tr>';
+      }
+    }
+  }
+  function pipelineRowHtml(f, grp) {
+    const agent = crmCache.agents[f.agent_id];
+    const lastCol = grp === 'scheduled'
+      ? fmtDateShort(f.closing_date)
+      : (f.closing_date ? 'Closes ' + fmtDateShort(f.closing_date) : '—');
+    return '<tr data-file-id="' + f.id + '" style="cursor:pointer">' +
+      '<td>' + escapeHtml(f.property_address || '(no address)') + '</td>' +
+      '<td>' + escapeHtml(nameFor(agent)) + '</td>' +
+      '<td>—</td>' +
+      '<td>' + escapeHtml(f.service_type || '—') + '</td>' +
+      '<td>' + fmtDateShort(f.created_at) + '</td>' +
+      '<td>' + lastCol + '</td>' +
+    '</tr>';
+  }
+  const pipeSearchEl = document.getElementById('pipe-search');
+  if (pipeSearchEl) pipeSearchEl.addEventListener('input', renderPipeline);
+
+  // -------------------- CALENDAR --------------------
+  function populateCalendarEvents() {
+    const files = crmCache.files || [];
+    const byDay = {}; // keyed YYYY-MM-DD
+    function add(dateStr, type, fileId, address) {
+      if (!dateStr) return;
+      const key = dateStr.length === 10 ? dateStr : dateStr.slice(0, 10);
+      if (!byDay[key]) byDay[key] = [];
+      byDay[key].push({ type, file_id: fileId, label: address });
+    }
+    files.forEach(f => {
+      if (CLOSED_STATUSES.includes(f.status)) return;
+      const addr = f.property_address || '(file)';
+      add(f.closing_date, 'close', f.id, '🏠 ' + addr);
+      add(f.inspection_date, 'inspection', f.id, '🔍 ' + addr);
+      add(f.financing_due_date, 'financing', f.id, '💰 ' + addr);
+      add(f.emd_due_date, 'emd', f.id, '💵 ' + addr);
+      add(f.appraisal_due_date, 'appraisal', f.id, '📋 ' + addr);
+    });
+    // Re-index into { dayOfMonth: [events] } for the visible month
+    window.__calEventsByDay = window.__calEventsByDay || {};
+    window.__calEventsByDayRaw = byDay;
+  }
+  function reindexCalendarForVisibleMonth() {
+    const raw = window.__calEventsByDayRaw || {};
+    const out = {};
+    const monthPrefix = String(calYear) + '-' + String(calMonth + 1).padStart(2, '0') + '-';
+    Object.keys(raw).forEach(dateStr => {
+      if (!dateStr.startsWith(monthPrefix)) return;
+      const day = parseInt(dateStr.slice(8, 10), 10);
+      if (!out[day]) out[day] = [];
+      raw[dateStr].forEach(ev => out[day].push(ev));
+    });
+    window.__calEventsByDay = out;
+  }
+
+  // Hook into existing calendar nav to re-index on month change
+  const _origRenderCalendar = renderCalendar;
+  renderCalendar = function () {
+    reindexCalendarForVisibleMonth();
+    _origRenderCalendar();
+  };
+
+  // -------------------- DIRECTORY --------------------
+  function renderDirectory() {
+    const agents = (crmCache.agentsList || []).slice().sort((a,b) => nameFor(a).localeCompare(nameFor(b)));
+    // The directory has an Agents/Vendors toggle; we wire Agents only for v1.
+    let host = document.querySelector('#view-directory .agents-list, #view-directory [data-directory="agents"]');
+    if (!host) {
+      // Fallback: find a body container by id pattern
+      host = document.getElementById('directory-agents-body') || document.querySelector('#view-directory .empty-state')?.parentElement;
+    }
+    if (!host) return;
+    if (!agents.length) {
+      host.innerHTML = '<div class="empty-state" style="padding:32px"><p class="label">No agents yet.</p><p>When an agent registers at aaritransactions.com/register, they appear here.</p></div>';
+      return;
+    }
+    host.innerHTML = '<div style="display:grid;grid-template-columns:1fr;gap:8px">' +
+      agents.map(a => {
+        const name = nameFor(a);
+        const role = (a.role || 'agent').toUpperCase();
+        const initials = ((a.first_name || '?')[0] + (a.last_name || '?')[0]).toUpperCase();
+        return '<div class="dir-row" style="display:grid;grid-template-columns:42px 2fr 2fr 1fr auto;gap:14px;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface)">' +
+          '<div style="width:36px;height:36px;border-radius:50%;background:var(--ink);color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center">' + escapeHtml(initials) + '</div>' +
+          '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + escapeHtml(name) + '</div><div style="font-size:11px;color:var(--muted)">' + escapeHtml(a.email || '') + '</div></div>' +
+          '<div style="font-size:12px;color:var(--ink-2)">' + escapeHtml(a.brokerage_name || '') + '</div>' +
+          '<div><span style="font-size:9px;letter-spacing:1px;font-weight:700;padding:3px 8px;border-radius:99px;background:' + (role === 'BROKER' ? 'var(--ink)' : (role === 'TC' ? '#0f6e30' : 'var(--soft-bg)')) + ';color:' + (role === 'AGENT' ? 'var(--muted)' : '#fff') + '">' + role + '</span></div>' +
+          '<a href="mailto:' + escapeHtml(a.email || '') + '" style="font-size:11px;color:var(--ink);text-decoration:underline;font-weight:600">Email</a>' +
+        '</div>';
+      }).join('') +
+    '</div>';
+  }
+
+  // -------------------- LEADS (Phase 3) --------------------
+  // Definition: files where tc_id is null OR status is intake_received.
+  // These are submissions awaiting assignment / triage.
+  function renderLeadsPhase3() {
+    const files = crmCache.files || [];
+    const newLeads = files.filter(f => (!f.tc_id || f.status === 'intake_received'));
+    const reviewLeads = files.filter(f => f.status === 'awaiting_docs' && !f.tc_id);
+    const convertedLeads = files.filter(f => f.tc_id && f.status !== 'intake_received');
+    const rejectedLeads = files.filter(f => f.status === 'cancelled' || f.status === 'rejected');
+    document.getElementById('lead-count-new').textContent = newLeads.length;
+    document.getElementById('lead-count-review').textContent = reviewLeads.length;
+    document.getElementById('lead-count-converted').textContent = convertedLeads.length;
+    document.getElementById('lead-count-rejected').textContent = rejectedLeads.length;
+    const map = { new: newLeads, review: reviewLeads, converted: convertedLeads, rejected: rejectedLeads };
+    const list = document.getElementById('leads-list');
+    const items = map[leadFilter] || [];
+    if (!items.length) {
+      list.innerHTML = '<div class="empty-state" style="padding:40px 20px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);margin-top:8px"><p class="label">No ' + leadFilter + ' leads.</p><p>When agents submit intake, files appear here for triage.</p></div>';
+      return;
+    }
+    list.innerHTML = items.map(f => {
+      const agent = crmCache.agents[f.agent_id];
+      return '<div class="lead-row" data-file-id="' + f.id + '" style="display:grid;grid-template-columns:1fr 2fr 1.5fr 1fr auto;gap:12px;align-items:center;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin-bottom:8px;cursor:pointer">' +
+        '<div style="font-size:11px;color:var(--muted)">' + fmtDateShort(f.created_at) + '</div>' +
+        '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + escapeHtml(nameFor(agent)) + '</div><div style="font-size:11px;color:var(--muted)">' + escapeHtml((agent && agent.brokerage_name) || '') + '</div></div>' +
+        '<div style="font-size:12px;color:var(--ink-2)">' + escapeHtml(f.service_type || '—') + '</div>' +
+        '<div style="font-size:11px;color:var(--muted)">' + escapeHtml(f.property_address || '(no address)') + '</div>' +
+        '<button type="button" class="btn-mini solid" style="font-size:11px;padding:7px 12px;background:var(--ink);color:#fff;border:1px solid var(--ink);border-radius:6px;cursor:pointer">Open</button>' +
+      '</div>';
+    }).join('');
+  }
+
+  // -------------------- TEMPLATES (Phase 3) --------------------
+  let templatesCache = [];
+  async function loadTemplates() {
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { data, error } = await client.from('email_templates').select('*').order('stage');
+      if (error) { console.warn('[CRM templates]', error.message); return; }
+      templatesCache = data || [];
+      renderTemplates();
+    } catch (e) { console.error('[CRM templates]', e); }
+  }
+  function renderTemplates() {
+    const search = (document.getElementById('tpl-search')?.value || '').toLowerCase();
+    const stages = { intake:[], active:[], ctc:'clear_to_close', postclose:'post_close', admin:[] };
+    const buckets = { intake:[], active:[], ctc:[], postclose:[], admin:[] };
+    templatesCache.forEach(t => {
+      if (search && !((t.name || '') + ' ' + (t.body || '')).toLowerCase().includes(search)) return;
+      const s = t.stage;
+      if (s === 'intake') buckets.intake.push(t);
+      else if (s === 'active') buckets.active.push(t);
+      else if (s === 'clear_to_close' || s === 'ctc') buckets.ctc.push(t);
+      else if (s === 'post_close' || s === 'postclose') buckets.postclose.push(t);
+      else buckets.admin.push(t);
+    });
+    Object.entries(buckets).forEach(([key, list]) => {
+      document.getElementById('tpl-count-' + key).textContent = list.length + ' template' + (list.length === 1 ? '' : 's');
+      const host = document.getElementById('tpl-list-' + key);
+      if (!host) return;
+      if (!list.length) {
+        host.innerHTML = '<div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)"><p style="font-size:12px;color:var(--muted)">No templates in this stage.</p></div>';
+        return;
+      }
+      host.innerHTML = list.map(t =>
+        '<div class="tpl-card" data-tpl-id="' + t.id + '" style="padding:14px 16px;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin-bottom:8px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div style="font-size:13px;font-weight:600;color:var(--ink)">' + escapeHtml(t.name) + '</div>' +
+            '<div style="display:flex;gap:6px"><button type="button" class="btn-mini tpl-copy" data-tpl-id="' + t.id + '" style="font-size:10px;padding:5px 10px;border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:5px;cursor:pointer">Copy</button>' +
+            '<button type="button" class="btn-mini tpl-edit" data-tpl-id="' + t.id + '" style="font-size:10px;padding:5px 10px;border:1px solid var(--ink);background:transparent;color:var(--ink);border-radius:5px;cursor:pointer">Edit</button></div></div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:6px"><strong>Subject:</strong> ' + escapeHtml(t.subject) + '</div>' +
+          '<div style="font-size:11.5px;color:var(--ink-2);margin-top:8px;white-space:pre-wrap;line-height:1.5;max-height:120px;overflow:hidden">' + escapeHtml(t.body) + '</div>' +
+        '</div>'
+      ).join('');
+    });
+  }
+  document.getElementById('tpl-search')?.addEventListener('input', renderTemplates);
+  document.addEventListener('click', e => {
+    const copy = e.target.closest('.tpl-copy');
+    if (copy) {
+      const tpl = templatesCache.find(t => t.id === copy.getAttribute('data-tpl-id'));
+      if (tpl && navigator.clipboard) navigator.clipboard.writeText('Subject: ' + tpl.subject + '\n\n' + tpl.body);
+      copy.textContent = 'Copied ✓';
+      setTimeout(() => { copy.textContent = 'Copy'; }, 1400);
+    }
+    const edit = e.target.closest('.tpl-edit');
+    if (edit) {
+      const tpl = templatesCache.find(t => t.id === edit.getAttribute('data-tpl-id'));
+      if (!tpl) return;
+      const newSubject = prompt('Edit subject:', tpl.subject);
+      if (newSubject === null) return;
+      const newBody = prompt('Edit body:', tpl.body);
+      if (newBody === null) return;
+      window.AariAuth.ensureClient().then(c =>
+        c.from('email_templates').update({ subject: newSubject, body: newBody, updated_at: new Date().toISOString() }).eq('id', tpl.id)
+      ).then(loadTemplates);
+    }
+  });
+  document.getElementById('tpl-new')?.addEventListener('click', async () => {
+    const stage = prompt('Stage (intake / active / clear_to_close / post_close / admin):', 'active');
+    if (!stage) return;
+    const name = prompt('Template name:');
+    if (!name) return;
+    const subject = prompt('Subject:');
+    if (!subject) return;
+    const body = prompt('Body (use {{merge_tags}}):');
+    if (!body) return;
+    const client = await window.AariAuth.ensureClient();
+    await client.from('email_templates').insert({ stage, name, subject, body, merge_vars: [] });
+    loadTemplates();
+  });
+
+  // -------------------- PAYOUT (Phase 3 · TC-facing) --------------------
+  let payoutsCache = [];
+  async function loadPayouts() {
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { data, error } = await client.from('payouts').select('*').order('submitted_at', { ascending: false });
+      if (error) { console.warn('[CRM payouts]', error.message); return; }
+      payoutsCache = data || [];
+      renderPayout();
+      renderPayroll();
+    } catch (e) { console.error('[CRM payouts]', e); }
+  }
+  function renderPayout() {
+    const session = window.__currentUserId;
+    const own = payoutsCache.filter(p => p.tc_id === session);
+    const pending = own.filter(p => p.status === 'pending');
+    const now = new Date();
+    const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay());
+    const approved = own.filter(p => p.status === 'approved' && p.approved_at && new Date(p.approved_at) >= weekStart);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const paid = own.filter(p => p.status === 'paid' && p.paid_at && new Date(p.paid_at) >= monthStart);
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const ytd = own.filter(p => p.status === 'paid' && p.paid_at && new Date(p.paid_at) >= yearStart);
+    const money = c => '$' + ((c || 0) / 100).toFixed(2);
+    const sum = arr => arr.reduce((a, p) => a + (p.amount_cents || 0), 0);
+    document.getElementById('po-pending').textContent = money(sum(pending));
+    document.getElementById('po-pending-count').textContent = pending.length + ' entr' + (pending.length === 1 ? 'y' : 'ies');
+    document.getElementById('po-approved').textContent = money(sum(approved));
+    document.getElementById('po-approved-count').textContent = approved.length + ' entr' + (approved.length === 1 ? 'y' : 'ies');
+    document.getElementById('po-paid').textContent = money(sum(paid));
+    document.getElementById('po-paid-count').textContent = paid.length + ' entr' + (paid.length === 1 ? 'y' : 'ies');
+    document.getElementById('po-ytd').textContent = money(sum(ytd));
+    document.getElementById('po-ytd-count').textContent = ytd.length + ' entr' + (ytd.length === 1 ? 'y' : 'ies');
+
+    // File picker
+    const fileSel = document.getElementById('po-file');
+    if (fileSel) {
+      const active = (crmCache.files || []).filter(f => ACTIVE_STATUSES.includes(f.status) || f.status === 'closed');
+      fileSel.innerHTML = '<option value="">Select file...</option>' + active.map(f => '<option value="' + f.id + '">' + escapeHtml(f.property_address || 'File ' + f.id.slice(0, 8)) + '</option>').join('');
+    }
+
+    const pendBody = document.getElementById('po-list-pending');
+    pendBody.innerHTML = pending.length
+      ? pending.map(p => payoutRowHtml(p)).join('')
+      : '<div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)"><p style="font-size:12px;color:var(--muted)">Nothing pending. Submit a payout above when you\'re ready.</p></div>';
+    const histBody = document.getElementById('po-list-history');
+    const history = own.filter(p => p.status === 'approved' || p.status === 'paid').slice(0, 25);
+    histBody.innerHTML = history.length
+      ? history.map(p => payoutRowHtml(p)).join('')
+      : '<div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)"><p style="font-size:12px;color:var(--muted)">No approved or paid payouts yet.</p></div>';
+  }
+  function payoutRowHtml(p) {
+    const file = (crmCache.files || []).find(f => f.id === p.file_id);
+    const color = { pending:'#9a6630', approved:'#4a7a4a', paid:'#0f6e30', rejected:'#a32d2d' }[p.status] || '#666';
+    return '<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr auto;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin-bottom:6px">' +
+      '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + escapeHtml(file ? file.property_address : '(file)') + '</div><div style="font-size:11px;color:var(--muted)">' + fmtDateShort(p.submitted_at) + '</div></div>' +
+      '<div style="font-family:var(--serif);font-size:18px;font-weight:600;color:var(--ink)">$' + ((p.amount_cents || 0) / 100).toFixed(2) + '</div>' +
+      '<div><span style="font-size:9px;letter-spacing:1px;font-weight:700;padding:3px 8px;border-radius:99px;background:#fafaf6;color:' + color + ';text-transform:uppercase">' + p.status + '</span></div>' +
+      '<div style="font-size:11px;color:var(--muted)">' + escapeHtml(p.notes || '') + '</div>' +
+    '</div>';
+  }
+  document.getElementById('po-submit')?.addEventListener('click', async () => {
+    const fileId = document.getElementById('po-file').value;
+    const amount = parseFloat(document.getElementById('po-amount').value || '0');
+    const notes = document.getElementById('po-notes').value;
+    if (!fileId) { alert('Pick a file.'); return; }
+    if (!amount || amount <= 0) { alert('Enter a valid amount.'); return; }
+    const client = await window.AariAuth.ensureClient();
+    const { error } = await client.from('payouts').insert({
+      tc_id: window.__currentUserId,
+      file_id: fileId,
+      amount_cents: Math.round(amount * 100),
+      status: 'pending',
+      notes: notes || null,
+    });
+    if (error) { alert('Submit failed: ' + error.message); return; }
+    document.getElementById('po-amount').value = '';
+    document.getElementById('po-notes').value = '';
+    document.getElementById('po-file').value = '';
+    loadPayouts();
+  });
+
+  // -------------------- PAYROLL (Phase 3 · broker-facing) --------------------
+  function renderPayroll() {
+    const pending = payoutsCache.filter(p => p.status === 'pending');
+    const approved = payoutsCache.filter(p => p.status === 'approved');
+    const money = c => '$' + ((c || 0) / 100).toFixed(2);
+    const sum = arr => arr.reduce((a, p) => a + (p.amount_cents || 0), 0);
+    document.getElementById('payroll-total-approved').textContent = money(sum(approved));
+    document.getElementById('payroll-tc-count').textContent = new Set(approved.map(p => p.tc_id)).size;
+    document.getElementById('payroll-pending-meta').textContent = pending.length + ' awaiting your review';
+
+    const pendList = document.getElementById('payroll-pending-list');
+    pendList.innerHTML = pending.length
+      ? pending.map(p => payrollPendingRowHtml(p)).join('')
+      : '<div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)"><p style="font-size:12px;color:var(--muted)">No payouts waiting for approval.</p></div>';
+
+    // Group approved by TC
+    const tcCards = document.getElementById('payroll-tc-cards');
+    if (!approved.length) {
+      tcCards.innerHTML = '<div class="empty-state" style="padding:24px 16px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md)"><p style="font-size:12px;color:var(--muted)">No approved payouts this week.</p></div>';
+    } else {
+      const byTc = {};
+      approved.forEach(p => {
+        if (!byTc[p.tc_id]) byTc[p.tc_id] = [];
+        byTc[p.tc_id].push(p);
+      });
+      tcCards.innerHTML = Object.entries(byTc).map(([tcId, list]) => {
+        const tc = crmCache.agents[tcId];
+        return '<div style="padding:14px 16px;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin-bottom:8px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:14px;font-weight:600;color:var(--ink)">' + escapeHtml(nameFor(tc)) + '</div><div style="font-family:var(--serif);font-size:20px;font-weight:600">' + money(sum(list)) + '</div></div>' +
+          '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + list.length + ' payout' + (list.length === 1 ? '' : 's') + '</div>' +
+        '</div>';
+      }).join('');
+    }
+  }
+  function payrollPendingRowHtml(p) {
+    const tc = crmCache.agents[p.tc_id];
+    const file = (crmCache.files || []).find(f => f.id === p.file_id);
+    return '<div style="display:grid;grid-template-columns:1.5fr 1.5fr 1fr auto;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin-bottom:6px">' +
+      '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + escapeHtml(nameFor(tc)) + '</div><div style="font-size:11px;color:var(--muted)">' + fmtDateShort(p.submitted_at) + '</div></div>' +
+      '<div style="font-size:12px;color:var(--ink-2)">' + escapeHtml(file ? file.property_address : '(file)') + '</div>' +
+      '<div style="font-family:var(--serif);font-size:18px;font-weight:600;color:var(--ink)">$' + ((p.amount_cents || 0) / 100).toFixed(2) + '</div>' +
+      '<div style="display:flex;gap:6px"><button type="button" class="payroll-approve" data-id="' + p.id + '" style="font-size:11px;padding:7px 12px;background:#0f6e30;color:#fff;border:none;border-radius:6px;cursor:pointer">Approve</button>' +
+        '<button type="button" class="payroll-reject" data-id="' + p.id + '" style="font-size:11px;padding:7px 12px;background:transparent;color:var(--status-red);border:1px solid var(--status-red);border-radius:6px;cursor:pointer">Reject</button></div>' +
+    '</div>';
+  }
+  document.addEventListener('click', async e => {
+    const approveBtn = e.target.closest('.payroll-approve');
+    const rejectBtn = e.target.closest('.payroll-reject');
+    if (approveBtn) {
+      const client = await window.AariAuth.ensureClient();
+      await client.from('payouts').update({ status: 'approved', approved_at: new Date().toISOString(), approved_by: window.__currentUserId }).eq('id', approveBtn.getAttribute('data-id'));
+      loadPayouts();
+    }
+    if (rejectBtn) {
+      const client = await window.AariAuth.ensureClient();
+      await client.from('payouts').update({ status: 'rejected' }).eq('id', rejectBtn.getAttribute('data-id'));
+      loadPayouts();
+    }
+  });
+  document.getElementById('payroll-run-btn')?.addEventListener('click', async () => {
+    const approved = payoutsCache.filter(p => p.status === 'approved');
+    if (!approved.length) { alert('No approved payouts to disburse.'); return; }
+    if (!confirm('Mark ' + approved.length + ' payout' + (approved.length === 1 ? '' : 's') + ' as paid? This logs the Friday Disbursement.')) return;
+    const client = await window.AariAuth.ensureClient();
+    const total = approved.reduce((a, p) => a + (p.amount_cents || 0), 0);
+    const { data: run } = await client.from('payroll_runs').insert({
+      total_cents: total,
+      payout_count: approved.length,
+      run_by: window.__currentUserId,
+    }).select().single();
+    await client.from('payouts')
+      .update({ status: 'paid', paid_at: new Date().toISOString(), paid_by: window.__currentUserId, payroll_run_id: run.id })
+      .in('id', approved.map(p => p.id));
+    loadPayouts();
+  });
+
+  // -------------------- WIN-BACK (Phase 3) --------------------
+  async function loadWinback() {
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { data, error } = await client.from('memberships').select('*, agents(first_name, last_name, email)').eq('status', 'cancelled');
+      if (error) { console.warn('[CRM winback]', error.message); return; }
+      renderWinback(data || []);
+    } catch (e) { console.error('[CRM winback]', e); }
+  }
+  function renderWinback(rows) {
+    const now = new Date();
+    const buckets = { day30:[], day60:[], day90:[], won:[], gone:[] };
+    rows.forEach(m => {
+      const cancelled = m.cancelled_at ? new Date(m.cancelled_at) : null;
+      if (!cancelled) return;
+      const days = Math.floor((now - cancelled) / 86400000);
+      if (m.re_subscribed_at) buckets.won.push(m);
+      else if (days >= 90 && days < 120) buckets.day90.push(m);
+      else if (days >= 60 && days < 90) buckets.day60.push(m);
+      else if (days >= 30 && days < 60) buckets.day30.push(m);
+      else if (days >= 120) buckets.gone.push(m);
+    });
+    Object.entries(buckets).forEach(([k, list]) => {
+      const countEl = document.getElementById('wb-count-' + k);
+      const listEl = document.getElementById('wb-list-' + k);
+      if (countEl) countEl.textContent = list.length;
+      if (listEl) {
+        if (!list.length) return; // keep default empty-state markup
+        listEl.innerHTML = list.map(m => {
+          const ag = m.agents || {};
+          const name = ((ag.first_name || '') + ' ' + (ag.last_name || '')).trim() || ag.email;
+          return '<div style="display:flex;justify-content:space-between;align-items:center;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin-bottom:8px">' +
+            '<div><div style="font-size:13px;font-weight:600;color:var(--ink)">' + escapeHtml(name) + '</div><div style="font-size:11px;color:var(--muted)">Cancelled ' + fmtDateShort(m.cancelled_at) + ' · ' + (m.previous_tier || '') + '</div></div>' +
+            '<button type="button" class="wb-send" data-mem-id="' + m.id + '" data-stage="' + k + '" style="font-size:11px;padding:8px 14px;background:var(--ink);color:#fff;border:none;border-radius:6px;cursor:pointer">Send ' + k + ' email</button>' +
+          '</div>';
+        }).join('');
+      }
+    });
+  }
+  document.querySelectorAll('[data-winback]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const k = btn.getAttribute('data-winback');
+      document.querySelectorAll('[data-winback]').forEach(b => b.classList.toggle('active', b === btn));
+      ['day30','day60','day90','won','gone'].forEach(key => {
+        const el = document.getElementById('wb-list-' + key);
+        if (el) el.style.display = key === k ? '' : 'none';
+      });
+    });
+  });
+  document.addEventListener('click', async e => {
+    const wbBtn = e.target.closest('.wb-send');
+    if (!wbBtn) return;
+    alert('Win-back email queued for membership ' + wbBtn.getAttribute('data-mem-id') + ' (stage: ' + wbBtn.getAttribute('data-stage') + '). The send-win-back Edge Function handles delivery on the next cron run.');
+  });
+
+  // -------------------- SETTINGS (Phase 3) --------------------
+  async function loadSettings() {
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { data: prefs } = await client.from('email_preferences').select('*').eq('user_id', window.__currentUserId).maybeSingle();
+      if (prefs) {
+        const t = document.querySelector('[data-pref="transactional"]');
+        const m = document.querySelector('[data-pref="marketing"]');
+        const r = document.querySelector('[data-pref="review_requests"]');
+        if (t) t.checked = prefs.transactional !== false;
+        if (m) m.checked = prefs.marketing !== false;
+        if (r) r.checked = prefs.review_requests !== false;
+      }
+    } catch (e) { console.warn('[CRM settings]', e); }
+  }
+  document.addEventListener('change', async e => {
+    const pref = e.target.closest('[data-pref]');
+    if (!pref) return;
+    const key = pref.getAttribute('data-pref');
+    const client = await window.AariAuth.ensureClient();
+    await client.from('email_preferences').upsert({
+      user_id: window.__currentUserId,
+      [key]: !!pref.checked,
+    }, { onConflict: 'user_id' });
+  });
+
+  // -------------------- ORCHESTRATION --------------------
   async function loadDashboard() {
-    // Placeholder until Supabase wiring.
+    await loadCrmData();
+    // Cache the auth user id so Phase 3 functions can scope writes correctly.
+    try {
+      const session = await window.AariAuth.getCurrentSession();
+      window.__currentUserId = session ? session.user.id : null;
+    } catch (_) {}
+    renderToday();
+    populateCalendarEvents();
+    reindexCalendarForVisibleMonth();
+    _origRenderCalendar();
+    renderDirectory();
+    renderLeadsPhase3();
+    loadTemplates();
+    loadPayouts();
+    loadWinback();
+    loadSettings();
   }
   async function loadPipeline() {
-    // Placeholder until Supabase wiring.
+    if (!crmCache.loadedAt) await loadCrmData();
+    renderPipeline();
   }
-  loadDashboard();
-  loadPipeline();
+  // Override the placeholder Leads loader so the lead-filter pills also re-render
+  loadLeads = function () { renderLeadsPhase3(); };
+  loadDashboard().then(loadPipeline);
 
   // ============== LEADS · Layer 2 ==============
   // AARI:WIRE · Replace placeholders with Supabase queries.
