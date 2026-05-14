@@ -118,9 +118,13 @@
           window.location.href = next;
           return;
         }
-        // Role-based routing · staff lands in CRM, agents in portal.
+        // Role-based routing · Eileen → BD cockpit, staff → CRM, agents → portal.
         try {
           const profile = await global.AariAuth.getAgentProfile();
+          if (profile && profile.role === 'tc' && String(profile.first_name || '').toLowerCase() === 'eileen') {
+            window.location.href = '/eileen.html';
+            return;
+          }
           if (profile && (profile.role === 'tc' || profile.role === 'broker')) {
             window.location.href = '/aari-crm';
             return;
