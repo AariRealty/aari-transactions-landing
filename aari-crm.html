@@ -1423,7 +1423,7 @@ body {
 /* ========================================================================
    CLIENT TRACKER REBUILD (May 2026) · Agent Portal-style single-scroll
    ======================================================================== */
-.crm-v2 .dash-hero{background:#faf6ec;padding:32px 36px;border-left:4px solid #b89968}
+.crm-v2 .dash-hero{background:#faf6ec;padding:32px 36px;border-left:4px solid #b89968;position:relative}
 .crm-v2 .dash-hero-eyebrow{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#967a4a;font-weight:700;margin-bottom:12px}
 .crm-v2 .dash-hero-title{font-family:'Cormorant Garamond',Georgia,serif;font-size:32px;font-weight:500;color:#0f0f0f;line-height:1.15;margin:0 0 10px;letter-spacing:-0.3px}
 .crm-v2 .dash-hero-sub{font-size:14px;color:#5a4a2a;opacity:.85;line-height:1.55;max-width:680px;margin:0}
@@ -1698,19 +1698,20 @@ body {
 <!-- ============== MAIN ============== -->
 <main id="crm-main" style="display:none">
 
-  <!-- ============== DASHBOARD HERO ============== -->
+  <!-- ============== DASHBOARD HERO (v3.0 · Agent Portal-aligned chassis) ============== -->
   <section class="dash-hero" id="dash-hero">
     <div class="dash-hero-eyebrow" id="dash-hero-eyebrow">Loading…</div>
     <h1 class="dash-hero-title" id="dash-hero-title">Good morning.</h1>
     <p class="dash-hero-sub" id="dash-hero-sub">Loading your workspace…</p>
+    <span style="position:absolute;top:8px;right:14px;font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:#0f0f0f;opacity:.3;font-weight:600;">v3.0</span>
   </section>
 
-  <!-- ============== KPI STRIP ============== -->
+  <!-- ============== KPI STRIP v3 · mirrors Agent Portal exactly ============== -->
   <section class="kpi-strip" id="kpi-strip">
-    <div class="kpi-card"><div class="kpi-lbl">Active</div><div class="kpi-num" id="kpi-active">—</div><div class="kpi-sub" id="kpi-active-sub">Across all TCs</div></div>
-    <div class="kpi-card"><div class="kpi-lbl">Closing this week</div><div class="kpi-num" id="kpi-closing">—</div><div class="kpi-sub" id="kpi-closing-sub">—</div></div>
-    <div class="kpi-card"><div class="kpi-lbl">Need review</div><div class="kpi-num" id="kpi-review">—</div><div class="kpi-sub" id="kpi-review-sub">Broker signoff</div></div>
-    <div class="kpi-card"><div class="kpi-lbl">New leads</div><div class="kpi-num" id="kpi-leads-kpi">—</div><div class="kpi-sub" id="kpi-leads-sub">Awaiting triage</div></div>
+    <div class="kpi-card"><div class="kpi-lbl">Active Files</div><div class="kpi-num" id="kpi-active">—</div><div class="kpi-sub" id="kpi-active-sub">Across all TCs</div></div>
+    <div class="kpi-card"><div class="kpi-lbl">Closing This Week</div><div class="kpi-num" id="kpi-closing">—</div><div class="kpi-sub" id="kpi-closing-sub">—</div></div>
+    <div class="kpi-card"><div class="kpi-lbl">Files YTD</div><div class="kpi-num" id="kpi-ytd">—</div><div class="kpi-sub" id="kpi-ytd-sub">—</div></div>
+    <div class="kpi-card"><div class="kpi-lbl">On-Time Close Rate</div><div class="kpi-num" id="kpi-ontime">—</div><div class="kpi-sub" id="kpi-ontime-sub">Aari goal: <strong>100%</strong></div></div>
   </section>
 
   <!-- ============== QUICK ACTIONS (BLACK panel, staff-relevant) ============== -->
@@ -6383,13 +6384,9 @@ body {
     const newLeads = files.filter(f => (!f.tc_id || f.status === 'intake_received'));
     const leadsCount = newLeads.length;
 
-    // KPI strip — populate numbers + dynamic sub-context
+    // ============ KPI STRIP v3 · Mirrors Agent Portal exactly =================
+    // 1) Active Files
     document.getElementById('kpi-active').textContent = active.length;
-    document.getElementById('kpi-closing').textContent = closingThisWeek.length;
-    document.getElementById('kpi-review').textContent = pendingReview.length;
-    document.getElementById('kpi-leads-kpi').textContent = leadsCount;
-
-    // Active sub · "Avg N days since open"
     let avgDaysOpen = 0;
     if (active.length) {
       const total = active.reduce((acc, f) => acc + Math.max(0, (now - new Date(f.created_at)) / 86400000), 0);
@@ -6397,9 +6394,10 @@ body {
     }
     document.getElementById('kpi-active-sub').innerHTML = active.length
       ? 'Avg <strong>' + avgDaysOpen + ' day' + (avgDaysOpen === 1 ? '' : 's') + '</strong> since open'
-      : 'No files yet';
+      : 'None active';
 
-    // Closing sub · "Next: May 26, 2026 · 12 days"
+    // 2) Closing This Week · sub shows "Next: <date> · N days"
+    document.getElementById('kpi-closing').textContent = closingThisWeek.length;
     const allClosingActive = active.filter(f => f.closing_date && new Date(f.closing_date + 'T00:00:00') >= today0);
     const nextClose = allClosingActive.sort((a, b) => (a.closing_date || '').localeCompare(b.closing_date || ''))[0];
     const closingSubEl = document.getElementById('kpi-closing-sub');
@@ -6411,15 +6409,40 @@ body {
       closingSubEl.textContent = 'Nothing scheduled';
     }
 
-    // Review sub · stays "Broker signoff" or shows top file
-    document.getElementById('kpi-review-sub').textContent = pendingReview.length
-      ? 'Awaiting broker signoff'
-      : 'All clear';
+    // 3) Files YTD · count of closed files year-to-date + this-month delta
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const closedYtd = files.filter(f => CLOSED_STATUSES.includes(f.status) && new Date(f.updated_at || f.created_at) >= yearStart);
+    const closedThisMonth = files.filter(f => CLOSED_STATUSES.includes(f.status) && new Date(f.updated_at || f.created_at) >= monthStart);
+    document.getElementById('kpi-ytd').textContent = closedYtd.length;
+    const ytdSubEl = document.getElementById('kpi-ytd-sub');
+    if (closedThisMonth.length) {
+      ytdSubEl.innerHTML = '<span class="up">↑ ' + closedThisMonth.length + '</span> this month';
+    } else if (closedYtd.length) {
+      ytdSubEl.textContent = 'No closes this month yet';
+    } else {
+      ytdSubEl.textContent = 'No closes yet';
+    }
 
-    // Leads sub
-    document.getElementById('kpi-leads-sub').textContent = leadsCount
-      ? 'Awaiting triage'
-      : 'No new leads';
+    // 4) On-Time Close Rate · % of closed files that hit their closing_date target
+    const closedWithDate = closedYtd.filter(f => f.closing_date && (f.updated_at || f.created_at));
+    let ontimeRate = null;
+    if (closedWithDate.length) {
+      const ontimeCount = closedWithDate.filter(f => {
+        const target = new Date(f.closing_date + 'T00:00:00');
+        const actual = new Date(f.updated_at || f.created_at);
+        return actual <= target;
+      }).length;
+      ontimeRate = Math.round((ontimeCount / closedWithDate.length) * 100);
+    }
+    const ontimeEl = document.getElementById('kpi-ontime');
+    if (ontimeRate !== null) {
+      ontimeEl.textContent = ontimeRate + '%';
+      ontimeEl.classList.remove('empty');
+    } else {
+      ontimeEl.textContent = 'No closes yet';
+      ontimeEl.classList.add('empty');
+    }
 
     // Hero sub
     const subBits = [];
