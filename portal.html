@@ -411,36 +411,9 @@
   </div>
 </div>
 
-<!-- ============== HEADER ============== -->
-<nav class="portal-nav" style="display:none" id="portal-nav">
-  <div class="wrap">
-    <a href="portal.html" class="brand">
-      <span class="mark">AARI</span>
-      <span class="name">Aari Transactions<small>AGENT PORTAL</small></span>
-    </a>
-    <!-- AP-3 · Click name to edit profile · click handler in renderHeader() -->
-    <div class="welcome" id="welcome-line" title="Click to edit your profile">Welcome back, <em>-</em><span class="edit-hint">· Edit profile</span></div>
-    <!-- AP-2 · Explicit "Back to website" link · session persists via Supabase localStorage -->
-    <a href="/index.html" class="brand-back-link" style="font-size:12px;color:var(--muted);text-decoration:none;padding:6px 10px;border-radius:6px;font-weight:500;letter-spacing:0.2px;margin-left:6px">&larr; Back to website</a>
-    <div class="nav-spacer"></div>
-    <!-- Staff-only · jump back to the Client Tracker. Hidden by default; shown when profile.role is tc|broker. -->
-    <a href="/aari-crm" id="staff-crm-link" style="display:none;font-size:12px;padding:7px 14px;border:1px solid var(--ink);border-radius:999px;color:var(--ink);font-weight:600;text-decoration:none;background:var(--soft-bg);margin-right:6px">Switch to Client Tracker &rarr;</a>
-    <div style="position:relative">
-      <button class="avatar-btn" id="avatar-btn">
-        <span class="av" id="avatar-initials">-</span>
-        <span id="avatar-name">-</span>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      <div class="avatar-menu" id="avatar-menu">
-        <button id="menu-profile">Profile</button>
-        <!-- Broker-only · shown via JS when profile.role === 'broker' -->
-        <button id="menu-broker-cockpit" style="display:none">Broker Cockpit →</button>
-        <button id="menu-signout">Sign out</button>
-      </div>
-    </div>
-    <button class="submit-cta" id="submit-cta">+ Submit a New File</button>
-  </div>
-</nav>
+<!-- ============== UNIFIED HEADER (shared across all interior pages) ============== -->
+<div id="aari-header" data-aari-view="portal" data-aari-show-submit="yes" style="display:none"></div>
+<script src="/js/aari-header.js" defer></script>
 
 <main style="display:none" id="portal-main">
 
@@ -598,7 +571,7 @@
       return;
     }
     document.getElementById('auth-gate').style.display = 'none';
-    document.getElementById('portal-nav').style.display = 'block';
+    document.getElementById('aari-header').style.display = 'block';
     document.getElementById('portal-main').style.display = 'block';
     renderHeader(profile);
 
@@ -636,52 +609,30 @@
     if (withActions) document.getElementById('auth-gate-actions').style.display = 'block';
   }
 
-  // ============ HEADER ============
+  // ============ HEADER (shared aari-header.js) ============
   let _currentProfile = null;
   function renderHeader(profile) {
     _currentProfile = profile;
-    // AP-3 · Make welcome line clickable to open profile editor.
-    document.getElementById('welcome-line').innerHTML = 'Welcome back, <em>' + esc(profile.first_name) + '.</em><span class="edit-hint">· Edit profile</span>';
-
-    // AP-5 · Headshot replaces default initials icon throughout the portal.
-    const avEl = document.getElementById('avatar-initials');
-    if (profile.headshot_url) {
-      avEl.classList.add('has-photo');
-      avEl.innerHTML = '<img src="' + esc(profile.headshot_url) + '" alt="' + esc(profile.first_name) + '">';
+    // Bootstrap the shared header — fills page name, role chip, avatar, dropdown filter.
+    if (window.AariHeader && typeof window.AariHeader.setProfile === 'function') {
+      window.AariHeader.setProfile(profile);
     } else {
-      avEl.classList.remove('has-photo');
-      const initials = ((profile.first_name || '?')[0] + (profile.last_name || '?')[0]).toUpperCase();
-      avEl.textContent = initials;
+      // aari-header.js loaded with defer; setProfile may not exist yet. Retry briefly.
+      let tries = 0;
+      const t = setInterval(() => {
+        if (window.AariHeader && typeof window.AariHeader.setProfile === 'function') {
+          clearInterval(t);
+          window.AariHeader.setProfile(profile);
+        } else if (++tries > 25) {
+          clearInterval(t);
+        }
+      }, 80);
     }
-    document.getElementById('avatar-name').textContent = profile.first_name + ' ' + profile.last_name;
-
-    // Staff toggle · show "Switch to Client Tracker" link only when role is tc or broker.
-    const staffLink = document.getElementById('staff-crm-link');
-    if (staffLink) {
-      const isStaff = profile.role === 'tc' || profile.role === 'broker';
-      staffLink.style.display = isStaff ? 'inline-flex' : 'none';
-    }
-    // Broker-only · show "Broker Cockpit" link in avatar menu when role is broker.
-    const brokerMenuLink = document.getElementById('menu-broker-cockpit');
-    if (brokerMenuLink) {
-      brokerMenuLink.style.display = (profile.role === 'broker') ? 'block' : 'none';
-      brokerMenuLink.addEventListener('click', () => { window.location.href = '/broker-cockpit.html'; });
-    }
-
-    const menu = document.getElementById('avatar-menu');
-    document.getElementById('avatar-btn').addEventListener('click', e => {
-      e.stopPropagation();
-      menu.classList.toggle('open');
-    });
-    document.addEventListener('click', () => menu.classList.remove('open'));
-    document.getElementById('menu-signout').addEventListener('click', async () => {
-      try { await window.AariAuth.signOut(); } catch (e) {}
-      window.location.href = '/index.html';
-    });
-    document.getElementById('menu-profile').addEventListener('click', () => openProfileEditor());
-    document.getElementById('welcome-line').addEventListener('click', () => openProfileEditor());
-    document.getElementById('submit-cta').addEventListener('click', () => { window.location.href = '/index.html#apply'; });
   }
+
+  // Wire up custom events from the shared header (avatar click → edit profile, submit CTA → apply flow).
+  document.addEventListener('aari:avatar-click', () => openProfileEditor());
+  document.addEventListener('aari:submit-file', () => { window.location.href = '/index.html#apply'; });
 
   // ============ AP-3 · PROFILE EDITOR MODAL ============
   function openProfileEditor() {
@@ -820,19 +771,11 @@
       msgEl.style.display = 'block';
     }
   }
-  // Re-render header bits after a profile update without re-binding click handlers
+  // Re-render header bits after a profile update — delegates to shared header.
   function renderHeaderQuick(profile) {
-    document.getElementById('welcome-line').innerHTML = 'Welcome back, <em>' + esc(profile.first_name) + '.</em><span class="edit-hint">· Edit profile</span>';
-    const avEl = document.getElementById('avatar-initials');
-    if (profile.headshot_url) {
-      avEl.classList.add('has-photo');
-      avEl.innerHTML = '<img src="' + esc(profile.headshot_url) + '" alt="' + esc(profile.first_name) + '">';
-    } else {
-      avEl.classList.remove('has-photo');
-      const initials = ((profile.first_name || '?')[0] + (profile.last_name || '?')[0]).toUpperCase();
-      avEl.textContent = initials;
+    if (window.AariHeader && typeof window.AariHeader.setProfile === 'function') {
+      window.AariHeader.setProfile(profile);
     }
-    document.getElementById('avatar-name').textContent = profile.first_name + ' ' + profile.last_name;
   }
 
   // ============ STATS · ZONE A · KPIs with context ============
