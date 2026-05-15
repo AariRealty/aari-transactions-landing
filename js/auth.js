@@ -28,9 +28,21 @@
 
   function ensureClient() {
     if (_clientReady) return _clientReady;
+    // AP-2 · Explicit auth options · session persists across pages of aaritransactions.com
+    // until the agent clicks Sign Out. Navigating from /portal back to / (or any link)
+    // must NOT log the agent out. persistSession + autoRefreshToken handle this.
+    const SUPABASE_AUTH_OPTS = {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        storage: global.localStorage,
+        storageKey: 'aari-auth-session'
+      }
+    };
     _clientReady = new Promise((resolve, reject) => {
       if (global.supabase && global.supabase.createClient) {
-        _client = global.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
+        _client = global.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, SUPABASE_AUTH_OPTS);
         return resolve(_client);
       }
       const s = document.createElement('script');
@@ -40,7 +52,7 @@
         if (!global.supabase || !global.supabase.createClient) {
           return reject(new Error('Supabase JS client failed to load.'));
         }
-        _client = global.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
+        _client = global.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, SUPABASE_AUTH_OPTS);
         resolve(_client);
       };
       s.onerror = () => reject(new Error('Failed to load Supabase from CDN.'));
