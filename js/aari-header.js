@@ -34,11 +34,12 @@
 
   // ── CSS (injected once) ───────────────────────────────────────────────
   var CSS = [
-    '.aari-hdr{background:#fff;border-bottom:1px solid #e8e8e6;padding:12px 20px;display:flex;align-items:center;gap:14px;font-family:"Inter",-apple-system,BlinkMacSystemFont,sans-serif;position:relative;z-index:50}',
-    '.aari-hdr-brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:#0f0f0f}',
+    '.aari-hdr{background:#fff;border-bottom:1px solid #e8e8e6;padding:14px 20px;display:flex;align-items:center;gap:14px;font-family:"Inter",-apple-system,BlinkMacSystemFont,sans-serif;position:relative;z-index:50}',
+    '.aari-hdr-brand{display:inline-flex;align-items:center;gap:12px;text-decoration:none;color:#0f0f0f}',
     '.aari-hdr-mark{font-family:"Cormorant Garamond",Georgia,serif;font-weight:600;font-size:14px;color:#0f0f0f;padding:4px 10px;border:1.5px solid #0f0f0f;border-radius:5px;letter-spacing:2px;line-height:1}',
-    '.aari-hdr-name{font-family:"Inter",sans-serif;font-weight:600;font-size:12px;color:#0f0f0f;line-height:1.15}',
-    '.aari-hdr-name small{display:block;font-weight:500;font-size:8px;letter-spacing:1.2px;color:#6b6760;text-transform:uppercase;margin-top:2px}',
+    '.aari-hdr-name{display:flex;flex-direction:column;gap:4px;line-height:1}',
+    '.aari-hdr-page{font-family:"Cormorant Garamond",Georgia,serif;font-weight:500;font-size:18px;color:#0f0f0f;line-height:1;letter-spacing:-.3px}',
+    '.aari-hdr-sub{font-family:"Inter",sans-serif;font-weight:600;font-size:10px;color:#0f0f0f;opacity:.55;text-transform:uppercase;letter-spacing:1.3px;line-height:1}',
     '.aari-hdr-spacer{flex:1;min-width:0}',
     '.aari-hdr-switch{background:#fff;color:#0f0f0f;border:1px solid #0f0f0f;padding:7px 14px;border-radius:6px;font-size:11px;font-weight:600;letter-spacing:.3px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;line-height:1;white-space:nowrap;transition:all .15s}',
     '.aari-hdr-switch:hover{background:#0f0f0f;color:#fff}',
@@ -108,17 +109,31 @@
     return map[view] || 'Aari Transactions';
   }
 
+  function pageSubFromView(view) {
+    var map = {
+      'portal': 'Agent dashboard',
+      'broker-cockpit': 'Broker view',
+      'client-tracker': 'Staff workspace',
+      'eileen': 'BD pilot'
+    };
+    return map[view] || '';
+  }
+
   // ── Render ────────────────────────────────────────────────────────────
   var root, currentView, showSubmit;
 
   function render() {
     if (!root) return;
     var pageLabel = pageLabelFromView(currentView);
+    var pageSub = pageSubFromView(currentView);
     root.innerHTML = [
       '<div class="aari-hdr">',
       '  <a href="/" class="aari-hdr-brand" aria-label="Aari Transactions home">',
       '    <span class="aari-hdr-mark">AARI</span>',
-      '    <span class="aari-hdr-name">' + escapeHtml(pageLabel) + '<small id="aari-hdr-role">Loading…</small></span>',
+      '    <span class="aari-hdr-name">',
+      '      <span class="aari-hdr-page">' + escapeHtml(pageLabel) + '</span>',
+      '      <span class="aari-hdr-sub" id="aari-hdr-role">' + escapeHtml(pageSub) + '</span>',
+      '    </span>',
       '  </a>',
       '  <div class="aari-hdr-spacer"></div>',
       '  <div style="position:relative">',
@@ -217,18 +232,19 @@
   function setProfile(profile) {
     if (!profile) return;
     var role = effectiveRole(profile);
-    var roleLabelMap = {
-      'broker': 'Broker · ' + (profile.first_name || ''),
-      'tc-eileen': 'TC · ' + (profile.first_name || ''),
-      'tc': 'TC · ' + (profile.first_name || ''),
-      'agent': 'Agent · ' + (profile.first_name || '')
-    };
-    var roleEl = document.getElementById('aari-hdr-role');
+    var roleWord = {
+      'broker': 'Broker',
+      'tc-eileen': 'TC',
+      'tc': 'TC',
+      'agent': 'Agent'
+    }[role] || '';
+    var firstName = profile.first_name || 'Account';
+    // Page sub-label stays static per view (set in render()); we don't override it on profile load.
     var firstNameEl = document.getElementById('aari-hdr-firstname');
     var initEl = document.getElementById('aari-hdr-initials');
     var avEl = document.getElementById('aari-hdr-avatar');
-    if (roleEl) roleEl.textContent = roleLabelMap[role] || 'Aari user';
-    if (firstNameEl) firstNameEl.textContent = profile.first_name || 'Account';
+    // Avatar pill carries "Name · Role" — this is where the viewer's identity lives.
+    if (firstNameEl) firstNameEl.textContent = roleWord ? (firstName + ' · ' + roleWord) : firstName;
     if (initEl) initEl.textContent = initialsFrom(profile);
     if (avEl && profile.headshot_url) {
       avEl.innerHTML = '<img src="' + profile.headshot_url + '" alt="">';
