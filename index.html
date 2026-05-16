@@ -1204,6 +1204,20 @@
   .file-chip .remove{width:22px;height:22px;border-radius:50%;background:transparent;border:1px solid transparent;color:#b14a4a;font-size:14px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;line-height:1;flex-shrink:0;transition:all 0.15s ease}
   .file-chip .remove:hover{background:#b14a4a;color:#fff;border-color:#b14a4a}
 
+  /* Task 2.3 · Additional signer toggle + block · structured co-buyer / co-seller fields */
+  .signers-list{display:flex;flex-direction:column;gap:14px;margin-top:14px}
+  .signers-list:empty{display:none}
+  .signer-block{position:relative;background:var(--pastel-cream);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px 16px 14px;animation:signerIn 0.18s ease}
+  @keyframes signerIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  .signer-block .signer-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .signer-block .signer-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-2)}
+  .signer-block .signer-remove{width:24px;height:24px;border-radius:50%;background:transparent;border:1px solid transparent;color:#b14a4a;font-size:16px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;line-height:1;transition:all 0.15s ease}
+  .signer-block .signer-remove:hover{background:#b14a4a;color:#fff;border-color:#b14a4a}
+  .signer-add-btn{display:inline-flex;align-items:center;gap:6px;padding:10px 16px;background:transparent;color:var(--ink);border:1.5px dashed var(--line-2);border-radius:var(--r-sm);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;margin-top:12px;transition:all 0.18s ease}
+  .signer-add-btn:hover{border-color:var(--ink);background:var(--surface)}
+  .signer-add-btn[disabled]{opacity:0.45;cursor:not-allowed;pointer-events:none}
+  .signer-add-btn .plus{font-size:16px;line-height:1;font-weight:400}
+
   .callout{background:var(--bg);border-left:3px solid var(--accent);padding:14px 18px;margin:14px 0;border-radius:0 var(--r-sm) var(--r-sm) 0;font-size:12.5px;line-height:1.65;color:var(--ink-2)}
   .callout.warn{border-left-color:#c2761c;background:#fdf6ed}
   .callout strong{color:var(--ink);font-weight:700}
@@ -3630,7 +3644,12 @@ Password:"></textarea>
             <div><label>Client Email *</label><input type="email" name="client_email"></div>
             <div><label>Client Phone *</label><input type="tel" name="client_phone"></div>
           </div>
-          <div class="field"><label>Co-Borrower / Co-Seller <span class="opt">optional</span></label><textarea name="co_party" rows="2" placeholder="Name · email · phone"></textarea></div>
+          <!-- Task 2.3 · Additional signers · structured fields, optional, up to 3 added -->
+          <div class="field" data-signers-field>
+            <label>Additional signers <span class="opt">optional &middot; co-buyer, co-seller, second LLC member, trustee, etc.</span></label>
+            <div class="signers-list" id="additionalSignersList"></div>
+            <button type="button" class="signer-add-btn" id="addSignerBtn"><span class="plus">+</span> Add another signer</button>
+          </div>
           <div class="field"><label>Property Address *</label><input type="text" name="address" data-google-address autocomplete="off" placeholder="Start typing. Google will suggest."></div>
         </fieldset>
 
@@ -4819,6 +4838,72 @@ Password:"></textarea>
             if(input.multiple) input.dispatchEvent(new Event('change', { bubbles: false }));
           }
         });
+      });
+    })();
+
+    /* ============================================================
+       Task 2.3 · Additional signers · structured fields, up to 3 added (4 total).
+       Replaces the legacy co_party textarea. Each block has name/email/phone
+       and a remove button. Numbering shows "Signer 2", "Signer 3"... after primary.
+       ============================================================ */
+    (function additionalSigners(){
+      const list = document.getElementById('additionalSignersList');
+      const btn = document.getElementById('addSignerBtn');
+      const MAX = 3;
+      if(!list || !btn) return;
+
+      function blockHtml(idx){
+        const n = idx + 1; // signer number (2, 3, 4 for "additional" — primary is 1)
+        return `
+          <div class="signer-block" data-signer-idx="${idx}">
+            <div class="signer-head">
+              <span class="signer-title">Signer ${n + 1}</span>
+              <button type="button" class="signer-remove" data-signer-remove="${idx}" aria-label="Remove signer ${n + 1}">&times;</button>
+            </div>
+            <div class="field"><label>Full Name *</label><input type="text" name="signer_${n + 1}_name" placeholder="As it appears on the contract"></div>
+            <div class="field-row">
+              <div><label>Email *</label><input type="email" name="signer_${n + 1}_email"></div>
+              <div><label>Phone *</label><input type="tel" name="signer_${n + 1}_phone"></div>
+            </div>
+          </div>
+        `;
+      }
+
+      function renumber(){
+        // After remove, re-index the visible blocks so names stay sequential.
+        const blocks = list.querySelectorAll('.signer-block');
+        blocks.forEach((blk, i) => {
+          blk.setAttribute('data-signer-idx', i);
+          const n = i + 1; // 1, 2, 3 → signer 2, 3, 4
+          blk.querySelector('.signer-title').textContent = `Signer ${n + 1}`;
+          const rm = blk.querySelector('.signer-remove');
+          if(rm){ rm.setAttribute('data-signer-remove', i); rm.setAttribute('aria-label', `Remove signer ${n + 1}`); }
+          const nameInp = blk.querySelector('input[type="text"]');
+          const emailInp = blk.querySelector('input[type="email"]');
+          const phoneInp = blk.querySelector('input[type="tel"]');
+          if(nameInp) nameInp.name = `signer_${n + 1}_name`;
+          if(emailInp) emailInp.name = `signer_${n + 1}_email`;
+          if(phoneInp) phoneInp.name = `signer_${n + 1}_phone`;
+        });
+        // Toggle add button availability against MAX
+        btn.disabled = blocks.length >= MAX;
+      }
+
+      btn.addEventListener('click', () => {
+        const current = list.querySelectorAll('.signer-block').length;
+        if(current >= MAX) return;
+        list.insertAdjacentHTML('beforeend', blockHtml(current));
+        const newBlock = list.lastElementChild;
+        // Wire the new remove button
+        const rm = newBlock.querySelector('.signer-remove');
+        rm.addEventListener('click', () => {
+          newBlock.remove();
+          renumber();
+        });
+        renumber();
+        // Focus the first field of the new block for fast entry
+        const firstInput = newBlock.querySelector('input');
+        if(firstInput) firstInput.focus();
       });
     })();
 
