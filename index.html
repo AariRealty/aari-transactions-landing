@@ -5085,6 +5085,149 @@ Password:"></textarea>
       apply();
     })();
 
+    /* ============================================================
+       PDF text extraction · hybrid free · executed contract upload only.
+       Uses pdf.js (client-side) to pull raw text, then regex-matches FAR/BAR
+       patterns to pre-fill Lender + Title structured fields.
+       Falls back silently if PDF is scanned (no extractable text) or format
+       is non-standard. Banner reports what was filled vs needs manual entry.
+       ============================================================ */
+    (function pdfContractExtract(){
+      const input = document.querySelector('input[name="executed_contract"]');
+      if(!input) return;
+      const wrap = input.closest('.field');
+      const spinner = wrap ? wrap.querySelector('[data-pdf-spinner]') : null;
+      const banner = wrap ? wrap.querySelector('[data-pdf-banner]') : null;
+
+      function setSpinner(on){
+        if(spinner) spinner.setAttribute('data-active', on ? 'true' : 'false');
+      }
+      function setBanner(state, html){
+        if(!banner) return;
+        if(!state){ banner.removeAttribute('data-state'); banner.innerHTML = ''; return; }
+        banner.setAttribute('data-state', state);
+        banner.innerHTML = html;
+      }
+
+      // Extract raw text from PDF using pdf.js
+      async function extractText(file){
+        if(typeof pdfjsLib === 'undefined') throw new Error('pdf.js not loaded');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let text = '';
+        const max = Math.min(pdf.numPages, 20); // safety cap on huge files
+        for(let i = 1; i <= max; i++){
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          text += content.items.map(it => it.str).join(' ') + '\n';
+        }
+        return text;
+      }
+
+      // Pattern library · tuned for FAR/BAR FL real estate contracts
+      function findField(text, labels){
+        // Returns the first match capture from any label pattern, trimmed
+        for(const lbl of labels){
+          const re = new RegExp(lbl + '[:\\s]+([A-Za-z0-9][A-Za-z0-9\\s&,.\\-\']{2,80})', 'i');
+          const m = text.match(re);
+          if(m && m[1]) return m[1].replace(/\s+/g, ' ').trim();
+        }
+        return '';
+      }
+      function findEmailNear(text, anchorLabels){
+        for(const anchor of anchorLabels){
+          const idx = text.toLowerCase().indexOf(anchor.toLowerCase());
+          if(idx === -1) continue;
+          const window = text.slice(idx, idx + 400);
+          const m = window.match(/[\w.\-]+@[\w.\-]+\.\w{2,}/);
+          if(m) return m[0];
+        }
+        // Last-resort fallback: any email in the doc
+        const any = text.match(/[\w.\-]+@[\w.\-]+\.\w{2,}/);
+        return any ? any[0] : '';
+      }
+      function findPhoneNear(text, anchorLabels){
+        for(const anchor of anchorLabels){
+          const idx = text.toLowerCase().indexOf(anchor.toLowerCase());
+          if(idx === -1) continue;
+          const window = text.slice(idx, idx + 400);
+          const m = window.match(/\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
+          if(m) return m[0];
+        }
+        return '';
+      }
+
+      function parseContract(text){
+        return {
+          title_name: findField(text, ['Closing Agent', 'Settlement Agent', 'Escrow Agent']),
+          title_company: findField(text, ['Title Company', 'Closing Company', 'Title and Escrow', 'Settlement Office']),
+          title_email: findEmailNear(text, ['Closing Agent', 'Settlement Agent', 'Title Company', 'Closing Company']),
+          title_phone: findPhoneNear(text, ['Closing Agent', 'Settlement Agent', 'Title Company', 'Closing Company']),
+          lender_name: findField(text, ['Loan Officer', 'Lender Contact', 'Mortgage Broker', 'Loan Originator']),
+          lender_company: findField(text, ['Lender', 'Mortgage Company', 'Mortgage Lender', 'Bank']),
+          lender_email: findEmailNear(text, ['Lender', 'Loan Officer', 'Mortgage Broker']),
+          lender_phone: findPhoneNear(text, ['Lender', 'Loan Officer', 'Mortgage Broker'])
+        };
+      }
+
+      function fillIfEmpty(name, value){
+        if(!value) return false;
+        const el = document.querySelector(`input[name="${name}"]`);
+        if(!el) return false;
+        if(el.value && el.value.trim()) return false; // don't overwrite agent input
+        el.value = value;
+        // Visual badge
+        const lbl = el.closest('.field') ? el.closest('.field').querySelector('label') : null;
+        if(lbl && !lbl.querySelector('.extracted-badge')){
+          const badge = document.createElement('span');
+          badge.className = 'extracted-badge';
+          badge.textContent = 'from contract';
+          lbl.appendChild(badge);
+        }
+        return true;
+      }
+
+      async function handleFile(file){
+        if(!file || !/\.pdf$/i.test(file.name)) return;
+        setBanner(null, '');
+        setSpinner(true);
+        try {
+          const text = await extractText(file);
+          if(!text || text.trim().length < 50){
+            setSpinner(false);
+            setBanner('none', "<strong>Couldn't extract from this PDF</strong> &middot; looks scanned or image-only. Fill the Lender + Title boxes manually.");
+            return;
+          }
+          const parsed = parseContract(text);
+          const filled = [];
+          if(fillIfEmpty('title_name', parsed.title_name)) filled.push('closing agent name');
+          if(fillIfEmpty('title_company', parsed.title_company)) filled.push('title company');
+          if(fillIfEmpty('title_email', parsed.title_email)) filled.push('title email');
+          if(fillIfEmpty('title_phone', parsed.title_phone)) filled.push('title phone');
+          if(fillIfEmpty('lender_name', parsed.lender_name)) filled.push('lender contact');
+          if(fillIfEmpty('lender_company', parsed.lender_company)) filled.push('lender company');
+          if(fillIfEmpty('lender_email', parsed.lender_email)) filled.push('lender email');
+          if(fillIfEmpty('lender_phone', parsed.lender_phone)) filled.push('lender phone');
+          setSpinner(false);
+          if(filled.length === 0){
+            setBanner('none', "<strong>Nothing matched</strong> &middot; this contract doesn't use the FAR/BAR standard pattern we recognize. Fill Lender + Title manually.");
+          } else {
+            setBanner('ok', `<strong>Aari pulled ${filled.length} field${filled.length === 1 ? '' : 's'} from your contract</strong> &middot; ${filled.join(' &middot; ')}. <strong>Verify before submitting.</strong>`);
+          }
+        } catch(err){
+          console.error('[pdf-extract] failed:', err);
+          setSpinner(false);
+          setBanner('none', "<strong>Couldn't read the PDF</strong> &middot; fill the Lender + Title boxes manually.");
+        }
+      }
+
+      input.addEventListener('change', () => {
+        const file = (input.files && input.files[0]) || null;
+        if(file) handleFile(file);
+      });
+    })();
+
     /* Phase 3 §2: bind intake tab clicks */
     function bindIntakeServiceTabs(){
       document.querySelectorAll('[data-intake-svc-tab]').forEach(tab => {
