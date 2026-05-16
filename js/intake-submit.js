@@ -355,6 +355,15 @@
 
     const agentEmail = (await safeGetAgentEmail()) || (fd.get('agent_email') || '');
 
+    // Fire a custom event the page's modal-only script forwards to the parent
+    // window (the portal's iframe overlay) so the portal can close the popup
+    // and refresh the agent's file list. Browsers ignore it on standalone pages.
+    try {
+      window.dispatchEvent(new CustomEvent('aari:intake-submitted', {
+        detail: { fileId: fileId, serviceId: serviceId, agentId: agentId }
+      }));
+    } catch (_) {}
+
     if (billing.timing === 'upfront') {
       const url = buildStripeRedirectUrl(stripeUrl, {
         email: agentEmail,

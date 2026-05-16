@@ -571,6 +571,22 @@
   </div>
 </div>
 
+<!-- ============== PORTAL INTAKE OVERLAY · embedded /index.html#apply iframe ============== -->
+<!-- Opens when any "Submit a file" button in the portal is clicked. Keeps the agent
+     inside the portal visually — no tab switch, no landing-page chrome. -->
+<div id="portal-intake-overlay" class="portal-intake-overlay" hidden aria-hidden="true">
+  <button type="button" class="portal-intake-close" id="portal-intake-close" aria-label="Close intake form">&times;</button>
+  <iframe id="portal-intake-iframe" title="Submit a file" allow="clipboard-read; clipboard-write"></iframe>
+</div>
+<style>
+  .portal-intake-overlay{position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,0.78);backdrop-filter:blur(4px);display:flex;align-items:stretch;justify-content:center}
+  .portal-intake-overlay[hidden]{display:none!important}
+  .portal-intake-overlay iframe{width:100%;height:100%;border:none;background:transparent;display:block}
+  .portal-intake-close{position:fixed;top:14px;right:14px;background:#fff;color:#0f0f0f;border:1px solid #0f0f0f;width:42px;height:42px;border-radius:50%;font-size:22px;font-weight:400;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1;font-family:var(--sans);box-shadow:0 4px 14px rgba(0,0,0,0.25);z-index:2001;padding:0}
+  .portal-intake-close:hover{background:#0f0f0f;color:#fff}
+  @media(max-width:540px){.portal-intake-close{top:10px;right:10px;width:36px;height:36px;font-size:20px}}
+</style>
+
 <!-- ============== SCRIPTS ============== -->
 <script src="js/supabase-config.js"></script>
 <script src="js/auth.js"></script>
@@ -654,7 +670,39 @@
 
   // Wire up custom events from the shared header (avatar click → edit profile, submit CTA → apply flow).
   document.addEventListener('aari:avatar-click', () => openProfileEditor());
-  document.addEventListener('aari:submit-file', () => { window.open('/index.html#apply', '_blank', 'noopener'); });
+  // Portal intake popup · keep the agent IN the portal, just float the intake on top.
+  function openPortalIntake() {
+    const overlay = document.getElementById('portal-intake-overlay');
+    const iframe = document.getElementById('portal-intake-iframe');
+    if (!overlay || !iframe) return;
+    iframe.src = '/index.html?modal-only=1#apply';
+    overlay.hidden = false;
+    overlay.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  }
+  function closePortalIntake() {
+    const overlay = document.getElementById('portal-intake-overlay');
+    const iframe = document.getElementById('portal-intake-iframe');
+    if (!overlay || !iframe) return;
+    overlay.hidden = true;
+    overlay.setAttribute('aria-hidden', 'true');
+    iframe.src = 'about:blank';
+    document.body.style.overflow = '';
+  }
+  document.getElementById('portal-intake-close').addEventListener('click', closePortalIntake);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !document.getElementById('portal-intake-overlay').hidden) closePortalIntake();
+  });
+  // Listen for the intake submission success message posted from the iframe.
+  window.addEventListener('message', (e) => {
+    if (e && e.data && e.data.type === 'aari:intake-submitted') {
+      closePortalIntake();
+      // Soft refresh · reload the page so Active Files reflects the new submission.
+      setTimeout(() => window.location.reload(), 250);
+    }
+  });
+
+  document.addEventListener('aari:submit-file', () => { openPortalIntake(); });
 
   // ============ AP-3 · PROFILE EDITOR MODAL ============
   function openProfileEditor() {
@@ -1191,7 +1239,7 @@
     const body = document.getElementById('active-files-body');
     document.getElementById('active-files-meta').textContent = active.length ? `${active.length} active` : '';
     if (active.length === 0) {
-      body.innerHTML = `<div class="empty"><p>No active files yet.</p><button class="btn-mini solid" onclick="window.open('/index.html#apply','_blank','noopener')">Submit your first file →</button></div>`;
+      body.innerHTML = `<div class="empty"><p>No active files yet.</p><button class="btn-mini solid" onclick="openPortalIntake()">Submit your first file →</button></div>`;
       return;
     }
     // Sort: overdue first, then by closing_date asc, nulls last
@@ -1725,7 +1773,7 @@
         </div>
       </div>`;
     }).join('')}</div>`;
-    document.querySelectorAll('[data-resume]').forEach(b => b.addEventListener('click', () => window.open('/index.html#apply', '_blank', 'noopener')));
+    document.querySelectorAll('[data-resume]').forEach(b => b.addEventListener('click', () => openPortalIntake()));
     document.querySelectorAll('[data-discard]').forEach(b => b.addEventListener('click', async (e) => {
       if (!confirm('Discard this draft?')) return;
       const id = e.currentTarget.getAttribute('data-discard');
@@ -2168,7 +2216,7 @@
   function wireQuickActions(files, profile) {
     // Submit a file · routes to the homepage intake modal
     const qSubmit = document.getElementById('qa-submit');
-    if (qSubmit) qSubmit.addEventListener('click', () => { window.open('/index.html#apply', '_blank', 'noopener'); });
+    if (qSubmit) qSubmit.addEventListener('click', () => { openPortalIntake(); });
 
     // View checklist · opens the pre-close checklist page
     const qChecklist = document.getElementById('qa-checklist');
@@ -2184,8 +2232,8 @@
       }
       // Route to the most recently updated active file. File detail page builds in a future ship.
       const target = active.slice().sort((a,b) => (b.updated_at || '').localeCompare(a.updated_at || ''))[0];
-      // For v1 · no file detail page exists yet. Open intake-style upload flow in a new tab so the portal stays open.
-      window.open('/index.html#apply', '_blank', 'noopener');
+      // For v1 · no file detail page exists yet. Open the in-portal intake overlay.
+      openPortalIntake();
     });
 
     // Profile banner CTA · scrolls to / opens the profile editor (TODO when editor exists)
