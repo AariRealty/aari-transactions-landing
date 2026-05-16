@@ -4700,6 +4700,31 @@ Password:"></textarea>
     }
 
     async function hasSession(){
+      // FAST PATH · check localStorage directly. If the Aari auth token is present
+      // we treat the user as logged in immediately. This avoids the race where the
+      // Supabase JS client hasn't finished restoring the session from storage yet
+      // (which previously made the auth gate flash on for already-signed-in users
+      // navigating from the portal to the intake modal in a new tab).
+      try {
+        const raw = localStorage.getItem('aari-auth-session');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          // Supabase v2 stores either { access_token, ... } directly or under a wrapper.
+          const token = (parsed && parsed.access_token)
+            || (parsed && parsed.currentSession && parsed.currentSession.access_token)
+            || (parsed && parsed.session && parsed.session.access_token);
+          if (token) {
+            // Verify not expired (Supabase tokens carry expires_at in seconds since epoch)
+            const expiresAt = (parsed && parsed.expires_at)
+              || (parsed && parsed.currentSession && parsed.currentSession.expires_at)
+              || (parsed && parsed.session && parsed.session.expires_at);
+            if (!expiresAt || (expiresAt * 1000) > Date.now()) {
+              return true;
+            }
+          }
+        }
+      } catch(_) {}
+      // SLOW PATH · async client check (handles expired tokens that the client will refresh)
       try {
         if(window.AariAuth && typeof window.AariAuth.getCurrentSession === 'function'){
           const session = await window.AariAuth.getCurrentSession();
