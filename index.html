@@ -4540,7 +4540,8 @@ Password:"></textarea>
         // Force visible with inline styles in case stylesheet was overridden.
         modal.setAttribute('data-open', 'true');
         modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,0.55);z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:24px';
-        markShown();
+        // markShown is called when user clicks "Got it" — not on open — so a
+        // dismissed-without-acknowledgment popup re-appears on the next click.
       }
       function closeModal(){
         if(!modal) return;
@@ -4613,14 +4614,11 @@ Password:"></textarea>
         }
       }
 
-      // Wire all entity-type radios across all forms (diagnostic logs included)
-      const wiredRadios = document.querySelectorAll('input[name="buyer_entity_type"], input[name="seller_entity_type"]');
-      console.log('[entity-ack] wiring ' + wiredRadios.length + ' entity radio inputs');
-      wiredRadios.forEach(r => {
-        r.addEventListener('change', () => {
-          console.log('[entity-ack] radio changed: ' + r.name + ' = ' + r.value + ' · modal present: ' + !!modal + ' · alreadyShown: ' + alreadyShown());
-          refreshAll(true);
-        });
+      // Entity-type radios only toggle the ack box visibility · popup is moved
+      // to the checkbox click instead (more reliable trigger, forces user to
+      // read the reminder before they can acknowledge).
+      document.querySelectorAll('input[name="buyer_entity_type"], input[name="seller_entity_type"]').forEach(r => {
+        r.addEventListener('change', () => refreshAll(false));
       });
 
       // Watch for form-block visibility changes (service switch / client_type switch)
@@ -4637,6 +4635,20 @@ Password:"></textarea>
           .observe(el, { attributes: true, attributeFilter: ['hidden'] });
       });
 
+      // Pending-check callback · popup's "Got it" button completes the check
+      let pendingCb = null;
+      function completePendingCheck(){
+        markShown();
+        if(!pendingCb) return;
+        const cb = pendingCb;
+        pendingCb = null;
+        cb.checked = true;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      if(modalClose){
+        modalClose.addEventListener('click', completePendingCheck);
+      }
+
       // Checkbox + link behavior
       document.querySelectorAll('[data-entity-ack]').forEach(ack => {
         const cb = ack.querySelector('[data-entity-ack-input]');
@@ -4645,6 +4657,15 @@ Password:"></textarea>
         const arrow = link ? link.querySelector('[data-arrow]') : null;
 
         if(cb){
+          // Intercept the FIRST check · fire popup, complete the check on dismissal
+          cb.addEventListener('click', (e) => {
+            // Allow unchecking without popup
+            if(cb.checked) return;
+            if(alreadyShown()) return;
+            e.preventDefault();
+            pendingCb = cb;
+            openModal();
+          });
           cb.addEventListener('change', () => {
             if(cb.checked){
               ack.setAttribute('data-checked', 'true');
