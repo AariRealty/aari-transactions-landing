@@ -24,12 +24,12 @@
   // ── Nav model ─────────────────────────────────────────────────────────
   // Each entry: { id, label, href, roles[] }
   // roles[] is a whitelist. If omitted, all roles see it.
-  // 'tc-eileen' is a special pseudo-role: TC whose first_name is "eileen".
+  // Three roles only: broker, tc, agent. No person-named pseudo-roles.
   var NAV = [
-    { id: 'broker-cockpit',  label: "Broker Cockpit",   href: '/broker-cockpit.html', roles: ['broker'] },
-    { id: 'client-tracker',  label: "Client Tracker",   href: '/aari-crm',            roles: ['broker', 'tc', 'tc-eileen'] },
-    { id: 'eileen',          label: "Eileen's Cockpit", href: '/eileen.html',         roles: ['broker', 'tc-eileen'] },
-    { id: 'portal',          label: "Agent Portal",     href: '/portal',              roles: ['broker', 'tc', 'tc-eileen', 'agent'] }
+    { id: 'broker-cockpit',  label: "Broker Cockpit", href: '/broker-cockpit.html', roles: ['broker'] },
+    { id: 'client-crm',      label: "Client CRM",     href: '/aari-crm',            roles: ['broker', 'tc'] },
+    { id: 'tc-cockpit',      label: "TC Cockpit",     href: '/tc-cockpit.html',     roles: ['broker', 'tc'] },
+    { id: 'portal',          label: "Agent Portal",   href: '/portal',              roles: ['broker', 'tc', 'agent'] }
   ];
 
   // ── CSS (injected once) ───────────────────────────────────────────────
@@ -92,10 +92,7 @@
   function effectiveRole(profile) {
     if (!profile) return 'agent';
     if (profile.role === 'broker') return 'broker';
-    if (profile.role === 'tc') {
-      if (String(profile.first_name || '').toLowerCase() === 'eileen') return 'tc-eileen';
-      return 'tc';
-    }
+    if (profile.role === 'tc') return 'tc';
     return 'agent';
   }
 
@@ -103,8 +100,8 @@
     var map = {
       'portal': 'Agent Portal',
       'broker-cockpit': 'Broker Cockpit',
-      'client-tracker': 'Client Tracker',
-      'eileen': "Eileen's Cockpit"
+      'client-crm': 'Client CRM',
+      'tc-cockpit': 'TC Cockpit'
     };
     return map[view] || 'Aari Transactions';
   }
@@ -113,8 +110,8 @@
     var map = {
       'portal': 'Agent dashboard',
       'broker-cockpit': 'Broker view',
-      'client-tracker': 'Staff workspace',
-      'eileen': 'BD pilot'
+      'client-crm': 'Client relationships',
+      'tc-cockpit': 'TC workspace'
     };
     return map[view] || '';
   }
