@@ -1195,6 +1195,15 @@
   .uploader.has-file .filename{display:block}
   .uploader.has-file .icon,.uploader.has-file .label-text{display:none}
 
+  /* Task 4.1 · Multi-file chip list · shows each selected file with a remove button */
+  .file-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+  .file-list:empty{display:none}
+  .file-chip{display:flex;align-items:center;gap:10px;padding:8px 10px 8px 12px;background:var(--pastel-cream);border:1px solid var(--line);border-radius:var(--r-sm);font-size:12.5px;color:var(--ink);font-family:var(--sans)}
+  .file-chip .name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+  .file-chip .size{color:var(--muted);font-weight:400;font-size:11.5px;flex-shrink:0}
+  .file-chip .remove{width:22px;height:22px;border-radius:50%;background:transparent;border:1px solid transparent;color:#b14a4a;font-size:14px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;line-height:1;flex-shrink:0;transition:all 0.15s ease}
+  .file-chip .remove:hover{background:#b14a4a;color:#fff;border-color:#b14a4a}
+
   .callout{background:var(--bg);border-left:3px solid var(--accent);padding:14px 18px;margin:14px 0;border-radius:0 var(--r-sm) var(--r-sm) 0;font-size:12.5px;line-height:1.65;color:var(--ink-2)}
   .callout.warn{border-left-color:#c2761c;background:#fdf6ed}
   .callout strong{color:var(--ink);font-weight:700}
@@ -4653,6 +4662,167 @@ Password:"></textarea>
       refreshAll(false);
     })();
 
+    /* ============================================================
+       Tasks 3.2 + 3.3 · Live dollar formatting
+       Applies to all $ inputs (purchase_price, earnest_money, listing_price, offer_price).
+       Strips non-digits on each keystroke, reformats as $XXX,XXX.
+       Form submission strips formatting back to a plain integer so downstream code
+       (Stripe, edge functions, DB) still receives a clean number.
+       ============================================================ */
+    (function moneyFormatter(){
+      const SELECTOR = 'input[name="purchase_price"], input[name="earnest_money"], input[name="listing_price"], input[name="offer_price"]';
+      function format(raw){
+        const digits = String(raw || '').replace(/[^0-9]/g, '');
+        if(!digits) return '';
+        return '$' + Number(digits).toLocaleString('en-US');
+      }
+      function rawDigits(val){
+        return String(val || '').replace(/[^0-9]/g, '');
+      }
+      document.querySelectorAll(SELECTOR).forEach(input => {
+        input.setAttribute('inputmode', 'numeric');
+        input.setAttribute('autocomplete', 'off');
+        input.addEventListener('input', () => {
+          const cursor = input.selectionStart;
+          const beforeLen = input.value.length;
+          input.value = format(input.value);
+          const afterLen = input.value.length;
+          // Keep caret position roughly stable as commas are added/removed
+          const newPos = Math.max(0, (cursor || 0) + (afterLen - beforeLen));
+          try { input.setSelectionRange(newPos, newPos); } catch(_) {}
+        });
+        input.addEventListener('blur', () => { input.value = format(input.value); });
+      });
+      // Strip formatting on submit so backend receives an integer string
+      document.querySelectorAll('form').forEach(f => {
+        f.addEventListener('submit', () => {
+          f.querySelectorAll(SELECTOR).forEach(input => {
+            input.value = rawDigits(input.value);
+          });
+        }, true);
+      });
+    })();
+
+    /* ============================================================
+       Task 4.1 · Multi-file uploader with red X remove
+       For every <input type="file" multiple>, render a chip list below
+       the uploader. Each chip has a remove button that drops that file
+       from the FileList (rebuilt via DataTransfer).
+       ============================================================ */
+    (function multiFileChips(){
+      function fmtSize(bytes){
+        if(bytes < 1024) return bytes + ' B';
+        if(bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+        return (bytes/(1024*1024)).toFixed(1) + ' MB';
+      }
+      function ensureList(input){
+        let list = input._aariFileList;
+        if(list && list.isConnected) return list;
+        const labelEl = input.closest('label.uploader');
+        list = document.createElement('div');
+        list.className = 'file-list';
+        if(labelEl && labelEl.parentNode){
+          labelEl.parentNode.insertBefore(list, labelEl.nextSibling);
+        } else {
+          input.parentNode.appendChild(list);
+        }
+        input._aariFileList = list;
+        return list;
+      }
+      function render(input){
+        const list = ensureList(input);
+        list.innerHTML = '';
+        const files = Array.from(input.files || []);
+        const labelEl = input.closest('label.uploader');
+        if(labelEl){
+          labelEl.classList.toggle('has-file', files.length > 0);
+          const fn = labelEl.querySelector('.filename');
+          if(fn) fn.textContent = files.length === 1 ? files[0].name : (files.length + ' files selected');
+        }
+        files.forEach((f, idx) => {
+          const chip = document.createElement('div');
+          chip.className = 'file-chip';
+          const name = document.createElement('span');
+          name.className = 'name';
+          name.textContent = f.name;
+          const size = document.createElement('span');
+          size.className = 'size';
+          size.textContent = fmtSize(f.size);
+          const rm = document.createElement('button');
+          rm.type = 'button';
+          rm.className = 'remove';
+          rm.setAttribute('aria-label', 'Remove ' + f.name);
+          rm.innerHTML = '&times;';
+          rm.addEventListener('click', () => removeAt(input, idx));
+          chip.appendChild(name);
+          chip.appendChild(size);
+          chip.appendChild(rm);
+          list.appendChild(chip);
+        });
+      }
+      function removeAt(input, idx){
+        const files = Array.from(input.files || []);
+        files.splice(idx, 1);
+        const dt = new DataTransfer();
+        files.forEach(f => dt.items.add(f));
+        input.files = dt.files;
+        render(input);
+        // Re-run any change listeners (PDF enforcement, downstream handlers)
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      document.querySelectorAll('input[type="file"][multiple]').forEach(input => {
+        input.addEventListener('change', () => render(input));
+      });
+    })();
+
+    /* ============================================================
+       Task 4.2 · PDF-only enforcement on contract/agreement uploads
+       Inputs in this allowlist must only accept PDFs. Anything else is
+       stripped from the FileList and the user is shown a polite reject
+       message inline.
+       ============================================================ */
+    (function pdfOnlyEnforce(){
+      const PDF_ONLY = new Set([
+        'executed_contract',
+        'listing_agreement',
+        'addenda_disclosures',
+        'listing_disclosures',
+        'closing_docs',
+        'preapproval_letter'
+      ]);
+      function showReject(input, msg){
+        const labelEl = input.closest('label.uploader');
+        if(!labelEl) return;
+        let warn = labelEl.parentNode.querySelector('.file-reject');
+        if(!warn){
+          warn = document.createElement('div');
+          warn.className = 'file-reject';
+          warn.style.cssText = 'font-size:12px;color:#b14a4a;font-weight:600;margin-top:6px;font-family:var(--sans)';
+          labelEl.parentNode.insertBefore(warn, labelEl.nextSibling);
+        }
+        warn.textContent = msg;
+        setTimeout(() => { if(warn) warn.textContent = ''; }, 5000);
+      }
+      document.querySelectorAll('input[type="file"]').forEach(input => {
+        if(!PDF_ONLY.has(input.name)) return;
+        // Lock the accept attribute to PDFs only
+        input.setAttribute('accept', '.pdf,application/pdf');
+        input.addEventListener('change', () => {
+          const files = Array.from(input.files || []);
+          const ok = files.filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+          const rejected = files.filter(f => !(/\.pdf$/i.test(f.name) || f.type === 'application/pdf'));
+          if(rejected.length){
+            const dt = new DataTransfer();
+            ok.forEach(f => dt.items.add(f));
+            input.files = dt.files;
+            showReject(input, 'PDF only · removed: ' + rejected.map(r => r.name).join(', '));
+            // Trigger re-render of chip list for multi inputs
+            if(input.multiple) input.dispatchEvent(new Event('change', { bubbles: false }));
+          }
+        });
+      });
+    })();
+
     /* Phase 3 §2: bind intake tab clicks */
     function bindIntakeServiceTabs(){
       document.querySelectorAll('[data-intake-svc-tab]').forEach(tab => {
@@ -4830,8 +5000,14 @@ Password:"></textarea>
       }
       document.getElementById('summaryTc').textContent = tcLabel;
       const explainer = document.getElementById('submitExplainer');
+      // Task 7.4 · same-day TC assignment promised ONLY when No Preference is selected.
+      // When the agent picked a specific TC, that TC may be at capacity — soften the promise.
+      const isAuto = (state.preferredTc === 'auto' || tcLabel === 'Auto-assign (Aari picks)');
+      const tcLine = isAuto
+        ? 'Your TC is assigned the same business day.'
+        : `Your TC, ${tcLabel}, will reach out as soon as possible.`;
       if(svc.timing === 'closing'){
-        explainer.innerHTML = `<strong>What happens next:</strong> Click Submit File. We confirm receipt same business day. Your ${tcLabel === 'Auto-assign (Aari picks)' ? 'TC' : tcLabel} reaches out the same business day. Our $${svc.price} fee is paid at settlement through your title CDA. Nothing due now.`;
+        explainer.innerHTML = `<strong>What happens next:</strong> Click Submit File. We confirm receipt as soon as possible. ${tcLine} Our $${svc.price} fee is paid at settlement through your title CDA. Nothing due now.`;
         submitBtn.textContent = 'Submit File →';
       } else {
         explainer.innerHTML = `<strong>What happens next:</strong> Click Pay & Submit. Your file is logged and you'll be redirected to Stripe to pay $${svc.price}. After payment, you'll return to a confirmation page and we begin work.`;
