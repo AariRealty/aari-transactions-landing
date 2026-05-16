@@ -4215,16 +4215,25 @@ Password:"></textarea>
         banner.innerHTML = '';
         return;
       }
-      const exactSavings = svc.price;       // membership credit covers this service in full
-      const annualSavings = svc.price * 12; // if the agent picked this service every month
+      // Honest math: the membership has a recurring cost. The savings calc must
+      // account for it. Net savings per file = service_price - (membership_cost / typical credits used).
+      // Conservative case · 1 credit used/month → net = svc.price - membership_cost
+      // Aggressive case · all 2 Starter credits used → net per file = svc.price - (membership_cost / 2)
+      const monthlyCost = coverage.monthly_cost;           // $79 for Starter
+      const netIfOneCredit = svc.price - monthlyCost;      // worst case · 1 credit/mo
+      const netIfTwoCredits = svc.price * 2 - monthlyCost; // best case · 2 credits/mo, both services same price
       banner.hidden = false;
       banner.innerHTML =
         '<div class="upsell-icon" aria-hidden="true">&#10042;</div>' +
         '<div class="upsell-body">' +
           '<div class="upsell-eyebrow">Membership match</div>' +
           '<p class="upsell-title">You picked <strong>' + svc.name + '</strong> at $' + svc.price + '. ' +
-          'With <strong>' + coverage.tier + ' membership</strong> ($' + coverage.monthly_cost + '/mo) this service is covered by your monthly credit — ' +
-          'saving you <strong>$' + exactSavings + '</strong> on this file (up to $' + annualSavings + '/year if you submit it monthly).</p>' +
+          '<strong>' + coverage.tier + ' membership</strong> is $' + monthlyCost + '/mo and includes 2 credits that cover this service. ' +
+          (netIfOneCredit > 0
+            ? '<strong>Worth it if you submit 1+ covered service/month</strong> — save $' + netIfOneCredit + '/month at one file, $' + netIfTwoCredits + '/month at two.'
+            : 'Pays off when you submit 2+ covered services/month (save $' + netIfTwoCredits + '/month at that pace).'
+          ) +
+          '</p>' +
           '<a href="/index.html#memberships" class="upsell-link">See ' + coverage.tier + ' membership &rarr;</a>' +
         '</div>';
     }
@@ -4328,6 +4337,10 @@ Password:"></textarea>
           renderAddonUpsell(state.serviceId);
           // Task 3.1 follow-up · adjust Client Type radios based on selected service
           updateClientTypeForService();
+          // Auto-advance to Step 2 (file details) so the user doesn't have to hunt for Continue.
+          // 700ms delay lets the selection visually register and the membership upsell banner
+          // appear long enough to be noticed before the form moves forward.
+          setTimeout(() => { if (state.step === 1) showStep(2); }, 700);
         });
       });
       // Also re-render on initial paint · handles both restored selection and Start Over (null hides the banner)
