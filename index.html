@@ -1218,6 +1218,16 @@
   .signer-add-btn[disabled]{opacity:0.45;cursor:not-allowed;pointer-events:none}
   .signer-add-btn .plus{font-size:16px;line-height:1;font-weight:400}
 
+  /* Structured contact group · Lender + Title / Closing Agent */
+  .contact-group{background:var(--pastel-cream);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px 16px}
+  .contact-group-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px}
+  .contact-group-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-2);margin:0}
+  .contact-cash-toggle{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-2);font-weight:500;cursor:pointer;font-family:var(--sans)}
+  .contact-cash-toggle input[type="checkbox"]{width:14px;height:14px;accent-color:var(--ink);cursor:pointer;margin:0}
+  .contact-group-body{display:flex;flex-direction:column;gap:10px}
+  .contact-group-body .field{margin-bottom:0}
+  .contact-group[data-cash="true"] .contact-group-body{display:none}
+
   .callout{background:var(--bg);border-left:3px solid var(--accent);padding:14px 18px;margin:14px 0;border-radius:0 var(--r-sm) var(--r-sm) 0;font-size:12.5px;line-height:1.65;color:var(--ink-2)}
   .callout.warn{border-left-color:#c2761c;background:#fdf6ed}
   .callout strong{color:var(--ink);font-weight:700}
@@ -3661,10 +3671,37 @@ Password:"></textarea>
           </div>
           <div class="field-row">
             <div><label>Purchase Price *</label><input type="text" name="purchase_price" placeholder="$"></div>
-            <div><label>Earnest Money <span class="opt">if known</span></label><input type="text" name="earnest_money" placeholder="$"></div>
+            <div><label>Earnest Money *</label><input type="text" name="earnest_money" placeholder="$ or Cash / None / TBD" required></div>
           </div>
-          <div class="field"><label>Lender Contact <span class="opt">name · company · email · phone</span></label><textarea name="lender_contact" rows="2" placeholder="Cash deal? Write 'Cash'"></textarea></div>
-          <div class="field"><label>Title / Closing Agent <span class="opt">name · company · email · phone</span></label><textarea name="title_contact" rows="2"></textarea></div>
+          <!-- Lender Contact · structured fields with cash-deal toggle -->
+          <div class="field contact-group" data-contact-group="lender">
+            <div class="contact-group-head">
+              <label class="contact-group-label">Lender Contact</label>
+              <label class="contact-cash-toggle"><input type="checkbox" id="lenderCashToggle" name="lender_is_cash" value="1"> Cash deal &middot; no lender</label>
+            </div>
+            <div class="contact-group-body" data-contact-body>
+              <div class="field"><label>Name</label><input type="text" name="lender_name" autocomplete="off"></div>
+              <div class="field"><label>Company</label><input type="text" name="lender_company" autocomplete="off"></div>
+              <div class="field-row">
+                <div><label>Email</label><input type="email" name="lender_email" autocomplete="off"></div>
+                <div><label>Phone</label><input type="tel" name="lender_phone" autocomplete="off"></div>
+              </div>
+            </div>
+          </div>
+          <!-- Title / Closing Agent · structured fields -->
+          <div class="field contact-group" data-contact-group="title">
+            <div class="contact-group-head">
+              <label class="contact-group-label">Title / Closing Agent</label>
+            </div>
+            <div class="contact-group-body">
+              <div class="field"><label>Name</label><input type="text" name="title_name" autocomplete="off"></div>
+              <div class="field"><label>Company</label><input type="text" name="title_company" autocomplete="off"></div>
+              <div class="field-row">
+                <div><label>Email</label><input type="email" name="title_email" autocomplete="off"></div>
+                <div><label>Phone</label><input type="tel" name="title_phone" autocomplete="off"></div>
+              </div>
+            </div>
+          </div>
           <div class="field">
             <label>Executed Contract *</label>
             <label class="uploader"><input type="file" name="executed_contract" accept=".pdf,.doc,.docx"><div class="icon">↑</div><div class="label-text">Drop the contract or <span class="browse">browse</span></div><div class="filename"></div></label>
@@ -4521,41 +4558,59 @@ Password:"></textarea>
        ============================================================ */
     (function entityAck(){
       const NON_INDIVIDUAL = new Set(['trust','corporation','llc']);
-      // In-memory flag · popup fires once per page load (resets on reload).
-      // Intentional: every fresh intake should re-prompt, and sessionStorage
-      // would suppress it across the whole tab session.
       let popupShown = false;
-      let modal = document.getElementById('entityReminderModal');
-      // Move the modal to document.body so it can never be clipped by an ancestor
-      // overflow / transform / contain context (intake modal, iframe wrapper, etc.).
-      if(modal && modal.parentNode !== document.body){
-        document.body.appendChild(modal);
-      }
-      const modalClose = document.getElementById('entityReminderClose');
-
       function alreadyShown(){ return popupShown; }
       function markShown(){ popupShown = true; }
+
+      // Build the popup fresh on each open · no reliance on pre-rendered markup.
+      // Inline styles with maximum z-index guarantee visibility regardless of
+      // ancestor stacking context, overflow, transform, or stylesheet conflicts.
+      let activeOverlay = null;
       function openModal(){
-        if(!modal) return;
-        // Force visible with inline styles in case stylesheet was overridden.
-        modal.setAttribute('data-open', 'true');
-        modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,0.55);z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:24px';
-        // markShown is called when user clicks "Got it" — not on open — so a
-        // dismissed-without-acknowledgment popup re-appears on the next click.
+        if(activeOverlay) return; // already open
+        const overlay = document.createElement('div');
+        overlay.setAttribute('data-entity-overlay', '1');
+        overlay.style.cssText = 'position:fixed!important;top:0!important;left:0!important;right:0!important;bottom:0!important;width:100vw!important;height:100vh!important;background:rgba(15,15,15,0.55)!important;z-index:2147483647!important;display:flex!important;align-items:center!important;justify-content:center!important;padding:24px!important;box-sizing:border-box';
+        const box = document.createElement('div');
+        box.style.cssText = 'background:#ffffff;border-radius:10px;max-width:420px;width:100%;padding:28px;border:1px solid rgba(150,122,74,0.25);box-shadow:0 20px 60px rgba(0,0,0,0.25);font-family:Inter,system-ui,sans-serif;color:#0f0f0f';
+        box.innerHTML = `
+          <h3 style="font-family:'Cormorant Garamond',Georgia,serif;font-size:24px;line-height:1.2;margin:0 0 14px;color:#0f0f0f;font-weight:500"><em style="color:#967a4a;font-style:italic;font-weight:500">One</em> small thing</h3>
+          <p style="font-size:14px;line-height:1.55;color:#0f0f0f;margin:0 0 10px">An entity can't sign. A human has to. And that human better have the authority to bind it.</p>
+          <p style="font-size:14px;line-height:1.55;color:#0f0f0f;margin:0 0 20px">Verifying authority is the agent's job.</p>
+          <button type="button" data-entity-ok style="background:#0f0f0f;color:#fff;border:1px solid #0f0f0f;padding:11px 22px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:Inter,system-ui,sans-serif">Got it &middot;</button>
+        `;
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+        activeOverlay = overlay;
+        const okBtn = box.querySelector('[data-entity-ok]');
+        okBtn.addEventListener('click', () => {
+          completePendingCheck();
+          closeModal();
+        });
+        overlay.addEventListener('click', (e) => {
+          if(e.target === overlay) closeModal();
+        });
+        const escHandler = (e) => {
+          if(e.key === 'Escape'){ closeModal(); document.removeEventListener('keydown', escHandler); }
+        };
+        document.addEventListener('keydown', escHandler);
       }
       function closeModal(){
-        if(!modal) return;
-        modal.removeAttribute('data-open');
-        modal.style.display = 'none';
+        if(activeOverlay && activeOverlay.parentNode){
+          activeOverlay.parentNode.removeChild(activeOverlay);
+        }
+        activeOverlay = null;
       }
-      if(modalClose) modalClose.addEventListener('click', closeModal);
-      if(modal){
-        modal.addEventListener('click', (e) => {
-          if(e.target === modal) closeModal();
-        });
-        document.addEventListener('keydown', (e) => {
-          if(e.key === 'Escape' && modal.getAttribute('data-open') === 'true') closeModal();
-        });
+
+      // Pending-check state · checkbox click sets this, "Got it" completes it
+      let pendingCb = null;
+      function completePendingCheck(){
+        markShown();
+        if(!pendingCb) return;
+        const cb = pendingCb;
+        pendingCb = null;
+        cb.checked = true;
+        cb.dispatchEvent(new Event('change', { bubbles: true }));
       }
 
       // Map each ack box to the entity radio names that gate its visibility.
@@ -4635,19 +4690,8 @@ Password:"></textarea>
           .observe(el, { attributes: true, attributeFilter: ['hidden'] });
       });
 
-      // Pending-check callback · popup's "Got it" button completes the check
-      let pendingCb = null;
-      function completePendingCheck(){
-        markShown();
-        if(!pendingCb) return;
-        const cb = pendingCb;
-        pendingCb = null;
-        cb.checked = true;
-        cb.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-      if(modalClose){
-        modalClose.addEventListener('click', completePendingCheck);
-      }
+      // Pending-check callback · "Got it" button (wired in openModal) calls this
+      // to mark the popup as shown and check the pending checkbox.
 
       // Checkbox + link behavior
       document.querySelectorAll('[data-entity-ack]').forEach(ack => {
@@ -4657,15 +4701,6 @@ Password:"></textarea>
         const arrow = link ? link.querySelector('[data-arrow]') : null;
 
         if(cb){
-          // Intercept the FIRST check · fire popup, complete the check on dismissal
-          cb.addEventListener('click', (e) => {
-            // Allow unchecking without popup
-            if(cb.checked) return;
-            if(alreadyShown()) return;
-            e.preventDefault();
-            pendingCb = cb;
-            openModal();
-          });
           cb.addEventListener('change', () => {
             if(cb.checked){
               ack.setAttribute('data-checked', 'true');
@@ -4751,6 +4786,10 @@ Password:"></textarea>
        ============================================================ */
     (function moneyFormatter(){
       const SELECTOR = 'input[name="purchase_price"], input[name="earnest_money"], input[name="listing_price"], input[name="offer_price"]';
+      // earnest_money accepts text fallbacks (Cash / None / TBD); the others
+      // are numeric-only. Detect letters and skip formatting if found.
+      const TEXT_FALLBACK = new Set(['earnest_money']);
+      function hasLetters(s){ return /[a-zA-Z]/.test(String(s || '')); }
       function format(raw){
         const digits = String(raw || '').replace(/[^0-9]/g, '');
         if(!digits) return '';
@@ -4760,24 +4799,34 @@ Password:"></textarea>
         return String(val || '').replace(/[^0-9]/g, '');
       }
       document.querySelectorAll(SELECTOR).forEach(input => {
-        input.setAttribute('inputmode', 'numeric');
+        input.setAttribute('inputmode', TEXT_FALLBACK.has(input.name) ? 'text' : 'numeric');
         input.setAttribute('autocomplete', 'off');
         input.addEventListener('input', () => {
+          // Skip formatting if user typed text (Cash / None / TBD) in a text-fallback field
+          if(TEXT_FALLBACK.has(input.name) && hasLetters(input.value)) return;
           const cursor = input.selectionStart;
           const beforeLen = input.value.length;
           input.value = format(input.value);
           const afterLen = input.value.length;
-          // Keep caret position roughly stable as commas are added/removed
           const newPos = Math.max(0, (cursor || 0) + (afterLen - beforeLen));
           try { input.setSelectionRange(newPos, newPos); } catch(_) {}
         });
-        input.addEventListener('blur', () => { input.value = format(input.value); });
+        input.addEventListener('blur', () => {
+          if(TEXT_FALLBACK.has(input.name) && hasLetters(input.value)) return;
+          input.value = format(input.value);
+        });
       });
-      // Strip formatting on submit so backend receives an integer string
+      // Strip formatting on submit so backend receives a clean value
+      // (integer string for numeric, or the literal text for fallback fields)
       document.querySelectorAll('form').forEach(f => {
         f.addEventListener('submit', () => {
           f.querySelectorAll(SELECTOR).forEach(input => {
-            input.value = rawDigits(input.value);
+            if(TEXT_FALLBACK.has(input.name) && hasLetters(input.value)){
+              // Leave text values as-is (Cash, None, TBD, etc.)
+              input.value = input.value.trim();
+            } else {
+              input.value = rawDigits(input.value);
+            }
           });
         }, true);
       });
@@ -5002,6 +5051,25 @@ Password:"></textarea>
       applyLabels();
     })();
 
+    /* ============================================================
+       Lender cash-deal toggle · collapses the structured lender fields
+       when the agent confirms it's a cash deal (no lender on file).
+       ============================================================ */
+    (function lenderCashToggle(){
+      const cb = document.getElementById('lenderCashToggle');
+      const group = document.querySelector('[data-contact-group="lender"]');
+      if(!cb || !group) return;
+      function apply(){
+        group.setAttribute('data-cash', cb.checked ? 'true' : 'false');
+        // Clear the fields when going cash so stale values aren't submitted
+        if(cb.checked){
+          group.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"]').forEach(inp => { inp.value = ''; });
+        }
+      }
+      cb.addEventListener('change', apply);
+      apply();
+    })();
+
     /* Phase 3 §2: bind intake tab clicks */
     function bindIntakeServiceTabs(){
       document.querySelectorAll('[data-intake-svc-tab]').forEach(tab => {
@@ -5179,17 +5247,17 @@ Password:"></textarea>
       }
       document.getElementById('summaryTc').textContent = tcLabel;
       const explainer = document.getElementById('submitExplainer');
-      // Task 7.4 · same-day TC assignment promised ONLY when No Preference is selected.
-      // When the agent picked a specific TC, that TC may be at capacity — soften the promise.
+      // Task 7.3 + 7.4 · confirmation copy capped at 2 sentences · TC same-day
+      // promise only when No Preference is selected.
       const isAuto = (state.preferredTc === 'auto' || tcLabel === 'Auto-assign (Aari picks)');
-      const tcLine = isAuto
-        ? 'Your TC is assigned the same business day.'
-        : `Your TC, ${tcLabel}, will reach out as soon as possible.`;
       if(svc.timing === 'closing'){
-        explainer.innerHTML = `<strong>What happens next:</strong> Click Submit File. We confirm receipt as soon as possible. ${tcLine} Our $${svc.price} fee is paid at settlement through your title CDA. Nothing due now.`;
+        const tcLine = isAuto
+          ? 'Your TC is assigned the same business day.'
+          : `Your TC, ${tcLabel}, will reach out as soon as possible.`;
+        explainer.innerHTML = `<strong>What happens next:</strong> ${tcLine} The $${svc.price} fee is paid at settlement through your title CDA, nothing due now.`;
         submitBtn.textContent = 'Submit File →';
       } else {
-        explainer.innerHTML = `<strong>What happens next:</strong> Click Pay & Submit. Your file is logged and you'll be redirected to Stripe to pay $${svc.price}. After payment, you'll return to a confirmation page and we begin work.`;
+        explainer.innerHTML = `<strong>What happens next:</strong> You'll be redirected to Stripe to pay $${svc.price}. After payment, you return here and we begin work.`;
         submitBtn.textContent = `Pay $${svc.price} & Submit →`;
       }
     }
