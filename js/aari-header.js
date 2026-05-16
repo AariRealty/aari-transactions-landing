@@ -46,8 +46,11 @@
     '.aari-hdr-switch .caret{font-size:10px;line-height:1}',
     '.aari-hdr-submit{background:#0f0f0f;color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.3px;padding:9px 16px;cursor:pointer;font-family:inherit;white-space:nowrap;transition:opacity .15s}',
     '.aari-hdr-submit:hover{opacity:.85}',
-    '.aari-hdr-avatar{background:#fff;color:#0f0f0f;border:1px solid #e8e8e6;border-radius:999px;padding:4px 4px 4px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:500;font-family:inherit;line-height:1}',
+    '.aari-hdr-avatar{background:#fff;color:#0f0f0f;border:1px solid #e8e8e6;border-radius:999px;padding:4px 4px 4px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:500;font-family:inherit;line-height:1;transition:border-color .15s}',
     '.aari-hdr-avatar:hover{border-color:#0f0f0f}',
+    '.aari-hdr-avatar:hover #aari-hdr-firstname{text-decoration:underline;text-underline-offset:3px}',
+    '.aari-hdr-avatar:focus-visible{outline:2px solid #0f0f0f;outline-offset:2px}',
+    '#aari-hdr-firstname{font-weight:600;letter-spacing:0.2px}',
     '.aari-hdr-avatar .av{background:#0f0f0f;color:#fff;width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;overflow:hidden}',
     '.aari-hdr-avatar .av img{width:100%;height:100%;object-fit:cover}',
     '.aari-hdr-menu{position:absolute;top:calc(100% + 6px);background:#fff;border:1px solid #e8e8e6;border-radius:8px;padding:8px;width:240px;box-shadow:0 4px 16px rgba(0,0,0,.10);display:none;z-index:60}',
@@ -145,7 +148,7 @@
       '    </div>',
       '  </div>',
       (showSubmit ? '  <button type="button" class="aari-hdr-submit" id="aari-submit-cta">+ Submit New File</button>' : ''),
-      '  <button type="button" class="aari-hdr-avatar" id="aari-avatar-btn" aria-label="Account menu">',
+      '  <button type="button" class="aari-hdr-avatar" id="aari-avatar-btn" aria-label="Edit your profile" title="Edit your profile">',
       '    <span id="aari-hdr-firstname">–</span>',
       '    <span class="av" id="aari-hdr-avatar"><span id="aari-hdr-initials">–</span></span>',
       '  </button>',
@@ -242,9 +245,24 @@
     var avEl = document.getElementById('aari-hdr-avatar');
     // Avatar pill carries "Name · Role" — this is where the viewer's identity lives.
     if (firstNameEl) firstNameEl.textContent = roleWord ? (firstName + ' · ' + roleWord) : firstName;
-    if (initEl) initEl.textContent = initialsFrom(profile);
-    if (avEl && profile.headshot_url) {
-      avEl.innerHTML = '<img src="' + profile.headshot_url + '" alt="">';
+    // Avatar render · handles 4 cases: no headshot → initials, headshot loads → image,
+    // headshot fails → initials fallback (via onerror), headshot removed → initials restored
+    if (avEl) {
+      var initials = initialsFrom(profile);
+      var fullName = ((profile.first_name || '') + ' ' + (profile.last_name || '')).trim() || 'Agent';
+      // Start by guaranteeing the initials span is present
+      avEl.innerHTML = '<span id="aari-hdr-initials">' + escapeHtml(initials) + '</span>';
+      if (profile.headshot_url) {
+        var img = document.createElement('img');
+        img.alt = fullName;
+        img.onerror = function () {
+          // Image failed to load → restore initials
+          avEl.innerHTML = '<span id="aari-hdr-initials">' + escapeHtml(initials) + '</span>';
+        };
+        img.src = profile.headshot_url;
+        avEl.innerHTML = '';
+        avEl.appendChild(img);
+      }
     }
     renderNavItems(role);
   }

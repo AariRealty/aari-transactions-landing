@@ -89,9 +89,40 @@
       try { await window.AariAuth.signOut(); } catch (err) {}
       window.location.reload();
     });
+
+    // ALSO update the main-site nav so the agent visually confirms session persistence
+    // (the session was already alive — this just exposes it). Task 1.2.
+    updateNavLoggedIn(agent);
+  }
+
+  function updateNavLoggedIn(agent) {
+    var navLinks = document.querySelector('.nav .nav-links');
+    if (!navLinks) return;
+    var portalLink = navLinks.querySelector('.nav-portal');
+    if (portalLink) {
+      portalLink.textContent = 'My portal';
+      portalLink.setAttribute('title', 'You are signed in. Go to your portal.');
+    }
+    // Insert the "Hi, [Name]" greeting before the Portal link (only once)
+    if (!navLinks.querySelector('[data-aari-nav-greeting]')) {
+      var firstName = (agent.first_name || '').trim();
+      if (firstName) {
+        var greet = document.createElement('span');
+        greet.setAttribute('data-aari-nav-greeting', '');
+        greet.style.cssText = 'font-family:Inter,sans-serif;font-size:12px;font-weight:500;color:#6b6b6b;padding:9px 8px;letter-spacing:0.2px;';
+        greet.textContent = 'Hi, ' + firstName;
+        navLinks.insertBefore(greet, portalLink || navLinks.lastElementChild);
+      }
+    }
   }
 
   function applyLoggedOutState() {
+    // Defensive: clear any greeting / "my portal" residue from a prior logged-in state
+    var greet = document.querySelector('.nav [data-aari-nav-greeting]');
+    if (greet) greet.remove();
+    var portalLink = document.querySelector('.nav .nav-portal');
+    if (portalLink && portalLink.textContent === 'My portal') portalLink.textContent = 'Portal';
+
     const fs = findAgentFieldset();
     if (!fs) return;
     injectBanner(

@@ -77,8 +77,7 @@
   #welcome-line:hover .edit-hint{opacity:1}
 
   /* AP-7 · Motivational message in profile section */
-  .ap-motivational{background:#faf6ec;border-left:3px solid #b89968;padding:14px 18px;border-radius:6px;margin:14px 0 0;font-size:13px;color:#5a4a2a;line-height:1.55;font-style:italic}
-  .ap-motivational strong{color:#0f0f0f;font-style:normal;font-weight:600}
+  .ap-motivational{background:#f5f0e8;border-left:3px solid #967a4a;padding:14px 18px;border-radius:6px;margin:0 0 16px;font-size:13px;color:#5a4e3a;line-height:1.55;font-style:italic}
 
   /* AP-8 · Membership upsell banner */
   .ap-upsell{background:#fff;border:1px solid #e8e0d2;border-left:4px solid #967a4a;padding:16px 18px;border-radius:8px;margin:16px 0;display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
@@ -194,8 +193,8 @@
   .qa-bar{background:var(--ink);border-radius:var(--r-lg);padding:16px 18px;margin-bottom:18px}
   .qa-bar .qa-label{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--pastel-sage);font-weight:700;margin-bottom:10px}
   .qa-bar .qa-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-  .qa-bar .qa-btn{background:#1f1f1f;color:#fff;padding:14px 8px;border-radius:8px;text-align:center;text-decoration:none;font-size:12px;font-weight:600;border:none;cursor:pointer;font-family:var(--sans);display:flex;flex-direction:column;align-items:center;gap:6px;transition:all 0.18s ease}
-  .qa-bar .qa-btn:hover{background:#2a2a2a;transform:translateY(-1px)}
+  .qa-bar .qa-btn{background:var(--ink);color:#fff;padding:14px 8px;border-radius:8px;text-align:center;text-decoration:none;font-size:12px;font-weight:600;border:none;cursor:pointer;font-family:var(--sans);display:flex;flex-direction:column;align-items:center;gap:6px;transition:all 0.18s ease}
+  .qa-bar .qa-btn:hover{background:#000;transform:translateY(-1px)}
   .qa-bar .qa-btn .qa-icon{font-size:20px;line-height:1}
   @media (max-width:560px){
     .qa-bar .qa-grid{grid-template-columns:repeat(2,1fr)}
@@ -250,8 +249,10 @@
 
   /* ===== ZONE B · FILE CARDS (5-step tracker + countdown) ===== */
   .zb-grid{display:flex;flex-direction:column;gap:14px}
-  .zb-card{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;transition:all 0.18s}
+  .zb-card{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;transition:all 0.18s;cursor:pointer}
   .zb-card:hover{border-color:var(--ink);box-shadow:0 4px 14px rgba(0,0,0,0.05)}
+  .zb-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  .zb-card.is-closed{cursor:default}
   .zb-card.is-overdue{border-color:#d96666}
   .zb-card.is-tight{border-color:#d4937f}
   .zb-card.is-watch{border-color:#c9a050}
@@ -266,6 +267,9 @@
   .zb-status-badge.tight{color:#a86684;background:#fce6f0}
   .zb-status-badge.overdue{color:#fff;background:#cc3333;border-color:#cc3333}
   .zb-status-badge.closed{color:var(--muted);background:var(--soft-bg);border-color:var(--line)}
+  .zb-status-badge.draft{color:#967a4a;background:#f5f0e8;border-color:#967a4a}
+  .zb-card.is-draft{border-color:#e8e0d2;background:#fafaf8}
+  .zb-card.is-draft:hover{border-color:#967a4a;box-shadow:0 4px 14px rgba(150,122,74,0.08)}
 
   /* 5-step tracker */
   .zb-track{padding:14px 18px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--soft-bg)}
@@ -735,6 +739,245 @@
     if (overlay) overlay.classList.remove('open');
     document.body.style.overflow = '';
   }
+
+  // ============ AP-6 v2 · PROFILE COMPLETION (quick-add + complete-full) ============
+  // Single source of truth for every completion-list item. Drives 3 paths:
+  //   (1) +Add button on each pending row → openQuickAdd(fieldId)
+  //   (2) Complete Full Profile button   → openCompleteProfile() · all pending at once
+  //   (3) Name-click profile editor       → existing openProfileEditor (core fields)
+  // All three paths persist via persistProfileUpdates() which auto-refreshes the
+  // completion list and header without a page reload.
+  const PROFILE_FIELD_DEFS = {
+    headshot_url: { label: 'Headshot', inputs: [
+      { key: 'headshot_url', type: 'url', label: 'Direct image link', placeholder: 'https://...', help: 'Upload to Drive or Dropbox and paste the public image link. Replaces your avatar throughout the portal.' }
+    ]},
+    on_team: { label: 'Team info', inputs: [
+      { key: 'on_team', type: 'select', label: 'Are you on a team?', options: [
+        { v: '', l: '— Select —' }, { v: 'solo', l: 'Solo agent' },
+        { v: 'team_leader', l: 'Team leader' }, { v: 'team_member', l: 'Team member' }
+      ]}
+    ]},
+    greensheets_preference: { label: 'Greensheets preference', inputs: [
+      { key: 'greensheets_preference', type: 'select', label: 'When should Aari run greensheets?', options: [
+        { v: '', l: '— Select —' }, { v: 'always', l: 'Always — run on every file' },
+        { v: 'never', l: 'Never — I handle these' }, { v: 'ask_per_file', l: 'Ask me per file' }
+      ]}
+    ]},
+    review_preference: { label: 'Review preference', inputs: [
+      { key: 'review_preference', type: 'select', label: 'Should Aari request a client review at close?', options: [
+        { v: '', l: '— Select —' }, { v: 'always', l: 'Always — send the review request' },
+        { v: 'never', l: 'Never — I handle these' }, { v: 'ask_per_file', l: 'Ask me per file' }
+      ]}
+    ]},
+    social_handles: { label: 'Social handles', inputs: [
+      { key: 'social_facebook', type: 'url', label: 'Facebook URL', placeholder: 'https://facebook.com/yourpage' },
+      { key: 'social_instagram', type: 'text', label: 'Instagram handle or URL', placeholder: '@yourhandle or full URL' }
+    ]},
+    birthday: { label: 'Birthday (for handwritten cards)', inputs: [
+      { key: 'birthday_month', type: 'select', label: 'Month', options: [
+        { v: '', l: '—' }, { v: '1', l: 'January' }, { v: '2', l: 'February' }, { v: '3', l: 'March' },
+        { v: '4', l: 'April' }, { v: '5', l: 'May' }, { v: '6', l: 'June' },
+        { v: '7', l: 'July' }, { v: '8', l: 'August' }, { v: '9', l: 'September' },
+        { v: '10', l: 'October' }, { v: '11', l: 'November' }, { v: '12', l: 'December' }
+      ]},
+      { key: 'birthday_day', type: 'select', label: 'Day', options: (function(){ const o = [{v:'',l:'—'}]; for (let i=1;i<=31;i++) o.push({v:String(i),l:String(i)}); return o; })() }
+    ]},
+    closing_gift_preferences: { label: 'Closing gift preferences', inputs: [
+      { key: 'closing_gift_preferences', type: 'textarea', label: 'Anything we should know about closing gifts you send your clients?', placeholder: 'e.g., I send wine baskets · Local Lehigh gift cards · Prefer plants', rows: 3 }
+    ]},
+    referral_source: { label: 'Referral source', inputs: [
+      { key: 'referral_source', type: 'text', label: 'How did you hear about Aari?', placeholder: 'e.g., Marlenyi · Referred by Jane Smith · Saw on Instagram' }
+    ]},
+    notes: { label: 'Notes', inputs: [
+      { key: 'notes', type: 'textarea', label: 'Anything else we should know?', rows: 4 }
+    ]}
+  };
+
+  function buildInputHtml(spec, currentValue) {
+    const base = 'width:100%;padding:11px 14px;font-size:14px;border:1px solid var(--line);border-radius:8px;font-family:var(--sans);background:#fff;color:var(--ink);box-sizing:border-box';
+    const id = 'qa-' + spec.key;
+    const v = currentValue == null ? '' : String(currentValue);
+    if (spec.type === 'textarea') {
+      return `<textarea id="${id}" rows="${spec.rows||3}" style="${base};resize:vertical;min-height:80px" placeholder="${esc(spec.placeholder||'')}">${esc(v)}</textarea>`;
+    }
+    if (spec.type === 'select') {
+      return `<select id="${id}" style="${base}">${spec.options.map(o=>`<option value="${esc(o.v)}"${v===String(o.v)?' selected':''}>${esc(o.l)}</option>`).join('')}</select>`;
+    }
+    return `<input id="${id}" type="${spec.type}" style="${base}" value="${esc(v)}" placeholder="${esc(spec.placeholder||'')}">`;
+  }
+
+  function buildFieldGroupHtml(def) {
+    return `<div class="pe-section">
+      <label class="pe-label">${esc(def.label)}</label>
+      ${def.inputs.map(spec => `
+        <div style="margin-bottom:10px">
+          ${def.inputs.length > 1 ? `<label class="pe-label" for="qa-${spec.key}" style="font-size:11px;text-transform:none;letter-spacing:0;font-weight:500;color:var(--muted);margin-bottom:4px">${esc(spec.label)}</label>` : ''}
+          ${buildInputHtml(spec, _currentProfile[spec.key])}
+          ${spec.help ? `<div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.45">${esc(spec.help)}</div>` : ''}
+        </div>
+      `).join('')}
+    </div>`;
+  }
+
+  function readFieldGroupValues(def) {
+    const updates = {};
+    def.inputs.forEach(spec => {
+      const el = document.getElementById('qa-' + spec.key);
+      if (!el) return;
+      let v = (el.value || '').trim();
+      if (spec.key === 'birthday_month' || spec.key === 'birthday_day') {
+        updates[spec.key] = v === '' ? null : parseInt(v, 10);
+      } else {
+        updates[spec.key] = v === '' ? null : v;
+      }
+    });
+    return updates;
+  }
+
+  async function persistProfileUpdates(updates) {
+    if (!_currentProfile) throw new Error('Profile not loaded');
+    updates.updated_at = new Date().toISOString();
+    const client = await window.AariAuth.ensureClient();
+    const { error } = await client.from('agents').update(updates).eq('id', _currentProfile.id);
+    if (error) throw error;
+    Object.assign(_currentProfile, updates);
+    renderCompletion(_currentProfile);
+    renderHeaderQuick(_currentProfile);
+  }
+
+  // -- Quick-Add modal · single field --
+  function openQuickAdd(fieldId) {
+    const def = PROFILE_FIELD_DEFS[fieldId];
+    if (!def || !_currentProfile) return;
+    let overlay = document.getElementById('quick-add-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'quick-add-overlay';
+      overlay.className = 'pe-overlay';
+      document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+      <div class="pe-modal" role="dialog" aria-modal="true" aria-labelledby="qa-title" style="max-width:480px">
+        <div class="pe-head">
+          <h2 id="qa-title">Add ${esc(def.label).toLowerCase()}</h2>
+          <button type="button" class="pe-close" id="qa-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="pe-body">
+          <div id="qa-msg" class="pe-msg" style="display:none"></div>
+          ${buildFieldGroupHtml(def)}
+        </div>
+        <div class="pe-foot">
+          <button type="button" class="pe-btn secondary" id="qa-cancel">Cancel</button>
+          <button type="button" class="pe-btn primary" id="qa-save">Save</button>
+        </div>
+      </div>
+    `;
+    overlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    function close() {
+      overlay.classList.remove('open');
+      document.body.style.overflow = '';
+    }
+    document.getElementById('qa-close').addEventListener('click', close);
+    document.getElementById('qa-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', function escClose(e) {
+      if (e.key === 'Escape' && overlay.classList.contains('open')) {
+        close();
+        document.removeEventListener('keydown', escClose);
+      }
+    });
+    setTimeout(() => { const first = overlay.querySelector('input,select,textarea'); if (first) first.focus(); }, 50);
+
+    document.getElementById('qa-save').addEventListener('click', async () => {
+      const msgEl = document.getElementById('qa-msg');
+      msgEl.className = 'pe-msg'; msgEl.style.display = 'none';
+      try {
+        await persistProfileUpdates(readFieldGroupValues(def));
+        close();
+      } catch (e) {
+        msgEl.textContent = 'Save failed: ' + (e.message || 'unknown error');
+        msgEl.classList.add('error'); msgEl.style.display = 'block';
+      }
+    });
+  }
+
+  // -- Complete Full Profile modal · all pending fields at once --
+  function openCompleteProfile() {
+    if (!_currentProfile) return;
+    const items = profileCompletionItems(_currentProfile);
+    const pending = items.filter(i => !i.done && PROFILE_FIELD_DEFS[i.field]);
+    if (!pending.length) return;
+    let overlay = document.getElementById('quick-add-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'quick-add-overlay';
+      overlay.className = 'pe-overlay';
+      document.body.appendChild(overlay);
+    }
+    overlay.innerHTML = `
+      <div class="pe-modal" role="dialog" aria-modal="true" aria-labelledby="cp-title">
+        <div class="pe-head">
+          <h2 id="cp-title">Complete your profile</h2>
+          <button type="button" class="pe-close" id="qa-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="pe-body">
+          <div id="qa-msg" class="pe-msg" style="display:none"></div>
+          <p style="font-size:12.5px;color:var(--muted);margin:0 0 16px;line-height:1.55">Fill in as much as you can. Skip anything you'd rather leave blank — you can always come back.</p>
+          ${pending.map(i => buildFieldGroupHtml(PROFILE_FIELD_DEFS[i.field])).join('')}
+        </div>
+        <div class="pe-foot">
+          <button type="button" class="pe-btn secondary" id="qa-cancel">Cancel</button>
+          <button type="button" class="pe-btn primary" id="qa-save">Save all</button>
+        </div>
+      </div>
+    `;
+    overlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    function close() {
+      overlay.classList.remove('open');
+      document.body.style.overflow = '';
+    }
+    document.getElementById('qa-close').addEventListener('click', close);
+    document.getElementById('qa-cancel').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    setTimeout(() => { const first = overlay.querySelector('input,select,textarea'); if (first) first.focus(); }, 50);
+
+    document.getElementById('qa-save').addEventListener('click', async () => {
+      const msgEl = document.getElementById('qa-msg');
+      msgEl.className = 'pe-msg'; msgEl.style.display = 'none';
+      try {
+        // Aggregate every input across every pending field group
+        let combined = {};
+        pending.forEach(i => Object.assign(combined, readFieldGroupValues(PROFILE_FIELD_DEFS[i.field])));
+        // Drop keys that came back null AND were already null (no-op writes)
+        Object.keys(combined).forEach(k => {
+          if (combined[k] == null && _currentProfile[k] == null) delete combined[k];
+        });
+        if (!Object.keys(combined).length) { close(); return; }
+        await persistProfileUpdates(combined);
+        close();
+      } catch (e) {
+        msgEl.textContent = 'Save failed: ' + (e.message || 'unknown error');
+        msgEl.classList.add('error'); msgEl.style.display = 'block';
+      }
+    });
+  }
+
+  // Pulled out so it's reusable by renderCompletion + openCompleteProfile.
+  function profileCompletionItems(profile) {
+    return [
+      { label: 'Headshot',                          done: !!profile.headshot_url,                                                         field: 'headshot_url' },
+      { label: 'Team info',                         done: !!profile.on_team,                                                              field: 'on_team' },
+      { label: 'Greensheets preference',            done: profile.greensheets_preference && profile.greensheets_preference !== 'ask_per_file', field: 'greensheets_preference' },
+      { label: 'Review preference',                 done: profile.review_preference && profile.review_preference !== 'ask_per_file',      field: 'review_preference' },
+      { label: 'Social handles',                    done: !!(profile.social_facebook || profile.social_instagram),                        field: 'social_handles' },
+      { label: 'Birthday (for handwritten cards)',  done: !!profile.birthday_month,                                                       field: 'birthday' },
+      { label: 'Closing gift preferences',          done: !!profile.closing_gift_preferences,                                             field: 'closing_gift_preferences' },
+      { label: 'Referral source',                   done: !!profile.referral_source,                                                      field: 'referral_source' },
+      { label: 'Notes',                             done: !!profile.notes,                                                                field: 'notes' }
+    ];
+  }
   async function saveProfileEdits() {
     const msgEl = document.getElementById('pe-msg');
     msgEl.className = 'pe-msg';
@@ -776,9 +1019,10 @@
         msgEl.style.display = 'block';
         return;
       }
-      // Update in-memory profile + re-render header
+      // Update in-memory profile + re-render header + completion list (Task 1.6)
       Object.assign(_currentProfile, updates);
       renderHeaderQuick(_currentProfile);
+      renderCompletion(_currentProfile);
       msgEl.textContent = 'Profile updated.';
       msgEl.classList.add('success');
       msgEl.style.display = 'block';
@@ -958,17 +1202,39 @@
       return a.closing_date.localeCompare(b.closing_date);
     });
     body.innerHTML = `<div class="zb-grid">${active.map(renderFileCard).join('')}</div>`;
-    // Wire action buttons
+    // Wire action buttons inside cards (View File / Message TC)
     body.querySelectorAll('[data-zb-action]').forEach(btn => {
       btn.addEventListener('click', (e) => {
+        // Prevent the parent card click handler from also firing
+        e.stopPropagation();
         const fid = e.currentTarget.getAttribute('data-zb-file');
         const act = e.currentTarget.getAttribute('data-zb-action');
         if (act === 'view') {
-          // AP-9 · Open file detail modal · agent can view + edit + add document URLs
           openFileDetailModal(fid, active);
         } else if (act === 'message') {
-          // Routes to the messaging endpoint or the portal's existing thread
           window.location.hash = 'message=' + fid;
+        }
+      });
+    });
+    // Task 1.9 · Card itself is clickable · opens file detail modal for edits + uploads.
+    // Click anywhere on the card body (outside the explicit action buttons) opens the modal.
+    // Keyboard: Enter or Space on a focused card does the same. Closed cards skip this.
+    body.querySelectorAll('.zb-card[data-zb-file]').forEach(card => {
+      if (card.classList.contains('is-closed')) return;
+      const openForCard = () => {
+        const fid = card.getAttribute('data-zb-file');
+        if (fid) openFileDetailModal(fid, active);
+      };
+      card.addEventListener('click', (e) => {
+        // Ignore clicks that landed on a button, link, or other interactive child —
+        // those have their own handlers (and we stopPropagation in them anyway).
+        if (e.target.closest('button, a, input, select, textarea')) return;
+        openForCard();
+      });
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          openForCard();
         }
       });
     });
@@ -1395,7 +1661,7 @@
       return `<div class="zb-step ${cls}"><div class="dot"></div><div class="lbl">${esc(s.label)}</div></div>`;
     }).join('');
     const fileNum = 'File #' + String(f.id || '').slice(0, 8).toUpperCase();
-    return `<div class="zb-card is-${h.cls}${isClosed ? ' is-closed' : ''}">
+    return `<div class="zb-card is-${h.cls}${isClosed ? ' is-closed' : ''}" data-zb-file="${esc(f.id)}" role="button" tabindex="0" aria-label="${esc((f.property_address || 'File') + ' — open to edit or upload documents')}">
       <div class="zb-card-head">
         <div>
           <div class="addr">${esc(f.property_address || '(address pending)')}</div>
@@ -1442,23 +1708,27 @@
     }
     document.getElementById('drafts-card').style.display = 'block';
     document.getElementById('drafts-meta').textContent = `${drafts.length} saved`;
-    document.getElementById('drafts-body').innerHTML = drafts.map(d => `
-      <div class="draft-row">
-        <div class="body">
-          <div class="ttl">${esc(SERVICE_LABELS[d.service_type] || d.service_type || 'Draft')}</div>
-          <div class="sub">${esc(d.property_address || '- address not yet entered')}</div>
-          <div class="progress">Step ${d.current_step || 1} · saved ${timeAgo(d.updated_at)}</div>
+    document.getElementById('drafts-body').innerHTML = `<div class="zb-grid">${drafts.map(d => {
+      const svcLabel = SERVICE_LABELS[d.service_type] || d.service_type || 'Draft';
+      const stepNum = d.current_step || 1;
+      return `<div class="zb-card is-draft">
+        <div class="zb-card-head">
+          <div>
+            <div class="addr">${esc(d.property_address || '(address not yet entered)')}</div>
+            <div class="sub">${esc(svcLabel)} · Step ${stepNum} of 5 · saved ${timeAgo(d.updated_at)}</div>
+          </div>
+          <span class="zb-status-badge draft">Draft</span>
         </div>
-        <div style="display:flex;gap:6px">
-          <button class="btn-mini solid" data-resume="${esc(d.id)}">Continue</button>
-          <button class="btn-mini danger" data-discard="${esc(d.id)}">×</button>
+        <div class="zb-actions">
+          <button type="button" class="btn-primary" data-resume="${esc(d.id)}">Continue &rarr;</button>
+          <button type="button" class="btn-secondary" data-discard="${esc(d.id)}">Discard</button>
         </div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('')}</div>`;
     document.querySelectorAll('[data-resume]').forEach(b => b.addEventListener('click', () => window.location.href = '/index.html#apply'));
     document.querySelectorAll('[data-discard]').forEach(b => b.addEventListener('click', async (e) => {
       if (!confirm('Discard this draft?')) return;
-      const id = e.target.getAttribute('data-discard');
+      const id = e.currentTarget.getAttribute('data-discard');
       const client = await window.AariAuth.ensureClient();
       await client.from('drafts').delete().eq('id', id);
       window.location.reload();
@@ -1728,18 +1998,9 @@
     document.getElementById('completion-card').style.display = 'block';
     document.getElementById('completion-pct-label').textContent = pct + '%';
     document.getElementById('completion-fill').style.width = pct + '%';
-    // AP-6 · Each item maps to a profile-editor field for individual Add flow.
-    const items = [
-      { label: 'Headshot',                        done: !!profile.headshot_url,                                                         field: 'headshot_url' },
-      { label: 'Team info',                       done: !!profile.on_team,                                                              field: 'on_team' },
-      { label: 'Greensheets preference',          done: profile.greensheets_preference && profile.greensheets_preference !== 'ask_per_file', field: 'greensheets_preference' },
-      { label: 'Review preference',               done: profile.review_preference && profile.review_preference !== 'ask_per_file',      field: 'review_preference' },
-      { label: 'Social handles',                  done: !!(profile.social_facebook || profile.social_instagram),                        field: 'social_handles' },
-      { label: 'Birthday (for handwritten cards)',done: !!profile.birthday_month,                                                       field: 'birthday' },
-      { label: 'Closing gift preferences',        done: !!profile.closing_gift_preferences,                                             field: 'closing_gift_preferences' },
-      { label: 'Referral source',                 done: !!profile.referral_source,                                                      field: 'referral_source' },
-      { label: 'Notes',                           done: !!profile.notes,                                                                field: 'notes' },
-    ];
+    // AP-6 v2 · Items pulled from the shared profileCompletionItems() helper
+    // so renderCompletion and openCompleteProfile stay in sync.
+    const items = profileCompletionItems(profile);
     // AP-6 · Render each missing item with its OWN Add button (data-add-field hooks to JS below).
     //         Completed items disappear from the list entirely.
     const pending = items.filter(i => !i.done);
@@ -1759,7 +2020,7 @@
       fullBtn.className = 'ap-complete-full';
       fullBtn.textContent = 'Complete full profile →';
       fullBtn.style.cssText = 'margin-top:14px;width:100%;background:var(--ink);color:#fff;padding:11px 16px;border-radius:8px;font-size:13px;font-weight:600;border:none;cursor:pointer;font-family:var(--sans);letter-spacing:0.2px';
-      fullBtn.addEventListener('click', () => openProfileEditor());
+      fullBtn.addEventListener('click', () => openCompleteProfile());
       fullBtn.addEventListener('mouseenter', () => { fullBtn.style.background = '#000'; });
       fullBtn.addEventListener('mouseleave', () => { fullBtn.style.background = 'var(--ink)'; });
       card.appendChild(fullBtn);
@@ -1767,31 +2028,31 @@
       fullBtn.remove();
     }
 
-    // AP-7 · Motivational message · injected once after the completion list.
+    // AP-7 v2 · Motivational message · prominent at the TOP of the card body,
+    // BEFORE the items list. Verbatim text per Task 1.7 spec. Disappears
+    // automatically when pct >= 100 (card hides above on line 1972).
     const list = document.getElementById('completion-list');
     if (list && !list.parentElement.querySelector('.ap-motivational')) {
       const msg = document.createElement('div');
       msg.className = 'ap-motivational';
-      msg.innerHTML = '<strong>Complete your profile now</strong> before your next closing so we can promote it on our socials.';
-      list.parentElement.insertBefore(msg, fullBtn || null);
+      msg.textContent = 'Complete your profile now before your next closing so we can promote it on our socials.';
+      list.parentElement.insertBefore(msg, list);
     }
   }
 
-  // AP-6 · Per-field Add click handler · opens profile editor (full modal) for now.
-  //         Future enhancement: focus the specific field within the modal.
+  // AP-6 v2 · Per-field Add click handler · opens the Quick-Add single-field modal.
+  //          openQuickAdd renders ONLY the inputs for that field, saves to DB,
+  //          and refreshes the completion list + header without page reload.
   document.addEventListener('click', e => {
     const btn = e.target.closest('[data-add-field]');
     if (!btn) return;
-    openProfileEditor();
-    // Best-effort focus the related input by name pattern
     const field = btn.getAttribute('data-add-field');
-    const fieldMap = {
-      headshot_url: 'pe-headshot-url',
-      brokerage_name: 'pe-brokerage-name',
-      phone: 'pe-phone'
-    };
-    const id = fieldMap[field];
-    if (id) setTimeout(() => { const el = document.getElementById(id); if (el) el.focus(); }, 100);
+    if (PROFILE_FIELD_DEFS[field]) {
+      openQuickAdd(field);
+    } else {
+      // Fallback for any unmapped field — open the core editor
+      openProfileEditor();
+    }
   });
 
   // ============ AP-8 · MEMBERSHIP UPSELL · specific savings per add-on ============
