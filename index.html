@@ -3646,9 +3646,9 @@ Password:"></textarea>
           </div>
           <!-- Task 2.3 · Additional signers · structured fields, optional, up to 3 added -->
           <div class="field" data-signers-field>
-            <label>Additional signers <span class="opt">optional &middot; co-buyer, co-seller, second LLC member, trustee, etc.</span></label>
+            <label id="signersLabel">Additional signers <span class="opt" id="signersLabelOpt">optional</span></label>
             <div class="signers-list" id="additionalSignersList"></div>
-            <button type="button" class="signer-add-btn" id="addSignerBtn"><span class="plus">+</span> Add another signer</button>
+            <button type="button" class="signer-add-btn" id="addSignerBtn"><span class="plus">+</span> <span id="signersBtnLabel">Add another signer</span></button>
           </div>
           <div class="field"><label>Property Address *</label><input type="text" name="address" data-google-address autocomplete="off" placeholder="Start typing. Google will suggest."></div>
         </fieldset>
@@ -4598,14 +4598,21 @@ Password:"></textarea>
           const needed = refreshOne(ack);
           if(needed) anyNeeded = true;
         });
+        console.log('[entity-ack] refreshAll · triggerPopup: ' + triggerPopup + ' · anyNeeded: ' + anyNeeded + ' · alreadyShown: ' + alreadyShown());
         if(triggerPopup && anyNeeded && !alreadyShown()){
+          console.log('[entity-ack] OPENING MODAL');
           openModal();
         }
       }
 
-      // Wire all entity-type radios across all forms
-      document.querySelectorAll('input[name="buyer_entity_type"], input[name="seller_entity_type"]').forEach(r => {
-        r.addEventListener('change', () => refreshAll(true));
+      // Wire all entity-type radios across all forms (diagnostic logs included)
+      const wiredRadios = document.querySelectorAll('input[name="buyer_entity_type"], input[name="seller_entity_type"]');
+      console.log('[entity-ack] wiring ' + wiredRadios.length + ' entity radio inputs');
+      wiredRadios.forEach(r => {
+        r.addEventListener('change', () => {
+          console.log('[entity-ack] radio changed: ' + r.name + ' = ' + r.value + ' · modal present: ' + !!modal + ' · alreadyShown: ' + alreadyShown());
+          refreshAll(true);
+        });
       });
 
       // Watch for form-block visibility changes (service switch / client_type switch)
@@ -4849,43 +4856,72 @@ Password:"></textarea>
     (function additionalSigners(){
       const list = document.getElementById('additionalSignersList');
       const btn = document.getElementById('addSignerBtn');
+      const labelEl = document.getElementById('signersLabel');
+      const labelOpt = document.getElementById('signersLabelOpt');
+      const btnLabel = document.getElementById('signersBtnLabel');
       const MAX = 3;
       if(!list || !btn) return;
 
+      // Label flips based on client_type · Buyer → Co-Borrower · Seller → Co-Seller · Both → Additional signers
+      function getContext(){
+        const checked = document.querySelector('input[name="client_type"]:checked');
+        const ct = checked ? checked.value : '';
+        if(ct === 'Buyer') return { role: 'Co-Borrower', sectionLabel: 'Co-Borrower', btnLabel: 'Add co-borrower', hint: 'optional &middot; spouse, partner, or other person on the loan' };
+        if(ct === 'Seller') return { role: 'Co-Seller', sectionLabel: 'Co-Seller', btnLabel: 'Add co-seller', hint: 'optional &middot; spouse, partner, second LLC member, trustee, etc.' };
+        return { role: 'Signer', sectionLabel: 'Additional signers', btnLabel: 'Add another signer', hint: 'optional &middot; co-buyer, co-seller, second LLC member, trustee, etc.' };
+      }
+
+      function applyLabels(){
+        const ctx = getContext();
+        if(labelEl){
+          // Preserve the <span class="opt"> structure
+          labelEl.innerHTML = `${ctx.sectionLabel} <span class="opt" id="signersLabelOpt">${ctx.hint}</span>`;
+        }
+        if(btnLabel) btnLabel.textContent = ctx.btnLabel;
+        // Re-title existing blocks
+        list.querySelectorAll('.signer-block').forEach((blk, i) => {
+          const title = blk.querySelector('.signer-title');
+          if(title) title.textContent = `${ctx.role} ${i + 2}`;
+          const rm = blk.querySelector('.signer-remove');
+          if(rm) rm.setAttribute('aria-label', `Remove ${ctx.role.toLowerCase()} ${i + 2}`);
+        });
+      }
+
       function blockHtml(idx){
-        const n = idx + 1; // signer number (2, 3, 4 for "additional" — primary is 1)
+        const ctx = getContext();
+        const n = idx + 2; // primary client = 1, so first additional = 2
         return `
           <div class="signer-block" data-signer-idx="${idx}">
             <div class="signer-head">
-              <span class="signer-title">Signer ${n + 1}</span>
-              <button type="button" class="signer-remove" data-signer-remove="${idx}" aria-label="Remove signer ${n + 1}">&times;</button>
+              <span class="signer-title">${ctx.role} ${n}</span>
+              <button type="button" class="signer-remove" data-signer-remove="${idx}" aria-label="Remove ${ctx.role.toLowerCase()} ${n}">&times;</button>
             </div>
-            <div class="field"><label>Full Name *</label><input type="text" name="signer_${n + 1}_name" placeholder="As it appears on the contract"></div>
+            <div class="field"><label>Full Name *</label><input type="text" name="signer_${n}_name" placeholder="As it appears on the contract"></div>
             <div class="field-row">
-              <div><label>Email *</label><input type="email" name="signer_${n + 1}_email"></div>
-              <div><label>Phone *</label><input type="tel" name="signer_${n + 1}_phone"></div>
+              <div><label>Email *</label><input type="email" name="signer_${n}_email"></div>
+              <div><label>Phone *</label><input type="tel" name="signer_${n}_phone"></div>
             </div>
           </div>
         `;
       }
 
       function renumber(){
-        // After remove, re-index the visible blocks so names stay sequential.
         const blocks = list.querySelectorAll('.signer-block');
+        const ctx = getContext();
         blocks.forEach((blk, i) => {
           blk.setAttribute('data-signer-idx', i);
-          const n = i + 1; // 1, 2, 3 → signer 2, 3, 4
-          blk.querySelector('.signer-title').textContent = `Signer ${n + 1}`;
+          const n = i + 2;
+          const title = blk.querySelector('.signer-title');
+          if(title) title.textContent = `${ctx.role} ${n}`;
           const rm = blk.querySelector('.signer-remove');
-          if(rm){ rm.setAttribute('data-signer-remove', i); rm.setAttribute('aria-label', `Remove signer ${n + 1}`); }
+          if(rm){ rm.setAttribute('data-signer-remove', i); rm.setAttribute('aria-label', `Remove ${ctx.role.toLowerCase()} ${n}`); }
           const nameInp = blk.querySelector('input[type="text"]');
           const emailInp = blk.querySelector('input[type="email"]');
           const phoneInp = blk.querySelector('input[type="tel"]');
-          if(nameInp) nameInp.name = `signer_${n + 1}_name`;
-          if(emailInp) emailInp.name = `signer_${n + 1}_email`;
-          if(phoneInp) phoneInp.name = `signer_${n + 1}_phone`;
+          if(nameInp) nameInp.name = `signer_${n}_name`;
+          if(emailInp) emailInp.name = `signer_${n}_email`;
+          if(phoneInp) phoneInp.name = `signer_${n}_phone`;
         });
-        // Toggle add button availability against MAX
         btn.disabled = blocks.length >= MAX;
       }
 
@@ -4894,17 +4930,21 @@ Password:"></textarea>
         if(current >= MAX) return;
         list.insertAdjacentHTML('beforeend', blockHtml(current));
         const newBlock = list.lastElementChild;
-        // Wire the new remove button
         const rm = newBlock.querySelector('.signer-remove');
         rm.addEventListener('click', () => {
           newBlock.remove();
           renumber();
         });
         renumber();
-        // Focus the first field of the new block for fast entry
         const firstInput = newBlock.querySelector('input');
         if(firstInput) firstInput.focus();
       });
+
+      // Re-apply labels when Client Type changes
+      document.querySelectorAll('input[name="client_type"]').forEach(r => {
+        r.addEventListener('change', applyLabels);
+      });
+      applyLabels();
     })();
 
     /* Phase 3 §2: bind intake tab clicks */
