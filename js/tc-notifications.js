@@ -90,7 +90,9 @@
       console.warn('AariTcNotifications: no session, skipping mount');
       return null;
     }
-    var userId = session.user.id;
+    // Broker impersonation · if a userIdOverride is passed, use it for queries + realtime
+    // filter so the broker sees the impersonated TC's bell, not their own.
+    var userId = options.userIdOverride || session.user.id;
 
     injectCss();
 
