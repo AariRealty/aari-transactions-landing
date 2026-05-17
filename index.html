@@ -3785,7 +3785,7 @@ Password:"></textarea>
           </div>
           <div class="field-row">
             <div><label>Purchase Price *</label><input type="text" name="purchase_price" placeholder="$"></div>
-            <div><label>Earnest Money *</label><input type="text" name="earnest_money" placeholder="$ or Cash / None / TBD" required></div>
+            <div><label>Earnest Money *</label><input type="text" name="earnest_money" placeholder="$0.00" required inputmode="numeric"></div>
           </div>
           <!-- Lender Contact · structured fields with cash-deal toggle -->
           <div class="field contact-group" data-contact-group="lender">
@@ -4949,10 +4949,7 @@ Password:"></textarea>
        ============================================================ */
     (function moneyFormatter(){
       const SELECTOR = 'input[name="purchase_price"], input[name="earnest_money"], input[name="listing_price"], input[name="offer_price"]';
-      // earnest_money accepts text fallbacks (Cash / None / TBD); the others
-      // are numeric-only. Detect letters and skip formatting if found.
-      const TEXT_FALLBACK = new Set(['earnest_money']);
-      function hasLetters(s){ return /[a-zA-Z]/.test(String(s || '')); }
+      // All money fields are now strictly numeric · Cash/None/TBD text fallback removed.
       function format(raw){
         const digits = String(raw || '').replace(/[^0-9]/g, '');
         if(!digits) return '';
@@ -4962,11 +4959,9 @@ Password:"></textarea>
         return String(val || '').replace(/[^0-9]/g, '');
       }
       document.querySelectorAll(SELECTOR).forEach(input => {
-        input.setAttribute('inputmode', TEXT_FALLBACK.has(input.name) ? 'text' : 'numeric');
+        input.setAttribute('inputmode', 'numeric');
         input.setAttribute('autocomplete', 'off');
         input.addEventListener('input', () => {
-          // Skip formatting if user typed text (Cash / None / TBD) in a text-fallback field
-          if(TEXT_FALLBACK.has(input.name) && hasLetters(input.value)) return;
           const cursor = input.selectionStart;
           const beforeLen = input.value.length;
           input.value = format(input.value);
@@ -4975,21 +4970,16 @@ Password:"></textarea>
           try { input.setSelectionRange(newPos, newPos); } catch(_) {}
         });
         input.addEventListener('blur', () => {
-          if(TEXT_FALLBACK.has(input.name) && hasLetters(input.value)) return;
+          // Allow empty (will be flagged by required validation), otherwise format
+          if(!input.value.trim()) return;
           input.value = format(input.value);
         });
       });
-      // Strip formatting on submit so backend receives a clean value
-      // (integer string for numeric, or the literal text for fallback fields)
+      // Strip formatting on submit so backend receives an integer string
       document.querySelectorAll('form').forEach(f => {
         f.addEventListener('submit', () => {
           f.querySelectorAll(SELECTOR).forEach(input => {
-            if(TEXT_FALLBACK.has(input.name) && hasLetters(input.value)){
-              // Leave text values as-is (Cash, None, TBD, etc.)
-              input.value = input.value.trim();
-            } else {
-              input.value = rawDigits(input.value);
-            }
+            input.value = rawDigits(input.value);
           });
         }, true);
       });
@@ -5107,7 +5097,8 @@ Password:"></textarea>
             const dt = new DataTransfer();
             ok.forEach(f => dt.items.add(f));
             input.files = dt.files;
-            showReject(input, 'PDF only · removed: ' + rejected.map(r => r.name).join(', '));
+            // Spec verbatim · §4.2
+            showReject(input, 'Only PDF files are accepted. Please convert your document and try again.');
             // Trigger re-render of chip list for multi inputs
             if(input.multiple) input.dispatchEvent(new Event('change', { bubbles: false }));
           }
@@ -5359,12 +5350,20 @@ Password:"></textarea>
         // Lender contact group · cash-toggle checked OR any contact field filled
         const cashCb = el.querySelector('input[name="lender_is_cash"]');
         if(cashCb && cashCb.checked) return true;
-        // Text-like inputs · LENIENT · at least one filled = answered
-        // Final submit validates the rest. This lets the user advance through
-        // the cascade without filling every box perfectly first time.
+        // Text-like inputs · validation depends on question type
         const inputs = el.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="date"]');
         if(inputs.length){
           if(q.optional) return true;
+          // Strict groups · every input required. Money + dates + client contact
+          // are all critical for closing, so we enforce both fields filled.
+          const strictKeys = new Set(['q-money', 'q-dates', 'q-client-contact']);
+          if(strictKeys.has(q.key)){
+            for(const i of inputs){
+              if(!i.value || !i.value.trim()) return false;
+            }
+            return true;
+          }
+          // Lenient · at least one filled = answered (lender/title contact groups)
           for(const i of inputs){
             if(i.value && i.value.trim()) return true;
           }
