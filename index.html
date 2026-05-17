@@ -7112,7 +7112,50 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         showResumeBanner(saved);
       }
     }
-    function close(){
+    /* May 2026 audit · "X discards" exit pattern.
+       Save & exit button is gone. The X (plus overlay click + Escape) is the
+       single exit path. If the agent has any in-progress work, force them to
+       confirm a discard before the modal closes. Confirming wipes the
+       in-memory state, the form, and sessionStorage so a fresh open starts
+       clean — no half-completed drafts lingering between visits. */
+    function hasUnsavedIntakeWork(){
+      // Auth gate showing · no entries yet, nothing to discard
+      if(modalBox && modalBox.classList.contains('auth-gate-active')) return false;
+      // Past Step 1 or service picked counts as in-flight work
+      if(state.serviceId) return true;
+      if(state.step && state.step > 1) return true;
+      // Any user-typed visible value
+      if(form){
+        const inputs = form.querySelectorAll('input, textarea, select');
+        for(const el of inputs){
+          if(el.type === 'hidden') continue;
+          if(el.disabled) continue;
+          if(el.offsetParent === null && el.type !== 'radio' && el.type !== 'checkbox') continue;
+          if(el.type === 'radio' || el.type === 'checkbox'){
+            if(el.checked) return true;
+            continue;
+          }
+          if(el.value && String(el.value).trim() !== '') return true;
+        }
+      }
+      return false;
+    }
+    function close(opts){
+      opts = opts || {};
+      if(!opts.skipConfirm && hasUnsavedIntakeWork()){
+        const ok = window.confirm("Discard your draft? Your progress won't be saved.");
+        if(!ok) return;
+        // Hard reset · so the next open() starts at Step 1 with empty fields.
+        clearProgress();
+        try { form.reset(); } catch(e){}
+        ['intakeServiceId','intakeServiceName','intakeServicePrice','intakeServiceTiming',
+         'intakePreferredTc','intakeSaSigned','intakeSaTyped','intakeSaDrawn','intakeSaTimestamp',
+         'intake-payment-status']
+          .forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
+        state.serviceId = '';
+        state.preferredTc = '';
+        state.step = 1;
+      }
       overlay.setAttribute('hidden', '');
       overlay.classList.remove('open');
       document.body.style.overflow = '';

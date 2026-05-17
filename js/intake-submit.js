@@ -472,7 +472,10 @@
   // ===== Bootstrap =====
   whenReady(({ form, foot, submitBtn }) => {
     installSubmitHijack(form, submitBtn);
-    installSaveAndExit(foot);
+    // Save & exit removed (May 2026 audit · "X discards" pattern).
+    // The X button in the modal header now handles all exits via a confirm
+    // dialog. Cross-device draft resume is dormant — installResumeHandler
+    // stays bootable for any legacy drafts already in Supabase.
     installResumeHandler();
   });
 })(window);
