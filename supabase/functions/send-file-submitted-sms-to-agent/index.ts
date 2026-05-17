@@ -64,9 +64,18 @@ Deno.serve(async (req) => {
 
   const fileShortId = String(f.id).slice(0, 4).toUpperCase();
   const propertyShort = (f.property_address || "your file").split(",")[0].trim();
+
+  // 2 PM ET same-day cutoff · before 2 PM = TC starts today, after = tomorrow
+  // by 10 AM. Mirrors the operational policy locked in
+  // project_tc_acceptance_sla.md.
+  const beforeCutoff = isBeforeEasternCutoff(new Date(), 14, 0);
+  const startCommitment = beforeCutoff
+    ? "TC will start today (submitted before our 2 PM cutoff)."
+    : "TC will start tomorrow by 10 AM (submitted after our 2 PM cutoff).";
+
   const message =
     `Aari · File ${fileShortId} (${propertyShort}) is in · routing to ${tcName}. ` +
-    `We'll text you when they accept. Reply STOP to opt out.`;
+    `${startCommitment} We'll text you when they accept. Reply STOP to opt out.`;
 
   const result = await sendQuoSms({
     to: agent.phone,
@@ -90,4 +99,19 @@ function j(status: number, body: unknown): Response {
     status,
     headers: { ...cors, "Content-Type": "application/json" },
   });
+}
+
+// Returns true if the given UTC instant is BEFORE the cutoff hour/min in
+// America/New_York. Handles DST automatically via Intl.DateTimeFormat.
+function isBeforeEasternCutoff(d: Date, hour: number, minute: number): boolean {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(d);
+  const h = parseInt(parts.find(p => p.type === "hour")?.value ?? "0", 10);
+  const m = parseInt(parts.find(p => p.type === "minute")?.value ?? "0", 10);
+  return h < hour || (h === hour && m < minute);
 }
