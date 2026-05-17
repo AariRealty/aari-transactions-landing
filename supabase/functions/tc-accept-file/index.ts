@@ -121,15 +121,18 @@ Deno.serve(async (req) => {
     return json(500, { ok: false, error: "Failed to update file: " + updErr.message });
   }
 
-  // Fire the agent confirmation email (Slice 4 will build the template;
-  // for now we just invoke it best-effort and ignore failures).
-  try {
-    await admin.functions.invoke("send-tc-acceptance-to-agent", {
+  // Fire the agent confirmation email + SMS in parallel · both best-effort.
+  // Email goes to every agent (their main contact channel). SMS only if they
+  // have a phone on file AND sms_opt_in is true.
+  Promise.all([
+    admin.functions.invoke("send-tc-acceptance-to-agent", {
       body: { file_id: body.file_id },
-    });
-  } catch (_) {
-    // Non-fatal · the acceptance is recorded.
-  }
+    }).catch(() => {}),
+    admin.functions.invoke("send-tc-acceptance-sms", {
+      body: { file_id: body.file_id },
+    }).catch(() => {}),
+  ]).catch(() => {});
+  // Don't await · the file is already accepted, notifications are async.
 
   return json(200, {
     ok: true,
