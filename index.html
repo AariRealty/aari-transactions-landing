@@ -6810,6 +6810,48 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         } catch(_) {}
       })();
 
+      // May 2026 · TC live availability · pulls availability_status from
+      // agents table so the picker shows real-time state. Falls back to
+      // tcs.json's static availability if the query fails.
+      (async () => {
+        try {
+          if(!window.AariAuth) return;
+          const client = await window.AariAuth.ensureClient();
+          const tcIds = tcsActive.map(t => t.id);
+          // tcs.json uses string ids like 'eileen', 'mile' — those are NOT
+          // Supabase agent UUIDs. Match by email instead since tcs.json has
+          // canonical agent emails and the agents table is keyed on the
+          // same. Build email → tc map.
+          const emails = tcsActive.map(t => t.email).filter(Boolean);
+          if(!emails.length) return;
+          const { data } = await client
+            .from('agents')
+            .select('email, availability_status, availability_until, availability_message')
+            .in('email', emails);
+          if(!data || !data.length) return;
+          const byEmail = {};
+          data.forEach(row => { byEmail[row.email] = row; });
+          // Merge into tcsActive so the render below picks them up
+          tcsActive.forEach(t => {
+            const row = byEmail[t.email];
+            if(row){
+              t.availability = {
+                status: row.availability_status || 'available',
+                until: row.availability_until,
+                message: row.availability_message ||
+                  (row.availability_status === 'busy_until' && row.availability_until
+                    ? 'Booked till ' + new Date(row.availability_until).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})
+                    : row.availability_status === 'off_today'
+                    ? 'Off today · starts tomorrow'
+                    : 'Available now')
+              };
+            }
+          });
+          // Re-render picker if Step 3 is showing
+          if(state.step === 3) renderTcStep();
+        } catch(_) {}
+      })();
+
       if(state.preferredTc && state.preferredTc !== 'auto') {
         // Show preselected view
         const tc = tcsData.find(t => t.id === state.preferredTc);
