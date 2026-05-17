@@ -5270,115 +5270,125 @@ Password:"></textarea>
         return 'unknown';
       }
 
-      // Line-anchored parser specific to the FAR/BAR AS IS Residential Contract.
+      // Keyword-anchored parser · works whether pdf.js returns text as one stream
+      // or with line breaks. Doesn't rely on FAR/BAR's printed line numbers.
       function parseFarBarAsIs(text){
         const out = {};
-        // Line 1: PARTIES: X ("Seller"),
-        const l1 = getLine(text, 1);
-        let m = l1.match(/PARTIES:\s*(.+?)\s*\(\s*"?Seller"?\s*\)/i);
+        // Normalize: collapse multiple spaces, but keep single spaces.
+        const t = text.replace(/[ \t]/g, ' ').replace(/ +/g, ' ');
+
+        // Seller · PARTIES: <name> ("Seller")
+        let m = t.match(/PARTIES:\s*(.+?)\s*\(\s*[“”"]?Seller[“”"]?\s*\)/i);
         out.seller_name = m ? clean(m[1]) : '';
 
-        // Line 2: and X ("Buyer"),
-        const l2 = getLine(text, 2);
-        m = l2.match(/and\s+(.+?)\s*\(\s*"?Buyer"?\s*\)/i);
+        // Buyer · and <name> ("Buyer")
+        m = t.match(/\band\s+(.+?)\s*\(\s*[“”"]?Buyer[“”"]?\s*\)/i);
         out.buyer_name = m ? clean(m[1]) : '';
 
-        // Line 7: (a) Street address, city, zip: X
-        const l7 = getLine(text, 7);
-        m = l7.match(/Street address,\s*city,\s*zip:\s*(.+)$/i);
+        // Property address · "Street address, city, zip:" up to "(b)" or "Located in"
+        m = t.match(/Street\s*address[,]?\s*city[,]?\s*zip:\s*(.+?)(?=\s*\(b\)|Located in:|\n)/i);
         out.property_address = m ? clean(m[1]) : '';
 
-        // Line 8: Located in: X County. Property Tax ID #: Y
-        const l8 = getLine(text, 8);
-        m = l8.match(/Located in:\s*([A-Za-z\s]+?)\s*County/i);
+        // County · "Located in: <COUNTY> County"
+        m = t.match(/Located in:\s*([A-Za-z\s]+?)\s+County/i);
         out.county = m ? clean(m[1]) : '';
-        m = l8.match(/Property Tax ID[#\s:]+([A-Za-z0-9\-\.]+)/i);
+
+        // Tax ID · "Property Tax ID #: <id>"
+        m = t.match(/Property Tax ID\s*[#:]+\s*([A-Za-z0-9\-\.]+)/i);
         out.property_tax_id = m ? clean(m[1]) : '';
 
-        // Line 27: PURCHASE PRICE ... $ X
-        const l27 = getLine(text, 27);
-        m = l27.match(/PURCHASE PRICE[^$]*\$\s*([\d,]+(?:\.\d{2})?)/i);
+        // Purchase price · "PURCHASE PRICE ... $ <amount>"
+        m = t.match(/PURCHASE PRICE[^$]{0,80}\$\s*([\d,]+(?:\.\d{2})?)/i);
         out.purchase_price = m ? clean(m[1]) : '';
 
-        // Line 28: Initial deposit ... $ X
-        const l28 = getLine(text, 28);
-        m = l28.match(/Initial deposit[^$]*\$\s*([\d,]+(?:\.\d{2})?)/i);
+        // Earnest deposit · "Initial deposit ... $ <amount>"
+        m = t.match(/Initial deposit[^$]{0,200}\$\s*([\d,]+(?:\.\d{2})?)/i);
         out.earnest_money = m ? clean(m[1]) : '';
 
-        // Line 30: within ___X___ days after Effective Date (deposit days)
-        const l30 = getLine(text, 30);
-        m = l30.match(/within\s+(\d+)\s+\(if left blank/i);
+        // Deposit days · "within <N> ... days after Effective Date" near "deposit"
+        m = t.match(/Initial deposit[\s\S]{0,400}within\s+_*(\d+)_*\s+\(if left blank/i);
         out.deposit_days = m ? m[1] : '';
 
-        // Line 33: Escrow Agent Name: X
-        const l33 = getLine(text, 33);
-        m = l33.match(/Escrow Agent Name:\s*(.+)$/i);
+        // Escrow Agent Name
+        m = t.match(/Escrow Agent Name:\s*([^\n]+?)(?=\s*Address:|\s*\(b\)|\n)/i);
         out.title_name = m ? clean(m[1]) : '';
-        // Treat the escrow agent name as the closing company / title company too
         out.title_company = out.title_name;
 
-        // Line 34: Address: X Phone: Y
-        const l34 = getLine(text, 34);
-        m = l34.match(/Address:\s*(.+?)\s*Phone:\s*(.+)$/i);
+        // Escrow phone · "Phone: <phone>"
+        m = t.match(/Escrow Agent Name:[\s\S]{0,300}Phone:\s*([\d\(\)\-.\s_]+?)(?=\s*Email:|\s*Fax:|\n)/i);
         if(m){
-          out.title_address = clean(m[1]);
-          out.title_phone = clean(m[2]);
+          // Strip underscores AND spaces from inside the phone number
+          out.title_phone = clean(m[1]).replace(/\s/g, '').replace(/[_\-]+/g, '-').replace(/^-|-$/g, '');
+          // But preserve dashes — easier: just normalize
+          out.title_phone = clean(m[1]).replace(/\s+/g, '');
         }
 
-        // Line 35: Email: X Fax: Y
-        const l35 = getLine(text, 35);
-        m = l35.match(/Email:\s*(.+?)\s*Fax:/i);
-        out.title_email = m ? clean(m[1]) : '';
+        // Escrow email · "Email: <email>"
+        m = t.match(/Escrow Agent Name:[\s\S]{0,400}Email:\s*([\w.\-]+@[\w.\-]+\.\w{2,})/i);
+        if(m) out.title_email = m[1];
+        // Fallback: any email near "Escrow Agent"
+        if(!out.title_email){
+          const idx = t.search(/Escrow Agent/i);
+          if(idx >= 0){
+            const window = t.slice(idx, idx + 600);
+            const em = window.match(/[\w.\-]+@[\w.\-]+\.\w{2,}/);
+            if(em) out.title_email = em[0];
+          }
+        }
 
-        // Line 53: ... ("Closing Date")
-        const l53 = getLine(text, 53);
-        m = l53.match(/on\s+(.+?)\s*\(\s*"?Closing Date"?\s*\)/i);
+        // Closing date · "on <date> ("Closing Date")"
+        m = t.match(/on\s+([A-Za-z]+\s+\d{1,2},?\s*\d{4})\s*\(\s*[“”"]?Closing Date[“”"]?\s*\)/i);
+        if(!m) m = t.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s*\(\s*[“”"]?Closing Date[“”"]?\s*\)/i);
         out.closing_date = m ? clean(m[1]) : '';
 
-        // Line 89: within ___X___ days after Effective Date ("Loan Approval Period")
-        const l89 = getLine(text, 89);
-        m = l89.match(/within\s+(\d+)\s+\(if left blank/i);
+        // Loan Approval Period · "within <N> ... days after Effective Date ("Loan Approval Period")"
+        m = t.match(/within\s+_*(\d+)_*[\s\S]{0,80}\([“”"]?Loan Approval Period[“”"]?\s*\)/i);
         out.loan_approval_days = m ? m[1] : '';
 
-        // Line 261/262: Buyer shall have ___X___ days after Effective Date ("Inspection Period")
-        for(const ln of [261, 262]){
-          const lt = getLine(text, ln);
-          m = lt.match(/Buyer shall have\s+(\d+)\s+\(if left blank/i);
-          if(m){ out.inspection_days = m[1]; break; }
-        }
+        // Inspection Period · "Buyer shall have <N> ... days after Effective Date"
+        m = t.match(/Buyer shall have\s+_*(\d+)_*[\s\S]{0,80}\([“”"]?Inspection Period[“”"]?\s*\)/i);
+        if(!m) m = t.match(/Buyer shall have\s+_*(\d+)_*[\s\S]{0,120}Inspection Period/i);
+        out.inspection_days = m ? m[1] : '';
 
-        // Brokerage block · line 643 = sales associates, line 645 = brokers
-        // Two columns: [Cooperating · Buyer's side] [Listing · Seller's side]
-        const l643 = getLine(text, 643);
-        const l645 = getLine(text, 645);
-        // Split by 2+ spaces to separate the two columns
-        if(l643){
-          const cols = l643.split(/\s{2,}/).filter(Boolean);
-          out.cooperating_agent = cols[0] || '';
-          out.listing_agent = cols[1] || '';
-        }
-        if(l645){
-          const cols = l645.split(/\s{2,}/).filter(Boolean);
-          out.cooperating_broker = cols[0] || '';
-          out.listing_broker = cols[1] || '';
-        }
-
-        // Signature dates · derive Effective Date as MAX of signing dates.
-        // Buyer dates at lines 629-630, Seller dates at lines 631-632.
-        const dateRe = /Date:\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})/i;
-        const altDateRe = /\b(\d{2}\/\d{2}\/\d{4})\b/;
-        const dates = [];
-        for(const ln of [629, 630, 631, 632]){
-          const lt = getLine(text, ln);
-          let dm = lt.match(dateRe) || lt.match(altDateRe);
-          if(dm){
-            const d = new Date(dm[1].replace(/\//g, ' '));
-            if(!isNaN(d)) dates.push(d);
+        // Brokers · two columns near "Cooperating Sales Associate" / "Listing Sales Associate"
+        // The values appear ABOVE the labels in the PDF. Search backwards from the labels.
+        const agentLabelIdx = t.search(/Cooperating Sales Associate[\s,]*if any/i);
+        if(agentLabelIdx > 100){
+          // Take 200 chars before the label and look for two names separated by lots of underscores/spaces
+          const before = t.slice(Math.max(0, agentLabelIdx - 250), agentLabelIdx);
+          const cleaned = clean(before);
+          // Split by 3+ spaces (the column gap)
+          const parts = cleaned.split(/\s{3,}/).filter(p => p.length > 2 && !/Page\s*\d+/i.test(p));
+          if(parts.length >= 2){
+            out.cooperating_agent = parts[parts.length - 2];
+            out.listing_agent = parts[parts.length - 1];
           }
+        }
+        const brokerLabelIdx = t.search(/Cooperating Broker[\s,]*if any/i);
+        if(brokerLabelIdx > 100){
+          const before = t.slice(Math.max(0, brokerLabelIdx - 250), brokerLabelIdx);
+          const cleaned = clean(before);
+          const parts = cleaned.split(/\s{3,}/).filter(p => p.length > 2 && !/Page\s*\d+/i.test(p));
+          if(parts.length >= 2){
+            out.cooperating_broker = parts[parts.length - 2];
+            out.listing_broker = parts[parts.length - 1];
+          }
+        }
+
+        // Signature dates · derive Effective Date as MAX of signing dates
+        const dateRe = /Date:\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})/g;
+        const altDateRe = /\b(\d{1,2}\/\d{1,2}\/\d{4})\b/g;
+        const dates = [];
+        let dm;
+        while((dm = dateRe.exec(t)) !== null){
+          const d = new Date(dm[1]); if(!isNaN(d)) dates.push(d);
+        }
+        while((dm = altDateRe.exec(t)) !== null){
+          const d = new Date(dm[1]); if(!isNaN(d)) dates.push(d);
         }
         if(dates.length){
           const latest = new Date(Math.max(...dates.map(d => d.getTime())));
-          out.effective_date = latest.toISOString().slice(0, 10); // YYYY-MM-DD
+          out.effective_date = latest.toISOString().slice(0, 10);
         }
 
         return out;
@@ -5482,27 +5492,46 @@ Password:"></textarea>
             setBanner('none', "<strong>Couldn't extract from this PDF</strong> &middot; looks scanned or image-only. Fill the rest of the form manually.");
             return;
           }
-          // Diagnostic logging · paste these into chat so we can tune the parser
-          console.log('[pdf-extract] text length:', text.length);
-          console.log('[pdf-extract] first 800 chars:', text.slice(0, 800));
-          console.log('[pdf-extract] format detection markers:', {
-            hasAsIs: /AS\s*IS/i.test(text),
-            hasResidentialContract: /Residential Contract/i.test(text),
-            hasFloridaRealtors: /FloridaRealtors/i.test(text),
-            hasParties: /PARTIES:/i.test(text),
-            hasSellerLabel: /\("Seller"\)/i.test(text),
-            hasBuyerLabel: /\("Buyer"\)/i.test(text)
-          });
+          // Diagnostic info · also visible on the page so the agent can copy/paste it back
+          const diag = {
+            length: text.length,
+            preview: text.slice(0, 1200),
+            markers: {
+              hasAsIs: /AS\s*IS/i.test(text),
+              hasResidentialContract: /Residential Contract/i.test(text),
+              hasFloridaRealtors: /FloridaRealtors/i.test(text),
+              hasParties: /PARTIES:/i.test(text),
+              hasSellerLabel: /\(\s*["“”]?Seller["“”]?\s*\)/i.test(text),
+              hasBuyerLabel: /\(\s*["“”]?Buyer["“”]?\s*\)/i.test(text)
+            }
+          };
+          console.log('[pdf-extract]', diag);
+          window.AariLastExtractedText = text;
 
           const parsed = parseContract(text);
           window.AariExtractedContract = parsed;
           console.log('[pdf-extract] format:', parsed._format, '· parsed:', parsed);
           const filled = [];
 
+          function diagBanner(prefix){
+            const markers = Object.entries(diag.markers)
+              .map(([k,v]) => `${k}: ${v ? '✓' : '✗'}`)
+              .join(' · ');
+            return `<strong>${prefix}</strong>
+              <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Show debug info (paste into chat)</summary>
+                <div style="margin-top:8px;font-size:11px;font-family:monospace">
+                  <div><strong>length:</strong> ${diag.length}</div>
+                  <div><strong>markers:</strong> ${markers}</div>
+                  <div style="margin-top:6px"><strong>first 1200 chars:</strong></div>
+                  <textarea readonly style="width:100%;height:160px;font-family:monospace;font-size:10px;padding:6px;border:1px solid #ccc;border-radius:4px;background:#fff">${diag.preview.replace(/</g,'&lt;')}</textarea>
+                </div>
+              </details>`;
+          }
+
           // Format detection note
           if(parsed._format === 'unknown'){
             setSpinner(false);
-            setBanner('none', "<strong>Format not recognized</strong> &middot; check browser console for diagnostic output. Fill the form manually.");
+            setBanner('none', diagBanner('Format not recognized.'));
             return;
           }
 
@@ -5539,7 +5568,7 @@ Password:"></textarea>
           if(parsed.property_tax_id) aux.push(`Tax ID: ${parsed.property_tax_id}`);
 
           if(filled.length === 0 && aux.length === 0){
-            setBanner('none', "<strong>Nothing matched</strong> &middot; this contract doesn't use a FAR/BAR pattern we recognize. Fill the form manually.");
+            setBanner('none', diagBanner('Nothing matched in a recognized format.'));
           } else {
             const fmtLabel = parsed._format === 'farbar-asis' ? 'FAR/BAR AS IS' : 'FAR/BAR';
             const fillLine = filled.length ? `<strong>Pre-filled ${filled.length}:</strong> ${filled.join(' &middot; ')}.` : '';
