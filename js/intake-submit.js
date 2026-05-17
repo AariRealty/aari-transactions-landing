@@ -164,17 +164,43 @@
     // existing inline bubble-phase handler on the button never runs.
     // (A capture listener on the button itself would NOT do this — same-target
     // listeners fire in registration order regardless of phase.)
+    console.log('[intake-submit] hijack installed · waiting for submit clicks');
     document.addEventListener('click', (e) => {
       const t = e.target;
       const inSubmit = t === submitBtn || (submitBtn.contains && submitBtn.contains(t));
       if (!inSubmit) return;
+      // ── DIAGNOSTIC LOGGING · removed once submit is verified reliable ──
+      // If a future click on Submit "does nothing," the console + on-screen
+      // alert tell us EXACTLY which gate it hit. Each return path below now
+      // surfaces a visible error so Marlenyi doesn't need DevTools to debug.
+      console.log('[intake-submit] click intercepted on submit button');
       const modal = document.getElementById('intake-modal');
-      if (!modal || modal.hasAttribute('hidden')) return;
+      if (!modal) {
+        console.error('[intake-submit] modal element missing');
+        showAlert('Submit failed · intake modal element missing. Refresh and retry.');
+        return;
+      }
+      if (modal.hasAttribute('hidden')) {
+        console.error('[intake-submit] modal is hidden · click ignored');
+        showAlert('Submit failed · modal is hidden. Refresh and retry.');
+        return;
+      }
+      if (submitBtn.disabled) {
+        console.warn('[intake-submit] submit already in-flight · click ignored');
+        return;
+      }
       e.preventDefault();
       e.stopImmediatePropagation();
+      console.log('[intake-submit] handleSubmit starting');
       handleSubmit(form, submitBtn).catch(err => {
         console.error('[intake-submit] unexpected:', err);
-        showAlert(err && err.message ? err.message : 'Unexpected error. Please try again.');
+        // Surface BOTH the message AND the underlying stack tail so a
+        // production-only failure is debuggable from the visible alert alone.
+        const tail = (err && err.stack && err.stack.split('\n').slice(0, 3).join(' · ')) || '';
+        showAlert(
+          (err && err.message ? err.message : 'Unexpected error.') +
+          (tail ? ' [' + tail + ']' : '')
+        );
         submitBtn.disabled = false;
         submitBtn.textContent = 'Submit File →';
       });
@@ -184,6 +210,7 @@
   async function handleSubmit(form, submitBtn) {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Submitting…';
+    console.log('[intake-submit] handleSubmit ENTRY · form:', form && form.id, 'submitBtn:', submitBtn && submitBtn.id);
 
     const fd = new FormData(form);
 
@@ -194,6 +221,7 @@
     const serviceName = fd.get('service_name') || document.getElementById('intakeServiceName').value;
     const servicePriceStr = fd.get('service_price') || document.getElementById('intakeServicePrice').value;
     const service_price_cents = servicePriceStr ? Math.round(parseFloat(servicePriceStr) * 100) : null;
+    console.log('[intake-submit] serviceId:', serviceId, '· serviceName:', serviceName, '· price_cents:', service_price_cents);
 
     if (!serviceId) {
       submitBtn.disabled = false;
@@ -209,6 +237,7 @@
       return;
     }
 
+    console.log('[intake-submit] resolving session…');
     const session = await global.AariAuth.getCurrentSession();
     if (!session) {
       submitBtn.disabled = false;
@@ -217,6 +246,7 @@
       if (global.AariLogin) global.AariLogin.open();
       return;
     }
+    console.log('[intake-submit] session resolved · agent:', session.user && session.user.id);
     const agentId = session.user.id;
 
     const fileId = uuid();
@@ -305,6 +335,27 @@
       submitBtn.textContent = 'Submit File →';
       showAlert('We couldn\'t save your file. ' + (insertErr.message || 'Please try again or contact hello@aaritransactions.com.'));
       return;
+    }
+
+    // ===== 2.5 · Persist agent's confidential remarks template (if opted in) =====
+    // The listing intake's confidential remarks widget surfaces a checkbox
+    // "Save this as my default for future listings." When checked, the widget
+    // attempts an immediate save, but we also re-fire here at submit time as
+    // a safety net (handles the case where the agent typed AFTER ticking the
+    // box, or the immediate save failed). Idempotent · no harm if duplicate.
+    try {
+      const saveFlag = fd.get('confidential_remarks_save_to_profile');
+      const remarksSource = fd.get('confidential_remarks_source');
+      const remarksText = fd.get('confidential_remarks');
+      if (saveFlag === '1' && remarksSource === 'agent_custom' && typeof remarksText === 'string' && remarksText.trim().length > 0) {
+        await client
+          .from('agents')
+          .update({ default_confidential_remarks: remarksText.trim() })
+          .eq('id', agentId);
+      }
+    } catch (remarksSaveErr) {
+      // Non-fatal · the file is already saved, the agent's template just didn't update.
+      console.warn('[intake-submit] confidential remarks template save failed:', remarksSaveErr);
     }
 
     // ===== 3. Record signature via edge function (Section 6.2 audit fix) =====
