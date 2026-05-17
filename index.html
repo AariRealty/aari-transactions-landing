@@ -5235,8 +5235,15 @@ Password:"></textarea>
       }
 
       function detectFormat(text){
-        if(/AS IS.{0,15}Residential Contract For Sale/i.test(text)) return 'farbar-asis';
-        if(/Residential Contract For Sale And Purchase/i.test(text)) return 'farbar-standard';
+        // Multiple permissive paths · curly quotes, line-broken headers, and
+        // different pdf.js text orderings should all still match.
+        const flat = text.replace(/\s+/g, ' ');
+        if(/AS\s*IS.{0,60}Residential Contract/i.test(flat)) return 'farbar-asis';
+        if(/Residential Contract For Sale And Purchase/i.test(flat)) return 'farbar-standard';
+        if(/FloridaRealtors\/FloridaBar.{0,20}ASIS/i.test(flat)) return 'farbar-asis';
+        if(/FloridaRealtors\/FloridaBar/i.test(flat)) return 'farbar-standard';
+        // Last resort: if we see PARTIES + Seller + Buyer + Florida Bar, treat as FAR/BAR
+        if(/PARTIES:/.test(text) && /\("Seller"\)/.test(text) && /\("Buyer"\)/.test(text)) return 'farbar-asis';
         return 'unknown';
       }
 
@@ -5452,14 +5459,27 @@ Password:"></textarea>
             setBanner('none', "<strong>Couldn't extract from this PDF</strong> &middot; looks scanned or image-only. Fill the rest of the form manually.");
             return;
           }
+          // Diagnostic logging · paste these into chat so we can tune the parser
+          console.log('[pdf-extract] text length:', text.length);
+          console.log('[pdf-extract] first 800 chars:', text.slice(0, 800));
+          console.log('[pdf-extract] format detection markers:', {
+            hasAsIs: /AS\s*IS/i.test(text),
+            hasResidentialContract: /Residential Contract/i.test(text),
+            hasFloridaRealtors: /FloridaRealtors/i.test(text),
+            hasParties: /PARTIES:/i.test(text),
+            hasSellerLabel: /\("Seller"\)/i.test(text),
+            hasBuyerLabel: /\("Buyer"\)/i.test(text)
+          });
+
           const parsed = parseContract(text);
           window.AariExtractedContract = parsed;
+          console.log('[pdf-extract] format:', parsed._format, '· parsed:', parsed);
           const filled = [];
 
           // Format detection note
           if(parsed._format === 'unknown'){
             setSpinner(false);
-            setBanner('none', "<strong>Format not recognized</strong> &middot; we tune extraction to the FAR/BAR AS IS Residential Contract. Fill the form manually.");
+            setBanner('none', "<strong>Format not recognized</strong> &middot; check browser console for diagnostic output. Fill the form manually.");
             return;
           }
 
