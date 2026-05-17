@@ -35,7 +35,7 @@
 (function (global) {
   'use strict';
 
-  const SERVICE_AGREEMENT_VERSION = 'v4.5';
+  const SERVICE_AGREEMENT_VERSION = 'v4.6';
   const SERVICE_TYPE_TO_PAYMENT = {
     tc_one_side:         { timing: 'at_closing', billed_via: 'pay_at_closing_da' },
     tc_both_sides:       { timing: 'at_closing', billed_via: 'pay_at_closing_da' },
@@ -45,7 +45,6 @@
     listing_docs:        { timing: 'upfront',    billed_via: 'stripe_upfront' },
     mls_setup:           { timing: 'upfront',    billed_via: 'stripe_upfront' },
     file_org:            { timing: 'upfront',    billed_via: 'stripe_upfront' },
-    compliance_review:   { timing: 'upfront',    billed_via: 'stripe_upfront' },
   };
 
   // Stripe Payment Link URLs by service id. Mirrors the SERVICES catalog
