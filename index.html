@@ -5179,6 +5179,191 @@ Password:"></textarea>
     })();
 
     /* ============================================================
+       Chat-style sub-wizard for TC Step 2 · one question per screen.
+       JS-only · finds existing field elements, hides all, shows one at
+       a time with a serif headline. Top-level Next/Back delegate here
+       while active. Conditional questions (entity, pre-approval, lender)
+       drop from the sequence when not applicable.
+       ============================================================ */
+    (function tcQwiz(){
+      let active = false;
+      let idx = 0;
+      const selAll = '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field, ' +
+                     '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field-row, ' +
+                     '.intake-step[data-step="2"] .entity-ack[data-form="tc"], ' +
+                     '.intake-step[data-step="2"] [data-contact-group]';
+
+      function clientType(){
+        const r = document.querySelector('input[name="client_type"]:checked');
+        return r ? r.value : '';
+      }
+      function dealType(){
+        const r = document.querySelector('input[name="deal_type"]:checked');
+        return r ? r.value : '';
+      }
+      function nonIndividualPicked(){
+        const set = new Set(['trust','corporation','llc']);
+        const b = document.querySelector('input[name="buyer_entity_type"]:checked');
+        const s = document.querySelector('input[name="seller_entity_type"]:checked');
+        return (b && set.has(b.value)) || (s && set.has(s.value));
+      }
+      function contractUploaded(){
+        const f = document.querySelector('input[name="executed_contract"]');
+        return !!(f && f.files && f.files[0]);
+      }
+
+      // Question definitions · executed sequentially, conditional via `when`
+      const Q = [
+        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="client_type"])',
+          h: 'Who are you <em>representing</em>?', s: 'Pick one.' },
+        { sel: '#buyer-entity-field',
+          h: 'Is the <em>buyer</em> a trust, corp, or LLC?', s: 'Entity transactions need extra verification.',
+          when: () => ['Buyer','Both'].includes(clientType()) },
+        { sel: '#seller-entity-field',
+          h: 'Is the <em>seller</em> a trust, corp, or LLC?', s: 'Same question, other side.',
+          when: () => ['Seller','Both'].includes(clientType()) },
+        { sel: '.entity-ack[data-form="tc"]',
+          h: '<em>Confirm</em> authority.', s: 'Required when buyer or seller is an entity.',
+          when: () => nonIndividualPicked() },
+        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="executed_contract"])',
+          h: 'Drop the <em>contract</em>.', s: 'PDF only. We\'ll lock everything else until this is uploaded.' },
+        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="deal_type"])',
+          h: '<em>Financing</em> or cash?', s: 'Pick one.',
+          when: () => contractUploaded() },
+        { sel: '#preapprovalField',
+          h: 'Drop the <em>pre-approval</em>.', s: 'Required for financed deals. PDF only.',
+          when: () => contractUploaded() && dealType() === 'financing' },
+        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="client_name"])',
+          h: 'Client <em>full name</em>?', s: 'As it appears on the contract.',
+          when: () => contractUploaded() },
+        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field-row:has(input[name="client_email"])',
+          h: 'How do we <em>reach</em> them?', s: 'Email and phone.',
+          when: () => contractUploaded() },
+        { sel: '.intake-step[data-step="2"] [data-signers-field]',
+          h: 'Any <em>additional</em> signers?', s: 'Co-borrowers, co-sellers, second LLC members. Skip if none.',
+          when: () => contractUploaded() },
+        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="address"])',
+          h: '<em>Property</em> address?', s: 'Google will suggest as you type.',
+          when: () => contractUploaded() },
+        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field-row:has(input[name="effective_date"])',
+          h: 'Key <em>dates</em>?', s: 'Contract execution and closing.',
+          when: () => contractUploaded() },
+        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field-row:has(input[name="purchase_price"])',
+          h: 'The <em>numbers</em>.', s: 'Purchase price and earnest money.',
+          when: () => contractUploaded() },
+        { sel: '.intake-step[data-step="2"] [data-contact-group="lender"]',
+          h: '<em>Lender</em> contact.', s: 'Name, company, email, phone. Toggle Cash deal if none.',
+          when: () => contractUploaded() && dealType() === 'financing' },
+        { sel: '.intake-step[data-step="2"] [data-contact-group="title"]',
+          h: '<em>Title</em> / closing agent.', s: 'Name, company, email, phone.',
+          when: () => contractUploaded() },
+        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="addenda_disclosures"])',
+          h: 'Any <em>addenda</em> or disclosures?', s: 'Multiple files, optional.',
+          when: () => contractUploaded() }
+      ];
+
+      function visible(){ return Q.filter(q => !q.when || q.when()); }
+
+      function hideAll(){
+        document.querySelectorAll(selAll).forEach(el => { el.style.display = 'none'; });
+        // Make sure TC fieldsets are visible (their default hidden attribute is managed by service selection)
+        document.querySelectorAll('.intake-step[data-step="2"] fieldset[data-service-form="tc"]').forEach(fs => {
+          fs.hidden = false;
+        });
+      }
+      function clearStyles(){
+        document.querySelectorAll(selAll).forEach(el => { el.style.display = ''; });
+      }
+
+      function ensureHead(){
+        let head = document.getElementById('qwizHead');
+        if(head) return head;
+        head = document.createElement('div');
+        head.id = 'qwizHead';
+        head.className = 'qwiz-head';
+        head.innerHTML = '<div class="qwiz-counter" id="qwizCounter"></div><h2 class="qwiz-headline" id="qwizHeadline"></h2><p class="qwiz-sub" id="qwizSub"></p>';
+        const stepEl = document.querySelector('.intake-step[data-step="2"]');
+        if(stepEl) stepEl.insertBefore(head, stepEl.firstChild);
+        return head;
+      }
+      function removeHead(){
+        const head = document.getElementById('qwizHead');
+        if(head) head.remove();
+      }
+
+      function show(){
+        const list = visible();
+        if(list.length === 0) return;
+        if(idx >= list.length) idx = list.length - 1;
+        if(idx < 0) idx = 0;
+        hideAll();
+        const q = list[idx];
+        try {
+          document.querySelectorAll(q.sel).forEach(el => { el.style.display = ''; });
+        } catch(err) {
+          // :has() unsupported in some older browsers · skip selector errors
+          console.warn('[qwiz] selector failed:', q.sel, err);
+        }
+        const counter = document.getElementById('qwizCounter');
+        const headline = document.getElementById('qwizHeadline');
+        const sub = document.getElementById('qwizSub');
+        if(counter) counter.textContent = `Question ${idx + 1} of ${list.length}`;
+        if(headline) headline.innerHTML = q.h;
+        if(sub) sub.innerHTML = q.s || '';
+        // Body scroll to top of question
+        const body = document.querySelector('.intake-body');
+        if(body) body.scrollTop = 0;
+      }
+
+      function activate(){
+        if(active) return;
+        active = true;
+        const modal = document.getElementById('intake-modal-box');
+        if(modal) modal.classList.add('qwiz-active');
+        ensureHead();
+        idx = 0;
+        show();
+      }
+      function deactivate(){
+        if(!active) return;
+        active = false;
+        const modal = document.getElementById('intake-modal-box');
+        if(modal) modal.classList.remove('qwiz-active');
+        clearStyles();
+        removeHead();
+      }
+      function next(){
+        if(!active) return false;
+        const list = visible();
+        if(idx >= list.length - 1) return false; // signal "advance step"
+        idx++;
+        show();
+        return true;
+      }
+      function prev(){
+        if(!active) return false;
+        if(idx <= 0) return false; // signal "back to previous step"
+        idx--;
+        show();
+        return true;
+      }
+
+      // Re-render when any field state changes that could affect visible questions
+      document.addEventListener('change', (e) => {
+        if(!active) return;
+        const t = e.target;
+        if(!t || !t.name) return;
+        const reactiveNames = ['client_type', 'buyer_entity_type', 'seller_entity_type', 'deal_type', 'executed_contract'];
+        if(reactiveNames.includes(t.name)) show();
+      });
+
+      window.AariQwiz = {
+        activate, deactivate, next, prev,
+        isActive: () => active
+      };
+    })();
+
+    /* ============================================================
      Deal type router · TC form only.
        Financing → show pre-approval upload, expose lender fields
        Cash      → hide pre-approval upload, collapse lender fields
