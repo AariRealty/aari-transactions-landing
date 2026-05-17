@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
   // File first · plain query (FK joins are fragile)
   const { data: f, error: fileErr } = await admin
     .from("files")
-    .select("id, agent_id, assigned_tc_id, service_type, property_address, purchase_price_cents")
+    .select("id, agent_id, assigned_tc_id, service_type, property_address, purchase_price_cents, priority, priority_reason")
     .eq("id", body.file_id)
     .maybeSingle();
   if (fileErr) return j(500, { ok: false, error: "File lookup failed: " + fileErr.message });
@@ -78,9 +78,19 @@ Deno.serve(async (req) => {
   const serviceLabel = SERVICE_LABELS[f.service_type] || f.service_type || "service";
   const price = f.purchase_price_cents ? `$${Math.round(f.purchase_price_cents / 100000)}K` : "";
 
+  // Emergency prefix when priority='emergency' · adds 🚨 + reason inline
+  // deno-lint-ignore no-explicit-any
+  const isEmergency = (f as any).priority === "emergency";
+  // deno-lint-ignore no-explicit-any
+  const priorityReason = (f as any).priority_reason || "Closing soon";
+  const prefix = isEmergency
+    ? `Aari 🚨 PRIORITY (${priorityReason}) · `
+    : `Aari · `;
+  const expires = isEmergency ? "Expires in 15 min — respond fast." : "Expires in 30 min.";
+
   const message =
-    `Aari · New file ${fileShortId} from ${agentName} · ${propertyShort}${price ? " · " + price : ""} · ${serviceLabel}. ` +
-    `Reply Y to accept, N to pass. Expires in 30 min.`;
+    `${prefix}New file ${fileShortId} from ${agentName} · ${propertyShort}${price ? " · " + price : ""} · ${serviceLabel}. ` +
+    `Reply Y to accept, N to pass. ${expires}`;
 
   const result = await sendQuoSms({
     to: tc.phone,
