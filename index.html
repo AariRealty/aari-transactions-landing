@@ -3701,8 +3701,10 @@ Password:"></textarea>
               </div>
             </div>
             <div class="field" id="preapprovalField" hidden>
-              <label>Pre-Approval Letter *</label>
-              <label class="uploader"><input type="file" name="preapproval_letter" accept=".pdf,application/pdf"><div class="icon">↑</div><div class="label-text">Drop or <span class="browse">browse</span></div><div class="filename"></div></label>
+              <label>Pre-Approval Letter or Financing Addendum *</label>
+              <label class="uploader"><input type="file" name="preapproval_letter" accept=".pdf,application/pdf"><div class="icon">↑</div><div class="label-text">Drop the pre-approval or financing addendum &middot; we'll pull lender info. PDF only.</div><div class="filename"></div></label>
+              <div class="pdf-scan-spinner" data-preapproval-spinner>Reading document...</div>
+              <div class="pdf-scan-banner" data-preapproval-banner></div>
             </div>
             <div class="field"><label>Client Full Name(s) *</label><input type="text" name="client_name" placeholder="As it appears on the contract"></div>
             <div class="field-row">
@@ -5218,53 +5220,162 @@ Password:"></textarea>
         return text;
       }
 
-      // Pattern library · tuned for FAR/BAR FL real estate contracts
-      function findField(text, labels){
-        // Returns the first match capture from any label pattern, trimmed
-        for(const lbl of labels){
-          const re = new RegExp(lbl + '[:\\s]+([A-Za-z0-9][A-Za-z0-9\\s&,.\\-\']{2,80})', 'i');
-          const m = text.match(re);
-          if(m && m[1]) return m[1].replace(/\s+/g, ' ').trim();
-        }
-        return '';
+      // Clean PDF form-field values · strips the underscore characters that
+      // PDF renderers leave around typed-in values, then collapses whitespace.
+      function clean(s){
+        return String(s || '').replace(/_/g, '').replace(/\s+/g, ' ').trim();
       }
-      function findEmailNear(text, anchorLabels){
-        for(const anchor of anchorLabels){
-          const idx = text.toLowerCase().indexOf(anchor.toLowerCase());
-          if(idx === -1) continue;
-          const window = text.slice(idx, idx + 400);
-          const m = window.match(/[\w.\-]+@[\w.\-]+\.\w{2,}/);
-          if(m) return m[0];
-        }
-        // Last-resort fallback: any email in the doc
-        const any = text.match(/[\w.\-]+@[\w.\-]+\.\w{2,}/);
-        return any ? any[0] : '';
+
+      // Find a specific FAR/BAR line by its leading line number (printed in the PDF).
+      // Returns the FULL line text after the line number, cleaned of underscores.
+      function getLine(text, lineNum){
+        const re = new RegExp('^\\s*' + lineNum + '\\s+(.*)$', 'm');
+        const m = text.match(re);
+        return m ? clean(m[1]) : '';
       }
-      function findPhoneNear(text, anchorLabels){
-        for(const anchor of anchorLabels){
-          const idx = text.toLowerCase().indexOf(anchor.toLowerCase());
-          if(idx === -1) continue;
-          const window = text.slice(idx, idx + 400);
-          const m = window.match(/\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
-          if(m) return m[0];
+
+      function detectFormat(text){
+        if(/AS IS.{0,15}Residential Contract For Sale/i.test(text)) return 'farbar-asis';
+        if(/Residential Contract For Sale And Purchase/i.test(text)) return 'farbar-standard';
+        return 'unknown';
+      }
+
+      // Line-anchored parser specific to the FAR/BAR AS IS Residential Contract.
+      function parseFarBarAsIs(text){
+        const out = {};
+        // Line 1: PARTIES: X ("Seller"),
+        const l1 = getLine(text, 1);
+        let m = l1.match(/PARTIES:\s*(.+?)\s*\(\s*"?Seller"?\s*\)/i);
+        out.seller_name = m ? clean(m[1]) : '';
+
+        // Line 2: and X ("Buyer"),
+        const l2 = getLine(text, 2);
+        m = l2.match(/and\s+(.+?)\s*\(\s*"?Buyer"?\s*\)/i);
+        out.buyer_name = m ? clean(m[1]) : '';
+
+        // Line 7: (a) Street address, city, zip: X
+        const l7 = getLine(text, 7);
+        m = l7.match(/Street address,\s*city,\s*zip:\s*(.+)$/i);
+        out.property_address = m ? clean(m[1]) : '';
+
+        // Line 8: Located in: X County. Property Tax ID #: Y
+        const l8 = getLine(text, 8);
+        m = l8.match(/Located in:\s*([A-Za-z\s]+?)\s*County/i);
+        out.county = m ? clean(m[1]) : '';
+        m = l8.match(/Property Tax ID[#\s:]+([A-Za-z0-9\-\.]+)/i);
+        out.property_tax_id = m ? clean(m[1]) : '';
+
+        // Line 27: PURCHASE PRICE ... $ X
+        const l27 = getLine(text, 27);
+        m = l27.match(/PURCHASE PRICE[^$]*\$\s*([\d,]+(?:\.\d{2})?)/i);
+        out.purchase_price = m ? clean(m[1]) : '';
+
+        // Line 28: Initial deposit ... $ X
+        const l28 = getLine(text, 28);
+        m = l28.match(/Initial deposit[^$]*\$\s*([\d,]+(?:\.\d{2})?)/i);
+        out.earnest_money = m ? clean(m[1]) : '';
+
+        // Line 30: within ___X___ days after Effective Date (deposit days)
+        const l30 = getLine(text, 30);
+        m = l30.match(/within\s+(\d+)\s+\(if left blank/i);
+        out.deposit_days = m ? m[1] : '';
+
+        // Line 33: Escrow Agent Name: X
+        const l33 = getLine(text, 33);
+        m = l33.match(/Escrow Agent Name:\s*(.+)$/i);
+        out.title_name = m ? clean(m[1]) : '';
+        // Treat the escrow agent name as the closing company / title company too
+        out.title_company = out.title_name;
+
+        // Line 34: Address: X Phone: Y
+        const l34 = getLine(text, 34);
+        m = l34.match(/Address:\s*(.+?)\s*Phone:\s*(.+)$/i);
+        if(m){
+          out.title_address = clean(m[1]);
+          out.title_phone = clean(m[2]);
         }
-        return '';
+
+        // Line 35: Email: X Fax: Y
+        const l35 = getLine(text, 35);
+        m = l35.match(/Email:\s*(.+?)\s*Fax:/i);
+        out.title_email = m ? clean(m[1]) : '';
+
+        // Line 53: ... ("Closing Date")
+        const l53 = getLine(text, 53);
+        m = l53.match(/on\s+(.+?)\s*\(\s*"?Closing Date"?\s*\)/i);
+        out.closing_date = m ? clean(m[1]) : '';
+
+        // Line 89: within ___X___ days after Effective Date ("Loan Approval Period")
+        const l89 = getLine(text, 89);
+        m = l89.match(/within\s+(\d+)\s+\(if left blank/i);
+        out.loan_approval_days = m ? m[1] : '';
+
+        // Line 261/262: Buyer shall have ___X___ days after Effective Date ("Inspection Period")
+        for(const ln of [261, 262]){
+          const lt = getLine(text, ln);
+          m = lt.match(/Buyer shall have\s+(\d+)\s+\(if left blank/i);
+          if(m){ out.inspection_days = m[1]; break; }
+        }
+
+        // Brokerage block · line 643 = sales associates, line 645 = brokers
+        // Two columns: [Cooperating · Buyer's side] [Listing · Seller's side]
+        const l643 = getLine(text, 643);
+        const l645 = getLine(text, 645);
+        // Split by 2+ spaces to separate the two columns
+        if(l643){
+          const cols = l643.split(/\s{2,}/).filter(Boolean);
+          out.cooperating_agent = cols[0] || '';
+          out.listing_agent = cols[1] || '';
+        }
+        if(l645){
+          const cols = l645.split(/\s{2,}/).filter(Boolean);
+          out.cooperating_broker = cols[0] || '';
+          out.listing_broker = cols[1] || '';
+        }
+
+        // Signature dates · derive Effective Date as MAX of signing dates.
+        // Buyer dates at lines 629-630, Seller dates at lines 631-632.
+        const dateRe = /Date:\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})/i;
+        const altDateRe = /\b(\d{2}\/\d{2}\/\d{4})\b/;
+        const dates = [];
+        for(const ln of [629, 630, 631, 632]){
+          const lt = getLine(text, ln);
+          let dm = lt.match(dateRe) || lt.match(altDateRe);
+          if(dm){
+            const d = new Date(dm[1].replace(/\//g, ' '));
+            if(!isNaN(d)) dates.push(d);
+          }
+        }
+        if(dates.length){
+          const latest = new Date(Math.max(...dates.map(d => d.getTime())));
+          out.effective_date = latest.toISOString().slice(0, 10); // YYYY-MM-DD
+        }
+
+        return out;
+      }
+
+      // Generic fallback for non-FAR/BAR contracts · best-effort, low confidence
+      function parseGeneric(text){
+        const findEmail = () => {
+          const m = text.match(/[\w.\-]+@[\w.\-]+\.\w{2,}/);
+          return m ? m[0] : '';
+        };
+        const findPhone = () => {
+          const m = text.match(/\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
+          return m ? m[0] : '';
+        };
+        return {
+          title_email: findEmail(),
+          title_phone: findPhone()
+        };
       }
 
       function parseContract(text){
-        return {
-          buyer_name: findField(text, ['BUYER', 'Buyer', 'Purchaser']),
-          seller_name: findField(text, ['SELLER', 'Seller']),
-          property_address: findField(text, ['Property Address', 'Property', 'Real Property', 'Premises']),
-          title_name: findField(text, ['Closing Agent', 'Settlement Agent', 'Escrow Agent']),
-          title_company: findField(text, ['Title Company', 'Closing Company', 'Title and Escrow', 'Settlement Office']),
-          title_email: findEmailNear(text, ['Closing Agent', 'Settlement Agent', 'Title Company', 'Closing Company']),
-          title_phone: findPhoneNear(text, ['Closing Agent', 'Settlement Agent', 'Title Company', 'Closing Company']),
-          lender_name: findField(text, ['Loan Officer', 'Lender Contact', 'Mortgage Broker', 'Loan Originator']),
-          lender_company: findField(text, ['Lender', 'Mortgage Company', 'Mortgage Lender', 'Bank']),
-          lender_email: findEmailNear(text, ['Lender', 'Loan Officer', 'Mortgage Broker']),
-          lender_phone: findPhoneNear(text, ['Lender', 'Loan Officer', 'Mortgage Broker'])
-        };
+        const format = detectFormat(text);
+        if(format === 'farbar-asis' || format === 'farbar-standard'){
+          return Object.assign({ _format: format }, parseFarBarAsIs(text));
+        }
+        return Object.assign({ _format: 'unknown' }, parseGeneric(text));
       }
 
       function fillIfEmpty(name, value){
@@ -5303,6 +5414,33 @@ Password:"></textarea>
         r.addEventListener('change', applyClientNameFromCache);
       });
 
+      // Convert "October 17, 2025" or "10/17/2025" to YYYY-MM-DD for <input type="date">
+      function toIsoDate(raw){
+        if(!raw) return '';
+        const d = new Date(String(raw).replace(/\//g, ' '));
+        if(isNaN(d)) return '';
+        const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+        return `${y}-${m}-${day}`;
+      }
+      function fillMoneyIfEmpty(name, value){
+        if(!value) return false;
+        const el = document.querySelector(`input[name="${name}"]`);
+        if(!el) return false;
+        if(el.value && el.value.trim()) return false;
+        // Strip commas/decimals, keep digits only; money formatter reformats on input event
+        const digits = String(value).replace(/[^0-9]/g, '');
+        if(!digits) return false;
+        el.value = '$' + Number(digits).toLocaleString('en-US');
+        const lbl = el.closest('.field') ? el.closest('.field').querySelector('label') : null;
+        if(lbl && !lbl.querySelector('.extracted-badge')){
+          const badge = document.createElement('span');
+          badge.className = 'extracted-badge';
+          badge.textContent = 'from contract';
+          lbl.appendChild(badge);
+        }
+        return true;
+      }
+
       async function handleFile(file){
         if(!file || !/\.pdf$/i.test(file.name)) return;
         setBanner(null, '');
@@ -5317,30 +5455,176 @@ Password:"></textarea>
           const parsed = parseContract(text);
           window.AariExtractedContract = parsed;
           const filled = [];
+
+          // Format detection note
+          if(parsed._format === 'unknown'){
+            setSpinner(false);
+            setBanner('none', "<strong>Format not recognized</strong> &middot; we tune extraction to the FAR/BAR AS IS Residential Contract. Fill the form manually.");
+            return;
+          }
+
           // Client name fills after client_type is picked, but try now in case agent picked early
           if(applyClientNameFromCache()) filled.push('client name');
           if(fillIfEmpty('address', parsed.property_address)) filled.push('property address');
-          if(fillIfEmpty('title_name', parsed.title_name)) filled.push('closing agent name');
+          if(fillMoneyIfEmpty('purchase_price', parsed.purchase_price)) filled.push('purchase price');
+          if(fillMoneyIfEmpty('earnest_money', parsed.earnest_money)) filled.push('earnest money');
+
+          // Dates (effective_date + closing_date are <input type="date">)
+          const effIso = toIsoDate(parsed.effective_date);
+          if(effIso && fillIfEmpty('effective_date', effIso)) filled.push('effective date');
+          const closeIso = toIsoDate(parsed.closing_date);
+          if(closeIso && fillIfEmpty('closing_date', closeIso)) filled.push('closing date');
+
+          // Title / Escrow Agent
+          if(fillIfEmpty('title_name', parsed.title_name)) filled.push('closing agent');
           if(fillIfEmpty('title_company', parsed.title_company)) filled.push('title company');
           if(fillIfEmpty('title_email', parsed.title_email)) filled.push('title email');
           if(fillIfEmpty('title_phone', parsed.title_phone)) filled.push('title phone');
-          if(fillIfEmpty('lender_name', parsed.lender_name)) filled.push('lender contact');
-          if(fillIfEmpty('lender_company', parsed.lender_company)) filled.push('lender company');
-          if(fillIfEmpty('lender_email', parsed.lender_email)) filled.push('lender email');
-          if(fillIfEmpty('lender_phone', parsed.lender_phone)) filled.push('lender phone');
+
           setSpinner(false);
-          if(filled.length === 0){
-            setBanner('none', "<strong>Nothing matched</strong> &middot; this contract doesn't use the FAR/BAR standard pattern we recognize. Fill the form manually.");
+
+          // Auxiliary fields shown in the banner but not auto-filled (no form fields yet for these)
+          const aux = [];
+          if(parsed.cooperating_agent) aux.push(`Buyer's agent: ${parsed.cooperating_agent}`);
+          if(parsed.listing_agent) aux.push(`Listing agent: ${parsed.listing_agent}`);
+          if(parsed.cooperating_broker) aux.push(`Buyer's broker: ${parsed.cooperating_broker}`);
+          if(parsed.listing_broker) aux.push(`Listing broker: ${parsed.listing_broker}`);
+          if(parsed.deposit_days) aux.push(`Deposit due: ${parsed.deposit_days} days after Effective Date`);
+          if(parsed.loan_approval_days) aux.push(`Loan approval: ${parsed.loan_approval_days} days after Effective Date`);
+          if(parsed.inspection_days) aux.push(`Inspection: ${parsed.inspection_days} days after Effective Date`);
+          if(parsed.county) aux.push(`County: ${parsed.county}`);
+          if(parsed.property_tax_id) aux.push(`Tax ID: ${parsed.property_tax_id}`);
+
+          if(filled.length === 0 && aux.length === 0){
+            setBanner('none', "<strong>Nothing matched</strong> &middot; this contract doesn't use a FAR/BAR pattern we recognize. Fill the form manually.");
           } else {
-            const extra = (parsed.buyer_name || parsed.seller_name) && !document.querySelector('input[name="client_type"]:checked')
-              ? ' Pick Client Type below and we\'ll fill the name.'
+            const fmtLabel = parsed._format === 'farbar-asis' ? 'FAR/BAR AS IS' : 'FAR/BAR';
+            const fillLine = filled.length ? `<strong>Pre-filled ${filled.length}:</strong> ${filled.join(' &middot; ')}.` : '';
+            const auxLine = aux.length ? `<br><strong>Also detected:</strong> ${aux.join(' &middot; ')}.` : '';
+            const ctReminder = (parsed.buyer_name || parsed.seller_name) && !document.querySelector('input[name="client_type"]:checked')
+              ? ' Pick Client Type below to fill the name.'
               : '';
-            setBanner('ok', `<strong>Aari pulled ${filled.length} field${filled.length === 1 ? '' : 's'} from your contract</strong> &middot; ${filled.join(' &middot; ')}.${extra} <strong>Verify before submitting.</strong>`);
+            setBanner('ok', `<strong>${fmtLabel} detected.</strong> ${fillLine}${auxLine}${ctReminder} <strong>Verify before submitting.</strong>`);
           }
         } catch(err){
           console.error('[pdf-extract] failed:', err);
           setSpinner(false);
           setBanner('none', "<strong>Couldn't read the PDF</strong> &middot; fill the rest of the form manually.");
+        }
+      }
+
+      input.addEventListener('change', () => {
+        const file = (input.files && input.files[0]) || null;
+        if(file) handleFile(file);
+      });
+    })();
+
+    /* ============================================================
+       Pre-Approval / Financing Addendum extraction
+       Pulls lender info from the secondary upload (when Financing is selected).
+       Lenders use varying formats so this stays generic regex-based.
+       ============================================================ */
+    (function pdfPreApprovalExtract(){
+      const input = document.querySelector('input[name="preapproval_letter"]');
+      if(!input) return;
+      const wrap = input.closest('.field');
+      const spinner = wrap ? wrap.querySelector('[data-preapproval-spinner]') : null;
+      const banner = wrap ? wrap.querySelector('[data-preapproval-banner]') : null;
+
+      function setSpinner(on){ if(spinner) spinner.setAttribute('data-active', on ? 'true' : 'false'); }
+      function setBanner(state, html){
+        if(!banner) return;
+        if(!state){ banner.removeAttribute('data-state'); banner.innerHTML = ''; return; }
+        banner.setAttribute('data-state', state); banner.innerHTML = html;
+      }
+
+      async function extractText(file){
+        if(typeof pdfjsLib === 'undefined') throw new Error('pdf.js not loaded');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        const buf = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+        let text = '';
+        for(let i = 1; i <= Math.min(pdf.numPages, 10); i++){
+          const p = await pdf.getPage(i);
+          const c = await p.getTextContent();
+          text += c.items.map(it => it.str).join(' ') + '\n';
+        }
+        return text;
+      }
+
+      function fillIfEmpty(name, value){
+        if(!value) return false;
+        const el = document.querySelector(`input[name="${name}"]`);
+        if(!el) return false;
+        if(el.value && el.value.trim()) return false;
+        el.value = value;
+        const lbl = el.closest('.field') ? el.closest('.field').querySelector('label') : null;
+        if(lbl && !lbl.querySelector('.extracted-badge')){
+          const badge = document.createElement('span');
+          badge.className = 'extracted-badge';
+          badge.textContent = 'from pre-approval';
+          lbl.appendChild(badge);
+        }
+        return true;
+      }
+
+      function parsePreApproval(text){
+        const out = {};
+        // Email · first email in the doc (typically loan officer)
+        const em = text.match(/[\w.\-]+@[\w.\-]+\.\w{2,}/);
+        if(em) out.lender_email = em[0];
+        // Phone · first phone in the doc
+        const ph = text.match(/\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
+        if(ph) out.lender_phone = ph[0];
+        // Loan officer name · look for common labels
+        for(const lbl of ['Loan Officer', 'Mortgage Loan Originator', 'Loan Originator', 'Mortgage Broker', 'Sincerely,?\\s*\\n']){
+          const re = new RegExp(lbl + '[:\\s]+([A-Z][A-Za-z\\s\\.\'-]{2,60})', 'i');
+          const m = text.match(re);
+          if(m && m[1]){ out.lender_name = m[1].replace(/\s+/g, ' ').trim(); break; }
+        }
+        // Lender company · look for common labels or company-like text near "Lender:"
+        for(const lbl of ['Lender', 'Mortgage Company', 'Bank']){
+          const re = new RegExp(lbl + '[:\\s]+([A-Z][A-Za-z0-9\\s&,.\\-\']{2,80})', 'i');
+          const m = text.match(re);
+          if(m && m[1]){
+            const candidate = m[1].replace(/\s+/g, ' ').trim();
+            // Reject if it's a sentence rather than a company name (too many lowercase words)
+            if(!/\b(this|that|the\s|and\s|to\s|for\s)\b/i.test(candidate.slice(0, 40))){
+              out.lender_company = candidate;
+              break;
+            }
+          }
+        }
+        return out;
+      }
+
+      async function handleFile(file){
+        if(!file || !/\.pdf$/i.test(file.name)) return;
+        setBanner(null, '');
+        setSpinner(true);
+        try {
+          const text = await extractText(file);
+          if(!text || text.trim().length < 50){
+            setSpinner(false);
+            setBanner('none', "<strong>Couldn't extract from this PDF</strong> &middot; looks scanned. Fill the Lender boxes manually.");
+            return;
+          }
+          const parsed = parsePreApproval(text);
+          const filled = [];
+          if(fillIfEmpty('lender_name', parsed.lender_name)) filled.push('loan officer');
+          if(fillIfEmpty('lender_company', parsed.lender_company)) filled.push('lender company');
+          if(fillIfEmpty('lender_email', parsed.lender_email)) filled.push('lender email');
+          if(fillIfEmpty('lender_phone', parsed.lender_phone)) filled.push('lender phone');
+          setSpinner(false);
+          if(filled.length === 0){
+            setBanner('none', "<strong>No lender info matched</strong> &middot; fill the Lender boxes manually.");
+          } else {
+            setBanner('ok', `<strong>Aari pulled ${filled.length} lender field${filled.length === 1 ? '' : 's'}</strong> &middot; ${filled.join(' &middot; ')}. <strong>Verify before submitting.</strong>`);
+          }
+        } catch(err){
+          console.error('[pre-approval-extract] failed:', err);
+          setSpinner(false);
+          setBanner('none', "<strong>Couldn't read the PDF</strong> &middot; fill the Lender boxes manually.");
         }
       }
 
