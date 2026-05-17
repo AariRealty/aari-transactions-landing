@@ -57,7 +57,6 @@
     listing_docs:      'https://buy.stripe.com/6oU7sD8bZbCH3ubfbccAo08',
     mls_setup:         'https://buy.stripe.com/fZu5kvgIvbCH7Kr7IKcAo09',
     file_org:          'https://buy.stripe.com/6oU00b2RF6infcT8MOcAo0f',
-    compliance_review: 'https://buy.stripe.com/8x24grgIv7mrd4L0gicAo0g',
   };
 
   function uuid() {
