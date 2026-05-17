@@ -78,8 +78,26 @@
 
     const pwField = el('div', { class: 'aari-field' });
     pwField.appendChild(el('label', { for: 'aari-login-pw', html: 'Password <span class="req">*</span>' }));
-    const pwInput = el('input', { class: 'aari-input', id: 'aari-login-pw', type: 'password', autocomplete: 'current-password', required: 'true', placeholder: '••••••••' });
-    pwField.appendChild(pwInput);
+    // May 2026 · password show/hide toggle · standard eye icon UX
+    const pwWrap = el('div', { class: 'aari-pw-wrap', style: 'position:relative;display:flex;align-items:center' });
+    const pwInput = el('input', { class: 'aari-input', id: 'aari-login-pw', type: 'password', autocomplete: 'current-password', required: 'true', placeholder: '••••••••', style: 'padding-right:44px;width:100%' });
+    const pwToggle = el('button', {
+      type: 'button',
+      class: 'aari-pw-toggle',
+      'aria-label': 'Show password',
+      style: 'position:absolute;right:10px;top:50%;transform:translateY(-50%);background:transparent;border:none;cursor:pointer;color:#967a4a;padding:4px 8px;font-size:13px;font-family:inherit;font-weight:600;letter-spacing:0.04em'
+    });
+    pwToggle.textContent = 'Show';
+    pwToggle.addEventListener('click', () => {
+      const showing = pwInput.type === 'text';
+      pwInput.type = showing ? 'password' : 'text';
+      pwToggle.textContent = showing ? 'Show' : 'Hide';
+      pwToggle.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
+      pwInput.focus();
+    });
+    pwWrap.appendChild(pwInput);
+    pwWrap.appendChild(pwToggle);
+    pwField.appendChild(pwWrap);
     const forgotWrap = el('div', { class: 'aari-helper', style: 'margin-top:8px;text-align:right' });
     const forgotLink = el('a', { html: 'Forgot password?' });
     forgotLink.style.cursor = 'pointer';
