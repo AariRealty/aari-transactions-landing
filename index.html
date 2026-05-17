@@ -5189,140 +5189,171 @@ Password:"></textarea>
     })();
 
     /* ============================================================
-       Chat-style sub-wizard for TC Step 2 · one question per screen.
-       JS-only · finds existing field elements, hides all, shows one at
-       a time with a serif headline. Top-level Next/Back delegate here
-       while active. Conditional questions (entity, pre-approval, lender)
-       drop from the sequence when not applicable.
+       Chat-style PROGRESSIVE DISCLOSURE qwiz for TC Step 2.
+       Q1 visible on load. Answering Q1 reveals Q2. Answering Q2 reveals Q3.
+       Optional questions (additional signers, addenda) auto-unlock the next.
+       No internal nav buttons · top-level Continue advances Step.
        ============================================================ */
     (function tcQwiz(){
       let active = false;
-      let idx = 0;
-      const selAll = '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field, ' +
-                     '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field-row, ' +
-                     '.intake-step[data-step="2"] .entity-ack[data-form="tc"], ' +
-                     '.intake-step[data-step="2"] [data-contact-group]';
 
-      function clientType(){
-        const r = document.querySelector('input[name="client_type"]:checked');
-        return r ? r.value : '';
-      }
-      function dealType(){
-        const r = document.querySelector('input[name="deal_type"]:checked');
-        return r ? r.value : '';
-      }
+      function clientType(){ const r = document.querySelector('input[name="client_type"]:checked'); return r ? r.value : ''; }
+      function dealType(){ const r = document.querySelector('input[name="deal_type"]:checked'); return r ? r.value : ''; }
       function nonIndividualPicked(){
         const set = new Set(['trust','corporation','llc']);
         const b = document.querySelector('input[name="buyer_entity_type"]:checked');
         const s = document.querySelector('input[name="seller_entity_type"]:checked');
         return (b && set.has(b.value)) || (s && set.has(s.value));
       }
-      function contractUploaded(){
-        const f = document.querySelector('input[name="executed_contract"]');
-        return !!(f && f.files && f.files[0]);
-      }
+      function contractUploaded(){ const f = document.querySelector('input[name="executed_contract"]'); return !!(f && f.files && f.files[0]); }
 
-      // Question definitions · executed sequentially, conditional via `when`
+      // Question definitions · `optional` means user can skip without filling
       const Q = [
-        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="client_type"])',
+        { key:'q-client-type', sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="client_type"])',
           h: 'Who are you <em>representing</em>?', s: 'Pick one.' },
-        { sel: '#buyer-entity-field',
+        { key:'q-buyer-entity', sel: '#buyer-entity-field',
           h: 'Is the <em>buyer</em> a trust, corp, or LLC?', s: 'Entity transactions need extra verification.',
           when: () => ['Buyer','Both'].includes(clientType()) },
-        { sel: '#seller-entity-field',
+        { key:'q-seller-entity', sel: '#seller-entity-field',
           h: 'Is the <em>seller</em> a trust, corp, or LLC?', s: 'Same question, other side.',
           when: () => ['Seller','Both'].includes(clientType()) },
-        { sel: '.entity-ack[data-form="tc"]',
+        { key:'q-entity-ack', sel: '.entity-ack[data-form="tc"]',
           h: '<em>Confirm</em> authority.', s: 'Required when buyer or seller is an entity.',
           when: () => nonIndividualPicked() },
-        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="executed_contract"])',
-          h: 'Drop the <em>contract</em>.', s: 'PDF only. We\'ll lock everything else until this is uploaded.' },
-        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="deal_type"])',
+        { key:'q-contract', sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="executed_contract"])',
+          h: 'Drop the <em>contract</em>.', s: 'PDF only.' },
+        { key:'q-deal-type', sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="deal_type"])',
           h: '<em>Financing</em> or cash?', s: 'Pick one.',
           when: () => contractUploaded() },
-        { sel: '#preapprovalField',
+        { key:'q-preapproval', sel: '#preapprovalField',
           h: 'Drop the <em>pre-approval</em>.', s: 'Required for financed deals. PDF only.',
           when: () => contractUploaded() && dealType() === 'financing' },
-        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="client_name"])',
+        { key:'q-client-name', sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="client_name"])',
           h: 'Client <em>full name</em>?', s: 'As it appears on the contract.',
           when: () => contractUploaded() },
-        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field-row:has(input[name="client_email"])',
+        { key:'q-client-contact', sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field-row:has(input[name="client_email"])',
           h: 'How do we <em>reach</em> them?', s: 'Email and phone.',
           when: () => contractUploaded() },
-        { sel: '.intake-step[data-step="2"] [data-signers-field]',
+        { key:'q-signers', sel: '.intake-step[data-step="2"] [data-signers-field]',
           h: 'Any <em>additional</em> signers?', s: 'Co-borrowers, co-sellers, second LLC members. Skip if none.',
-          when: () => contractUploaded() },
-        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="address"])',
+          when: () => contractUploaded(), optional: true },
+        { key:'q-address', sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="address"])',
           h: '<em>Property</em> address?', s: 'Google will suggest as you type.',
           when: () => contractUploaded() },
-        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field-row:has(input[name="effective_date"])',
+        { key:'q-dates', sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field-row:has(input[name="effective_date"])',
           h: 'Key <em>dates</em>?', s: 'Contract execution and closing.',
           when: () => contractUploaded() },
-        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field-row:has(input[name="purchase_price"])',
+        { key:'q-money', sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field-row:has(input[name="purchase_price"])',
           h: 'The <em>numbers</em>.', s: 'Purchase price and earnest money.',
           when: () => contractUploaded() },
-        { sel: '.intake-step[data-step="2"] [data-contact-group="lender"]',
+        { key:'q-lender', sel: '.intake-step[data-step="2"] [data-contact-group="lender"]',
           h: '<em>Lender</em> contact.', s: 'Name, company, email, phone. Toggle Cash deal if none.',
           when: () => contractUploaded() && dealType() === 'financing' },
-        { sel: '.intake-step[data-step="2"] [data-contact-group="title"]',
+        { key:'q-title', sel: '.intake-step[data-step="2"] [data-contact-group="title"]',
           h: '<em>Title</em> / closing agent.', s: 'Name, company, email, phone.',
           when: () => contractUploaded() },
-        { sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="addenda_disclosures"])',
+        { key:'q-addenda', sel: '.intake-step[data-step="2"] fieldset[data-service-form="tc"] .field:has(input[name="addenda_disclosures"])',
           h: 'Any <em>addenda</em> or disclosures?', s: 'Multiple files, optional.',
-          when: () => contractUploaded() }
+          when: () => contractUploaded(), optional: true }
       ];
 
       function visible(){ return Q.filter(q => !q.when || q.when()); }
 
-      function hideAll(){
-        document.querySelectorAll(selAll).forEach(el => { el.style.display = 'none'; });
-        // Make sure TC fieldsets are visible (their default hidden attribute is managed by service selection)
-        document.querySelectorAll('.intake-step[data-step="2"] fieldset[data-service-form="tc"]').forEach(fs => {
-          fs.hidden = false;
-        });
+      function firstEl(q){
+        try { return document.querySelector(q.sel); } catch(_) { return null; }
       }
-      function clearStyles(){
-        document.querySelectorAll(selAll).forEach(el => { el.style.display = ''; });
+      function allEls(q){
+        try { return Array.from(document.querySelectorAll(q.sel)); } catch(_) { return []; }
       }
 
-      function ensureHead(){
-        let head = document.getElementById('qwizHead');
-        if(head) return head;
-        head = document.createElement('div');
-        head.id = 'qwizHead';
-        head.className = 'qwiz-head';
-        head.innerHTML = '<div class="qwiz-counter" id="qwizCounter"></div><h2 class="qwiz-headline" id="qwizHeadline"></h2><p class="qwiz-sub" id="qwizSub"></p>';
-        const stepEl = document.querySelector('.intake-step[data-step="2"]');
-        if(stepEl) stepEl.insertBefore(head, stepEl.firstChild);
+      function isAnswered(q){
+        const el = firstEl(q);
+        if(!el) return false;
+        const radio = el.querySelector('input[type="radio"]:checked');
+        if(radio) return true;
+        if(el.querySelector('input[type="radio"]')) return false; // radio group, none checked
+        const cb = el.querySelector('input[type="checkbox"]');
+        if(cb) return cb.checked;
+        const file = el.querySelector('input[type="file"]');
+        if(file) return !!(file.files && file.files[0]);
+        const inputs = el.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="date"]');
+        if(inputs.length){
+          // Consider answered if ALL visible required inputs have a value, OR optional inputs have at least one value
+          if(q.optional){
+            // For optional, treat as auto-answered after a small idle (visual still revealed below)
+            return true;
+          }
+          // For required inputs (single field or row), need at least one input with value
+          let hasValue = false, allHaveValue = true;
+          inputs.forEach(i => {
+            if(i.value.trim()) hasValue = true;
+            else allHaveValue = false;
+          });
+          // For .field-row (2 inputs side-by-side), require BOTH; for single .field, just one
+          return inputs.length > 1 ? allHaveValue : hasValue;
+        }
+        return q.optional === true;
+      }
+
+      function ensureHeadFor(q, idx, total){
+        const el = firstEl(q);
+        if(!el) return null;
+        let head = el.previousElementSibling;
+        const counterText = `QUESTION ${idx + 1} OF ${total}`;
+        const headHtml = `<div class="qwiz-counter">${counterText}</div><h2 class="qwiz-headline">${q.h}</h2>${q.s ? `<p class="qwiz-sub">${q.s}</p>` : ''}`;
+        if(head && head.classList && head.classList.contains('qwiz-q-head') && head.dataset.qwizKey === q.key){
+          head.innerHTML = headHtml;
+        } else {
+          head = document.createElement('div');
+          head.className = 'qwiz-q-head';
+          head.dataset.qwizKey = q.key;
+          head.innerHTML = headHtml;
+          el.parentNode.insertBefore(head, el);
+        }
         return head;
       }
-      function removeHead(){
-        const head = document.getElementById('qwizHead');
-        if(head) head.remove();
+
+      function removeAllHeads(){
+        document.querySelectorAll('.qwiz-q-head').forEach(h => h.remove());
       }
 
-      function show(){
+      function refresh(){
+        if(!active) return;
         const list = visible();
-        if(list.length === 0) return;
-        if(idx >= list.length) idx = list.length - 1;
-        if(idx < 0) idx = 0;
-        hideAll();
-        const q = list[idx];
-        try {
-          document.querySelectorAll(q.sel).forEach(el => { el.style.display = ''; });
-        } catch(err) {
-          // :has() unsupported in some older browsers · skip selector errors
-          console.warn('[qwiz] selector failed:', q.sel, err);
+        // Hide everything first
+        Q.forEach(q => {
+          allEls(q).forEach(el => { el.style.display = 'none'; });
+        });
+        // Reveal accumulator
+        let revealUpTo = 0;
+        for(let i = 0; i < list.length; i++){
+          revealUpTo = i;
+          if(!isAnswered(list[i])) break;
+          if(i === list.length - 1) revealUpTo = i + 1; // last one was answered
         }
-        const counter = document.getElementById('qwizCounter');
-        const headline = document.getElementById('qwizHeadline');
-        const sub = document.getElementById('qwizSub');
-        if(counter) counter.textContent = `Question ${idx + 1} of ${list.length}`;
-        if(headline) headline.innerHTML = q.h;
-        if(sub) sub.innerHTML = q.s || '';
-        // Body scroll to top of question
-        const body = document.querySelector('.intake-body');
-        if(body) body.scrollTop = 0;
+        // Remove orphan heads first
+        document.querySelectorAll('.qwiz-q-head').forEach(h => {
+          const stillNeeded = list.some(q => q.key === h.dataset.qwizKey);
+          if(!stillNeeded) h.remove();
+        });
+        // Render heads + reveal up to revealUpTo (inclusive)
+        for(let i = 0; i <= Math.min(revealUpTo, list.length - 1); i++){
+          const q = list[i];
+          ensureHeadFor(q, i, list.length);
+          allEls(q).forEach(el => { el.style.display = ''; });
+        }
+        // Auto-scroll to the most recently revealed question (the one just unlocked)
+        if(revealUpTo > 0 && revealUpTo < list.length){
+          const justRevealed = list[revealUpTo];
+          const el = firstEl(justRevealed);
+          const head = el && el.previousElementSibling;
+          if(head && head.classList.contains('qwiz-q-head')){
+            // Use rAF so the just-shown element has layout
+            requestAnimationFrame(() => {
+              try { head.scrollIntoView({ behavior:'smooth', block:'start' }); } catch(_) {}
+            });
+          }
+        }
       }
 
       function activate(){
@@ -5330,48 +5361,31 @@ Password:"></textarea>
         active = true;
         const modal = document.getElementById('intake-modal-box');
         if(modal) modal.classList.add('qwiz-active');
-        ensureHead();
-        idx = 0;
-        show();
-        console.log('[qwiz] activated · ' + visible().length + ' questions in sequence');
+        document.querySelectorAll('.intake-step[data-step="2"] fieldset[data-service-form="tc"]').forEach(fs => { fs.hidden = false; });
+        refresh();
+        console.log('[qwiz] activated · progressive disclosure mode');
       }
       function deactivate(){
         if(!active) return;
         active = false;
         const modal = document.getElementById('intake-modal-box');
         if(modal) modal.classList.remove('qwiz-active');
-        clearStyles();
-        removeHead();
+        Q.forEach(q => {
+          allEls(q).forEach(el => { el.style.display = ''; });
+        });
+        removeAllHeads();
         console.log('[qwiz] deactivated');
       }
-      function next(){
-        if(!active) return false;
-        const list = visible();
-        if(idx >= list.length - 1) return false; // signal "advance step"
-        idx++;
-        show();
-        return true;
-      }
-      function prev(){
-        if(!active) return false;
-        if(idx <= 0) return false; // signal "back to previous step"
-        idx--;
-        show();
-        return true;
-      }
 
-      // Re-render when any field state changes that could affect visible questions
-      document.addEventListener('change', (e) => {
-        if(!active) return;
-        const t = e.target;
-        if(!t || !t.name) return;
-        const reactiveNames = ['client_type', 'buyer_entity_type', 'seller_entity_type', 'deal_type', 'executed_contract'];
-        if(reactiveNames.includes(t.name)) show();
-      });
+      // Listen broadly for ANY input change inside the intake · recompute reveal cascade
+      document.addEventListener('input', (e) => { if(active) refresh(); }, true);
+      document.addEventListener('change', (e) => { if(active) refresh(); }, true);
 
+      // Public API · no more next/prev (progressive disclosure doesn't need them)
       window.AariQwiz = {
-        activate, deactivate, next, prev,
-        isActive: () => active
+        activate, deactivate, refresh,
+        isActive: () => active,
+        allAnswered: () => visible().every(q => q.optional || isAnswered(q))
       };
     })();
 
