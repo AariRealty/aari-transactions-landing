@@ -37,28 +37,39 @@ Deno.serve(async (req) => {
 
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // Pull file + agent + tc in one query
+  // Pull the file first · plain query, no joins (FK relationship names vary
+  // by project and the embedded-select syntax is fragile across migrations).
   const { data: f, error: fileErr } = await admin
     .from("files")
-    .select(`
-      id, property_address, tc_expected_start_at,
-      agent:agents!files_agent_id_fkey ( id, first_name, phone, sms_opt_in ),
-      tc:agents!files_assigned_tc_id_fkey ( id, first_name, last_name )
-    `)
+    .select("id, agent_id, assigned_tc_id, property_address, tc_expected_start_at")
     .eq("id", body.file_id)
-    .single();
+    .maybeSingle();
+  if (fileErr) return j(500, { ok: false, error: "File lookup failed: " + fileErr.message });
+  if (!f) return j(404, { ok: false, error: "File not found · id=" + body.file_id });
 
-  if (fileErr || !f) return j(404, { ok: false, error: "File not found" });
-  // deno-lint-ignore no-explicit-any
-  const agent = (f as any).agent;
-  // deno-lint-ignore no-explicit-any
-  const tc = (f as any).tc;
+  // Pull the agent + TC separately
+  const { data: agent } = await admin
+    .from("agents")
+    .select("id, first_name, phone, sms_opt_in")
+    .eq("id", f.agent_id)
+    .maybeSingle();
+  if (!agent) return j(404, { ok: false, error: "Agent not found for file" });
 
-  if (!agent?.phone) {
+  if (!agent.phone) {
     return j(200, { ok: false, skipped: true, reason: "agent_no_phone" });
   }
   if (agent.sms_opt_in === false) {
     return j(200, { ok: false, skipped: true, reason: "agent_opted_out" });
+  }
+
+  let tc: { id: string; first_name?: string; last_name?: string } | null = null;
+  if (f.assigned_tc_id) {
+    const { data: tcRow } = await admin
+      .from("agents")
+      .select("id, first_name, last_name")
+      .eq("id", f.assigned_tc_id)
+      .maybeSingle();
+    tc = tcRow;
   }
 
   const tcName = `${tc?.first_name ?? ""} ${tc?.last_name ?? ""}`.trim() || "Your TC";

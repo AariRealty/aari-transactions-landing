@@ -34,23 +34,28 @@ Deno.serve(async (req) => {
 
   const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-  // Pull everything we need in one query · file + agent + tc
+  // Plain queries · skip the embedded join syntax (FK relationship names
+  // vary across projects and are fragile to migrate).
   const { data: f, error: fileErr } = await admin
     .from("files")
-    .select(`
-      id, agent_id, assigned_tc_id, property_address, tc_expected_start_at,
-      agent:agents!files_agent_id_fkey ( id, first_name, email ),
-      tc:agents!files_assigned_tc_id_fkey ( id, first_name, last_name, email, phone )
-    `)
+    .select("id, agent_id, assigned_tc_id, property_address, tc_expected_start_at")
     .eq("id", body.file_id)
-    .single();
+    .maybeSingle();
+  if (fileErr) return j(500, { ok: false, error: "File lookup failed: " + fileErr.message });
+  if (!f) return j(404, { ok: false, error: "File not found · id=" + body.file_id });
 
-  if (fileErr || !f) return j(404, { ok: false, error: "File not found" });
-  // deno-lint-ignore no-explicit-any
-  const agent = (f as any).agent;
-  // deno-lint-ignore no-explicit-any
-  const tc = (f as any).tc;
+  const { data: agent } = await admin
+    .from("agents").select("id, first_name, email")
+    .eq("id", f.agent_id).maybeSingle();
   if (!agent?.email) return j(422, { ok: false, error: "Agent missing email" });
+
+  let tc: { id: string; first_name?: string; last_name?: string; email?: string; phone?: string } | null = null;
+  if (f.assigned_tc_id) {
+    const { data: tcRow } = await admin
+      .from("agents").select("id, first_name, last_name, email, phone")
+      .eq("id", f.assigned_tc_id).maybeSingle();
+    tc = tcRow;
+  }
   if (!tc) return j(422, { ok: false, error: "TC missing on file" });
 
   const tcName = `${tc.first_name ?? ""} ${tc.last_name ?? ""}`.trim();
