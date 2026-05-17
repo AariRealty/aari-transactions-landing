@@ -260,7 +260,12 @@
 
   /* ===== ZONE B · FILE CARDS (5-step tracker + countdown) ===== */
   .zb-grid{display:flex;flex-direction:column;gap:14px}
-  .zb-card{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;transition:all 0.18s;cursor:pointer}
+  .zb-card{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden;transition:all 0.18s;cursor:pointer;position:relative}
+  /* May 2026 · Phase 4 · "Just submitted" highlight + slide-in animation */
+  @keyframes zb-card-slide-in { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes zb-card-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(150,122,74,0.3); } 50% { box-shadow: 0 0 0 6px rgba(150,122,74,0); } }
+  .zb-card.zb-card-new { border-color: #967a4a; border-width: 2px; animation: zb-card-slide-in 0.5s ease-out, zb-card-pulse 2.4s ease-in-out 2; }
+  .zb-card.zb-card-new::before { content: "Just submitted"; position: absolute; top: -10px; right: 14px; background: #967a4a; color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 10px; border-radius: 12px; z-index: 1; }
   .zb-card:hover{border-color:var(--ink);box-shadow:0 4px 14px rgba(0,0,0,0.05)}
   .zb-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .zb-card.is-closed{cursor:default}
@@ -607,8 +612,13 @@
   'use strict';
 
   // ============ INIT ============
+  let _client = null;
+  let _profile = null;
+  let _highlightFileId = null;  // set by reloadDashboard({highlightFileId}) · drives the "Just submitted" animation
+
   async function init() {
     const client = await window.AariAuth.ensureClient();
+    _client = client;
     const session = await window.AariAuth.getCurrentSession();
     if (!session) {
       showGate('Please sign in to continue.', true);
@@ -619,38 +629,89 @@
       showGate('Account exists, but no agent profile found. Contact hello@aaritransactions.com.', false);
       return;
     }
+    _profile = profile;
     document.getElementById('auth-gate').style.display = 'none';
     document.getElementById('aari-header').style.display = 'block';
     document.getElementById('portal-main').style.display = 'block';
     renderHeader(profile);
+    await reloadDashboard();
+    // May 2026 · Phase 4 · Supabase realtime subscription so dashboard
+    // updates the moment a TC accepts, a status changes, or any field on
+    // the file row flips server-side. Filtered to the agent's own files.
+    subscribeToFileChanges(session.user.id);
+  }
 
-    // Parallel data fetch
+  // ============ RELOAD · the dashboard refresh that runs without a page reload ============
+  // Called: (1) once during init, (2) after intake submit via postMessage,
+  // (3) whenever a realtime change fires for one of the agent's files.
+  // Pass {highlightFileId} to animate one card in with a "Just submitted" badge.
+  async function reloadDashboard(opts) {
+    opts = opts || {};
+    if (opts.highlightFileId) _highlightFileId = opts.highlightFileId;
+    if (!_client || !_profile) return;
     const [filesR, draftsR, paymentsR, sigsR, auditR, memR] = await Promise.all([
-      client.from('files').select('*').order('created_at', { ascending: false }),
-      client.from('drafts').select('*').order('updated_at', { ascending: false }),
-      client.from('payments').select('*').order('paid_at', { ascending: false }),
-      client.from('agreement_signatures').select('*').order('signed_at', { ascending: false }),
-      client.from('audit_log').select('action, target_id, target_table, details, created_at').order('created_at', { ascending: false }).limit(10),
-      client.from('memberships').select('*').maybeSingle(),
+      _client.from('files').select('*').order('created_at', { ascending: false }),
+      _client.from('drafts').select('*').order('updated_at', { ascending: false }),
+      _client.from('payments').select('*').order('paid_at', { ascending: false }),
+      _client.from('agreement_signatures').select('*').order('signed_at', { ascending: false }),
+      _client.from('audit_log').select('action, target_id, target_table, details, created_at').order('created_at', { ascending: false }).limit(10),
+      _client.from('memberships').select('*').maybeSingle(),
     ]);
-
     const files = filesR.data || [];
     const drafts = draftsR.data || [];
     const payments = paymentsR.data || [];
     const sigs = sigsR.data || [];
     const audit = auditR.data || [];
     const mem = memR.data;
-
     renderStats(files);
     renderActiveFiles(files);
     renderDrafts(drafts);
     renderActivity(audit, files);
     renderBilling(payments);
-    renderDocuments(sigs, files, client);
+    renderDocuments(sigs, files, _client);
     renderMembership(mem);
-    renderCompletion(profile);
-    // AP-8 · Membership upsell · compute potential savings from add-on history
+    renderCompletion(_profile);
     renderMembershipUpsell(payments, mem);
+    // After render, apply highlight if requested. Removed after 5 min.
+    if (opts.highlightFileId) applyJustSubmittedHighlight(opts.highlightFileId);
+  }
+  // Expose for tc-cockpit accept flow + intake submit success card
+  window.reloadFiles = () => reloadDashboard();
+  window.reloadDashboard = reloadDashboard;
+
+  function applyJustSubmittedHighlight(fileId) {
+    setTimeout(() => {
+      const card = document.querySelector('.zb-card[data-zb-file="' + cssEscape(fileId) + '"]');
+      if (!card) return;
+      card.classList.add('zb-card-new');
+      // Auto-clear after 5 min · matches the spec
+      setTimeout(() => card.classList.remove('zb-card-new'), 5 * 60 * 1000);
+    }, 80);
+  }
+  function cssEscape(s) {
+    return String(s).replace(/(["\\])/g, '\\$1');
+  }
+
+  // ============ REALTIME · Supabase subscription on the files table ============
+  let _realtimeChannel = null;
+  function subscribeToFileChanges(agentId) {
+    if (!_client || _realtimeChannel) return;
+    try {
+      _realtimeChannel = _client
+        .channel('agent-files-' + agentId)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'files', filter: 'agent_id=eq.' + agentId },
+          () => {
+            // Debounce · avoid storm-reloads when multiple columns flip at once
+            if (subscribeToFileChanges._timer) clearTimeout(subscribeToFileChanges._timer);
+            subscribeToFileChanges._timer = setTimeout(() => reloadDashboard(), 300);
+          }
+        )
+        .subscribe();
+    } catch (e) {
+      console.warn('[realtime] subscription failed · falling back to event-only refresh:', e);
+    }
   }
 
   function showGate(msg, withActions) {
@@ -705,11 +766,21 @@
     if (e.key === 'Escape' && !document.getElementById('portal-intake-overlay').hidden) closePortalIntake();
   });
   // Listen for the intake submission success message posted from the iframe.
+  // May 2026 · Phase 4 · in-place refresh instead of full page reload. The
+  // intake's inline success card stays visible inside the iframe for ~1.5s;
+  // we close + refresh + highlight here so the new file is already animating
+  // in by the time the agent looks at the dashboard.
   window.addEventListener('message', (e) => {
     if (e && e.data && e.data.type === 'aari:intake-submitted') {
-      closePortalIntake();
-      // Soft refresh · reload the page so Active Files reflects the new submission.
-      setTimeout(() => window.location.reload(), 250);
+      // intake-submit.js fires CustomEvent with detail:{fileId,serviceId,agentId};
+      // the forwarder in index.html (line 2644) wraps that as {type,detail}.
+      const detail = e.data.detail || {};
+      const fileId = detail.fileId || e.data.fileId || null;
+      // Give the user a moment to see the success card before we tear it down.
+      setTimeout(() => {
+        closePortalIntake();
+        reloadDashboard({ highlightFileId: fileId });
+      }, 1200);
     }
   });
 
