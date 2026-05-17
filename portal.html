@@ -1530,7 +1530,7 @@
     body.innerHTML = `<div class="zb-grid">${active.map(renderFileCard).join('')}</div>`;
     // Wire action buttons inside cards (View File / Message TC)
     body.querySelectorAll('[data-zb-action]').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', async (e) => {
         // Prevent the parent card click handler from also firing
         e.stopPropagation();
         const fid = e.currentTarget.getAttribute('data-zb-file');
@@ -1539,6 +1539,28 @@
           openFileDetailModal(fid, active);
         } else if (act === 'message') {
           window.location.hash = 'message=' + fid;
+        } else if (act === 'reassign-tc') {
+          // May 2026 · TC Acceptance Workflow Slice 3 · agent-driven reassign
+          const ok = window.confirm('Request another TC? The current TC will be marked as passed and a different TC will be assigned. Limit: 3 swaps per file.');
+          if(!ok) return;
+          const tgt = e.currentTarget;
+          tgt.disabled = true;
+          tgt.textContent = 'Reassigning…';
+          try {
+            const client = await window.AariAuth.ensureClient();
+            const { data, error } = await client.functions.invoke('agent-request-tc-reassign', {
+              body: { file_id: fid }
+            });
+            if(error || !data || data.ok !== true){
+              throw new Error((data && data.error) || (error && error.message) || 'Reassign failed');
+            }
+            // Reload the dashboard to pick up the new assignment
+            window.location.reload();
+          } catch (err) {
+            alert(err.message || 'Could not reassign. Try again or contact support.');
+            tgt.disabled = false;
+            tgt.textContent = 'Request another TC';
+          }
         }
       });
     });
@@ -1998,14 +2020,63 @@
       <div class="zb-track"><div class="zb-track-dots">${stepsHtml}</div></div>
       <div class="zb-body">
         ${zbCountdown(f, h)}
+        ${zbAcceptanceStatus(f)}
         ${f.broker_review_status === 'pending' ? '<div class="zb-body-row watch"><span class="ico">⚖</span> <strong>Awaiting broker review</strong></div>' : ''}
         ${f.payment_status === 'pending' ? '<div class="zb-body-row watch"><span class="ico">💳</span> Payment pending</div>' : ''}
       </div>
       <div class="zb-actions">
         <button type="button" class="btn-secondary" data-zb-action="view" data-zb-file="${esc(f.id)}">View File</button>
+        ${renderReassignButton(f)}
         <button type="button" class="btn-primary" data-zb-action="message" data-zb-file="${esc(f.id)}">Message TC</button>
       </div>
     </div>`;
+  }
+
+  // May 2026 · TC Acceptance Workflow Slice 3
+  // Surfaces the file's acceptance state inline on the card so the agent
+  // never wonders "did anyone see this." Three states:
+  //   awaiting_tc_acceptance · countdown to 30-min timeout
+  //   tc_engaged             · "TC starts at [time]"
+  //   awaiting_broker_review · all TCs full, broker is taking it
+  function zbAcceptanceStatus(f){
+    if(f.status === 'awaiting_tc_acceptance' || (f.status === 'intake_received' && !f.tc_accepted_at)){
+      const swaps = f.tc_reassign_count || 0;
+      const swapsLeft = 3 - swaps;
+      const swapsCopy = swapsLeft > 0 ? ` · ${swapsLeft} swap${swapsLeft === 1 ? '' : 's'} left` : ' · swap limit reached';
+      return `<div class="zb-body-row watch"><span class="ico">⏱</span> Awaiting TC to accept${esc(swapsCopy)}</div>`;
+    }
+    if(f.status === 'tc_engaged' && f.tc_expected_start_at){
+      const startStr = formatStartTime(f.tc_expected_start_at);
+      return `<div class="zb-body-row good"><span class="ico">✓</span> TC starts at ${esc(startStr)}</div>`;
+    }
+    if(f.status === 'awaiting_broker_review'){
+      return `<div class="zb-body-row watch"><span class="ico">⚖</span> Routing to broker · all TCs are at capacity</div>`;
+    }
+    return '';
+  }
+
+  function renderReassignButton(f){
+    // Only show "Request another TC" while file is awaiting acceptance AND
+    // the 3-swap cap isn't hit AND the TC hasn't accepted yet.
+    const canSwap = (f.status === 'awaiting_tc_acceptance' || (f.status === 'intake_received' && !f.tc_accepted_at))
+      && (f.tc_reassign_count || 0) < 3
+      && !f.tc_accepted_at;
+    if(!canSwap) return '';
+    return `<button type="button" class="btn-text" data-zb-action="reassign-tc" data-zb-file="${esc(f.id)}">Request another TC</button>`;
+  }
+
+  function formatStartTime(iso){
+    try {
+      const d = new Date(iso);
+      const today = new Date();
+      const isSameDay = d.toDateString() === today.toDateString();
+      const tomorrow = new Date(today); tomorrow.setDate(today.getDate()+1);
+      const isTomorrow = d.toDateString() === tomorrow.toDateString();
+      const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      if(isSameDay) return time + ' today';
+      if(isTomorrow) return time + ' tomorrow';
+      return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    } catch(_) { return iso; }
   }
 
   const SERVICE_LABELS = {

@@ -410,6 +410,19 @@
       }));
     } catch (_) {}
 
+    // May 2026 · Phase 2 of lifecycle flow · inline success instead of redirect
+    // At-closing services (TC): render success card in modal, agent stays put.
+    // Upfront services (LC, OP, MLS Setup, etc.): briefly show success card so
+    // the agent sees acknowledgement, then redirect to Stripe checkout.
+    const successOpts = {
+      fileId,
+      serviceId,
+      serviceName,
+      agentId,
+      propertyAddress: fd.get('address') || fd.get('property_address') || null,
+      assignedTcName: fd.get('intakePreferredTc') || document.getElementById('intakePreferredTc')?.value || null,
+    };
+
     if (billing.timing === 'upfront') {
       const url = buildStripeRedirectUrl(stripeUrl, {
         email: agentEmail,
@@ -418,10 +431,78 @@
         service_type: serviceId,
         service_price_cents,
       }) || buildThankYouUrl('unpaid', serviceId, fileId);
-      window.location.href = url;
+      // Show success card for 1.5s then redirect to Stripe so the agent
+      // never sees a blank "thank-you.html" page — payment is the next step,
+      // not the end of the flow.
+      renderInlineSuccess({ ...successOpts, primaryCtaLabel: 'Continue to payment →', primaryCtaUrl: url });
+      setTimeout(() => { window.location.href = url; }, 1500);
     } else {
-      window.location.href = buildThankYouUrl('submitted', serviceId, fileId);
+      renderInlineSuccess({ ...successOpts, primaryCtaLabel: 'Open in portal →', primaryCtaUrl: '/portal.html' });
     }
+  }
+
+  // ====================================================================
+  // Inline success renderer · May 2026
+  // Swaps the modal's form + footer for a confirmation card with the TC
+  // assignment, file ID, and a single primary CTA. Used by both at-closing
+  // (stays in modal) and upfront (briefly shown before Stripe redirect).
+  // ====================================================================
+  function renderInlineSuccess(opts) {
+    const box = document.getElementById('intake-modal-box');
+    const view = document.getElementById('intakeSuccessView');
+    if (!box || !view) {
+      // Fallback if the success markup isn't present · old redirect path
+      if (opts.primaryCtaUrl) window.location.href = opts.primaryCtaUrl;
+      return;
+    }
+    box.setAttribute('data-success-state', 'true');
+    view.hidden = false;
+
+    // File ID · first 8 chars upper-case for readability
+    const shortId = String(opts.fileId || '').slice(0, 8).toUpperCase();
+    setText('intakeSuccessFileId', shortId ? '#' + shortId : '—');
+    setText('intakeSuccessServiceName', opts.serviceName || '—');
+    if (opts.propertyAddress) {
+      setText('intakeSuccessProperty', opts.propertyAddress);
+    } else {
+      const row = document.getElementById('intakeSuccessPropertyRow');
+      if (row) row.style.display = 'none';
+    }
+
+    // TC card · branch on whether a specific TC was picked or fast-path
+    const tcName = opts.assignedTcName;
+    const autoCard = document.getElementById('intakeSuccessAutoCard');
+    const tcCard = document.getElementById('intakeSuccessTcCard');
+    if (tcName && tcName !== 'auto-assign' && tcName !== 'auto') {
+      // Find TC photo from window.tcsData if available
+      let photo = '';
+      try {
+        const tc = (window.tcsData || []).find(t => t.displayName === tcName);
+        if (tc) photo = tc.photoUrl;
+      } catch (_) {}
+      const img = document.getElementById('intakeSuccessTcPhoto');
+      if (img && photo) { img.src = photo; img.alt = tcName; }
+      setText('intakeSuccessTcName', tcName);
+      tcCard.hidden = false;
+      autoCard.hidden = true;
+    } else {
+      tcCard.hidden = true;
+      autoCard.hidden = false;
+    }
+
+    // Primary CTA
+    const primary = document.getElementById('intakeSuccessPrimary');
+    if (primary) {
+      primary.textContent = opts.primaryCtaLabel || 'Open in portal →';
+      primary.onclick = () => {
+        if (opts.primaryCtaUrl) window.location.href = opts.primaryCtaUrl;
+      };
+    }
+  }
+
+  function setText(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val == null ? '—' : String(val);
   }
 
   async function safeGetAgentEmail() {
