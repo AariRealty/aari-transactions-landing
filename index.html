@@ -5269,28 +5269,29 @@ Password:"></textarea>
       function isAnswered(q){
         const el = firstEl(q);
         if(!el) return false;
-        const radio = el.querySelector('input[type="radio"]:checked');
-        if(radio) return true;
-        if(el.querySelector('input[type="radio"]')) return false; // radio group, none checked
-        const cb = el.querySelector('input[type="checkbox"]');
-        if(cb) return cb.checked;
+        // Radio group · answered when any option is checked
+        if(el.querySelector('input[type="radio"]')){
+          return !!el.querySelector('input[type="radio"]:checked');
+        }
+        // Entity acknowledgment uses [data-entity-ack-input] specifically
+        const ackInput = el.querySelector('input[data-entity-ack-input]');
+        if(ackInput) return ackInput.checked;
+        // File input · answered when a file is selected
         const file = el.querySelector('input[type="file"]');
         if(file) return !!(file.files && file.files[0]);
+        // Lender contact group · cash-toggle checked OR any contact field filled
+        const cashCb = el.querySelector('input[name="lender_is_cash"]');
+        if(cashCb && cashCb.checked) return true;
+        // Text-like inputs · LENIENT · at least one filled = answered
+        // Final submit validates the rest. This lets the user advance through
+        // the cascade without filling every box perfectly first time.
         const inputs = el.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input[type="date"]');
         if(inputs.length){
-          // Consider answered if ALL visible required inputs have a value, OR optional inputs have at least one value
-          if(q.optional){
-            // For optional, treat as auto-answered after a small idle (visual still revealed below)
-            return true;
+          if(q.optional) return true;
+          for(const i of inputs){
+            if(i.value && i.value.trim()) return true;
           }
-          // For required inputs (single field or row), need at least one input with value
-          let hasValue = false, allHaveValue = true;
-          inputs.forEach(i => {
-            if(i.value.trim()) hasValue = true;
-            else allHaveValue = false;
-          });
-          // For .field-row (2 inputs side-by-side), require BOTH; for single .field, just one
-          return inputs.length > 1 ? allHaveValue : hasValue;
+          return false;
         }
         return q.optional === true;
       }
@@ -6211,10 +6212,20 @@ Password:"></textarea>
     }
 
     function nextStep(){
-      // Progressive disclosure · block step advance until all visible questions are answered
-      if(window.AariQwiz && window.AariQwiz.isActive() && !window.AariQwiz.allAnswered()){
-        // Re-render to make sure the latest unanswered question is visible + scrolled to
-        window.AariQwiz.refresh();
+      console.log('[step] next clicked · current step:', state.step, '· qwiz active:', !!(window.AariQwiz && window.AariQwiz.isActive()));
+      // Progressive disclosure · while qwiz active, IT owns validation.
+      // Skip the legacy HTML5 visibleRequired check entirely (qwiz hides fields
+      // via inline style which the legacy check can't see).
+      if(window.AariQwiz && window.AariQwiz.isActive()){
+        if(!window.AariQwiz.allAnswered()){
+          console.log('[step] qwiz blocking · not all answered');
+          window.AariQwiz.refresh();
+          return;
+        }
+        // qwiz says all answered → advance
+        const validSteps = getValidSteps();
+        const idx = validSteps.indexOf(state.step);
+        if(idx < validSteps.length - 1) showStep(validSteps[idx + 1]);
         return;
       }
       const valid = validateCurrentStep();
@@ -6224,6 +6235,7 @@ Password:"></textarea>
       if(idx < validSteps.length - 1) showStep(validSteps[idx + 1]);
     }
     function prevStep(){
+      console.log('[step] back clicked · current step:', state.step);
       const validSteps = getValidSteps();
       const idx = validSteps.indexOf(state.step);
       if(idx > 0) showStep(validSteps[idx - 1]);
