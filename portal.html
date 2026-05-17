@@ -928,6 +928,63 @@
     document.body.style.overflow = '';
   }
 
+  // May 2026 · change password handler
+  // Re-authenticates with the current password before updating — Supabase Auth
+  // doesn't enforce this server-side for updateUser, so we do it client-side
+  // to prevent a hijacked session from silently rotating the password.
+  async function handlePasswordUpdate() {
+    const currentInput = document.getElementById('pe-pw-current');
+    const newInput     = document.getElementById('pe-pw-new');
+    const confirmInput = document.getElementById('pe-pw-confirm');
+    const submitBtn    = document.getElementById('pe-pw-submit');
+    const msgEl        = document.getElementById('pe-pw-msg');
+    if (!currentInput || !newInput || !confirmInput || !msgEl) return;
+
+    function showMsg(text, kind) {
+      msgEl.textContent = text;
+      msgEl.style.display = '';
+      msgEl.style.color = kind === 'error' ? '#b14a4a' : '#3b6d11';
+    }
+
+    const current = currentInput.value;
+    const next    = newInput.value;
+    const confirm = confirmInput.value;
+
+    if (!current || !next || !confirm) return showMsg('Fill in all three password fields.', 'error');
+    if (next.length < 8)               return showMsg('New password must be at least 8 characters.', 'error');
+    if (next !== confirm)              return showMsg('New password and confirmation don\'t match.', 'error');
+    if (next === current)              return showMsg('New password can\'t match the current one.', 'error');
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Updating…';
+    msgEl.style.display = 'none';
+
+    try {
+      const client = await window.AariAuth.ensureClient();
+      // Step 1 · re-authenticate to verify the current password is correct.
+      // We do this by attempting signInWithPassword on the current session's
+      // email. If it succeeds, the password matches.
+      const session = await window.AariAuth.getCurrentSession();
+      const email = session && session.user && session.user.email;
+      if (!email) throw new Error('No active session. Sign in again.');
+      const { error: reauthErr } = await client.auth.signInWithPassword({ email, password: current });
+      if (reauthErr) throw new Error('Current password is incorrect.');
+      // Step 2 · update to the new password
+      const { error: updErr } = await client.auth.updateUser({ password: next });
+      if (updErr) throw new Error(updErr.message || 'Could not update password.');
+      // Clear fields + success message
+      currentInput.value = '';
+      newInput.value = '';
+      confirmInput.value = '';
+      showMsg('Password updated. Use the new one next time you sign in.', 'success');
+    } catch (err) {
+      showMsg(err && err.message ? err.message : 'Update failed. Try again.', 'error');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Update password';
+    }
+  }
+
   // ===== Headshot upload helpers · Supabase Storage bucket "headshots" =====
   function renderHeadshotPreview(url, profile) {
     const preview = document.getElementById('pe-headshot-preview');
