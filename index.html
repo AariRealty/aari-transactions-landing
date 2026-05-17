@@ -4453,6 +4453,44 @@ Password:"></textarea>
     const submitBtn = document.getElementById('intakeSubmit');
     const form = document.getElementById('intake-form');
     const TC_STORAGE_KEY = 'aari.preferredTc';
+    // Task 5.2 · cross-session persistence in localStorage + Supabase profile
+    const TC_PROFILE_KEY = 'aari.preferredTcId';
+
+    async function loadPreferredTcFromProfile(){
+      let cached = null;
+      try { cached = localStorage.getItem(TC_PROFILE_KEY); } catch(_) {}
+      if(window.AariAuth && typeof window.AariAuth.getCurrentSession === 'function'){
+        try {
+          const session = await window.AariAuth.getCurrentSession();
+          const sb = window.AariAuth.client || window.AariAuth.supabase;
+          if(session && sb){
+            const { data, error } = await sb.from('agents').select('preferred_tc_id').eq('id', session.user.id).maybeSingle();
+            if(!error && data && data.preferred_tc_id){
+              try { localStorage.setItem(TC_PROFILE_KEY, data.preferred_tc_id); } catch(_) {}
+              return data.preferred_tc_id;
+            }
+          }
+        } catch(err){ console.warn('[preferred-tc] load failed:', err); }
+      }
+      return cached;
+    }
+
+    async function savePreferredTcToProfile(tcId){
+      try {
+        if(tcId === null || tcId === 'auto') localStorage.removeItem(TC_PROFILE_KEY);
+        else localStorage.setItem(TC_PROFILE_KEY, tcId);
+      } catch(_) {}
+      if(window.AariAuth && typeof window.AariAuth.getCurrentSession === 'function'){
+        try {
+          const session = await window.AariAuth.getCurrentSession();
+          const sb = window.AariAuth.client || window.AariAuth.supabase;
+          if(session && sb){
+            const value = (tcId === null || tcId === 'auto') ? null : tcId;
+            await sb.from('agents').update({ preferred_tc_id: value }).eq('id', session.user.id);
+          }
+        } catch(err){ console.warn('[preferred-tc] save failed:', err); }
+      }
+    }
     const PROGRESS_KEY = 'aari_intake_progress';
     const CLOSED_FLAG_KEY = 'aari_intake_closed_at';
     const PROGRESS_TTL_MS = 24 * 60 * 60 * 1000; // 24h
