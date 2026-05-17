@@ -645,18 +645,28 @@
   // Called: (1) once during init, (2) after intake submit via postMessage,
   // (3) whenever a realtime change fires for one of the agent's files.
   // Pass {highlightFileId} to animate one card in with a "Just submitted" badge.
+  // May 2026 · TC lookup cache for the Call your TC button on file cards.
+  // Loaded once per page · stays in sync because realtime hits reloadDashboard
+  // which doesn't refetch the TC list (TC roster rarely changes).
+  let _tcsById = {};
+
   async function reloadDashboard(opts) {
     opts = opts || {};
     if (opts.highlightFileId) _highlightFileId = opts.highlightFileId;
     if (!_client || !_profile) return;
-    const [filesR, draftsR, paymentsR, sigsR, auditR, memR] = await Promise.all([
+    const [filesR, draftsR, paymentsR, sigsR, auditR, memR, tcsR] = await Promise.all([
       _client.from('files').select('*').order('created_at', { ascending: false }),
       _client.from('drafts').select('*').order('updated_at', { ascending: false }),
       _client.from('payments').select('*').order('paid_at', { ascending: false }),
       _client.from('agreement_signatures').select('*').order('signed_at', { ascending: false }),
       _client.from('audit_log').select('action, target_id, target_table, details, created_at').order('created_at', { ascending: false }).limit(10),
       _client.from('memberships').select('*').maybeSingle(),
+      // TCs · pulled to power the Call your TC button on file cards
+      _client.from('agents').select('id, first_name, last_name, phone').eq('role', 'tc'),
     ]);
+    // Build the by-id lookup for fast render
+    _tcsById = {};
+    (tcsR.data || []).forEach(t => { _tcsById[t.id] = t; });
     const files = filesR.data || [];
     const drafts = draftsR.data || [];
     const payments = paymentsR.data || [];
