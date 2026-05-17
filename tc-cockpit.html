@@ -982,7 +982,24 @@
   }
 
   function renderFileCard(file){
-    return `<div class="file-card" data-file-id="${file.id}">
+    // May 2026 · TC Acceptance Workflow Slice 1
+    // Files that haven't been accepted yet show a prominent banner with the
+    // Accept button. Banner disappears once tc_accepted_at is set.
+    const needsAcceptance = !file.tc_accepted_at && (
+      file.status === 'intake_received' ||
+      file.status === 'awaiting_tc_acceptance'
+    );
+    const acceptBanner = needsAcceptance
+      ? `<div class="file-accept-banner">
+          <div class="file-accept-text">
+            <strong>New file from ${file.agent || 'agent'}</strong>
+            <div class="file-accept-sub">Accept within 30 minutes · or it auto-reassigns</div>
+          </div>
+          <button type="button" class="file-accept-btn" data-tc-accept="${file.id}">Accept &amp; pick start time</button>
+        </div>`
+      : '';
+    return `<div class="file-card" data-file-id="${file.id}" data-needs-acceptance="${needsAcceptance ? '1' : '0'}">
+      ${acceptBanner}
       <div class="file-card-head" data-toggle-file="${file.id}">
         <div class="file-card-head-left">
           <div class="file-card-address">${file.address}</div>
@@ -996,6 +1013,97 @@
       </div>
     </div>`;
   }
+
+  /* ===== TC Accept · start-time modal (Slice 1) ===== */
+  function openAcceptModal(fileId){
+    // Compute defaults · ASAP = now + 1h, EOB = today 5pm, Tomorrow = 9am next biz day
+    const now = new Date();
+    const asap = new Date(now.getTime() + 60 * 60 * 1000);
+    const eob = new Date(now); eob.setHours(17, 0, 0, 0);
+    const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1); tomorrow.setHours(9, 0, 0, 0);
+    function toLocalDatetime(d){
+      const pad = n => String(n).padStart(2, '0');
+      return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'tc-accept-overlay';
+    overlay.innerHTML = `
+      <div class="tc-accept-modal" role="dialog" aria-modal="true" aria-labelledby="tcAcceptTitle">
+        <button type="button" class="tc-accept-close" aria-label="Close" data-tc-accept-close>×</button>
+        <h3 id="tcAcceptTitle">When will you start this file?</h3>
+        <p class="tc-accept-sub">The agent sees this start time the moment you confirm.</p>
+        <div class="tc-accept-presets">
+          <button type="button" class="tc-accept-preset" data-preset-value="${toLocalDatetime(asap)}">
+            <span class="preset-name">ASAP</span><span class="preset-time">within 1 hour</span>
+          </button>
+          <button type="button" class="tc-accept-preset" data-preset-value="${toLocalDatetime(eob)}">
+            <span class="preset-name">End of business today</span><span class="preset-time">5:00 PM</span>
+          </button>
+          <button type="button" class="tc-accept-preset" data-preset-value="${toLocalDatetime(tomorrow)}">
+            <span class="preset-name">Tomorrow morning</span><span class="preset-time">9:00 AM</span>
+          </button>
+        </div>
+        <label class="tc-accept-custom-label">Or pick a custom time</label>
+        <input type="datetime-local" class="tc-accept-custom" value="${toLocalDatetime(asap)}">
+        <div class="tc-accept-err" data-tc-accept-err hidden></div>
+        <button type="button" class="tc-accept-confirm" data-tc-accept-confirm="${fileId}">Accept this file</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const customInput = overlay.querySelector('.tc-accept-custom');
+    overlay.querySelectorAll('.tc-accept-preset').forEach(btn => {
+      btn.addEventListener('click', () => {
+        overlay.querySelectorAll('.tc-accept-preset').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        customInput.value = btn.getAttribute('data-preset-value');
+      });
+    });
+
+    overlay.querySelector('[data-tc-accept-close]').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', e => { if(e.target === overlay) overlay.remove(); });
+
+    overlay.querySelector('[data-tc-accept-confirm]').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const errEl = overlay.querySelector('[data-tc-accept-err]');
+      errEl.hidden = true;
+      const startVal = customInput.value;
+      if(!startVal){
+        errEl.textContent = 'Pick a start time.';
+        errEl.hidden = false;
+        return;
+      }
+      const startIso = new Date(startVal).toISOString();
+      btn.disabled = true;
+      btn.textContent = 'Accepting…';
+      try {
+        const client = (window.AariAuth && await window.AariAuth.ensureClient()) || window.aariSupabase;
+        if(!client) throw new Error('Supabase client not loaded');
+        const { data, error } = await client.functions.invoke('tc-accept-file', {
+          body: { file_id: fileId, expected_start_at: startIso }
+        });
+        if(error || !data || data.ok !== true){
+          throw new Error((data && data.error) || (error && error.message) || 'Failed to accept');
+        }
+        overlay.remove();
+        // Refresh file list · the cockpit fetcher re-runs and the banner disappears
+        if(typeof window.reloadFiles === 'function') window.reloadFiles();
+      } catch (err) {
+        errEl.textContent = err.message || 'Accept failed. Try again.';
+        errEl.hidden = false;
+        btn.disabled = false;
+        btn.textContent = 'Accept this file';
+      }
+    });
+  }
+  // Global click delegation · catches Accept buttons inside file cards
+  document.addEventListener('click', e => {
+    const btn = e.target.closest && e.target.closest('[data-tc-accept]');
+    if(!btn) return;
+    e.stopPropagation();
+    openAcceptModal(btn.getAttribute('data-tc-accept'));
+  });
 
   function renderFileList(files){
     const host = document.getElementById('mf-list');
