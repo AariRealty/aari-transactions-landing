@@ -100,6 +100,17 @@
   .pe-section{margin-bottom:16px}
   .pe-label{display:block;font-size:11px;letter-spacing:0.6px;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:6px}
   .pe-input{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:6px;font-family:var(--sans);font-size:13px;background:#fff;color:var(--ink)}
+  /* Headshot uploader · replaces URL input */
+  .pe-headshot-upload{display:flex;align-items:center;gap:14px;padding:12px;background:#fafaf6;border:1px solid var(--line);border-radius:8px}
+  .pe-headshot-preview{width:72px;height:72px;border-radius:50%;overflow:hidden;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;flex-shrink:0;border:2px solid var(--line)}
+  .pe-headshot-preview img{width:100%;height:100%;object-fit:cover}
+  .pe-headshot-preview.has-image{background:transparent}
+  .pe-headshot-actions{display:flex;gap:8px;flex-wrap:wrap}
+  .pe-headshot-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:var(--ink);color:#fff;border:1px solid var(--ink);border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--sans)}
+  .pe-headshot-btn:hover{opacity:0.9}
+  .pe-headshot-btn.uploading{opacity:0.5;cursor:wait}
+  .pe-headshot-remove{padding:8px 14px;background:#fff;color:#b14a4a;border:1px solid #e8e8e6;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:var(--sans)}
+  .pe-headshot-remove:hover{border-color:#b14a4a}
   .pe-input:focus{outline:none;border-color:var(--ink)}
   .pe-foot{padding:14px 24px 20px;border-top:1px solid var(--line);background:var(--soft-bg);display:flex;justify-content:flex-end;gap:8px}
   .pe-btn{padding:9px 18px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid;font-family:var(--sans)}
@@ -741,9 +752,22 @@
               <input class="pe-input" id="pe-broker-contact" type="text" placeholder="Jane Smith · jane@broker.com">
             </div>
             <div class="pe-section">
-              <label class="pe-label">Headshot URL <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(direct image link)</span></label>
-              <input class="pe-input" id="pe-headshot-url" type="url" placeholder="https://...">
-              <div style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.45">Upload to Drive or Dropbox and paste the public image link here. Replaces the avatar initials throughout the portal.</div>
+              <label class="pe-label">Headshot</label>
+              <div class="pe-headshot-upload" id="pe-headshot-upload">
+                <div class="pe-headshot-preview" id="pe-headshot-preview">
+                  <span class="pe-headshot-initials" id="pe-headshot-initials">–</span>
+                </div>
+                <div class="pe-headshot-actions">
+                  <label class="pe-headshot-btn">
+                    <input type="file" id="pe-headshot-file" accept="image/png,image/jpeg,image/webp,image/heic" style="display:none">
+                    <span id="pe-headshot-btn-label">Upload image</span>
+                  </label>
+                  <button type="button" class="pe-headshot-remove" id="pe-headshot-remove" style="display:none">Remove</button>
+                </div>
+              </div>
+              <!-- Hidden field persists the public URL captured from Supabase Storage on upload -->
+              <input type="hidden" id="pe-headshot-url" value="">
+              <div id="pe-headshot-status" style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.45">PNG / JPG / WEBP. Replaces the avatar throughout the portal.</div>
             </div>
             <div class="pe-section">
               <label class="pe-label">Preferred TC <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
@@ -778,6 +802,9 @@
     document.getElementById('pe-headshot-url').value = _currentProfile.headshot_url || '';
     document.getElementById('pe-preferred-tc').value = _currentProfile.preferred_tc_id || '';
     document.getElementById('pe-msg').style.display = 'none';
+    // Headshot uploader · render preview from current value + wire file input
+    renderHeadshotPreview(_currentProfile.headshot_url, _currentProfile);
+    wireHeadshotUpload();
 
     overlay.classList.add('open');
     document.body.style.overflow = 'hidden';
@@ -786,6 +813,98 @@
     const overlay = document.getElementById('profile-editor-overlay');
     if (overlay) overlay.classList.remove('open');
     document.body.style.overflow = '';
+  }
+
+  // ===== Headshot upload helpers · Supabase Storage bucket "headshots" =====
+  function renderHeadshotPreview(url, profile) {
+    const preview = document.getElementById('pe-headshot-preview');
+    const initials = document.getElementById('pe-headshot-initials');
+    const removeBtn = document.getElementById('pe-headshot-remove');
+    const btnLabel = document.getElementById('pe-headshot-btn-label');
+    if (!preview) return;
+    if (url) {
+      preview.classList.add('has-image');
+      preview.innerHTML = `<img src="${url}" alt="Headshot">`;
+      if (removeBtn) removeBtn.style.display = '';
+      if (btnLabel) btnLabel.textContent = 'Replace image';
+    } else {
+      preview.classList.remove('has-image');
+      const first = (profile && profile.first_name || '').slice(0, 1).toUpperCase();
+      const last = (profile && profile.last_name || '').slice(0, 1).toUpperCase();
+      preview.innerHTML = `<span class="pe-headshot-initials">${first || '–'}${last || ''}</span>`;
+      if (removeBtn) removeBtn.style.display = 'none';
+      if (btnLabel) btnLabel.textContent = 'Upload image';
+    }
+  }
+
+  function wireHeadshotUpload() {
+    const fileInput = document.getElementById('pe-headshot-file');
+    const removeBtn = document.getElementById('pe-headshot-remove');
+    const statusEl = document.getElementById('pe-headshot-status');
+    const urlInput = document.getElementById('pe-headshot-url');
+    const btn = document.querySelector('.pe-headshot-btn');
+    if (!fileInput || fileInput._aariWired) return;
+    fileInput._aariWired = true;
+
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      // Validate type
+      if (!/^image\/(png|jpe?g|webp|heic)$/i.test(file.type)) {
+        statusEl.textContent = 'Please pick a PNG, JPG, WEBP, or HEIC image.';
+        statusEl.style.color = '#b14a4a';
+        return;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        statusEl.textContent = 'Image is too large. Max 8 MB.';
+        statusEl.style.color = '#b14a4a';
+        return;
+      }
+      try {
+        btn.classList.add('uploading');
+        statusEl.style.color = 'var(--muted)';
+        statusEl.textContent = 'Uploading…';
+        const client = (window.AariAuth && window.AariAuth.client) || window.aariSupabase || window.supabase;
+        if (!client || !client.auth) throw new Error('Supabase client not loaded');
+        const { data: session } = await client.auth.getSession();
+        const userId = session?.session?.user?.id;
+        if (!userId) throw new Error('Not logged in');
+        // Path: headshots/{user_id}/{timestamp}.{ext}
+        const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+        const path = `headshots/${userId}/${Date.now()}.${ext}`;
+        const { error: upErr } = await client.storage.from('headshots').upload(path, file, {
+          contentType: file.type,
+          upsert: false,
+          cacheControl: '3600',
+        });
+        if (upErr) throw upErr;
+        // Public URL · bucket is public
+        const { data: pub } = client.storage.from('headshots').getPublicUrl(path);
+        const publicUrl = pub?.publicUrl;
+        if (!publicUrl) throw new Error('No public URL returned');
+        urlInput.value = publicUrl;
+        renderHeadshotPreview(publicUrl, _currentProfile);
+        statusEl.textContent = 'Uploaded. Click "Save changes" to apply.';
+        statusEl.style.color = 'var(--muted)';
+      } catch (err) {
+        console.error('[headshot-upload] failed:', err);
+        statusEl.textContent = 'Upload failed: ' + (err && err.message ? err.message : 'unknown error');
+        statusEl.style.color = '#b14a4a';
+      } finally {
+        btn.classList.remove('uploading');
+        // Reset input so the same file can be re-picked
+        try { fileInput.value = ''; } catch (_) {}
+      }
+    });
+
+    if (removeBtn) {
+      removeBtn.addEventListener('click', () => {
+        urlInput.value = '';
+        renderHeadshotPreview(null, _currentProfile);
+        statusEl.textContent = 'Removed. Click "Save changes" to apply.';
+        statusEl.style.color = 'var(--muted)';
+      });
+    }
   }
 
   // ============ AP-6 v2 · PROFILE COMPLETION (quick-add + complete-full) ============
@@ -797,7 +916,7 @@
   // completion list and header without a page reload.
   const PROFILE_FIELD_DEFS = {
     headshot_url: { label: 'Headshot', inputs: [
-      { key: 'headshot_url', type: 'url', label: 'Direct image link', placeholder: 'https://...', help: 'Upload to Drive or Dropbox and paste the public image link. Replaces your avatar throughout the portal.' }
+      { key: 'headshot_url', type: 'headshot', label: 'Upload your headshot', help: 'PNG / JPG / WEBP / HEIC. Max 8 MB. Replaces your avatar throughout the portal.' }
     ]},
     on_team: { label: 'Team info', inputs: [
       { key: 'on_team', type: 'select', label: 'Are you on a team?', options: [
@@ -851,7 +970,99 @@
     if (spec.type === 'select') {
       return `<select id="${id}" style="${base}">${spec.options.map(o=>`<option value="${esc(o.v)}"${v===String(o.v)?' selected':''}>${esc(o.l)}</option>`).join('')}</select>`;
     }
+    if (spec.type === 'headshot') {
+      // Renders the file-upload component · wired by wireQuickAddHeadshot()
+      const initials = ((_currentProfile && _currentProfile.first_name || '').slice(0,1) + (_currentProfile && _currentProfile.last_name || '').slice(0,1)).toUpperCase() || '–';
+      const previewInner = v ? `<img src="${esc(v)}" alt="Headshot">` : `<span>${initials}</span>`;
+      const hasImage = v ? 'has-image' : '';
+      return `
+        <input id="${id}" type="hidden" value="${esc(v)}">
+        <div class="pe-headshot-upload" data-headshot-wrap="${id}">
+          <div class="pe-headshot-preview ${hasImage}" data-preview>${previewInner}</div>
+          <div class="pe-headshot-actions">
+            <label class="pe-headshot-btn">
+              <input type="file" data-headshot-file accept="image/png,image/jpeg,image/webp,image/heic" style="display:none">
+              <span data-btn-label>${v ? 'Replace image' : 'Upload image'}</span>
+            </label>
+            <button type="button" class="pe-headshot-remove" data-headshot-remove style="${v ? '' : 'display:none'}">Remove</button>
+          </div>
+        </div>
+        <div data-headshot-status style="font-size:11px;color:var(--muted);margin-top:6px;line-height:1.45;display:none"></div>
+      `;
+    }
     return `<input id="${id}" type="${spec.type}" style="${base}" value="${esc(v)}" placeholder="${esc(spec.placeholder||'')}">`;
+  }
+
+  // Wire the file-upload behavior for any quick-add headshot input. Idempotent.
+  function wireQuickAddHeadshotInputs() {
+    document.querySelectorAll('[data-headshot-wrap]').forEach(wrap => {
+      if (wrap._aariWired) return;
+      wrap._aariWired = true;
+      const fileInput = wrap.querySelector('[data-headshot-file]');
+      const removeBtn = wrap.querySelector('[data-headshot-remove]');
+      const preview = wrap.querySelector('[data-preview]');
+      const btnLabel = wrap.querySelector('[data-btn-label]');
+      const hiddenId = wrap.getAttribute('data-headshot-wrap');
+      const hidden = document.getElementById(hiddenId);
+      const statusEl = wrap.parentElement.querySelector('[data-headshot-status]');
+
+      function setStatus(msg, isError) {
+        if (!statusEl) return;
+        statusEl.style.display = msg ? '' : 'none';
+        statusEl.textContent = msg || '';
+        statusEl.style.color = isError ? '#b14a4a' : 'var(--muted)';
+      }
+      function setPreview(url) {
+        const first = ((_currentProfile && _currentProfile.first_name || '').slice(0,1) + (_currentProfile && _currentProfile.last_name || '').slice(0,1)).toUpperCase() || '–';
+        if (url) {
+          preview.classList.add('has-image');
+          preview.innerHTML = `<img src="${url}" alt="Headshot">`;
+          if (removeBtn) removeBtn.style.display = '';
+          if (btnLabel) btnLabel.textContent = 'Replace image';
+        } else {
+          preview.classList.remove('has-image');
+          preview.innerHTML = `<span>${first}</span>`;
+          if (removeBtn) removeBtn.style.display = 'none';
+          if (btnLabel) btnLabel.textContent = 'Upload image';
+        }
+      }
+      fileInput.addEventListener('change', async () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        if (!/^image\/(png|jpe?g|webp|heic)$/i.test(file.type)) { setStatus('Please pick a PNG, JPG, WEBP, or HEIC image.', true); return; }
+        if (file.size > 8 * 1024 * 1024) { setStatus('Image is too large. Max 8 MB.', true); return; }
+        try {
+          setStatus('Uploading…');
+          const client = (window.AariAuth && window.AariAuth.client) || window.aariSupabase || window.supabase;
+          if (!client || !client.auth) throw new Error('Supabase client not loaded');
+          const { data: session } = await client.auth.getSession();
+          const userId = session?.session?.user?.id;
+          if (!userId) throw new Error('Not logged in');
+          const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+          const path = `headshots/${userId}/${Date.now()}.${ext}`;
+          const { error: upErr } = await client.storage.from('headshots').upload(path, file, { contentType: file.type, upsert: false, cacheControl: '3600' });
+          if (upErr) throw upErr;
+          const { data: pub } = client.storage.from('headshots').getPublicUrl(path);
+          const publicUrl = pub?.publicUrl;
+          if (!publicUrl) throw new Error('No public URL returned');
+          hidden.value = publicUrl;
+          setPreview(publicUrl);
+          setStatus('Uploaded. Click Save to apply.');
+        } catch (err) {
+          console.error('[quick-add headshot] failed:', err);
+          setStatus('Upload failed: ' + (err && err.message ? err.message : 'unknown error'), true);
+        } finally {
+          try { fileInput.value = ''; } catch (_) {}
+        }
+      });
+      if (removeBtn) {
+        removeBtn.addEventListener('click', () => {
+          hidden.value = '';
+          setPreview(null);
+          setStatus('Removed. Click Save to apply.');
+        });
+      }
+    });
   }
 
   function buildFieldGroupHtml(def) {

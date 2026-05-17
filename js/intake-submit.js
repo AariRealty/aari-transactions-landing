@@ -268,6 +268,9 @@
       title_contact: fd.get('title_contact') || null,
       assigned_tc_id: null,
       service_agreement_signed: true,
+      // Display-only convenience timestamp on the files row. The authoritative
+      // ESIGN signing timestamp + IP live on agreement_signatures (server-side),
+      // captured by the record-signed-agreement edge function below.
       service_agreement_signed_at: new Date().toISOString(),
       service_agreement_typed_name: fd.get('service_agreement_typed_name') || null,
       service_agreement_signature_data: signatureUrl ? null : (fd.get('service_agreement_drawn') || null),
@@ -306,38 +309,32 @@
       return;
     }
 
-    // ===== 3. Insert agreement_signatures row (now the FK to files.id is satisfied) =====
-    // Then fire-and-forget generate-signed-agreement-pdf. The Edge Function bumps
-    // pdf_generation_attempts and is safe to retry. Dashboard polls pdf_generation_status;
-    // agents see "Generating…" briefly, then a download link once status flips to 'succeeded'.
+    // ===== 3. Record signature via edge function (Section 6.2 audit fix) =====
+    // Routes through the record-signed-agreement edge function so the IP can be
+    // captured from request headers and the timestamp is set server-side
+    // (not by the browser clock). The edge function then fire-and-forgets the
+    // generate-signed-agreement-pdf invocation. Old client-side insert (which
+    // hardcoded ip_address: null and used new Date().toISOString()) is gone.
     try {
-      const { data: sigRow, error: sigInsertErr } = await client
-        .from('agreement_signatures')
-        .insert({
+      const { data: rec, error: recErr } = await client.functions.invoke('record-signed-agreement', {
+        body: {
           agent_id: agentId,
           file_id: fileId,
-          // 'service_agreement' is the per-file Service Agreement v4.x execution.
-          // Schema check constraint allows: service_agreement, membership_agreement, intake_specific.
           agreement_type: 'service_agreement',
           agreement_version: SERVICE_AGREEMENT_VERSION,
           typed_full_name: fd.get('service_agreement_typed_name') || '',
           drawn_signature_data: signatureUrl ? null : (fd.get('service_agreement_drawn') || null),
           signature_image_url: signatureUrl,
-          ip_address: null,
           user_agent: navigator.userAgent,
-        })
-        .select('id')
-        .single();
-
-      if (!sigInsertErr && sigRow && sigRow.id) {
-        client.functions
-          .invoke('generate-signed-agreement-pdf', { body: { signature_id: sigRow.id } })
-          .catch(err => console.warn('[intake-submit] PDF gen invoke deferred:', err));
-      } else if (sigInsertErr) {
-        console.warn('[intake-submit] agreement_signatures insert failed:', sigInsertErr);
+        },
+      });
+      if (recErr) {
+        console.warn('[intake-submit] record-signed-agreement failed:', recErr);
+      } else if (rec && rec.signature_id) {
+        // PDF gen chain happens inside the edge function — nothing more to do here.
       }
     } catch (sigRowErr) {
-      console.warn('[intake-submit] agreement_signatures insert threw:', sigRowErr);
+      console.warn('[intake-submit] record-signed-agreement threw:', sigRowErr);
       // Non-fatal — the file row already captured the signature path; PDF can be
       // re-generated manually via the replay curl in README.
     }
