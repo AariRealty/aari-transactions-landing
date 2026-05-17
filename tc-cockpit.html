@@ -1166,6 +1166,145 @@
     openAcceptModal(btn.getAttribute('data-tc-accept'));
   });
 
+  // ====================================================================
+  // May 2026 · TC self-service availability widget
+  // Pill in the masthead reflects current status pulled from agents row.
+  // Click → modal with three options · Save writes back to Supabase.
+  // ====================================================================
+  async function loadAndRenderAvailability(){
+    const pill = document.getElementById('tc-avail-pill');
+    if(!pill) return;
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const session = await window.AariAuth.getCurrentSession();
+      if(!session) return;
+      const { data } = await client
+        .from('agents')
+        .select('availability_status, availability_until, availability_message')
+        .eq('id', session.user.id)
+        .maybeSingle();
+      const status = (data && data.availability_status) || 'available';
+      paintAvailPill(status, data?.availability_until, data?.availability_message);
+      pill.dataset.until = data?.availability_until || '';
+      pill.dataset.message = data?.availability_message || '';
+    } catch(err){
+      console.warn('[tc-availability] load failed:', err);
+    }
+  }
+  function paintAvailPill(status, until, msg){
+    const pill = document.getElementById('tc-avail-pill');
+    const text = document.getElementById('tc-avail-text');
+    if(!pill || !text) return;
+    pill.dataset.status = status;
+    let label = msg;
+    if(!label){
+      if(status === 'available') label = 'Available';
+      else if(status === 'busy_until' && until) label = 'Booked till ' + formatLocalTime(until);
+      else if(status === 'busy_until') label = 'Busy';
+      else if(status === 'off_today') label = 'Off today';
+      else label = 'Available';
+    }
+    text.textContent = label;
+  }
+  function formatLocalTime(iso){
+    try {
+      const d = new Date(iso);
+      return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    } catch(_) { return ''; }
+  }
+
+  function openAvailabilityModal(){
+    const pill = document.getElementById('tc-avail-pill');
+    const currentStatus = (pill && pill.dataset.status) || 'available';
+    const overlay = document.createElement('div');
+    overlay.className = 'tc-avail-overlay';
+    overlay.innerHTML = `
+      <div class="tc-avail-modal" role="dialog" aria-modal="true" aria-labelledby="tcAvailTitle">
+        <button type="button" class="tc-avail-close" aria-label="Close" data-tc-avail-close>&times;</button>
+        <h3 id="tcAvailTitle">Your availability</h3>
+        <p class="sub">This drives the green / amber / red pill agents see when picking a TC.</p>
+        <button type="button" class="tc-avail-opt${currentStatus==='available'?' selected':''}" data-opt="available">
+          <span class="tc-avail-opt-dot"></span>
+          <div><div class="tc-avail-opt-name">Available now</div><div class="tc-avail-opt-sub">Can take new files immediately</div></div>
+        </button>
+        <button type="button" class="tc-avail-opt${currentStatus==='busy_until'?' selected':''}" data-opt="busy_until">
+          <span class="tc-avail-opt-dot"></span>
+          <div><div class="tc-avail-opt-name">Booked till later today</div><div class="tc-avail-opt-sub">Pick when you'll be free</div></div>
+        </button>
+        <div class="tc-avail-time-row" id="tc-avail-time-row" style="display:${currentStatus==='busy_until'?'block':'none'}">
+          <input type="time" id="tc-avail-time-input">
+        </div>
+        <button type="button" class="tc-avail-opt${currentStatus==='off_today'?' selected':''}" data-opt="off_today">
+          <span class="tc-avail-opt-dot"></span>
+          <div><div class="tc-avail-opt-name">Off today</div><div class="tc-avail-opt-sub">No new files until tomorrow</div></div>
+        </button>
+        <div class="tc-avail-err" style="background:#fbeaea;color:#a32d2d;padding:8px 12px;border-radius:6px;font-size:12px;margin-top:10px;display:none" data-tc-avail-err></div>
+        <button type="button" class="tc-avail-save" data-tc-avail-save>Save</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    let selected = currentStatus;
+    const timeRow = overlay.querySelector('#tc-avail-time-row');
+    const timeInput = overlay.querySelector('#tc-avail-time-input');
+    overlay.querySelectorAll('.tc-avail-opt').forEach(btn => {
+      btn.addEventListener('click', () => {
+        overlay.querySelectorAll('.tc-avail-opt').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selected = btn.getAttribute('data-opt');
+        timeRow.style.display = (selected === 'busy_until') ? 'block' : 'none';
+      });
+    });
+    overlay.querySelector('[data-tc-avail-close]').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', e => { if(e.target === overlay) overlay.remove(); });
+
+    overlay.querySelector('[data-tc-avail-save]').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const errEl = overlay.querySelector('[data-tc-avail-err]');
+      errEl.style.display = 'none';
+      let untilIso = null;
+      if(selected === 'busy_until'){
+        const t = timeInput.value;
+        if(!t){ errEl.textContent = 'Pick a time you\'ll be free.'; errEl.style.display = 'block'; return; }
+        const [hh, mm] = t.split(':').map(n => parseInt(n, 10));
+        const d = new Date(); d.setHours(hh, mm, 0, 0);
+        if(d.getTime() <= Date.now()){ errEl.textContent = 'Pick a time later today.'; errEl.style.display = 'block'; return; }
+        untilIso = d.toISOString();
+      }
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        const client = await window.AariAuth.ensureClient();
+        const session = await window.AariAuth.getCurrentSession();
+        const { error } = await client
+          .from('agents')
+          .update({
+            availability_status: selected,
+            availability_until: untilIso,
+            availability_message: null,
+          })
+          .eq('id', session.user.id);
+        if(error) throw error;
+        paintAvailPill(selected, untilIso, null);
+        const pill = document.getElementById('tc-avail-pill');
+        pill.dataset.until = untilIso || '';
+        pill.dataset.message = '';
+        overlay.remove();
+      } catch(err){
+        errEl.textContent = (err && err.message) || 'Save failed. Try again.';
+        errEl.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Save';
+      }
+    });
+  }
+  document.addEventListener('click', e => {
+    const pill = e.target.closest && e.target.closest('#tc-avail-pill');
+    if(!pill) return;
+    openAvailabilityModal();
+  });
+  // Initial load · run after auth resolves
+  if (window.AariAuth && typeof window.AariAuth.getCurrentSession === 'function') {
+    window.AariAuth.getCurrentSession().then(s => { if(s) loadAndRenderAvailability(); });
+  }
+
   function renderFileList(files){
     const host = document.getElementById('mf-list');
     if(!host) return;
