@@ -966,35 +966,49 @@
     // Real data
     loadCalendar();
     loadDeals();
-    loadCloze();
+    loadFollowups();
+    wireFollowupForm();
   }
 
-  // ─── CLOZE → TOP 5 FOLLOW-UPS ──────────────────────────────────────────
-  async function loadCloze() {
+  // ─── FOLLOW-UPS · manual entry (Path A) ────────────────────────────────
+  // Top 5 reads from crm_followups_cache (any source · manual or future Cloze
+  // sync). Manual entry is the working path today; Cloze direct API blocked.
+  let _followupsCache = [];
+
+  async function loadFollowups() {
     if (!window.AariAuth) return;
     try {
       const client = await window.AariAuth.ensureClient();
       const { data: rows, error } = await client
         .from('crm_followups_cache')
-        .select('cloze_contact_id, display_name, email, phone, last_touched_at, temperature, why_text')
-        .order('last_touched_at', { ascending: true, nullsFirst: true })
-        .limit(5);
+        .select('id, cloze_contact_id, display_name, email, phone, last_touched_at, temperature, why_text, source, created_at')
+        .order('created_at', { ascending: false })
+        .limit(20);
 
-      if (error) { console.warn('[briefing] cloze cache load error', error); return; }
-      if (!rows || !rows.length) {
-        // Cache is empty · keep the "Cloze sync pending" empty state
+      if (error) { console.warn('[briefing] followups load error', error); return; }
+      _followupsCache = rows || [];
+      if (!_followupsCache.length) {
+        renderFollowupsEmptyManual();
         return;
       }
-      renderFollowups(rows);
+      renderFollowups(_followupsCache.slice(0, 5));
     } catch (e) {
-      console.warn('[briefing] loadCloze threw', e);
+      console.warn('[briefing] loadFollowups threw', e);
     }
+  }
+
+  function renderFollowupsEmptyManual() {
+    document.getElementById('followups-host').innerHTML =
+      `<div class="empty-state">
+        <div class="empty-title">No follow-ups added yet</div>
+        <div class="empty-sub">Click "+ Add follow-up" above to add the people you need to reach today.</div>
+      </div>`;
   }
 
   function renderFollowups(items) {
     const host = document.getElementById('followups-host');
     host.innerHTML = items.map(it => {
-      const id = it.cloze_contact_id;
+      const id = it.id;
       if (state['fu-skip:' + id]) return '';
       const temp = it.temperature || 'warm';
       const meta = it.why_text || '';
@@ -1006,6 +1020,7 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           ${email ? `<a href="mailto:${esc(email)}?subject=${encodeURIComponent('Following up')}" class="deal-action" style="text-decoration:none;display:inline-flex;align-items:center">Email</a>` : ''}
           <button type="button" class="deal-handled" data-action="skip" data-id="${esc(id)}">Skip today</button>
+          ${it.source === 'manual' ? `<button type="button" class="deal-handled" data-action="delete" data-id="${esc(id)}">Delete</button>` : ''}
         </div>
       </div>`;
     }).join('') || '<div class="empty-state"><div class="empty-title">All caught up for today.</div></div>';
@@ -1016,6 +1031,79 @@
         persist();
         renderFollowups(items);
       });
+    });
+    host.querySelectorAll('[data-action="delete"]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-id');
+        if (!confirm('Delete this follow-up?')) return;
+        try {
+          const client = await window.AariAuth.ensureClient();
+          await client.from('crm_followups_cache').delete().eq('id', id);
+          await loadFollowups();
+        } catch (e) {
+          console.warn('[briefing] delete followup failed', e);
+          alert('Could not delete. Try again.');
+        }
+      });
+    });
+  }
+
+  function wireFollowupForm() {
+    const addBtn = document.getElementById('add-followup-btn');
+    const form = document.getElementById('followup-form');
+    const saveBtn = document.getElementById('fu-save-btn');
+    const cancelBtn = document.getElementById('fu-cancel-btn');
+    const nameEl = document.getElementById('fu-name');
+    const emailEl = document.getElementById('fu-email');
+    const tempEl = document.getElementById('fu-temp');
+    const whyEl = document.getElementById('fu-why');
+
+    if (!addBtn || addBtn._wired) return;
+    addBtn._wired = true;
+
+    function showForm() {
+      form.style.display = 'block';
+      nameEl.focus();
+    }
+    function hideForm() {
+      form.style.display = 'none';
+      nameEl.value = ''; emailEl.value = ''; whyEl.value = ''; tempEl.value = 'warm';
+    }
+
+    addBtn.addEventListener('click', () => {
+      if (form.style.display === 'block') { hideForm(); } else { showForm(); }
+    });
+    cancelBtn.addEventListener('click', hideForm);
+
+    saveBtn.addEventListener('click', async () => {
+      const name = nameEl.value.trim();
+      if (!name) { nameEl.focus(); return; }
+      saveBtn.disabled = true;
+      saveBtn.textContent = 'Saving…';
+      try {
+        const session = await window.AariAuth.getCurrentSession();
+        if (!session) { alert('Sign in first.'); saveBtn.disabled = false; saveBtn.textContent = 'Save follow-up'; return; }
+        const client = await window.AariAuth.ensureClient();
+        const row = {
+          agent_id: session.user.id,
+          source: 'manual',
+          cloze_contact_id: 'manual-' + (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2)),
+          display_name: name,
+          email: emailEl.value.trim() || null,
+          temperature: tempEl.value,
+          why_text: whyEl.value.trim() || null,
+          last_touched_at: null
+        };
+        const { error } = await client.from('crm_followups_cache').insert(row);
+        if (error) throw error;
+        hideForm();
+        await loadFollowups();
+      } catch (e) {
+        console.warn('[briefing] save followup failed', e);
+        alert('Could not save: ' + (e.message || 'unknown'));
+      }
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save follow-up';
     });
   }
 
