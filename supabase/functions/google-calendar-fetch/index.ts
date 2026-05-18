@@ -178,11 +178,27 @@ Deno.serve(async (req) => {
   });
 
   // 4) Drop events the user explicitly declined
+  // 5) Drop events whose title matches the noise list (case-insensitive)
+  // To add more, append a string here and redeploy.
+  const EXCLUDED_EVENT_TITLES = [
+    "sleep",
+  ];
+  function isExcludedTitle(summary: string | undefined): boolean {
+    if (!summary) return false;
+    const lower = summary.toLowerCase();
+    return EXCLUDED_EVENT_TITLES.some(ex => lower.includes(ex));
+  }
+
   const filtered = allEvents.filter(e => {
+    // declined invites
     const att = (e as GoogleEvent & { attendees?: Array<{ self?: boolean; responseStatus?: string }> }).attendees;
-    if (!att) return true;
-    const self = att.find(a => a.self);
-    return !self || self.responseStatus !== "declined";
+    if (att) {
+      const self = att.find(a => a.self);
+      if (self && self.responseStatus === "declined") return false;
+    }
+    // noise titles (Sleep, etc.)
+    if (isExcludedTitle(e.summary)) return false;
+    return true;
   });
 
   const events = filtered.map(e => ({
