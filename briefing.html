@@ -434,6 +434,7 @@
   .tab-pane { display: none; }
   .tab-pane.active { display: block; }
   .pipeline-iframe { width: 100%; height: calc(100vh - 180px); min-height: 600px; border: 1px solid var(--line); border-radius: var(--r-md); background: #fff; }
+  .embedded-section-iframe { width: 100%; height: 720px; border: 1px solid var(--line); border-radius: var(--r-md); background: #fff; }
 
   /* BANNER · OAuth return flash */
   .banner {
@@ -492,9 +493,10 @@
 
 <main class="wrap">
 
-  <!-- TAB NAV · Briefing | Pipeline -->
+  <!-- TAB NAV · Today's Briefing | Weekly Review | Pipeline -->
   <nav class="tab-nav" role="tablist" aria-label="Dashboard sections">
     <button type="button" class="tab-btn active" role="tab" aria-selected="true" data-tab="briefing">Today's Briefing</button>
+    <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="weekly">Weekly Review</button>
     <button type="button" class="tab-btn" role="tab" aria-selected="false" data-tab="pipeline">Pipeline</button>
   </nav>
 
@@ -565,8 +567,24 @@
         <span class="section-eyebrow">Active files</span>
         <div class="section-title">Deals needing attention</div>
       </div>
+      <div id="deals-scope-toggle" style="display:flex;gap:6px">
+        <button type="button" class="tab-btn active" data-scope="mine" style="padding:6px 14px;font-size:11px">My files</button>
+        <button type="button" class="tab-btn" data-scope="all" style="padding:6px 14px;font-size:11px">Brokerage view</button>
+      </div>
     </div>
     <div id="deals-host"></div>
+  </section>
+
+  <!-- AARI REALTY · TODAY'S ACTION LIST (pulled from pipeline.html#today) -->
+  <section class="section">
+    <div class="section-header">
+      <div>
+        <span class="section-eyebrow">Aari Realty</span>
+        <div class="section-title">Today's action list</div>
+      </div>
+      <span class="section-meta">Calls · prospecting · nurture</span>
+    </div>
+    <iframe class="embedded-section-iframe" id="today-actions-iframe" data-src="/pipeline.html#today" title="Today's Action List" loading="lazy"></iframe>
   </section>
 
   <div class="footer-note">
@@ -575,9 +593,14 @@
 
   </div><!-- /tab-briefing -->
 
+  <!-- TAB · WEEKLY REVIEW (pipeline.html deep-linked to its #weekly view) -->
+  <div class="tab-pane" id="tab-weekly" role="tabpanel" aria-hidden="true">
+    <iframe class="pipeline-iframe" id="weekly-iframe" data-src="/pipeline.html#weekly" title="Weekly Review" loading="lazy"></iframe>
+  </div>
+
   <!-- TAB · PIPELINE (Aari Realty CRM, full standalone page in iframe) -->
   <div class="tab-pane" id="tab-pipeline" role="tabpanel" aria-hidden="true">
-    <iframe class="pipeline-iframe" id="pipeline-iframe" data-src="/pipeline.html" title="Aari Realty Pipeline" loading="lazy"></iframe>
+    <iframe class="pipeline-iframe" id="pipeline-iframe" data-src="/pipeline.html#pipeline" title="Aari Realty Pipeline" loading="lazy"></iframe>
   </div>
 
 </main>
@@ -861,16 +884,30 @@
   }
 
   // ─── FILES → DEALS + START HERE ────────────────────────────────────────
+  // Deals scope · 'mine' = files where I'm the agent · 'all' = brokerage-wide
+  let _dealsScope = 'mine';
+  try { _dealsScope = localStorage.getItem('aari_deals_scope') || 'mine'; } catch(_) {}
+  let _authedUserId = null;
+
   async function loadDeals() {
     if (!window.AariAuth) return;
     try {
       const client = await window.AariAuth.ensureClient();
-      const { data: files, error } = await client
+      const session = await window.AariAuth.getCurrentSession();
+      _authedUserId = session?.user?.id || null;
+
+      let q = client
         .from('files')
-        .select('id, property_address, closing_date, priority, priority_reason, status, created_at, updated_at, service_type')
+        .select('id, property_address, closing_date, priority, priority_reason, status, created_at, updated_at, service_type, agent_id')
         .not('status', 'in', '(closed,archived)')
         .order('created_at', { ascending: false })
         .limit(50);
+
+      if (_dealsScope === 'mine' && _authedUserId) {
+        q = q.eq('agent_id', _authedUserId);
+      }
+
+      const { data: files, error } = await q;
 
       if (error) { console.warn('[briefing] files load error', error); return; }
       if (!files || !files.length) return;  // empty state stays
@@ -952,12 +989,18 @@
         p.classList.toggle('active', on);
         p.setAttribute('aria-hidden', on ? 'false' : 'true');
       });
-      // Lazy-load the iframe the first time Pipeline opens
+      // Lazy-load the iframe the first time each iframe tab opens
       if (tabId === 'pipeline') {
         const f = document.getElementById('pipeline-iframe');
-        if (f && !f.getAttribute('src')) {
-          f.setAttribute('src', f.getAttribute('data-src'));
-        }
+        if (f && !f.getAttribute('src')) f.setAttribute('src', f.getAttribute('data-src'));
+      } else if (tabId === 'weekly') {
+        const f = document.getElementById('weekly-iframe');
+        if (f && !f.getAttribute('src')) f.setAttribute('src', f.getAttribute('data-src'));
+      } else if (tabId === 'briefing') {
+        // The embedded Today's Action List iframe also lazy-loads when the
+        // briefing tab is active (default on page load).
+        const a = document.getElementById('today-actions-iframe');
+        if (a && !a.getAttribute('src')) a.setAttribute('src', a.getAttribute('data-src'));
       }
       try { localStorage.setItem(TAB_KEY, tabId); } catch(_) {}
     }
@@ -966,15 +1009,41 @@
       b.addEventListener('click', () => activate(b.getAttribute('data-tab')));
     });
 
-    // Restore last-used tab on load
+    // Restore last-used tab on load · always run activate() so the embedded
+    // Today's Action List iframe lazy-loads even when staying on the default.
     let initial = 'briefing';
     try { initial = localStorage.getItem(TAB_KEY) || 'briefing'; } catch(_) {}
-    if (initial !== 'briefing') activate(initial);
+    activate(initial);
+  }
+
+  // ─── DEALS SCOPE TOGGLE · My files / Brokerage view ────────────────────
+  function wireDealsScopeToggle() {
+    const host = document.getElementById('deals-scope-toggle');
+    if (!host) return;
+    // Reflect saved scope into UI
+    host.querySelectorAll('[data-scope]').forEach(b => {
+      b.classList.toggle('active', b.getAttribute('data-scope') === _dealsScope);
+    });
+    host.querySelectorAll('[data-scope]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const scope = b.getAttribute('data-scope');
+        if (scope === _dealsScope) return;
+        _dealsScope = scope;
+        try { localStorage.setItem('aari_deals_scope', scope); } catch(_) {}
+        host.querySelectorAll('[data-scope]').forEach(x => {
+          x.classList.toggle('active', x.getAttribute('data-scope') === scope);
+        });
+        // Reset to empty state then reload
+        renderDealsEmpty();
+        await loadDeals();
+      });
+    });
   }
 
   // ─── GLOBAL WIRES (work without auth) ──────────────────────────────────
   function wireGlobals() {
     wireTabs();
+    wireDealsScopeToggle();
     // Reload
     document.getElementById('reload-btn').addEventListener('click', () => window.location.reload());
     // Switch view dropdown
