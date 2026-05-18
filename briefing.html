@@ -499,7 +499,7 @@
         <span class="section-eyebrow">Dark contacts</span>
         <div class="section-title">Top 5 follow-ups</div>
       </div>
-      <span class="section-meta">Cloze sync pending</span>
+      <span class="section-meta">Pulled from Cloze · oldest touch first</span>
     </div>
     <div id="followups-host"></div>
   </section>
@@ -947,6 +947,57 @@
     // Real data
     loadCalendar();
     loadDeals();
+    loadCloze();
+  }
+
+  // ─── CLOZE → TOP 5 FOLLOW-UPS ──────────────────────────────────────────
+  async function loadCloze() {
+    if (!window.AariAuth) return;
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { data: rows, error } = await client
+        .from('crm_followups_cache')
+        .select('cloze_contact_id, display_name, email, phone, last_touched_at, temperature, why_text')
+        .order('last_touched_at', { ascending: true, nullsFirst: true })
+        .limit(5);
+
+      if (error) { console.warn('[briefing] cloze cache load error', error); return; }
+      if (!rows || !rows.length) {
+        // Cache is empty · keep the "Cloze sync pending" empty state
+        return;
+      }
+      renderFollowups(rows);
+    } catch (e) {
+      console.warn('[briefing] loadCloze threw', e);
+    }
+  }
+
+  function renderFollowups(items) {
+    const host = document.getElementById('followups-host');
+    host.innerHTML = items.map(it => {
+      const id = it.cloze_contact_id;
+      if (state['fu-skip:' + id]) return '';
+      const temp = it.temperature || 'warm';
+      const meta = it.why_text || '';
+      const email = it.email || '';
+      return `<div class="follow-card" data-id="${esc(id)}">
+        <span class="follow-tag" data-temp="${esc(temp)}">${esc(temp)}</span>
+        <div class="follow-name">${esc(it.display_name)}</div>
+        <div class="follow-meta">${esc(meta)}${email ? ' · ' + esc(email) : ''}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${email ? `<a href="mailto:${esc(email)}?subject=${encodeURIComponent('Following up')}" class="deal-action" style="text-decoration:none;display:inline-flex;align-items:center">Email</a>` : ''}
+          <button type="button" class="deal-handled" data-action="skip" data-id="${esc(id)}">Skip today</button>
+        </div>
+      </div>`;
+    }).join('') || '<div class="empty-state"><div class="empty-title">All caught up for today.</div></div>';
+
+    host.querySelectorAll('[data-action="skip"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state['fu-skip:' + btn.getAttribute('data-id')] = true;
+        persist();
+        renderFollowups(items);
+      });
+    });
   }
 
   if (document.readyState === 'loading') {
