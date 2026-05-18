@@ -579,39 +579,43 @@
 
   // ===== Init =====
   async function init() {
-    // Default-render nav with agent role so menu has items before auth resolves
+    // STEP 1 · Always-rendered chrome (works even when signed out)
     renderSwitchNav('agent');
-
-    // Auth gate
-    if (window.AariAuth) {
-      try {
-        const session = await window.AariAuth.getCurrentSession();
-        if (!session) {
-          // Tell login modal to return to briefing after successful auth.
-          // Without this, the modal bounces brokers to /aari-crm by default.
-          try { sessionStorage.setItem('aari-after-auth', '/briefing.html'); } catch(_) {}
-          if (window.AariLogin) window.AariLogin.open();
-          return;
-        }
-        const profile = await window.AariAuth.getAgentProfile();
-        renderHeaderUser(profile, session.user.email);
-        renderSwitchNav(profile && profile.role);
-      } catch (e) {
-        console.warn('[briefing] auth check failed', e);
-      }
-    }
-
     renderDate();
     handleGoogleOAuthReturn();  // checks ?google_connected / ?google_error in URL
     renderStartHere(EMPTY_START_HERE);
     renderScheduleEmpty();
     renderFollowupsEmpty();
     renderDealsEmpty();
-    wireGlobals();
+    wireGlobals();  // Reload + Where to? dropdown wired NOW
 
-    // Real data · async loaders replace empty states when they resolve
+    // STEP 2 · Auth check · prompts sign-in if no session, but page stays usable either way
+    if (!window.AariAuth) return;
+    let session = null;
+    let profile = null;
+    try {
+      session = await window.AariAuth.getCurrentSession();
+    } catch (e) {
+      console.warn('[briefing] getCurrentSession failed', e);
+    }
+    if (!session) {
+      // Tell login modal to return to briefing after successful auth.
+      // Without this, the modal bounces brokers to /aari-crm by default.
+      try { sessionStorage.setItem('aari-after-auth', '/briefing.html'); } catch(_) {}
+      if (window.AariLogin) window.AariLogin.open();
+      return;  // page is interactive but data loaders skip until signed in
+    }
+    try {
+      profile = await window.AariAuth.getAgentProfile();
+      renderHeaderUser(profile, session.user.email);
+      renderSwitchNav(profile && profile.role);
+    } catch (e) {
+      console.warn('[briefing] profile load failed', e);
+    }
+
+    // STEP 3 · Real data loaders · only when signed in
     tryLoadRealCalendar();
-    tryLoadRealDeals();   // also computes Start Here from the #1 ranked deal
+    tryLoadRealDeals();
     // tryLoadRealFollowups() · gated on Cloze infra (not yet built)
   }
 
