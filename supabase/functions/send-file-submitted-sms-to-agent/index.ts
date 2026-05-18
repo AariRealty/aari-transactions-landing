@@ -74,8 +74,8 @@ Deno.serve(async (req) => {
     : "TC will start tomorrow by 10 AM (submitted after our 2 PM cutoff).";
 
   const message =
-    `Aari · File ${fileShortId} (${propertyShort}) is in · routing to ${tcName}. ` +
-    `${startCommitment} We'll text you when they accept. Reply STOP to opt out.`;
+    `Aari · File ${fileShortId} (${propertyShort}) is in · routing to ${tcName}.\n\n` +
+    `${startCommitment} We'll text you when they accept.\n\n`;
 
   const result = await sendQuoSms({
     to: agent.phone,

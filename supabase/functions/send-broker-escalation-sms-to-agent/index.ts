@@ -49,8 +49,8 @@ Deno.serve(async (req) => {
   const fileShortId = String(f.id).slice(0, 4).toUpperCase();
   const propertyShort = (f.property_address || "your file").split(",")[0].trim();
   const message =
-    `Aari · File ${fileShortId} (${propertyShort}) is going directly to the broker — ` +
-    `Marlenyi is taking it personally. No further action needed from you.`;
+    `Aari · File ${fileShortId} (${propertyShort}) is going directly to the broker.\n\n` +
+    `Marlenyi is taking it personally.\n\nNo further action needed from you.\n\n`;
 
   const result = await sendQuoSms({
     to: agent.phone,

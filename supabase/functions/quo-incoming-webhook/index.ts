@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
     await admin.from("agents").update({ sms_opt_in: false }).eq("id", tc.id);
     await sendQuoSms({
       to: fromPhone,
-      body: "You're unsubscribed from Aari SMS. You'll still get email. Reply START to re-enable texts.",
+      body: "You're unsubscribed from Aari SMS.\n\nYou'll still get email.\n\nReply START to re-enable texts.\n\n",
       sourceContext: { tc_id: tc.id, reason: "opt_out_confirm" },
     });
     return j(200, { ok: true, action: "opted_out" });
@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
   if (!pendingFile) {
     await sendQuoSms({
       to: fromPhone,
-      body: "Aari · No pending files to accept right now. If you meant to act on a specific file, do it from the cockpit.",
+      body: "Aari · No pending files to accept right now.\n\nIf you meant to act on a specific file, do it from the cockpit.\n\n",
       sourceContext: { tc_id: tc.id, reason: "no_pending_file" },
     });
     return j(200, { ok: true, action: "no_pending" });
@@ -152,7 +152,7 @@ Deno.serve(async (req) => {
     // Confirmation back to the TC
     await sendQuoSms({
       to: fromPhone,
-      body: `Got it. File ${fileShortId} is yours. Default start: ${startStr}. Adjust in your cockpit if needed.`,
+      body: `Got it. File ${fileShortId} is yours.\n\nDefault start: ${startStr}.\n\nAdjust in your cockpit if needed.\n\n`,
       sourceContext: { tc_id: tc.id, file_id: pendingFile.id, reason: "accept_confirm" },
     });
     return j(200, { ok: true, action: "accepted", file_id: pendingFile.id });
@@ -204,7 +204,7 @@ Deno.serve(async (req) => {
 
     await sendQuoSms({
       to: fromPhone,
-      body: `Okay — file ${fileShortId} routed to another TC. Thanks for the fast reply.`,
+      body: `Okay — file ${fileShortId} routed to another TC.\n\nThanks for the fast reply.\n\n`,
       sourceContext: { tc_id: tc.id, file_id: pendingFile.id, reason: "decline_confirm" },
     });
     return j(200, { ok: true, action: "declined", file_id: pendingFile.id });
@@ -213,7 +213,7 @@ Deno.serve(async (req) => {
   // ── UNCLEAR REPLY ────────────────────────────────────────────────────────
   await sendQuoSms({
     to: fromPhone,
-    body: `Didn't catch that — reply Y to accept file ${fileShortId} or N to pass.`,
+    body: `Didn't catch that.\n\nReply Y to accept file ${fileShortId} or N to pass.\n\n`,
     sourceContext: { tc_id: tc.id, file_id: pendingFile.id, reason: "unclear_reply" },
   });
   return j(200, { ok: true, action: "unclear", file_id: pendingFile.id });

@@ -89,8 +89,8 @@ Deno.serve(async (req) => {
   const expires = isEmergency ? "Expires in 15 min — respond fast." : "Expires in 30 min.";
 
   const message =
-    `${prefix}New file ${fileShortId} from ${agentName} · ${propertyShort}${price ? " · " + price : ""} · ${serviceLabel}. ` +
-    `Reply Y to accept, N to pass. ${expires}`;
+    `${prefix}New file ${fileShortId} from ${agentName} · ${propertyShort}${price ? " · " + price : ""} · ${serviceLabel}.\n\n` +
+    `Reply Y to accept, N to pass.\n\n${expires}\n\n`;
 
   const result = await sendQuoSms({
     to: tc.phone,
