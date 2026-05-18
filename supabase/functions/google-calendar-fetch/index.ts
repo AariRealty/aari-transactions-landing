@@ -92,34 +92,77 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Fetch today's events · America/New_York timezone
+  // Fetch today's events · ACROSS ALL CALENDARS the user has read access to
   const tz = "America/New_York";
   const now = new Date();
-  // Compute start-of-day and end-of-day in ET, then convert to ISO UTC
   const startOfDayET = dayStartInTZ(now, tz);
   const endOfDayET = new Date(startOfDayET.getTime() + 24 * 60 * 60 * 1000 - 1);
 
-  const calUrl = new URL("https://www.googleapis.com/calendar/v3/calendars/primary/events");
-  calUrl.searchParams.set("timeMin", startOfDayET.toISOString());
-  calUrl.searchParams.set("timeMax", endOfDayET.toISOString());
-  calUrl.searchParams.set("singleEvents", "true");
-  calUrl.searchParams.set("orderBy", "startTime");
-  calUrl.searchParams.set("maxResults", "25");
-
-  const calResp = await fetch(calUrl.toString(), {
-    headers: { "Authorization": "Bearer " + accessToken },
-  });
-  if (!calResp.ok) {
-    const errBody = await calResp.text().catch(() => "");
-    console.error("[google-calendar-fetch] calendar API error:", errBody);
-    if (calResp.status === 401 || calResp.status === 403) {
+  // 1) List every calendar the user has access to (primary + work + shared + etc.)
+  const listResp = await fetch(
+    "https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader",
+    { headers: { "Authorization": "Bearer " + accessToken } }
+  );
+  if (!listResp.ok) {
+    const errBody = await listResp.text().catch(() => "");
+    console.error("[google-calendar-fetch] calendarList error:", errBody);
+    if (listResp.status === 401 || listResp.status === 403) {
       return j(200, { ok: true, connected: false, reason: "calendar_auth_failed" });
     }
-    return j(500, { ok: false, error: "calendar_api_error" });
+    return j(500, { ok: false, error: "calendar_list_error" });
   }
+  const listJson = await listResp.json() as { items?: GoogleCalendarListEntry[] };
+  // Respect Google Calendar's per-calendar `selected` flag · skip calendars
+  // the user toggled off in their Google Calendar sidebar.
+  const calendars = (listJson.items ?? []).filter(c => !c.deleted && c.selected !== false);
 
-  const cal = await calResp.json() as { items?: GoogleEvent[] };
-  const events = (cal.items ?? []).map(e => ({
+  // 2) Pull today's events from each calendar in parallel
+  const allEvents: Array<GoogleEvent & { _cal?: string }> = [];
+  const calendarErrors: string[] = [];
+  await Promise.all(calendars.map(async (cal) => {
+    try {
+      const eventsUrl = new URL(
+        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id ?? "")}/events`
+      );
+      eventsUrl.searchParams.set("timeMin", startOfDayET.toISOString());
+      eventsUrl.searchParams.set("timeMax", endOfDayET.toISOString());
+      eventsUrl.searchParams.set("singleEvents", "true");
+      eventsUrl.searchParams.set("orderBy", "startTime");
+      eventsUrl.searchParams.set("maxResults", "50");
+
+      const evResp = await fetch(eventsUrl.toString(), {
+        headers: { "Authorization": "Bearer " + accessToken },
+      });
+      if (!evResp.ok) {
+        const body = await evResp.text().catch(() => "");
+        calendarErrors.push(`${cal.summary}: ${evResp.status} ${body.slice(0, 100)}`);
+        return;
+      }
+      const evJson = await evResp.json() as { items?: GoogleEvent[] };
+      (evJson.items ?? []).forEach(e => {
+        allEvents.push({ ...e, _cal: cal.summary });
+      });
+    } catch (e) {
+      calendarErrors.push(`${cal.summary}: threw ${String(e)}`);
+    }
+  }));
+
+  // 3) Sort by start time (chronological)
+  allEvents.sort((a, b) => {
+    const aTime = a.start?.dateTime ?? a.start?.date ?? "";
+    const bTime = b.start?.dateTime ?? b.start?.date ?? "";
+    return aTime.localeCompare(bTime);
+  });
+
+  // 4) Drop events the user explicitly declined
+  const filtered = allEvents.filter(e => {
+    const att = (e as GoogleEvent & { attendees?: Array<{ self?: boolean; responseStatus?: string }> }).attendees;
+    if (!att) return true;
+    const self = att.find(a => a.self);
+    return !self || self.responseStatus !== "declined";
+  });
+
+  const events = filtered.map(e => ({
     id: e.id,
     summary: e.summary ?? "(No title)",
     start: e.start?.dateTime ?? e.start?.date ?? null,
@@ -128,6 +171,7 @@ Deno.serve(async (req) => {
     all_day: !!(e.start?.date && !e.start?.dateTime),
     status: e.status ?? "confirmed",
     html_link: e.htmlLink ?? null,
+    calendar: e._cal ?? null,
   }));
 
   return j(200, {
@@ -135,8 +179,18 @@ Deno.serve(async (req) => {
     connected: true,
     email: row.google_email,
     events,
+    calendar_count: calendars.length,
+    calendar_errors: calendarErrors.length ? calendarErrors : undefined,
   });
 });
+
+interface GoogleCalendarListEntry {
+  id?: string;
+  summary?: string;
+  deleted?: boolean;
+  selected?: boolean;
+  accessRole?: string;
+}
 
 interface GoogleEvent {
   id: string;
