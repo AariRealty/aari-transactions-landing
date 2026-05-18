@@ -601,6 +601,7 @@
     }
 
     renderDate();
+    handleGoogleOAuthReturn();  // checks ?google_connected / ?google_error in URL
     renderStartHere(EMPTY_START_HERE);
     renderScheduleEmpty();
     renderFollowupsEmpty();
@@ -616,10 +617,65 @@
   // ===== Empty states · render before async loaders resolve =====
   function renderScheduleEmpty() {
     const host = document.getElementById('schedule-grid');
-    host.innerHTML = `<div style="padding:24px 20px;text-align:center;font-size:13px;color:var(--muted);line-height:1.6">
-      <div style="margin-bottom:8px;font-weight:500;color:var(--ink)">No calendar connected yet</div>
-      <a href="/portal.html#account" style="font-size:12px;color:var(--gold);font-weight:600;text-decoration:underline">Connect Google Calendar →</a>
+    host.innerHTML = `<div style="padding:32px 20px;text-align:center;font-size:13px;color:var(--muted);line-height:1.6">
+      <div style="margin-bottom:14px;font-weight:500;color:var(--ink);font-size:14px">No calendar connected yet</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Auto-block your day around appointments.</div>
+      <button type="button" id="connect-google-cal" style="background:var(--ink);color:#fff;border:1px solid var(--ink);padding:9px 18px;border-radius:var(--r-sm);font-size:12px;font-weight:600;letter-spacing:0.3px;cursor:pointer;font-family:var(--sans)">Connect Google Calendar</button>
     </div>`;
+    wireConnectGoogleCal();
+  }
+
+  function wireConnectGoogleCal() {
+    const btn = document.getElementById('connect-google-cal');
+    if (!btn || btn._wired) return;
+    btn._wired = true;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = 'Opening Google…';
+      try {
+        const client = await window.AariAuth.ensureClient();
+        const { data, error } = await client.functions.invoke('google-oauth-init', { body: {} });
+        if (error) throw new Error(error.message || 'init_failed');
+        if (!data || !data.url) throw new Error('no_url');
+        window.location.href = data.url;
+      } catch (e) {
+        console.warn('[briefing] google-oauth-init failed', e);
+        btn.disabled = false;
+        btn.textContent = 'Connect Google Calendar';
+        alert('Could not start Google sign-in. Check that the google-oauth-init function is deployed and try again.');
+      }
+    });
+  }
+
+  // Handle post-OAuth redirect · Google sends user back with ?google_connected=1 or ?google_error=...
+  function handleGoogleOAuthReturn() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('google_connected')) {
+      // Strip the query param so reloads don't re-trigger
+      params.delete('google_connected');
+      const clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+      window.history.replaceState({}, '', clean);
+      // Briefly flash a confirmation banner
+      flashBanner('Google Calendar connected. Loading today\'s events…', 'success');
+    }
+    if (params.has('google_error')) {
+      const errCode = params.get('google_error');
+      params.delete('google_error');
+      const clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+      window.history.replaceState({}, '', clean);
+      flashBanner('Google Calendar connection failed: ' + errCode + '. Try again.', 'error');
+    }
+  }
+
+  function flashBanner(msg, kind) {
+    const b = document.createElement('div');
+    b.style.cssText = 'position:fixed;top:18px;left:50%;transform:translateX(-50%);background:' +
+      (kind === 'success' ? 'var(--ink)' : 'var(--red)') +
+      ';color:#fff;padding:10px 18px;border-radius:var(--r-sm);font-family:var(--sans);font-size:13px;font-weight:500;z-index:200;box-shadow:var(--shadow-md)';
+    b.textContent = msg;
+    document.body.appendChild(b);
+    setTimeout(() => { b.style.opacity = '0'; b.style.transition = 'opacity 0.3s'; }, 4000);
+    setTimeout(() => b.remove(), 4500);
   }
   function renderFollowupsEmpty() {
     const host = document.getElementById('followups-list');

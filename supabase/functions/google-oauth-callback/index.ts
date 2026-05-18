@@ -19,7 +19,7 @@ const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_OAUTH_CLIENT_ID")!;
 const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_OAUTH_CLIENT_SECRET")!;
 const SUPABASE_PROJECT_REF = "fnlrgmuvtgwzjsihqxcn";
 const REDIRECT_URI = `https://${SUPABASE_PROJECT_REF}.supabase.co/functions/v1/google-oauth-callback`;
-const PORTAL_URL = Deno.env.get("AARI_PORTAL_URL") ?? "https://aaritransactions.com/portal.html";
+const PORTAL_URL = Deno.env.get("AARI_PORTAL_URL") ?? "https://aaritransactions.com/briefing.html";
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);
