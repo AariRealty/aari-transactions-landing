@@ -112,9 +112,32 @@ Deno.serve(async (req) => {
     return j(500, { ok: false, error: "calendar_list_error" });
   }
   const listJson = await listResp.json() as { items?: GoogleCalendarListEntry[] };
+
+  // Calendar exclusion list · noise calendars we don't want cluttering the briefing.
+  // Case-insensitive substring match against the calendar name.
+  // To add more, just append a string here and redeploy.
+  const EXCLUDED_CALENDAR_NAMES = [
+    "miami",          // Miami MLS
+    "mls",            // any other MLS subscriptions
+    "airbnb",         // Airbnb auto-generated calendar
+    "birthday",       // Google Contacts birthday calendar
+    "birthdays",
+  ];
+
+  function isExcluded(name: string | undefined): boolean {
+    if (!name) return false;
+    const lower = name.toLowerCase();
+    return EXCLUDED_CALENDAR_NAMES.some(ex => lower.includes(ex));
+  }
+
   // Respect Google Calendar's per-calendar `selected` flag · skip calendars
   // the user toggled off in their Google Calendar sidebar.
-  const calendars = (listJson.items ?? []).filter(c => !c.deleted && c.selected !== false);
+  // Also skip the broker's noise calendars (Miami MLS / Airbnb / Birthdays / Holidays).
+  const calendars = (listJson.items ?? []).filter(c =>
+    !c.deleted
+    && c.selected !== false
+    && !isExcluded(c.summary)
+  );
 
   // 2) Pull today's events from each calendar in parallel
   const allEvents: Array<GoogleEvent & { _cal?: string }> = [];
