@@ -230,6 +230,16 @@
   .closeout-timer { font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--sage); }
   .closeout-timer[data-state="overdue"] { color: #f0e3dd; }
 
+  /* YESTERDAY · continuity strip · top of briefing */
+  .yesterday-strip { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 16px; background: var(--surface-soft); border: 1px solid var(--line); border-radius: var(--r-sm); margin-bottom: 28px; font-family: var(--sans); }
+  .yesterday-strip[data-state="strong"] { background: var(--sage-soft); border-color: var(--sage); }
+  .yesterday-strip[data-state="partial"] { background: var(--pastel-cream); border-color: #d9c89a; }
+  .yesterday-strip[data-state="dropped"] { background: var(--pastel-blush); border-color: #d9b3a3; }
+  .yesterday-label { font-size: 10px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); }
+  .yesterday-msg { font-size: 13px; font-weight: 500; color: var(--ink); }
+  .yesterday-dismiss { background: transparent; border: none; color: var(--muted); font-size: 14px; cursor: pointer; padding: 4px 8px; border-radius: 4px; }
+  .yesterday-dismiss:hover { background: rgba(0,0,0,0.05); color: var(--ink); }
+
   /* SCHEDULE */
   .grid-card {
     background: #fff;
@@ -534,6 +544,15 @@
 
   <!-- TAB · BRIEFING -->
   <div class="tab-pane active" id="tab-briefing" role="tabpanel">
+
+  <!-- YESTERDAY · continuity strip · hidden if not relevant -->
+  <div id="yesterday-strip" class="yesterday-strip" style="display:none">
+    <div>
+      <div class="yesterday-label">Yesterday</div>
+      <div class="yesterday-msg" id="yesterday-msg">—</div>
+    </div>
+    <button type="button" class="yesterday-dismiss" id="yesterday-dismiss" title="Dismiss">×</button>
+  </div>
 
   <div class="title-block">
     <div>
@@ -1204,6 +1223,53 @@
     setInterval(updateCloseoutTimer, 30 * 1000);
   }
 
+  // ─── YESTERDAY · continuity strip · awareness only, no per-item carryover ────
+  function renderYesterdayStrip() {
+    const strip = document.getElementById('yesterday-strip');
+    if (!strip) return;
+
+    // Dismissed for today? Hide.
+    const todayKey = new Date().toDateString();
+    try {
+      if (localStorage.getItem('aari_yesterday_dismissed') === todayKey) return;
+    } catch(_) {}
+
+    // Read yesterday's closeout state
+    const yest = new Date();
+    yest.setDate(yest.getDate() - 1);
+    const yestKey = 'aari_closeout_' + yest.toDateString();
+    let yestState = {};
+    try { yestState = JSON.parse(localStorage.getItem(yestKey) || '{}'); } catch(_) {}
+
+    const total = CLOSEOUT_SECTIONS.length;
+    const done = CLOSEOUT_SECTIONS.filter(x => yestState[x.id]).length;
+
+    // If we have no record of yesterday (first day, or yesterday wasn't a work day),
+    // skip the strip entirely · don't fake a fresh-start message.
+    if (Object.keys(yestState).length === 0) return;
+
+    const undone = CLOSEOUT_SECTIONS.filter(x => !yestState[x.id]);
+    const msgEl = document.getElementById('yesterday-msg');
+
+    if (done === total) {
+      strip.setAttribute('data-state', 'strong');
+      msgEl.textContent = 'Closed out clean. ' + total + ' of ' + total + ' complete.';
+    } else if (done === 0) {
+      strip.setAttribute('data-state', 'dropped');
+      msgEl.textContent = 'Yesterday slipped. Fresh start today · no carryover.';
+    } else {
+      strip.setAttribute('data-state', 'partial');
+      const labels = undone.map(x => x.label.split(' — ')[0]).join(', ');
+      msgEl.textContent = done + ' of ' + total + ' complete. Unfinished: ' + labels + '.';
+    }
+    strip.style.display = 'flex';
+
+    document.getElementById('yesterday-dismiss').addEventListener('click', () => {
+      try { localStorage.setItem('aari_yesterday_dismissed', todayKey); } catch(_) {}
+      strip.style.display = 'none';
+    });
+  }
+
   // ─── GLOBAL WIRES (work without auth) ──────────────────────────────────
   function wireGlobals() {
     wireTabs();
@@ -1257,6 +1323,7 @@
     renderNav('agent');
     renderDate();
     wireGlobals();
+    renderYesterdayStrip();  // awareness layer · how you closed out yesterday
     handleOAuthReturn();
     renderFollowupsEmpty();
 
