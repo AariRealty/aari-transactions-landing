@@ -13861,18 +13861,10 @@ function _hideChromeInIframe(){
 }
 try{_hideChromeInIframe();}catch(_){}
 
-// SLIM MODE · for the embedded Today's Action List section in briefing.
-// Hides hub-dashboard (stat cards) + main-tabs entirely. Only the active
-// view (e.g. #view-today) renders. Triggered by ?slim=1 in the URL.
-// Also reports content height to the parent frame so the iframe auto-sizes
-// to fit the full content (no internal scroll · parent page scrolls instead).
-function _initSlimMode(){
-  const params = new URLSearchParams(location.search);
-  if(params.get('slim')!=='1')return;
-  // Frame identifier · briefing.html uses this to route postMessage back to
-  // the correct iframe element. Default to 'today-actions' for back-compat.
-  const frameId = params.get('frame') || 'today-actions';
-
+// Shared height-reporter · used by slim mode AND autosize mode.
+// Posts the document scroll height to the parent so the iframe can grow to
+// fit · no internal scroll, only the parent page scrolls.
+function _setupAutoHeightReporting(frameId){
   function sendHeight(){
     try {
       const h = Math.max(
@@ -13884,19 +13876,9 @@ function _initSlimMode(){
       window.parent.postMessage({ type: 'aari-iframe-height', frame: frameId, height: h }, '*');
     } catch(_) {}
   }
-
-  function apply(){
-    const hub = document.getElementById('hub-dashboard');
-    const tabs = document.getElementById('main-tabs');
-    if(hub) hub.style.display='none';
-    if(tabs) tabs.style.display='none';
-    document.body.style.paddingTop='0';
-    document.body.style.margin='0';
-    document.documentElement.style.overflow='hidden';  // no internal scrollbar
+  function attach(){
+    document.documentElement.style.overflow='hidden';
     document.body.style.overflow='hidden';
-
-    // Send height now, on resize, on mutation, and at intervals
-    // (renderTodayView is async; content keeps changing for a few seconds)
     sendHeight();
     if (typeof ResizeObserver !== 'undefined') {
       try { new ResizeObserver(sendHeight).observe(document.body); } catch(_) {}
@@ -13905,17 +13887,53 @@ function _initSlimMode(){
       try { new MutationObserver(sendHeight).observe(document.body, { childList: true, subtree: true, attributes: true }); } catch(_) {}
     }
     window.addEventListener('resize', sendHeight);
-    // Catch late-rendering content from renderTodayView async calls
+    // Catch late renders (async views like renderTodayView, renderPipeline)
     [200, 600, 1500, 3000, 6000].forEach(ms => setTimeout(sendHeight, ms));
   }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',attach);
+  }else{
+    setTimeout(attach,0);
+  }
+}
 
+// SLIM MODE · for the embedded Today's Action List section in briefing.
+// Hides hub-dashboard (stat cards) + main-tabs entirely. Only the active
+// view (e.g. #view-today) renders. Also auto-resizes height. Triggered by
+// ?slim=1 in the URL.
+function _initSlimMode(){
+  const params = new URLSearchParams(location.search);
+  if(params.get('slim')!=='1')return;
+  const frameId = params.get('frame') || 'today-actions';
+
+  function apply(){
+    const hub = document.getElementById('hub-dashboard');
+    const tabs = document.getElementById('main-tabs');
+    if(hub) hub.style.display='none';
+    if(tabs) tabs.style.display='none';
+    document.body.style.paddingTop='0';
+    document.body.style.margin='0';
+  }
   if(document.readyState==='loading'){
     document.addEventListener('DOMContentLoaded',apply);
   }else{
     setTimeout(apply,0);
   }
+  _setupAutoHeightReporting(frameId);
 }
 try{_initSlimMode();}catch(_){}
+
+// AUTOSIZE MODE · for the briefing's Pipeline tab. KEEPS stat cards and
+// internal tab nav, just removes the internal scroll by growing the iframe
+// to fit. Triggered by ?autosize=1 in the URL.
+function _initAutoSize(){
+  const params = new URLSearchParams(location.search);
+  if(params.get('autosize')!=='1')return;
+  if(params.get('slim')==='1')return;  // slim mode already handles autosize
+  const frameId = params.get('frame') || 'pipeline';
+  _setupAutoHeightReporting(frameId);
+}
+try{_initAutoSize();}catch(_){}
 
 function switchTab(tab,btn){
   currentTab=tab;
