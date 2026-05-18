@@ -52,41 +52,79 @@ Deno.serve(async (req) => {
     return j(500, { ok: false, error: "Could not resolve broker agent_id. Set BROKER_AGENT_ID secret or have a row in agents with role='broker'." });
   }
 
-  // ---- Pull contacts from Cloze ------------------------------------------
-  // Cloze REST API · https://api.cloze.com/v1
-  // We use the people/list endpoint with the api_key as a query param.
-  // This is the most commonly-supported auth pattern across Cloze API versions.
+  // ---- Probe Cloze API · find the right endpoint ------------------------
+  // Cloze's REST API endpoint paths vary by docs version. We probe a list of
+  // likely candidates, log status of each, and use the first one that returns
+  // an array of contacts.
   const clozeBase = "https://api.cloze.com/v1";
-  const clozeUrl = `${clozeBase}/profiles/find?api_key=${encodeURIComponent(CLOZE_API_KEY)}&segment=people&max=100&sortby=last_event`;
+  const keyParam = `api_key=${encodeURIComponent(CLOZE_API_KEY)}`;
 
-  let clozeResp: Response;
-  try {
-    clozeResp = await fetch(clozeUrl, {
-      headers: { "Accept": "application/json" },
+  // Diagnostic mode · if ?diag=1, try every candidate and return summary
+  const url = new URL(req.url);
+  const isDiag = url.searchParams.get("diag") === "1";
+
+  const candidates = [
+    { name: "users/me",            method: "GET",  path: `/users/me?${keyParam}` },
+    { name: "profiles GET",        method: "GET",  path: `/profiles?${keyParam}&max=10` },
+    { name: "profiles/list GET",   method: "GET",  path: `/profiles/list?${keyParam}&max=10` },
+    { name: "profiles/list POST",  method: "POST", path: `/profiles/list?${keyParam}`, body: { max: 10 } },
+    { name: "people GET",          method: "GET",  path: `/people?${keyParam}&max=10` },
+    { name: "people/list GET",     method: "GET",  path: `/people/list?${keyParam}&max=10` },
+    { name: "people/list POST",    method: "POST", path: `/people/list?${keyParam}`, body: { max: 10 } },
+    { name: "segments/list GET",   method: "GET",  path: `/segments/list?${keyParam}` },
+  ];
+
+  const probeResults: Array<Record<string, unknown>> = [];
+  let workingResponse: { name: string; data: Record<string, unknown> } | null = null;
+
+  for (const c of candidates) {
+    try {
+      const init: RequestInit = {
+        method: c.method,
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      };
+      if (c.body) init.body = JSON.stringify(c.body);
+      const resp = await fetch(clozeBase + c.path, init);
+      const txt = await resp.text();
+      let parsed: unknown = null;
+      try { parsed = JSON.parse(txt); } catch {}
+      const summary = {
+        endpoint: c.name,
+        status: resp.status,
+        ok: resp.ok,
+        keys: parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          ? Object.keys(parsed as Record<string, unknown>).slice(0, 10)
+          : (Array.isArray(parsed) ? ["(array length " + parsed.length + ")"] : []),
+        sample: txt.slice(0, 200),
+      };
+      probeResults.push(summary);
+      if (resp.ok && parsed && !workingResponse && c.name !== "users/me") {
+        const arr = extractContactArray(parsed);
+        if (arr && arr.length >= 0) {
+          workingResponse = { name: c.name, data: parsed as Record<string, unknown> };
+        }
+      }
+    } catch (e) {
+      probeResults.push({ endpoint: c.name, error: String(e) });
+    }
+  }
+
+  if (isDiag || !workingResponse) {
+    return j(200, {
+      ok: false,
+      mode: "diagnostic",
+      message: workingResponse
+        ? "Found working endpoint · " + workingResponse.name
+        : "No working contact-list endpoint found. Check the probe results below and report back.",
+      working: workingResponse ? workingResponse.name : null,
+      probes: probeResults,
     });
-  } catch (e) {
-    console.error("[cloze-sync] network error", e);
-    return j(502, { ok: false, error: "cloze_network_error", detail: String(e) });
   }
 
-  if (!clozeResp.ok) {
-    const body = await clozeResp.text().catch(() => "");
-    console.error("[cloze-sync] Cloze API error", clozeResp.status, body);
-    return j(502, { ok: false, error: "cloze_api_error", status: clozeResp.status, body: body.slice(0, 500) });
-  }
+  const contacts: ClozeContact[] = extractContactArray(workingResponse.data) || [];
 
-  const clozeJson = await clozeResp.json().catch(() => null);
-  if (!clozeJson) {
-    return j(502, { ok: false, error: "cloze_parse_error" });
-  }
-
-  // Cloze returns shape: { profiles: [...] } OR { items: [...] } depending on
-  // endpoint. We try both for resilience.
-  const contacts: ClozeContact[] = (clozeJson.profiles || clozeJson.items || clozeJson.results || []) as ClozeContact[];
-
-  if (!Array.isArray(contacts)) {
-    console.error("[cloze-sync] unexpected Cloze response shape", Object.keys(clozeJson));
-    return j(502, { ok: false, error: "cloze_unexpected_shape", keys: Object.keys(clozeJson) });
+  if (!Array.isArray(contacts) || contacts.length === 0) {
+    return j(200, { ok: true, fetched: 0, inserted: 0, agent_id: agentId, note: "Endpoint worked but returned 0 contacts." });
   }
 
   // ---- Transform + upsert into cache ------------------------------------
@@ -143,6 +181,18 @@ interface ClozeContact {
   segments?: string[];
   tags?: string[];
   [k: string]: unknown;
+}
+
+function extractContactArray(obj: unknown): ClozeContact[] | null {
+  if (Array.isArray(obj)) return obj as ClozeContact[];
+  if (!obj || typeof obj !== "object") return null;
+  const o = obj as Record<string, unknown>;
+  // Common envelope keys Cloze might use
+  const candidateKeys = ["profiles", "people", "items", "results", "data", "list", "contacts"];
+  for (const k of candidateKeys) {
+    if (Array.isArray(o[k])) return o[k] as ClozeContact[];
+  }
+  return null;
 }
 
 function transformContact(c: ClozeContact, agentId: string, now: string) {
