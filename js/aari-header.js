@@ -168,10 +168,9 @@
   function renderNavItems(role) {
     var box = document.getElementById('aari-switch-items');
     if (!box) return;
-    var items = NAV.filter(function (n) {
-      return !n.roles || n.roles.indexOf(role) > -1;
-    });
-    box.innerHTML = items.map(function (n) {
+    // Show all nav items · destination pages enforce auth. The role chip on
+    // each item still communicates who the view is intended for.
+    box.innerHTML = NAV.map(function (n) {
       var active = n.id === currentView ? ' active' : '';
       var chip = n.chip ? '<span class="nav-chip">' + escapeHtml(n.chip) + '</span>' : '';
       return '<a href="' + n.href + '" role="menuitem" class="' + active.trim() + '"><span>' + escapeHtml(n.label) + '</span>' + chip + '</a>';
