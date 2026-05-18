@@ -26,10 +26,11 @@
   // roles[] is a whitelist. If omitted, all roles see it.
   // Three roles only: broker, tc, agent. No person-named pseudo-roles.
   var NAV = [
-    { id: 'broker-cockpit',  label: "Broker Cockpit", href: '/broker-cockpit.html', roles: ['broker'] },
-    { id: 'client-crm',      label: "Client CRM",     href: '/aari-crm',            roles: ['broker', 'tc'] },
-    { id: 'tc-cockpit',      label: "TC Cockpit",     href: '/tc-cockpit.html',     roles: ['broker', 'tc'] },
-    { id: 'portal',          label: "Agent Portal",   href: '/portal',              roles: ['broker', 'tc', 'agent'] }
+    { id: 'briefing',        label: "Start my day",  href: '/briefing.html',       roles: ['broker', 'tc', 'agent'], chip: 'ALL' },
+    { id: 'broker-cockpit',  label: "Run the team",  href: '/broker-cockpit.html', roles: ['broker'],                chip: 'BROKER' },
+    { id: 'client-crm',      label: "Track clients", href: '/aari-crm',            roles: ['broker', 'tc'],          chip: 'BROKER · TC' },
+    { id: 'tc-cockpit',      label: "Work the files",href: '/tc-cockpit.html',     roles: ['broker', 'tc'],          chip: 'TC' },
+    { id: 'portal',          label: "Submit a file", href: '/portal',              roles: ['broker', 'tc', 'agent'], chip: 'AGENT' }
   ];
 
   // ── CSS (injected once) ───────────────────────────────────────────────
@@ -56,10 +57,11 @@
     '.aari-hdr-menu{position:absolute;top:calc(100% + 6px);background:#fff;border:1px solid #e8e8e6;border-radius:8px;padding:8px;width:240px;box-shadow:0 4px 16px rgba(0,0,0,.10);display:none;z-index:60}',
     '.aari-hdr-menu.open{display:block}',
     '.aari-hdr-menu .hdr-label{padding:8px 12px;font-size:10px;color:#6b6760;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;border-bottom:1px solid #e8e8e6;margin-bottom:4px}',
-    '.aari-hdr-menu a{display:block;padding:9px 12px;font-size:13px;color:#0f0f0f;text-decoration:none;border-radius:5px;cursor:pointer;font-weight:500;line-height:1.3}',
+    '.aari-hdr-menu a{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;font-size:13px;color:#0f0f0f;text-decoration:none;border-radius:5px;cursor:pointer;font-weight:500;line-height:1.3}',
     '.aari-hdr-menu a:hover{background:#f7f5ee}',
     '.aari-hdr-menu a.active{background:#faf6ec;font-weight:600}',
-    '.aari-hdr-menu a.active::after{content:"●";float:right;font-size:11px;color:#0f0f0f;line-height:1.3}',
+    '.aari-hdr-menu .nav-chip{font-family:"Inter",sans-serif;font-size:9px;font-weight:600;letter-spacing:.6px;padding:2px 6px;background:#f0e6d2;color:#6b4a18;border-radius:3px;white-space:nowrap;line-height:1.4}',
+    '.aari-hdr-menu a.active .nav-chip{background:#0f0f0f;color:#fff}',
     '.aari-hdr-menu .menu-divider{border-top:1px solid #e8e8e6;margin:4px 0 0;padding-top:4px}',
     '.aari-hdr-menu .menu-meta{color:#6b6760;font-weight:500}',
     '#aari-switch-menu{left:auto;right:auto}',
@@ -104,7 +106,8 @@
       'portal': 'Agent Portal',
       'broker-cockpit': 'Broker Cockpit',
       'client-crm': 'Client CRM',
-      'tc-cockpit': 'TC Cockpit'
+      'tc-cockpit': 'TC Cockpit',
+      'briefing': 'Morning Briefing'
     };
     return map[view] || 'Aari Transactions';
   }
@@ -114,7 +117,8 @@
       'portal': 'Agent dashboard',
       'broker-cockpit': 'Broker view',
       'client-crm': 'Client relationships',
-      'tc-cockpit': 'TC workspace'
+      'tc-cockpit': 'TC workspace',
+      'briefing': 'Start your day'
     };
     return map[view] || '';
   }
@@ -137,9 +141,9 @@
       '  </a>',
       '  <div class="aari-hdr-spacer"></div>',
       '  <div style="position:relative">',
-      '    <button type="button" class="aari-hdr-switch" id="aari-switch-btn" aria-haspopup="true" aria-expanded="false">Switch view <span class="caret">▾</span></button>',
-      '    <div class="aari-hdr-menu" id="aari-switch-menu" role="menu" aria-label="Jump to view">',
-      '      <div class="hdr-label">Jump to view</div>',
+      '    <button type="button" class="aari-hdr-switch" id="aari-switch-btn" aria-haspopup="true" aria-expanded="false">Where to? <span class="caret">▾</span></button>',
+      '    <div class="aari-hdr-menu" id="aari-switch-menu" role="menu" aria-label="Where to?">',
+      '      <div class="hdr-label">Where to?</div>',
       '      <div id="aari-switch-items"></div>',
       '      <div class="menu-divider">',
       '        <a href="/index.html" role="menuitem" class="menu-meta">← Back to website</a>',
@@ -169,7 +173,8 @@
     });
     box.innerHTML = items.map(function (n) {
       var active = n.id === currentView ? ' active' : '';
-      return '<a href="' + n.href + '" role="menuitem" class="' + active.trim() + '">' + escapeHtml(n.label) + '</a>';
+      var chip = n.chip ? '<span class="nav-chip">' + escapeHtml(n.chip) + '</span>' : '';
+      return '<a href="' + n.href + '" role="menuitem" class="' + active.trim() + '"><span>' + escapeHtml(n.label) + '</span>' + chip + '</a>';
     }).join('');
   }
 

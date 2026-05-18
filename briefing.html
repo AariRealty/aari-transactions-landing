@@ -304,7 +304,10 @@
   .switch-wrap[data-open="true"] .switch-menu { display: block; }
   .switch-menu-label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); padding: 8px 12px 4px; }
   .switch-menu a, .switch-menu button {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     padding: 8px 12px;
     color: var(--ink);
     text-decoration: none;
@@ -320,6 +323,7 @@
   }
   .switch-menu a:hover, .switch-menu button:hover { background: var(--cream-soft); }
   .switch-menu hr { border: none; height: 1px; background: var(--line); margin: 6px 0; }
+  .switch-menu .nav-chip { font-family: var(--sans); font-size: 9px; font-weight: 600; letter-spacing: .6px; padding: 2px 6px; background: #f0e6d2; color: #6b4a18; border-radius: 3px; white-space: nowrap; line-height: 1.4; }
 </style>
 </head>
 <body>
@@ -334,13 +338,10 @@
   </div>
   <div class="mast-right">
     <div class="switch-wrap" id="switch-wrap">
-      <button class="switch-view" id="switch-view-btn" aria-haspopup="true" aria-expanded="false">Switch view ▾</button>
+      <button class="switch-view" id="switch-view-btn" aria-haspopup="true" aria-expanded="false">Where to? ▾</button>
       <div class="switch-menu" role="menu">
-        <div class="switch-menu-label">Jump to view</div>
-        <a href="/broker-cockpit.html">Broker Cockpit</a>
-        <a href="/aari-crm.html">Client CRM</a>
-        <a href="/tc-cockpit.html">TC Cockpit</a>
-        <a href="/portal.html">Agent Portal</a>
+        <div class="switch-menu-label">Where to?</div>
+        <div id="switch-menu-items"></div>
         <hr>
         <a href="/">← Back to website</a>
         <button id="signout-btn">Sign out</button>
@@ -457,8 +458,31 @@
   try { state = JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch(_) { state = {}; }
   function persistState(){ try { localStorage.setItem(STATE_KEY, JSON.stringify(state)); } catch(_) {} }
 
+  // ===== Switch View nav model (matches js/aari-header.js) =====
+  const SWITCH_NAV = [
+    { id: 'briefing',       label: 'Start my day',   href: '/briefing.html',       roles: ['broker','tc','agent'], chip: 'ALL' },
+    { id: 'broker-cockpit', label: 'Run the team',   href: '/broker-cockpit.html', roles: ['broker'],              chip: 'BROKER' },
+    { id: 'client-crm',     label: 'Track clients',  href: '/aari-crm.html',       roles: ['broker','tc'],         chip: 'BROKER · TC' },
+    { id: 'tc-cockpit',     label: 'Work the files', href: '/tc-cockpit.html',     roles: ['broker','tc'],         chip: 'TC' },
+    { id: 'portal',         label: 'Submit a file',  href: '/portal.html',         roles: ['broker','tc','agent'], chip: 'AGENT' }
+  ];
+
+  function renderSwitchNav(role) {
+    const host = document.getElementById('switch-menu-items');
+    if (!host) return;
+    const r = (role === 'broker' || role === 'tc') ? role : 'agent';
+    const items = SWITCH_NAV.filter(n => n.roles.indexOf(r) > -1);
+    host.innerHTML = items.map(n => {
+      const chip = n.chip ? `<span class="nav-chip">${esc(n.chip)}</span>` : '';
+      return `<a href="${esc(n.href)}"><span>${esc(n.label)}</span>${chip}</a>`;
+    }).join('');
+  }
+
   // ===== Init =====
   async function init() {
+    // Default-render nav with agent role so menu has items before auth resolves
+    renderSwitchNav('agent');
+
     // Auth gate
     if (window.AariAuth) {
       try {
@@ -469,6 +493,7 @@
         }
         const profile = await window.AariAuth.getAgentProfile();
         renderHeaderUser(profile, session.user.email);
+        renderSwitchNav(profile && profile.role);
       } catch (e) {
         console.warn('[briefing] auth check failed', e);
       }
