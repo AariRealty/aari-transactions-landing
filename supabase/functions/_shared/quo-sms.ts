@@ -35,15 +35,16 @@ export interface QuoSmsResult {
 export interface QuoSmsParams {
   to: string;                      // E.164 or raw 10-digit US (will be normalized)
   body: string;                    // 1-1600 chars
+  from?: string;                   // optional · E.164 sender · defaults to QUO_FROM_NUMBER
   sourceContext?: Record<string, unknown>; // saved in sms_log.metadata
 }
 
 export async function sendQuoSms(params: QuoSmsParams): Promise<QuoSmsResult> {
   const apiKey = Deno.env.get("QUO_API_KEY");
-  const fromNumber = Deno.env.get("QUO_FROM_NUMBER");
+  const fromNumber = params.from || Deno.env.get("QUO_FROM_NUMBER");
 
   if (!apiKey) return logAndReturn({ ok: false, error: "QUO_API_KEY not set" }, params);
-  if (!fromNumber) return logAndReturn({ ok: false, error: "QUO_FROM_NUMBER not set" }, params);
+  if (!fromNumber) return logAndReturn({ ok: false, error: "QUO_FROM_NUMBER not set (and no from override)" }, params);
 
   const toE164 = normalizeToE164(params.to);
   if (!toE164) return logAndReturn({ ok: false, error: "Invalid recipient phone number" }, params);
