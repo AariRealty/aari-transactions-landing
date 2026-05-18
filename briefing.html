@@ -807,28 +807,37 @@
   }
 
   // ─── DATA RENDERERS ────────────────────────────────────────────────────
+  // Schedule keeps the original items so we can re-render after a click.
+  let _scheduleItems = [];
+
   function renderSchedule(items) {
+    _scheduleItems = items;
     const host = document.getElementById('schedule-host');
-    host.innerHTML = `<div class="grid-card">${items.map((it, i) => {
-      const key = 'sched:' + i;
-      const checked = !!state[key];
-      return `<div class="schedule-row" data-checked="${checked}" data-key="${esc(key)}">
-        <span class="sched-check">${checked ? '✓' : ''}</span>
-        <span class="sched-time">${esc(it.time)}</span>
+    // Tag with original index for stable keys, then sort: unchecked first,
+    // checked sink to the bottom of the list (ADHD-friendly · done falls away)
+    const enriched = items.map((it, i) => ({
+      it, key: 'sched:' + i, checked: !!state['sched:' + i],
+    }));
+    enriched.sort((a, b) => (a.checked ? 1 : 0) - (b.checked ? 1 : 0));
+
+    host.innerHTML = `<div class="grid-card">${enriched.map(r => {
+      return `<div class="schedule-row" data-checked="${r.checked}" data-key="${esc(r.key)}">
+        <span class="sched-check">${r.checked ? '✓' : ''}</span>
+        <span class="sched-time">${esc(r.it.time)}</span>
         <span>
-          <div class="sched-title">${esc(it.title)}</div>
-          ${it.sub ? '<div class="sched-sub">' + esc(it.sub) + '</div>' : ''}
+          <div class="sched-title">${esc(r.it.title)}</div>
+          ${r.it.sub ? '<div class="sched-sub">' + esc(r.it.sub) + '</div>' : ''}
         </span>
       </div>`;
     }).join('')}</div>`;
+
     host.querySelectorAll('.schedule-row').forEach(row => {
       row.addEventListener('click', () => {
         const key = row.getAttribute('data-key');
-        const next = row.getAttribute('data-checked') !== 'true';
-        row.setAttribute('data-checked', next);
-        row.querySelector('.sched-check').textContent = next ? '✓' : '';
-        state[key] = next;
+        state[key] = row.getAttribute('data-checked') !== 'true';
         persist();
+        // Re-render so the just-checked row sinks to the bottom
+        renderSchedule(_scheduleItems);
       });
     });
   }
