@@ -511,7 +511,7 @@
         <span class="section-eyebrow">Dark contacts</span>
         <div class="section-title">Top 5 follow-ups</div>
       </div>
-      <span class="section-meta">Pulled from Cloze · oldest touch first</span>
+      <span class="section-meta">Cloze sync pending</span>
     </div>
     <div id="followups-list">
       <!-- cards injected by JS -->
@@ -533,7 +533,7 @@
 
   <!-- Footer note -->
   <div class="footer-note">
-    <strong>Live data:</strong> Pulls from Google Calendar, Gmail, your CRM, and tasks every time you reload this page.
+    <strong>Live data:</strong> Today's schedule pulls from Google Calendar. Deals + Start Here pull from your active files in Aari. Top 5 follow-ups will populate once Cloze sync is wired (pending). Reload to refresh.
     Hit the ↻ Reload button up top to refresh. Showing sample data until your connectors are wired — connect Google Calendar from the
     <a href="/portal.html" style="color:var(--bronze-deep);text-decoration:underline">Agent Portal</a> to start pulling real schedule. Checkmarks and "handled" states persist locally between reloads.
   </div>
@@ -547,41 +547,10 @@
 (function(){
   'use strict';
 
-  // ===== Sample data (used until real connectors light up) =====
-  const SAMPLE_SCHEDULE = [
-    { time: '7:00 – 7:30', title: 'Coffee + this briefing' },
-    { time: '7:30 – 8:30', title: 'Draft Maple Ave counter + Jennifer follow-up' },
-    { time: '8:30 – 9:00', title: 'Call Jennifer Chen', sub: 'Offer status — Maple Ave' },
-    { time: '9:00 – 10:30', title: '412 Oakwood photo walkthrough', sub: 'with photographer' },
-    { time: '10:30 – 11:00', title: 'Inbox triage' },
-    { time: '11:00 – 12:00', title: 'Buyer consult: Marcus & Priya Patel', sub: 'new, pre-approval in hand' },
-    { time: '12:00 – 1:00', title: 'Lunch / drive to Westside' },
-    { time: '1:00 – 2:30', title: 'Showing: 88 Birch Ln with the Hendersons', sub: '3rd showing — likely offer convo' },
-    { time: '2:30 – 3:30', title: "Send today's follow-ups" },
-    { time: '3:30 – 4:00', title: 'Coffee & Contracts Reels script batch' },
-    { time: '4:00 – 5:00', title: 'Friday Riverside closing prep' },
-    { time: '5:00 – 5:30', title: 'Wrap + plan tomorrow' }
-  ];
-
-  const SAMPLE_FOLLOWUPS = [
-    { id: 'fu-1', temp: 'hot', name: 'Jennifer Chen', meta: '1422 Maple Ave offer · no reply in 6 days · jennifer.chen@example.com' },
-    { id: 'fu-2', temp: 'warm', name: 'Tom & Lisa Rodriguez', meta: 'Buyer consult last Thursday · ghosted since · tom.rodriguez@example.com' },
-    { id: 'fu-3', temp: 'warm', name: 'David Park', meta: 'Lead from 5/3 open house · went cold · david.park@example.com' },
-    { id: 'fu-4', temp: 'active', name: 'Sarah Mitchell', meta: 'Relocation client · asked about Eastside schools · sarah.mitchell@example.com' },
-    { id: 'fu-5', temp: 'partner', name: 'Mike at Bayside Mortgage', meta: 'Referral partner · 3 weeks since last touch · mike@baysidemortgage.example.com' }
-  ];
-
-  const SAMPLE_DEALS = [
-    { id: 'd-1', status: 'alert', title: '1422 Maple Ave — Jennifer Chen', sub: 'Offer submitted · 6 days no response · close 6/15', action: 'Call this morning' },
-    { id: 'd-2', status: 'warn', title: '88 Birch Ln — Hendersons', sub: 'Active showing · stage unchanged 16 days', action: 'Ask: writing this week?' },
-    { id: 'd-3', status: 'warn', title: '412 Oakwood — your listing', sub: '22 days on market · 2 showings last week · no offers', action: 'Confirm walkthrough + wire' },
-    { id: 'd-4', status: 'ok', title: 'Riverside closing — Walsh', sub: 'Closes Friday 6/15', action: 'Send follow-up draft above' },
-    { id: 'd-5', status: 'warn', title: 'David Park lead', sub: '11 days no contact since open house', action: null }
-  ];
-
-  const SAMPLE_START_HERE = {
-    title: 'Call Jennifer Chen at 8:30 AM before her 9 AM showing with another agent.',
-    reasoning: "She's been radio-silent for 6 days on the Maple Ave offer and you have a $12K price-drop signal from the listing agent — this is the highest-leverage 10 minutes of your day."
+  // ===== Empty-state defaults · real data overrides via async loaders =====
+  const EMPTY_START_HERE = {
+    title: 'Loading your highest-leverage move…',
+    reasoning: ''
   };
 
   // ===== State =====
@@ -632,13 +601,40 @@
     }
 
     renderDate();
-    renderStartHere(SAMPLE_START_HERE);
-    renderSchedule(SAMPLE_SCHEDULE);
-    renderFollowups(SAMPLE_FOLLOWUPS);
-    renderDeals(SAMPLE_DEALS);
+    renderStartHere(EMPTY_START_HERE);
+    renderScheduleEmpty();
+    renderFollowupsEmpty();
+    renderDealsEmpty();
     wireGlobals();
-    // Try to pull real calendar data over the sample schedule
+
+    // Real data · async loaders replace empty states when they resolve
     tryLoadRealCalendar();
+    tryLoadRealDeals();   // also computes Start Here from the #1 ranked deal
+    // tryLoadRealFollowups() · gated on Cloze infra (not yet built)
+  }
+
+  // ===== Empty states · render before async loaders resolve =====
+  function renderScheduleEmpty() {
+    const host = document.getElementById('schedule-grid');
+    host.innerHTML = `<div style="padding:24px 20px;text-align:center;font-size:13px;color:var(--muted);line-height:1.6">
+      <div style="margin-bottom:8px;font-weight:500;color:var(--ink)">No calendar connected yet</div>
+      <a href="/portal.html#account" style="font-size:12px;color:var(--gold);font-weight:600;text-decoration:underline">Connect Google Calendar →</a>
+    </div>`;
+  }
+  function renderFollowupsEmpty() {
+    const host = document.getElementById('followups-list');
+    host.innerHTML = `<div style="padding:24px 20px;text-align:center;font-size:13px;color:var(--muted);line-height:1.6;background:#fff;border:1px solid var(--line);border-radius:var(--r-sm)">
+      <div style="margin-bottom:6px;font-weight:500;color:var(--ink)">Cloze sync not connected yet</div>
+      <div style="font-size:12px">Once linked, your 5 most-neglected contacts will surface here automatically, ranked by oldest touch.</div>
+    </div>`;
+  }
+  function renderDealsEmpty(msg) {
+    const host = document.getElementById('deals-list');
+    const text = msg || 'No deals need attention right now. All active files are on track.';
+    host.innerHTML = `<div style="padding:24px 20px;text-align:center;font-size:13px;color:var(--muted);line-height:1.6;background:#fff;border:1px solid var(--line);border-radius:var(--r-sm)">
+      <div style="font-weight:500;color:var(--ink)">${esc(text.split('.')[0] || text)}.</div>
+      <div style="font-size:12px;margin-top:4px">${esc(text.split('.').slice(1).join('.').trim())}</div>
+    </div>`;
   }
 
   function renderHeaderUser(profile, email) {
@@ -759,27 +755,121 @@
           row.setAttribute('data-handled', state['deal-handled:' + id]);
         } else if (act === 'primary') {
           const item = items.find(x => x.id === id);
-          alert((item ? item.action : 'Action') + ' — flow coming soon. Mark handled when complete.');
+          if (item && item.href) {
+            window.location.href = item.href;
+          } else {
+            alert((item ? item.action : 'Action') + ' — flow coming soon. Mark handled when complete.');
+          }
         }
       });
     });
   }
 
-  // Try pulling real Google Calendar data over the sample schedule
+  // Try pulling real Google Calendar data · replaces the empty state
   async function tryLoadRealCalendar() {
     if (!window.AariAuth) return;
     try {
       const client = await window.AariAuth.ensureClient();
       const { data, error } = await client.functions.invoke('google-calendar-fetch', { body: {} });
-      if (error || !data || data.connected !== true || !data.events || data.events.length === 0) return;
-      // Convert Google events into schedule rows
+      if (error || !data || data.connected !== true) return;
+      // Connected but no events today
+      if (!data.events || data.events.length === 0) {
+        const host = document.getElementById('schedule-grid');
+        host.innerHTML = `<div style="padding:24px 20px;text-align:center;font-size:13px;color:var(--muted);line-height:1.6">
+          <div style="font-weight:500;color:var(--ink)">Nothing on your calendar today.</div>
+          <div style="font-size:12px;margin-top:4px">Calendar is connected · ${esc(data.email || '')}</div>
+        </div>`;
+        return;
+      }
       const rows = data.events.map(ev => {
         const time = ev.all_day ? 'All day' : formatRange(ev.start, ev.end);
         return { time, title: ev.summary || '(No title)', sub: ev.location || null };
       });
       renderSchedule(rows);
     } catch (e) {
-      // Silent · sample data stays
+      // Silent · empty state stays
+    }
+  }
+
+  // Try pulling real files · ranks by urgency, renders Deals + Start Here
+  async function tryLoadRealDeals() {
+    if (!window.AariAuth) return;
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { data: files, error } = await client
+        .from('files')
+        .select('id, property_address, closing_date, priority, priority_reason, status, created_at, updated_at, service_type')
+        .not('status', 'in', '(closed,archived)')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (error) { console.warn('[briefing] deals load error', error); return; }
+      if (!files || !files.length) return;  // keep "all on track" empty state
+
+      // Score + rank
+      const todayStr = new Date().toISOString().slice(0,10);
+      const today0 = new Date(todayStr + 'T00:00:00');
+      const scored = files.map(f => {
+        let score = 0;
+        const reasons = [];
+        if (f.priority === 'emergency') { score += 100; reasons.push(f.priority_reason || 'Closing in ≤7 days'); }
+        if (f.status === 'awaiting_broker_review') { score += 80; reasons.push('Awaiting broker review'); }
+        if (f.status === 'awaiting_signatures') { score += 40; reasons.push('Needs signatures'); }
+        if (f.status === 'awaiting_docs') { score += 30; reasons.push('Docs pending'); }
+        if (f.closing_date) {
+          const close = new Date(f.closing_date + 'T00:00:00');
+          const days = Math.ceil((close - today0) / (1000*60*60*24));
+          if (days < 0) { score += 90; reasons.push('Past closing date'); }
+          else if (days <= 3 && f.priority !== 'emergency') { score += 70; reasons.push('Closes in ' + days + ' day' + (days===1?'':'s')); }
+          else if (days <= 7 && f.priority !== 'emergency') { score += 50; reasons.push('Closes in ' + days + ' days'); }
+        }
+        // Stagnation · no update in 48hrs on a status that implies action
+        if (f.updated_at) {
+          const hoursSince = (Date.now() - new Date(f.updated_at).getTime()) / (1000*60*60);
+          if (hoursSince > 48 && ['awaiting_signatures','awaiting_docs','awaiting_broker_review'].indexOf(f.status) > -1) {
+            score += 25;
+            reasons.push(Math.floor(hoursSince/24) + ' days stale');
+          }
+        }
+        return { f, score, reasons };
+      }).filter(x => x.score > 0)
+        .sort((a,b) => b.score - a.score)
+        .slice(0, 5);
+
+      if (scored.length === 0) return;  // keep empty state · nothing urgent
+
+      // Render Deals
+      const deals = scored.map(x => {
+        const addr = x.f.property_address || 'File ' + String(x.f.id).slice(0,4).toUpperCase();
+        const dotStatus = (x.f.priority === 'emergency' || x.f.status === 'awaiting_broker_review') ? 'alert' : 'warn';
+        const action = x.f.status === 'awaiting_broker_review' ? 'Assign TC'
+                     : x.f.priority === 'emergency' ? 'Open file'
+                     : 'Review file';
+        return {
+          id: x.f.id,
+          status: dotStatus,
+          title: addr,
+          sub: x.reasons.slice(0,2).join(' · ') || 'Needs attention',
+          action,
+          href: '/portal.html#file-' + x.f.id
+        };
+      });
+      renderDeals(deals);
+
+      // Compute Start Here from the #1 ranked file
+      const top = scored[0];
+      const topAddr = top.f.property_address || 'File ' + String(top.f.id).slice(0,4).toUpperCase();
+      const startTitle = top.f.priority === 'emergency'
+        ? 'Handle ' + topAddr + ' first — emergency lane.'
+        : top.f.status === 'awaiting_broker_review'
+        ? 'Assign a TC to ' + topAddr + ' now.'
+        : 'Move ' + topAddr + ' forward today.';
+      renderStartHere({
+        title: startTitle,
+        reasoning: top.reasons.join(' · ') || 'Highest-leverage file in your pipeline.'
+      });
+    } catch (e) {
+      console.warn('[briefing] tryLoadRealDeals threw', e);
     }
   }
 
