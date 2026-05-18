@@ -13864,16 +13864,48 @@ try{_hideChromeInIframe();}catch(_){}
 // SLIM MODE · for the embedded Today's Action List section in briefing.
 // Hides hub-dashboard (stat cards) + main-tabs entirely. Only the active
 // view (e.g. #view-today) renders. Triggered by ?slim=1 in the URL.
+// Also reports content height to the parent frame so the iframe auto-sizes
+// to fit the full content (no internal scroll · parent page scrolls instead).
 function _initSlimMode(){
   const params = new URLSearchParams(location.search);
   if(params.get('slim')!=='1')return;
+
+  function sendHeight(){
+    try {
+      const h = Math.max(
+        document.body.scrollHeight,
+        document.documentElement.scrollHeight,
+        document.body.offsetHeight,
+        document.documentElement.offsetHeight
+      );
+      window.parent.postMessage({ type: 'aari-iframe-height', frame: 'today-actions', height: h }, '*');
+    } catch(_) {}
+  }
+
   function apply(){
     const hub = document.getElementById('hub-dashboard');
     const tabs = document.getElementById('main-tabs');
     if(hub) hub.style.display='none';
     if(tabs) tabs.style.display='none';
     document.body.style.paddingTop='0';
+    document.body.style.margin='0';
+    document.documentElement.style.overflow='hidden';  // no internal scrollbar
+    document.body.style.overflow='hidden';
+
+    // Send height now, on resize, on mutation, and at intervals
+    // (renderTodayView is async; content keeps changing for a few seconds)
+    sendHeight();
+    if (typeof ResizeObserver !== 'undefined') {
+      try { new ResizeObserver(sendHeight).observe(document.body); } catch(_) {}
+    }
+    if (typeof MutationObserver !== 'undefined') {
+      try { new MutationObserver(sendHeight).observe(document.body, { childList: true, subtree: true, attributes: true }); } catch(_) {}
+    }
+    window.addEventListener('resize', sendHeight);
+    // Catch late-rendering content from renderTodayView async calls
+    [200, 600, 1500, 3000, 6000].forEach(ms => setTimeout(sendHeight, ms));
   }
+
   if(document.readyState==='loading'){
     document.addEventListener('DOMContentLoaded',apply);
   }else{
