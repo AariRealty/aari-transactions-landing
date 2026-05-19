@@ -18,7 +18,30 @@
 (function () {
   'use strict';
 
-  if (document.querySelector('footer.aari-shared-footer')) return; // idempotent
+  // ── Brand-mark swap · replace text wordmark with image logo ───────────
+  // Runs first so the header updates even if the footer markup is missing.
+  // Handles all 3 legacy class variants: .mark-wordmark, .brand-mark, .brand-mark-foot.
+  // Idempotent · won't re-swap an element that's already an <img>.
+  (function swapBrandMark() {
+    var marks = document.querySelectorAll('.mark-wordmark, .brand-mark, .brand-mark-foot');
+    if (!marks.length) return;
+    if (!document.getElementById('aari-brand-logo-style')) {
+      var brandStyle = document.createElement('style');
+      brandStyle.id = 'aari-brand-logo-style';
+      brandStyle.textContent = '.mark-logo{height:36px;width:auto;flex-shrink:0;display:block;border:none;padding:0;background:transparent}@media(max-width:899px){.mark-logo{height:30px}}footer .mark-logo{filter:invert(1)}';
+      document.head.appendChild(brandStyle);
+    }
+    marks.forEach(function (m) {
+      if (m.tagName === 'IMG') return;
+      var img = document.createElement('img');
+      img.className = 'mark-logo';
+      img.src = '/images/aari-logo.png';
+      img.alt = 'Aari Transactions';
+      m.parentNode.replaceChild(img, m);
+    });
+  })();
+
+  if (document.querySelector('footer.aari-shared-footer')) return; // idempotent (footer-only)
 
   // ── CSS (injected once) ───────────────────────────────────────────────
   var CSS = [
