@@ -20,10 +20,11 @@
 
   // ── Brand-mark swap · replace text wordmark with image logo ───────────
   // Runs first so the header updates even if the footer markup is missing.
-  // Handles all 3 legacy class variants: .mark-wordmark, .brand-mark, .brand-mark-foot.
+  // Handles all 4 legacy class variants used across the site:
+  //   .mark-wordmark, .brand-mark, .brand-mark-foot, .brand .mark
   // Idempotent · won't re-swap an element that's already an <img>.
   (function swapBrandMark() {
-    var marks = document.querySelectorAll('.mark-wordmark, .brand-mark, .brand-mark-foot');
+    var marks = document.querySelectorAll('.mark-wordmark, .brand-mark, .brand-mark-foot, .brand .mark, header .mark, .nav .mark');
     if (!marks.length) return;
     if (!document.getElementById('aari-brand-logo-style')) {
       var brandStyle = document.createElement('style');
@@ -62,6 +63,17 @@
     '.aari-foot-btn{background:#000;color:#fff;border:1px solid #000;border-radius:4px;padding:14px 26px;font-size:11px;letter-spacing:2px;text-transform:uppercase;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit;transition:background 0.18s,color 0.18s}',
     '.aari-foot-btn:hover{background:transparent;color:#000}',
     '.aari-foot-micro{font-size:11px;color:#666;margin:14px 0 0;font-family:inherit;position:relative;z-index:2}',
+    '.aari-foot-consent{position:relative;z-index:2;font-size:11px;color:#555;margin:12px auto 0;max-width:460px;line-height:1.6;text-align:left;font-family:inherit}',
+    '.aari-foot-consent label{cursor:pointer;display:inline-block}',
+    '.aari-foot-consent input[type="checkbox"]{accent-color:#000;margin-right:8px;vertical-align:middle}',
+    '.aari-foot-consent-upload{display:block;margin-top:6px;font-size:10.5px;color:#777}',
+    '.aari-foot-consent-upload input[type="file"]{margin-left:6px;font-size:11px}',
+    '.aari-foot-trust{position:relative;z-index:2;display:flex;justify-content:center;align-items:center;gap:14px;margin:24px 0 0;font-size:11px;color:#666;letter-spacing:0.3px;flex-wrap:wrap}',
+    '.aari-foot-trust-faces{display:flex;align-items:center}',
+    '.aari-foot-trust-face{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#bfb7a5,#7a6f5e);border:2px solid #f5f0e8;margin-left:-8px;overflow:hidden}',
+    '.aari-foot-trust-face:first-child{margin-left:0}',
+    '.aari-foot-trust-face img{width:100%;height:100%;object-fit:cover;display:block}',
+    '.aari-foot-trust span strong{color:#000;font-family:"Cormorant Garamond",Georgia,serif;font-size:14px;letter-spacing:-0.2px;font-weight:400;font-style:italic}',
     '.aari-foot-cols{padding:36px 32px 0;max-width:880px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr);gap:32px;text-align:left}',
     '.aari-foot-col h5{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#888;font-weight:600;margin:0 0 12px;display:flex;align-items:center;gap:8px;font-family:inherit}',
     '.aari-foot-col h5::after{content:"";flex:1;height:1px;background:#2a2a2a}',
@@ -100,13 +112,27 @@
     '    <span class="aari-foot-pill"><span class="dot"></span>Aari Brief &middot; Live &middot; 2&times; per month</span>',
     '    <h3 class="aari-foot-h">Join the Aari Brief.<br><em>Florida TC notes.</em></h3>',
     '    <p class="aari-foot-sub">FR/Bar changes, compliance traps, operating notes. 2 emails a month. Built for agents who actually run files.</p>',
-    '    <form class="aari-foot-form" name="aari-newsletter" method="POST" data-netlify="true" netlify-honeypot="bot-field" action="/thank-you.html">',
+    '    <form class="aari-foot-form" name="aari-newsletter" method="POST" enctype="multipart/form-data" data-netlify="true" netlify-honeypot="bot-field" action="/thank-you.html">',
     '      <input type="hidden" name="form-name" value="aari-newsletter">',
     '      <p hidden><label>Don\'t fill this out: <input name="bot-field"></label></p>',
     '      <input type="email" name="email" class="aari-foot-input" placeholder="your@email.com" aria-label="Email" required>',
     '      <button type="submit" class="aari-foot-btn">Subscribe &rarr;</button>',
     '    </form>',
+    '    <p class="aari-foot-consent">',
+    '      <label><input type="checkbox" name="photo_consent" value="yes" form="aari-newsletter"> I agree Aari may use my submitted photo in marketing (optional)</label>',
+    '      <span class="aari-foot-consent-upload"><label>Upload photo (optional): <input type="file" name="subscriber_photo" accept="image/*" form="aari-newsletter"></label></span>',
+    '    </p>',
     '    <p class="aari-foot-micro">No spam &middot; Unsubscribe anytime</p>',
+    '    <div class="aari-foot-trust">',
+    '      <div class="aari-foot-trust-faces">',
+    '        <div class="aari-foot-trust-face" aria-label="Subscriber"></div>',
+    '        <div class="aari-foot-trust-face" aria-label="Subscriber"></div>',
+    '        <div class="aari-foot-trust-face" aria-label="Subscriber"></div>',
+    '        <div class="aari-foot-trust-face" aria-label="Subscriber"></div>',
+    '        <div class="aari-foot-trust-face" aria-label="Subscriber"></div>',
+    '      </div>',
+    '      <span>Joined by <strong>Florida agents who close</strong></span>',
+    '    </div>',
     '  </div>',
     '',
     '  <div class="aari-foot-cols">',
