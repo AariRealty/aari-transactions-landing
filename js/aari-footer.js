@@ -158,6 +158,7 @@
     '      <h5>Connect</h5>',
     '      <a href="/book.html">Book a call</a>',
     '      <a href="/refer.html">Introduce an agent</a>',
+    '      <a href="https://www.instagram.com/aari.tc/" target="_blank" rel="noopener">Instagram &middot; aari.tc</a>',
     '      <a href="/portal">Portal</a>',
     '    </div>',
     '  </div>',
