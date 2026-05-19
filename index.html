@@ -5413,6 +5413,30 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       op_basic:'addons', op_complete:'addons', file_org:'addons'
     };
 
+    /* Muck 4 · goal-first wizard · default service per goal (May 2026).
+       When agent clicks a goal in Step 1, this service auto-selects so the form
+       can pre-populate without forcing a second pick. Agent can change via the
+       service-confirm chip on Step 2 if the default is wrong. */
+    const GOAL_DEFAULT_SERVICE = {
+      tc: 'tc_one_side',
+      listing: 'lc',
+      addons: 'op_basic'
+    };
+
+    /* Helper · populate the hidden form inputs that downstream steps rely on */
+    function setIntakeServiceFields(svcId){
+      const svc = SERVICE_BY_ID[svcId];
+      if(!svc) return;
+      const idEl = document.getElementById('intakeServiceId');
+      const nameEl = document.getElementById('intakeServiceName');
+      const priceEl = document.getElementById('intakeServicePrice');
+      const timingEl = document.getElementById('intakeServiceTiming');
+      if(idEl) idEl.value = svc.id;
+      if(nameEl) nameEl.value = svc.name + ' · ' + svc.tier;
+      if(priceEl) priceEl.value = svc.price;
+      if(timingEl) timingEl.value = svc.timing;
+    }
+
     let state = { step:1, serviceId:null, preferredTc:null, sigDataUrl:null, sigTimestamp:null, intakeSvcTab:'tc' };
     let sigPad = null;
     let tcsData = [];
@@ -5500,54 +5524,28 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     /* --- isMember check (reads localStorage flag set by Stripe webhook in Milestone 3) --- */
     function isActiveMember(){ return localStorage.getItem(MEMBER_KEY) === 'true'; }
 
-    /* --- Render Step 1 service cards --- */
+    /* --- Step 1 render (Muck 4 · goal-first wizard) ---
+       The service-card grid is skipped entirely in this layout. Goal click does
+       the picking + auto-advance. This function still runs on Step 1 entry to:
+       - sync the goal button visual state
+       - guarantee a default serviceId so Continue without picking still works
+       - clear any stale service-card markup
+       - keep the addon upsell + client-type sync in step with the selection */
     function renderServiceGrid(){
       const grid = document.getElementById('serviceGrid');
       const activeTab = state.intakeSvcTab || 'tc';
-      // Sync tab visual state
+      // Sync goal button visual state
       document.querySelectorAll('[data-intake-svc-tab]').forEach(tab => {
         tab.classList.toggle('active', tab.dataset.intakeSvcTab === activeTab);
       });
-      // Filter services by active tab
-      const filtered = SERVICES.filter(s => SVC_CATEGORY_BY_ID[s.id] === activeTab);
-      grid.innerHTML = filtered.map(s => `
-        <button type="button" class="service-card${state.serviceId === s.id ? ' selected' : ''}" data-service-id="${s.id}">
-          <span class="sc-body">
-            <span class="sc-name">${s.name}</span>
-            <span class="sc-tier">${s.tier}</span>
-          </span>
-          <span class="sc-price">$${s.price}</span>
-        </button>
-      `).join('');
-      grid.querySelectorAll('.service-card').forEach(btn => {
-        btn.addEventListener('click', () => {
-          state.serviceId = btn.dataset.serviceId;
-          // Populate hidden inputs immediately · auto-advance below skips validateCurrentStep,
-          // so we set them here to keep the submit handler happy at Step 5.
-          const svc = SERVICE_BY_ID[state.serviceId];
-          if(svc){
-            const idEl = document.getElementById('intakeServiceId');
-            const nameEl = document.getElementById('intakeServiceName');
-            const priceEl = document.getElementById('intakeServicePrice');
-            const timingEl = document.getElementById('intakeServiceTiming');
-            if(idEl) idEl.value = svc.id;
-            if(nameEl) nameEl.value = svc.name + ' · ' + svc.tier;
-            if(priceEl) priceEl.value = svc.price;
-            if(timingEl) timingEl.value = svc.timing;
-          }
-          grid.querySelectorAll('.service-card').forEach(b => b.classList.toggle('selected', b === btn));
-          saveProgress();
-          // Task 1.8 · Recalculate the add-on membership upsell whenever selection changes
-          renderAddonUpsell(state.serviceId);
-          // Task 3.1 follow-up · adjust Client Type radios based on selected service
-          updateClientTypeForService();
-          // Auto-advance to Step 2 (file details) so the user doesn't have to hunt for Continue.
-          // 700ms delay lets the selection visually register and the membership upsell banner
-          // appear long enough to be noticed before the form moves forward.
-          setTimeout(() => { if (state.step === 1) showStep(2); }, 700);
-        });
-      });
-      // Also re-render on initial paint · handles both restored selection and Start Over (null hides the banner)
+      // Guarantee a default serviceId so the agent can hit Continue without picking
+      if(!state.serviceId){
+        state.serviceId = GOAL_DEFAULT_SERVICE[activeTab] || 'tc_one_side';
+        setIntakeServiceFields(state.serviceId);
+        saveProgress();
+      }
+      // Clear any stale service-card markup (goal-first wizard skips this layer)
+      if(grid) grid.innerHTML = '';
       renderAddonUpsell(state.serviceId);
       updateClientTypeForService();
     }
@@ -7195,14 +7193,28 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       // Pre-approval auto-extraction DISABLED · manual entry for now.
     })();
 
-    /* Phase 3 §2: bind intake tab clicks */
+    /* Muck 4 · goal-first wizard · bind goal-button clicks (May 2026)
+       Goal click sets the default service for that goal, marks it as preselected
+       (so the chip on Step 2 surfaces), and auto-advances after 700ms. */
     function bindIntakeServiceTabs(){
       document.querySelectorAll('[data-intake-svc-tab]').forEach(tab => {
         if(tab._aariBound) return;
         tab._aariBound = true;
         tab.addEventListener('click', () => {
-          state.intakeSvcTab = tab.dataset.intakeSvcTab;
-          renderServiceGrid();
+          const goalKey = tab.dataset.intakeSvcTab;
+          state.intakeSvcTab = goalKey;
+          state.serviceId = GOAL_DEFAULT_SERVICE[goalKey] || 'tc_one_side';
+          state.servicePreselected = true;
+          setIntakeServiceFields(state.serviceId);
+          // Visual selected state across all goal buttons
+          document.querySelectorAll('[data-intake-svc-tab]').forEach(t => {
+            t.classList.toggle('active', t.dataset.intakeSvcTab === goalKey);
+          });
+          saveProgress();
+          renderAddonUpsell(state.serviceId);
+          updateClientTypeForService();
+          // Auto-advance to Step 2 · 700ms lets the selection visually register
+          setTimeout(() => { if (state.step === 1) showStep(2); }, 700);
         });
       });
     }
