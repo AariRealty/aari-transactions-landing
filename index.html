@@ -4175,7 +4175,7 @@ Password:"></textarea>
       <!-- ========== STEP 1: Goal-first wizard (Muck 4 · May 2026) ========== -->
       <section class="intake-step" data-step="1">
         <div class="intake-goal-stack" role="tablist" aria-label="What do you need?">
-          <button type="button" class="intake-goal-btn active" data-intake-svc-tab="tc">
+          <button type="button" class="intake-goal-btn" data-intake-svc-tab="tc">
             <span class="igb-ico" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
               <span class="igb-badge">1</span>
@@ -5456,7 +5456,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(timingEl) timingEl.value = svc.timing;
     }
 
-    let state = { step:1, serviceId:null, preferredTc:null, sigDataUrl:null, sigTimestamp:null, intakeSvcTab:'tc' };
+    let state = { step:1, serviceId:null, preferredTc:null, sigDataUrl:null, sigTimestamp:null, intakeSvcTab:null };
     let sigPad = null;
     let tcsData = [];
 
@@ -5544,29 +5544,25 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     function isActiveMember(){ return localStorage.getItem(MEMBER_KEY) === 'true'; }
 
     /* --- Step 1 render (Muck 4 · goal-first wizard) ---
-       The service-card grid is skipped entirely in this layout. Goal click does
-       the picking + auto-advance. This function still runs on Step 1 entry to:
-       - sync the goal button visual state
-       - guarantee a default serviceId so Continue without picking still works
-       - clear any stale service-card markup
-       - keep the addon upsell + client-type sync in step with the selection */
+       No pre-selection on initial open · agent must explicitly pick a goal,
+       then a service pill, before they can advance. validateCurrentStep
+       enforces this via the existing "Please pick a service" alert. */
     function renderServiceGrid(){
       const grid = document.getElementById('serviceGrid');
-      const activeTab = state.intakeSvcTab || 'tc';
-      // Sync goal button visual state
+      const activeTab = state.intakeSvcTab;
+      // Sync goal button visual state · if no goal picked, none are active
       document.querySelectorAll('[data-intake-svc-tab]').forEach(tab => {
-        tab.classList.toggle('active', tab.dataset.intakeSvcTab === activeTab);
+        tab.classList.toggle('active', activeTab && tab.dataset.intakeSvcTab === activeTab);
       });
-      // Guarantee a default serviceId so the agent can hit Continue without picking
-      if(!state.serviceId){
-        state.serviceId = GOAL_DEFAULT_SERVICE[activeTab] || 'tc_one_side';
-        setIntakeServiceFields(state.serviceId);
-        saveProgress();
-      }
-      // Clear any stale service-card markup (goal-first wizard skips this layer)
+      // Clear any stale service-card markup
       if(grid) grid.innerHTML = '';
-      // Render the sub-panel for the active goal so the agent sees the pill options immediately
-      renderGoalSubpanel(activeTab);
+      // Sub-panel only renders if a goal is actively selected
+      if(activeTab){
+        renderGoalSubpanel(activeTab);
+      } else {
+        const panel = document.getElementById('goalSubpanel');
+        if(panel) panel.hidden = true;
+      }
       renderAddonUpsell(state.serviceId);
       updateClientTypeForService();
     }
@@ -7273,11 +7269,19 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         tab.addEventListener('click', () => {
           const goalKey = tab.dataset.intakeSvcTab;
           state.intakeSvcTab = goalKey;
-          // Default service if none for this goal yet (so Continue without pill-pick still works)
-          if(SVC_CATEGORY_BY_ID[state.serviceId] !== goalKey){
-            state.serviceId = GOAL_DEFAULT_SERVICE[goalKey] || 'tc_one_side';
-            state.servicePreselected = true;
-            setIntakeServiceFields(state.serviceId);
+          // Clear any prior service from a different goal · agent must pick a pill below
+          if(state.serviceId && SVC_CATEGORY_BY_ID[state.serviceId] !== goalKey){
+            state.serviceId = null;
+            state.servicePreselected = false;
+            // Clear hidden inputs too
+            const idEl = document.getElementById('intakeServiceId');
+            const nameEl = document.getElementById('intakeServiceName');
+            const priceEl = document.getElementById('intakeServicePrice');
+            const timingEl = document.getElementById('intakeServiceTiming');
+            if(idEl) idEl.value = '';
+            if(nameEl) nameEl.value = '';
+            if(priceEl) priceEl.value = '';
+            if(timingEl) timingEl.value = '';
           }
           // Visual selected state across all goal buttons
           document.querySelectorAll('[data-intake-svc-tab]').forEach(t => {
@@ -7287,7 +7291,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           saveProgress();
           renderAddonUpsell(state.serviceId);
           updateClientTypeForService();
-          // No auto-advance · pills below let the agent sub-pick the exact service
+          // No auto-advance · agent picks a pill below to set the specific service
         });
       });
     }
