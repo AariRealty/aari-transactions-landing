@@ -448,12 +448,22 @@
   .intake-goal-subpanel[hidden]{display:none}
   @keyframes goalPanelIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
   .intake-goal-subpanel-label{font-size:10px;letter-spacing:1.4px;text-transform:uppercase;color:var(--muted);font-weight:600;margin:0 0 10px;font-family:var(--sans)}
-  .intake-goal-subpanel-pills{display:flex;flex-wrap:wrap;gap:6px}
-  .igb-pill{display:inline-flex;align-items:center;gap:6px;padding:9px 14px;background:#fff;border:1px solid var(--line);border-radius:999px;font-size:12.5px;font-weight:500;color:var(--ink);cursor:pointer;transition:background 0.15s ease,border-color 0.15s ease,color 0.15s ease;font-family:var(--sans)}
-  .igb-pill:hover{border-color:var(--ink-2)}
-  .igb-pill.selected{background:var(--ink);color:#fff;border-color:var(--ink)}
-  .igb-pill.selected .igb-pill-price{color:var(--pastel-cream)}
-  .igb-pill-price{color:var(--muted);font-family:var(--serif);font-weight:600;font-size:13.5px;letter-spacing:-0.01em}
+  .intake-goal-subpanel-pills{display:flex;flex-direction:column;gap:8px}
+  .igb-row-item{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:12px;cursor:pointer;transition:border-color 0.15s ease,background 0.15s ease;font-family:var(--sans);text-align:left;color:var(--ink)}
+  .igb-row-item:hover{border-color:var(--ink-2)}
+  .igb-row-item.selected{background:var(--ink);border-color:var(--ink);color:#fff}
+  .igb-row-item.selected .igb-row-tier{color:#c8c4b8}
+  .igb-row-item.selected .igb-row-price{color:#fff}
+  .igb-row-item.selected .igb-row-details{color:var(--pastel-cream)}
+  .igb-row-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .igb-row-name{font-weight:600;font-size:13.5px;color:inherit;margin:0;letter-spacing:-0.01em;line-height:1.25}
+  .igb-row-tier{font-size:11.5px;color:var(--muted);margin:0;line-height:1.3}
+  .igb-row-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+  .igb-row-price{font-family:var(--serif);font-size:17px;font-weight:600;color:inherit;line-height:1}
+  .igb-row-details{background:transparent;border:0;color:var(--muted);font-size:10px;letter-spacing:1.2px;text-transform:uppercase;font-weight:600;cursor:pointer;padding:6px 8px;text-decoration:underline;text-underline-offset:3px;font-family:var(--sans);transition:color 0.15s ease}
+  .igb-row-details:hover{color:var(--ink)}
+  /* Old pill class kept as no-op fallback */
+  .igb-pill{display:none}
   .intake-step .service-grid{display:flex;flex-direction:column;gap:10px;margin-top:6px}
   @media (max-width:560px){ .intake-step .service-grid{gap:10px} }
   /* Task 1.8 · Membership upsell banner · fires when an add-on service is selected */
@@ -3521,6 +3531,27 @@
         upgradeLabel: 'Pick One Side ($399) if',
         upgradeText: 'you want us to coordinate the deal, not just organize the file. One Side is paid at closing only · if the deal doesn\'t close, you owe nothing.',
         prefill: 'File Organization ($99)'
+      },
+      'both-sides': {
+        title: 'Transaction Coordination · Both Sides',
+        price: '$599', per: 'per file · paid at closing',
+        tagline: 'Dual representation. Both files coordinated to close.',
+        useWhen: 'You\'re representing both buyer and seller on the same deal · one coordinated file, both sides handled.',
+        included: [
+          'Everything in One Side, for both sides',
+          'Separate file tabs for buyer and seller',
+          'Separate disclosures + compliance per side',
+          'Joint scheduling so neither side waits',
+          'Same broker review applied to both sides',
+          'Single point of contact for the entire deal'
+        ],
+        excluded: [
+          'Offer prep before contract (that\'s Offer Prep)',
+          'Listing setup before contract (that\'s Listing Coordinator)'
+        ],
+        upgradeLabel: 'Pick One Side ($399) if',
+        upgradeText: 'you only represent one side of the deal. Both Sides is for true dual representation only.',
+        prefill: 'TC Both Sides ($599)'
       },
       'one-side': {
         title: 'Transaction Coordination · One Side',
@@ -7221,6 +7252,18 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       addons: 'Which add-on?'
     };
 
+    /* Map intake service IDs to the ALA_DETAILS keys (which power the details modal) */
+    const SVC_DETAILS_KEY = {
+      tc_one_side: 'one-side',
+      tc_both_sides: 'both-sides',
+      lc: 'listing-coordinator',
+      listing_docs: 'listing-docs',
+      mls_setup: 'mls-setup',
+      op_basic: 'offer-basic',
+      op_complete: 'offer-complete',
+      file_org: 'file-org'
+    };
+
     function renderGoalSubpanel(goalKey){
       const panel = document.getElementById('goalSubpanel');
       const label = document.getElementById('goalSubpanelLabel');
@@ -7229,22 +7272,34 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const services = SERVICES.filter(s => SVC_CATEGORY_BY_ID[s.id] === goalKey);
       if(!services.length){ panel.hidden = true; return; }
       if(label) label.textContent = GOAL_SUBPANEL_LABEL[goalKey] || 'Pick a service';
-      pillsRoot.innerHTML = services.map(s => `
-        <span class="igb-pill${state.serviceId === s.id ? ' selected' : ''}" data-pill-service="${s.id}" role="button" tabindex="0">
-          ${s.tier === 'Per offer' || s.tier === 'Per listing' || s.tier === 'Per file' ? s.name : (s.name.indexOf(s.tier) > -1 ? s.name : s.name + ' · ' + s.tier)}
-          <span class="igb-pill-price">$${s.price}</span>
-        </span>
-      `).join('');
+      pillsRoot.innerHTML = services.map(s => {
+        const detailsKey = SVC_DETAILS_KEY[s.id] || '';
+        const isSelected = state.serviceId === s.id;
+        return `
+          <div class="igb-row-item${isSelected ? ' selected' : ''}" data-pill-service="${s.id}" role="button" tabindex="0" aria-pressed="${isSelected}">
+            <div class="igb-row-body">
+              <p class="igb-row-name">${s.name}</p>
+              <p class="igb-row-tier">${s.tier}</p>
+            </div>
+            <div class="igb-row-right">
+              <span class="igb-row-price">$${s.price}</span>
+              ${detailsKey ? `<button type="button" class="igb-row-details" data-ala-details="${detailsKey}" aria-label="View ${s.name} details">Details</button>` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
       panel.hidden = false;
       bindPillClicks();
     }
 
     function bindPillClicks(){
-      document.querySelectorAll('[data-pill-service]').forEach(pill => {
-        if(pill._aariBound) return;
-        pill._aariBound = true;
-        pill.addEventListener('click', () => {
-          state.serviceId = pill.dataset.pillService;
+      document.querySelectorAll('[data-pill-service]').forEach(row => {
+        if(row._aariBound) return;
+        row._aariBound = true;
+        row.addEventListener('click', (e) => {
+          // Don't pick the service if the click came from the Details button
+          if(e.target.closest('[data-ala-details]')) return;
+          state.serviceId = row.dataset.pillService;
           state.servicePreselected = true;
           setIntakeServiceFields(state.serviceId);
           syncPillSelection();
@@ -7253,10 +7308,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           updateClientTypeForService();
           setTimeout(() => { if (state.step === 1) showStep(2); }, 500);
         });
-        pill.addEventListener('keydown', (e) => {
-          if(e.key === 'Enter' || e.key === ' '){
+        row.addEventListener('keydown', (e) => {
+          if((e.key === 'Enter' || e.key === ' ') && !e.target.closest('[data-ala-details]')){
             e.preventDefault();
-            pill.click();
+            row.click();
           }
         });
       });
