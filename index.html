@@ -5070,6 +5070,22 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
            Takes over the modal · all .intake-step sections hide when active.
            ============================================================ -->
       <div id="aariPathA" hidden>
+        <!-- Service-confirm chip · ported from old Step 2 · same look/behavior.
+             Shows on Path A steps 3+ once a service is selected (prefill or manual).
+             DETAILS opens the existing intake details popup · CHANGE resets to Step 1. -->
+        <div id="paServiceChip" class="intake-service-chip" hidden>
+          <div class="chip-top">
+            <div class="chip-body">
+              <p class="chip-name" id="paServiceChipName">Service Name</p>
+              <p class="chip-summary" id="paServiceChipSummary"></p>
+            </div>
+            <span class="chip-price" id="paServiceChipPrice">$0</span>
+          </div>
+          <div class="chip-footer">
+            <button type="button" id="paServiceChipInfo" class="chip-info" aria-label="View details" title="View details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> Details</button>
+            <button type="button" id="paServiceChipChange" class="chip-change" aria-label="Change service">Change</button>
+          </div>
+        </div>
         <section class="pa-step" data-pa-step="1">
           <div class="field">
             <div class="radio-group" id="paServiceType">
@@ -8837,7 +8853,65 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       updateHead();
       renderDots();
       updateFootButtons();
+      renderServiceChip();
       if(state.step === 2) renderPackages();
+    }
+
+    /* Service-confirm chip · same chrome as old intake Step 2.
+       Shows on Path A from Step 3 onward once a service is locked in. */
+    function renderServiceChip(){
+      const chip = document.getElementById('paServiceChip');
+      if(!chip) return;
+      // Hide on type/package pickers (1+2) and on the done screen · chip is redundant there.
+      const showOn = (state.step !== 1 && state.step !== 2 && state.step !== 'done');
+      // Resolve service · prefer full catalog (SERVICE_BY_ID) for name/summary/price,
+      // fall back to Path A's PACKAGES if the service isn't in the homepage catalog yet.
+      let name = '', summary = '', price = '', detailsKey = null, svcIdForDetails = null;
+      const svcId = state.data.serviceId || null;
+      if(svcId && typeof SERVICE_BY_ID !== 'undefined' && SERVICE_BY_ID[svcId]){
+        const svc = SERVICE_BY_ID[svcId];
+        const tierIsPerUnit = svc.tier && /^Per\s/i.test(svc.tier);
+        name = svc.name + (svc.tier && !tierIsPerUnit ? ' · ' + svc.tier : '');
+        summary = svc.summary || '';
+        price = '$' + svc.price;
+        svcIdForDetails = svc.id;
+        detailsKey = (typeof SVC_DETAILS_KEY !== 'undefined') ? SVC_DETAILS_KEY[svc.id] : null;
+      } else if(state.data.serviceType && state.data.servicePackage){
+        // Fallback · pull from Path A's PACKAGES (covers TC + Listing tiers not in homepage catalog)
+        const list = PACKAGES[state.data.serviceType] || [];
+        const pkg = list.find(p => p.id === state.data.servicePackage);
+        if(pkg){
+          const typeLabel = state.data.serviceType === 'tc' ? 'Transaction Coordination' : 'Listing Support';
+          name = typeLabel + ' · ' + pkg.name;
+          price = pkg.price === 0 ? 'Included' : ('$' + pkg.price);
+          summary = '';
+        }
+      }
+      if(!showOn || !name){
+        chip.hidden = true;
+        return;
+      }
+      const nameEl = document.getElementById('paServiceChipName');
+      const priceEl = document.getElementById('paServiceChipPrice');
+      const summaryEl = document.getElementById('paServiceChipSummary');
+      const infoEl = document.getElementById('paServiceChipInfo');
+      if(nameEl) nameEl.textContent = name;
+      if(priceEl) priceEl.textContent = price;
+      if(summaryEl){
+        summaryEl.textContent = summary;
+        summaryEl.style.display = summary ? '' : 'none';
+      }
+      if(infoEl){
+        if(detailsKey){
+          infoEl.setAttribute('data-intake-details', detailsKey);
+          infoEl.setAttribute('aria-label', 'View ' + name + ' details');
+          infoEl.style.display = '';
+        } else {
+          infoEl.removeAttribute('data-intake-details');
+          infoEl.style.display = 'none';
+        }
+      }
+      chip.hidden = false;
     }
 
     function updateHead(){
