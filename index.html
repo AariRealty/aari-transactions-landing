@@ -1490,6 +1490,11 @@
   #aariPathB2 .pb2-upload-label:hover{border-color:#0f0f0f;background:rgba(245,240,232,0.7)}
   #aariPathB2 .pb2-upload-label[data-filled="true"]{border-style:solid;border-color:#3b6d11;background:rgba(192,221,151,0.18);color:#0f0f0f}
   #aariPathB2 .pb2-upload-label[data-filled="true"] .ti{color:#3b6d11}
+  /* Tiny "skip for now" link tucked at bottom-right of the headshot field */
+  #aariPathB2 .pb2-skip-row{text-align:right;margin-top:4px}
+  #aariPathB2 .pb2-skip-link{font-size:11px;color:#8a8580;text-decoration:underline;cursor:pointer;font-family:Inter,sans-serif}
+  #aariPathB2 .pb2-skip-link:hover{color:#0f0f0f}
+  #aariPathB2 .pb2-skip-link[data-skipped="true"]{color:#0f0f0f;font-weight:500}
   /* Client reviews toggle · Yes/No row */
   #aariPathB2 .pb2-toggle-block{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 14px;background:#f5f0e8;border-radius:8px;margin-bottom:12px}
   #aariPathB2 .pb2-toggle-text{flex:1}
@@ -5757,7 +5762,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
                   </label>
                   <div id="pb2HeadshotPreview" hidden style="margin-top:8px"></div>
                 </div>
-                <div class="aari-helper">Used in your agent profile, file confirmations, and Aari marketing materials.</div>
+                <div class="aari-helper">By uploading your photo you give Aari Transactions LLC permission to use your headshot in your agent profile, file confirmations, and Aari marketing materials including social media. You may request removal at any time by emailing hello@aaritransactions.com.</div>
+                <div class="pb2-skip-row">
+                  <a href="#" id="pb2HeadshotSkip" class="pb2-skip-link">Don&apos;t have one? Skip for now</a>
+                </div>
               </div>
               <div class="aari-actions">
                 <button type="button" class="aari-btn ghost" data-pb2-prev>&larr; Back</button>
@@ -11151,7 +11159,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     const TOP = ['Lee','Collier','Charlotte','Sarasota','Hendry','DeSoto'];
     const ALL_REMAINING = ['Alachua','Baker','Bay','Bradford','Brevard','Broward','Calhoun','Citrus','Clay','Columbia','Dixie','Duval','Escambia','Flagler','Franklin','Gadsden','Gilchrist','Glades','Gulf','Hamilton','Hardee','Hernando','Highlands','Hillsborough','Holmes','Indian River','Jackson','Jefferson','Lafayette','Lake','Leon','Levy','Liberty','Madison','Manatee','Marion','Martin','Miami-Dade','Monroe','Nassau','Okaloosa','Okeechobee','Orange','Osceola','Palm Beach','Pasco','Pinellas','Polk','Putnam','Santa Rosa','Seminole','St. Johns','St. Lucie','Sumter','Suwannee','Taylor','Union','Volusia','Wakulla','Walton','Washington'];
 
-    let state = { step: 1, profile: {}, active: false, headshotFile: null, headshotUrl: null, signatureDataUrl: null };
+    let state = { step: 1, profile: {}, active: false, headshotFile: null, headshotUrl: null, headshotSkipped: false, signatureDataUrl: null };
     const selectedCounties = new Set();
     let _wired = false;
     let _reviewBound = false;
@@ -11277,7 +11285,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(!data.licenseNumber) return showError('Enter your license number.');
       if(!data.licenseExpiresAt) return showError('Enter your license expiration date.');
       if(!data.serviceCounties.length) return showError('Select at least one Florida county.');
-      if(!state.headshotFile) return showError('Please upload a headshot.');
+      if(!state.headshotFile && !state.headshotSkipped) return showError('Please upload a headshot or click "Skip for now."');
       Object.assign(state.profile, data);
       showStep(3);
     }
@@ -11423,6 +11431,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           return;
         }
         state.headshotFile = file;
+        // Uploading a file auto-clears the skip flag.
+        state.headshotSkipped = false;
+        const skipLink = el('pb2HeadshotSkip');
+        if(skipLink){ skipLink.textContent = "Don't have one? Skip for now"; skipLink.removeAttribute('data-skipped'); }
         if(text) text.textContent = file.name;
         if(label) label.setAttribute('data-filled', 'true');
         if(preview){
@@ -11434,6 +11446,35 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           preview.hidden = false;
         }
         clearError();
+      });
+    }
+    /* Skip link · agent opts out of uploading a headshot at signup.
+       Toggles state.headshotSkipped · click again to undo. */
+    function bindHeadshotSkip(){
+      const link = el('pb2HeadshotSkip');
+      if(!link || link._bound) return;
+      link._bound = true;
+      link.addEventListener('click', e => {
+        e.preventDefault();
+        state.headshotSkipped = !state.headshotSkipped;
+        if(state.headshotSkipped){
+          link.textContent = "Skipped · I'll add later (click to undo)";
+          link.setAttribute('data-skipped', 'true');
+          // Clear any uploaded file when opting out.
+          state.headshotFile = null;
+          const input = el('pb2Headshot');
+          if(input) input.value = '';
+          const label = el('pb2HeadshotLabel');
+          if(label) label.removeAttribute('data-filled');
+          const text = el('pb2HeadshotText');
+          if(text) text.textContent = 'Click to upload · JPG or PNG, max 5MB';
+          const preview = el('pb2HeadshotPreview');
+          if(preview){ preview.innerHTML = ''; preview.hidden = true; }
+          clearError();
+        } else {
+          link.textContent = "Don't have one? Skip for now";
+          link.removeAttribute('data-skipped');
+        }
       });
     }
     async function uploadHeadshot(file){
@@ -11903,7 +11944,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     /* ------- Lifecycle ------- */
     function init(seed){
-      state = { step: 1, profile: {}, active: true, headshotFile: null, headshotUrl: null, signatureDataUrl: null };
+      state = { step: 1, profile: {}, active: true, headshotFile: null, headshotUrl: null, headshotSkipped: false, signatureDataUrl: null };
       selectedCounties.clear();
 
       // Hide all other modal surfaces · we own the modal now.
@@ -11952,6 +11993,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(headshotText) headshotText.textContent = 'Click to upload · JPG or PNG, max 5MB';
       const headshotPreview = el('pb2HeadshotPreview');
       if(headshotPreview){ headshotPreview.innerHTML = ''; headshotPreview.hidden = true; }
+      const headshotSkip = el('pb2HeadshotSkip');
+      if(headshotSkip){ headshotSkip.textContent = "Don't have one? Skip for now"; headshotSkip.removeAttribute('data-skipped'); }
 
       // Prefill email from the gate hand-off and LOCK it (matches register.html behavior).
       if(seed && seed.email){
@@ -11975,6 +12018,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       bindPwMeter();
       bindBackButtons();
       bindHeadshot();
+      bindHeadshotSkip();
       bindReviewToggle();
       bindAgreementGate();
       bindSignaturePad();
