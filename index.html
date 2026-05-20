@@ -9247,6 +9247,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(gateErrorEl){ gateErrorEl.textContent = ''; gateErrorEl.style.display = 'none'; }
       const gateInputEl = document.getElementById('aariGateEmail');
       if(gateInputEl) gateInputEl.value = '';
+      // Reset the Supabase-backed gate state machine to 'email' so the agent starts at lookup.
+      if(typeof resetGateState === 'function') resetGateState();
       const saved = readSavedProgress();
       hideResumeBanner();
       suspendSave = !!saved;
@@ -9498,35 +9500,174 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
     }
 
-    function handleGateContinue(){
-      showError('');
-      showStatus('');
-      const input = document.getElementById('aariGateEmail');
-      if(!input){ showStatus('Error: email input not found.'); return false; }
-      const email = normalizeEmail(input.value);
-      if(!email){ showError('Email is required.'); return false; }
-      if(!isValidEmail(email)){ showError("That doesn't look like a valid email."); return false; }
-      showStatus('Looking up your profile · ' + email);
-      const profile = lookupProfile(email);
-      if(profile){
-        showStatus('Profile found · loading your short form...');
-        routeToPathA(profile);
-      } else {
-        showStatus('New here · loading onboarding...');
-        routeToPathB(email);
-      }
-      return true;
+    /* V3 · STEP 3 · Supabase-backed gate.
+       Three states: 'email' (initial) → 'login' (existing) | 'register' (new). */
+    let gateState = 'email';
+
+    function resetGateState(){
+      gateState = 'email';
+      const headline = document.getElementById('aariGateHeadline');
+      if(headline) headline.innerHTML = 'Welcome <em>back.</em>';
+      const sub = document.getElementById('aariGateSub');
+      if(sub) sub.textContent = 'Enter your email to get started.';
+      const emailInput = document.getElementById('aariGateEmail');
+      if(emailInput) emailInput.readOnly = false;
+      const pwWrap = document.getElementById('aariGatePasswordWrap');
+      if(pwWrap) pwWrap.hidden = true;
+      const pwInput = document.getElementById('aariGatePassword');
+      if(pwInput) pwInput.value = '';
+      const btn = document.getElementById('aariGateContinue');
+      if(btn) btn.innerHTML = 'Continue &rarr;';
+      const hint = document.getElementById('aariGateHint');
+      if(hint) hint.textContent = "New here? Same field · we'll set you up after.";
     }
 
-    /* Wire the inline hero Continue button + Enter key on the email input. */
+    async function handleGateContinue(){
+      showError(''); showStatus('');
+      const emailInput = document.getElementById('aariGateEmail');
+      if(!emailInput) return;
+      const email = normalizeEmail(emailInput.value);
+      if(!email){ showError('Email is required.'); return; }
+      if(!isValidEmail(email)){ showError("That doesn't look like a valid email."); return; }
+      const supabase = (window.AariAuth && window.AariAuth.client) || null;
+      if(!supabase){ showError('Auth not ready · refresh the page.'); return; }
+
+      // STATE 1 · email → check if account exists in Supabase auth
+      if(gateState === 'email'){
+        showStatus('Looking up your account...');
+        try {
+          const { data: exists, error } = await supabase.rpc('agent_exists', { email_check: email });
+          if(error) throw error;
+          showStatus('');
+          if(exists){
+            // Existing agent · reveal password + switch button to "Log in"
+            document.getElementById('aariGateHeadline').innerHTML = 'Welcome <em>back.</em>';
+            document.getElementById('aariGateSub').textContent = 'Enter your password.';
+            document.getElementById('aariGatePasswordWrap').hidden = false;
+            document.getElementById('aariGateContinue').innerHTML = 'Log in &rarr;';
+            document.getElementById('aariGateHint').textContent = '';
+            emailInput.readOnly = true;
+            gateState = 'login';
+            setTimeout(() => document.getElementById('aariGatePassword').focus(), 60);
+          } else {
+            // New agent · switch to "Create my account"
+            document.getElementById('aariGateHeadline').innerHTML = 'New <em>here?</em>';
+            document.getElementById('aariGateSub').textContent = "Looks like you are new here. Let's get you set up.";
+            document.getElementById('aariGateContinue').innerHTML = 'Create my account &rarr;';
+            document.getElementById('aariGateHint').textContent = '';
+            emailInput.readOnly = true;
+            gateState = 'register';
+          }
+        } catch(err){
+          console.error('[gate] agent_exists rpc failed', err);
+          showError('Lookup failed · ' + (err.message || 'try again.'));
+        }
+        return;
+      }
+
+      // STATE 2 · login → signInWithPassword + pull profile
+      if(gateState === 'login'){
+        const password = document.getElementById('aariGatePassword').value;
+        if(!password){ showError('Password is required.'); return; }
+        showStatus('Signing you in...');
+        try {
+          const { data, error } = await supabase.auth.signInWithPassword({ email: email, password: password });
+          if(error) throw error;
+          // Pull full profile from agents table
+          const { data: row, error: profileErr } = await supabase
+            .from('agents')
+            .select('*')
+            .eq('id', data.user.id)
+            .maybeSingle();
+          if(profileErr) throw profileErr;
+          showStatus('');
+          resetGateState();
+          if(window.AariPathA && typeof window.AariPathA.init === 'function'){
+            window.AariPathA.init(mapAgentRowToProfile(row, email));
+          }
+        } catch(err){
+          console.error('[gate] signInWithPassword failed', err);
+          showError('That password does not match. Try again or reset it.');
+        }
+        return;
+      }
+
+      // STATE 3 · register → hand off to Path B with email pre-filled
+      if(gateState === 'register'){
+        showStatus('');
+        resetGateState();
+        if(window.AariPathB && typeof window.AariPathB.init === 'function'){
+          window.AariPathB.init({ email: email });
+        }
+        return;
+      }
+    }
+
+    async function handleForgotPassword(){
+      showError(''); showStatus('');
+      const emailInput = document.getElementById('aariGateEmail');
+      const email = normalizeEmail(emailInput ? emailInput.value : '');
+      if(!email || !isValidEmail(email)){ showError('Enter your email first.'); return; }
+      const supabase = (window.AariAuth && window.AariAuth.client) || null;
+      if(!supabase){ showError('Auth not ready · refresh.'); return; }
+      showStatus('Sending reset link...');
+      try {
+        const { error } = await supabase.auth.resetPasswordForEmail(email);
+        if(error) throw error;
+        showStatus('Check your inbox. We sent a reset link.');
+      } catch(err){
+        console.error('[gate] resetPasswordForEmail failed', err);
+        showError('Reset failed · ' + (err.message || 'try again.'));
+      }
+    }
+
+    /* Map a Supabase agents row → the profile shape Path A expects. */
+    function mapAgentRowToProfile(row, email){
+      if(!row) return { email: email };
+      return {
+        email: email,
+        name: [row.first_name, row.last_name].filter(Boolean).join(' '),
+        first_name: row.first_name,
+        last_name: row.last_name,
+        phone: row.phone,
+        license_number: row.license_number,
+        license_state: row.license_state || 'FL',
+        license_expiration: row.license_expiration,
+        brokerage: row.brokerage,
+        broker_name: row.broker_name,
+        broker_email: row.broker_email,
+        title_company: row.title_company,
+        lender: row.lender,
+        compliance_platform: row.compliance_platform,
+        signing_platform: row.signing_platform,
+        review_preference: row.review_preference,
+        instagram: row.instagram,
+        facebook: row.facebook,
+        headshot_url: row.headshot_url,
+        service_area: row.service_area,
+        agreement_signed: row.agreement_signed,
+        agreement_signed_at: row.agreement_signed_at,
+        agreement_version: row.agreement_version,
+        agreement_typed_name: row.agreement_typed_name
+      };
+    }
+
+    /* Wire the inline hero Continue button + Enter key + Forgot password link. */
     document.addEventListener('click', function(e){
       if(e.target && (e.target.id === 'aariGateContinue' || (e.target.closest && e.target.closest('#aariGateContinue')))){
         e.preventDefault();
         handleGateContinue();
+        return;
+      }
+      if(e.target && (e.target.id === 'aariGateForgot' || (e.target.closest && e.target.closest('#aariGateForgot')))){
+        e.preventDefault();
+        handleForgotPassword();
+        return;
       }
     });
     document.addEventListener('keydown', function(e){
-      if(e.key === 'Enter' && e.target && e.target.id === 'aariGateEmail'){
+      if(e.key !== 'Enter') return;
+      if(e.target && (e.target.id === 'aariGateEmail' || e.target.id === 'aariGatePassword')){
         e.preventDefault();
         handleGateContinue();
       }
