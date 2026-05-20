@@ -5731,6 +5731,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       { id:'file_org', name:'File Organization', tier:'Per file', unit:'per file', summary:'Full upload + execution verification + broker review', price:99, timing:'upfront', form:'file_org', meta:'Pay upfront via Stripe', stripe:'https://buy.stripe.com/6oU00b2RF6infcT8MOcAo0f' }
     ];
     const SERVICE_BY_ID = Object.fromEntries(SERVICES.map(s => [s.id, s]));
+    // Expose globally so Path A (separate IIFE) can resolve service details for the confirm chip.
+    try { window.SERVICE_BY_ID = SERVICE_BY_ID; window.SERVICES = SERVICES; } catch(_){}
 
     /* Task 1.8 · Membership credit coverage by service.
        Source: Aari Realty pricing — Starter ($79/mo, 2 credits) and Producer ($129/mo, 4 credits).
@@ -7633,6 +7635,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       op_complete: 'offer-complete',
       file_org: 'file-org'
     };
+    // Expose to window so Path A (separate IIFE) can look up details keys for chip info icons.
+    try { window.SVC_DETAILS_KEY = SVC_DETAILS_KEY; } catch(_){}
 
     function renderGoalSubpanel(goalKey){
       const panel = document.getElementById('goalSubpanel');
@@ -8947,25 +8951,26 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const showOn = (state.step !== 1 && state.step !== 2 && state.step !== 'done');
       // Resolve service · prefer full catalog (SERVICE_BY_ID) for name/summary/price,
       // fall back to Path A's PACKAGES if the service isn't in the homepage catalog yet.
-      let name = '', summary = '', price = '', detailsKey = null, svcIdForDetails = null;
-      const svcId = state.data.serviceId || null;
-      if(svcId && typeof SERVICE_BY_ID !== 'undefined' && SERVICE_BY_ID[svcId]){
-        const svc = SERVICE_BY_ID[svcId];
+      let name = '', summary = '', price = '', detailsKey = null;
+      const svcId = state.data.serviceId || state.data.servicePackage || null;
+      const SBI = (typeof window !== 'undefined') ? window.SERVICE_BY_ID : null;
+      const SDK = (typeof window !== 'undefined') ? window.SVC_DETAILS_KEY : null;
+      if(svcId && SBI && SBI[svcId]){
+        const svc = SBI[svcId];
         const tierIsPerUnit = svc.tier && /^Per\s/i.test(svc.tier);
         name = svc.name + (svc.tier && !tierIsPerUnit ? ' · ' + svc.tier : '');
         summary = svc.summary || '';
         price = '$' + svc.price;
-        svcIdForDetails = svc.id;
-        detailsKey = (typeof SVC_DETAILS_KEY !== 'undefined') ? SVC_DETAILS_KEY[svc.id] : null;
+        detailsKey = SDK ? SDK[svc.id] : null;
       } else if(state.data.serviceType && state.data.servicePackage){
-        // Fallback · pull from Path A's PACKAGES (covers TC + Listing tiers not in homepage catalog)
+        // Fallback · pull from Path A's PACKAGES · pkg.name already carries full label
         const list = PACKAGES[state.data.serviceType] || [];
         const pkg = list.find(p => p.id === state.data.servicePackage);
         if(pkg){
-          const typeLabel = state.data.serviceType === 'tc' ? 'Transaction Coordination' : 'Listing Support';
-          name = typeLabel + ' · ' + pkg.name;
+          name = pkg.name;
+          summary = pkg.summary || '';
           price = pkg.price === 0 ? 'Included' : ('$' + pkg.price);
-          summary = '';
+          detailsKey = SDK ? SDK[pkg.id] : null;
         }
       }
       if(!showOn || !name){
