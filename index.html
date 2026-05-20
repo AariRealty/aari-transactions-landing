@@ -10968,13 +10968,15 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const uid = userResp && userResp.user && userResp.user.id;
       if(!uid) throw new Error('No authenticated user.');
       const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-      const path = uid + '/headshot.' + ext;
-      const { error: upErr } = await supabase.storage.from('agent-headshots').upload(path, file, {
+      // Bucket: `headshots`. RLS policy requires path: headshots/{uid}/{filename}
+      // (the policy double-nests the folder name · see 20260517_headshots_bucket.sql).
+      const path = 'headshots/' + uid + '/' + Date.now() + '.' + ext;
+      const { error: upErr } = await supabase.storage.from('headshots').upload(path, file, {
         upsert: true,
         contentType: file.type
       });
       if(upErr) throw upErr;
-      const { data: urlData } = supabase.storage.from('agent-headshots').getPublicUrl(path);
+      const { data: urlData } = supabase.storage.from('headshots').getPublicUrl(path);
       state.headshotUrl = urlData && urlData.publicUrl ? urlData.publicUrl : null;
       return state.headshotUrl;
     }
@@ -10990,6 +10992,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(!uid) return;
       const nowIso = new Date().toISOString();
       const typedName = (state.profile.firstName + ' ' + state.profile.lastName).trim();
+      // Map Yes/No toggle → schema vocabulary 'always'|'never' (existing column constraint).
+      const reviewMap = { yes: 'always', no: 'never' };
+      const reviewVal = reviewMap[state.profile.reviewPreference] || null;
       await supabase.from('agents').update({
         agreement_signed:       true,
         agreement_signed_at:    nowIso,
@@ -10998,9 +11003,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         signature_image_url:    state.signatureDataUrl || null,
         compliance_platform:    state.profile.compliancePlatform || null,
         signing_platform:       state.profile.signingPlatform || null,
-        review_preference:      state.profile.reviewPreference || null,
-        instagram:              state.profile.instagram || null,
-        facebook:               state.profile.facebook || null,
+        review_preference:      reviewVal,
+        social_instagram:       state.profile.instagram || null,
+        social_facebook:        state.profile.facebook || null,
         headshot_url:           state.headshotUrl || null,
         license_expiration:     state.profile.licenseExpiresAt || null
       }).eq('id', uid);
