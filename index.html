@@ -1332,6 +1332,15 @@
   .sa-popup-submit{display:block;width:100%;background:#0f0f0f;color:#fff;font-family:var(--sans);font-size:13px;font-weight:600;padding:14px 22px;border-radius:8px;border:none;letter-spacing:0.02em;cursor:pointer;margin-top:14px;transition:opacity 0.15s ease}
   .sa-popup-submit:disabled{opacity:0.4;cursor:not-allowed}
   .sa-popup-submit:not(:disabled):hover{opacity:0.92}
+  /* Counter-signature block · shown when agent reaches bottom · proves mutual execution */
+  .sa-popup-counter{background:#0f0f0f;color:#fff;border-radius:8px;padding:16px 18px;margin:0 0 14px}
+  .sa-popup-counter[hidden]{display:none}
+  .sa-popup-counter-eb{font-family:var(--sans);font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:rgba(255,255,255,0.55);font-weight:700;margin:0 0 8px}
+  .sa-popup-counter-sig{font-family:var(--serif);font-style:italic;font-size:30px;font-weight:500;color:#fff;line-height:1.05;margin:0 0 6px;letter-spacing:-0.005em}
+  .sa-popup-counter-meta{font-family:var(--sans);font-size:11.5px;color:rgba(255,255,255,0.72);line-height:1.5;margin:0;letter-spacing:0}
+  .sa-popup-counter-meta strong{color:#fff;font-weight:500}
+  /* Checkbox · em treatment for statutory citation */
+  .sa-popup-check em{font-style:italic;color:#0f0f0f;font-weight:500}
   /* Identity preview block · shows the agent what's being captured */
   .sa-popup-preview{background:#f5f0e8;border:1px solid #e6e2d8;border-radius:8px;padding:14px 16px;margin:0 0 14px}
   .sa-popup-preview[hidden]{display:none}
@@ -5806,6 +5815,13 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;margin-left:6px"><polyline points="6 9 12 15 18 9"/></svg>
     </button>
     <div class="sa-popup-foot">
+      <!-- Counter-signature · Aari has pre-executed v4.6 · agent sees this when they reach the bottom.
+           Mutual execution is visibly shown · removes the "one-sided" defense argument. -->
+      <div class="sa-popup-counter" id="saPopupCounter" hidden>
+        <p class="sa-popup-counter-eb">Counter-signed by Aari Transactions LLC</p>
+        <p class="sa-popup-counter-sig">Marlenyi Paredes</p>
+        <p class="sa-popup-counter-meta"><strong>Marlenyi Paredes, Founder</strong> &middot; Aari Transactions LLC &middot; Master v4.6 executed Oct 14, 2025</p>
+      </div>
       <!-- Identity preview · shows the agent exactly what's being captured as their signature.
            Auto-populates from Path B state · the typed-name input updates the Name row live. -->
       <div class="sa-popup-preview" id="saPopupPreview" hidden>
@@ -5828,7 +5844,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             <span class="sa-popup-preview-val" id="saPreviewBrokerage">—</span>
           </div>
           <div class="sa-popup-preview-row">
-            <span class="sa-popup-preview-key">Effective date</span>
+            <span class="sa-popup-preview-key">Signature date</span>
             <span class="sa-popup-preview-val" id="saPreviewDate">—</span>
           </div>
           <div class="sa-popup-preview-row">
@@ -5839,7 +5855,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       </div>
       <label class="sa-popup-check" id="saPopupCheckWrap">
         <input type="checkbox" id="saPopupAgree" disabled>
-        <span>I have read and agree to the Aari Transactions Service Agreement (v4.6).</span>
+        <span>I have read this Agreement in full, intend to be legally bound by all its terms, and I am authorized to enter this Agreement in my professional capacity. My typed name below and the timestamp captured here constitute my electronic signature under <em>Fla. Stat. &sect; 668.50</em>.</span>
       </label>
       <div class="sa-popup-sign" id="saPopupSignWrap" hidden>
         <label for="saPopupName">Type your full legal name to sign *</label>
@@ -10388,7 +10404,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(submit) submit.disabled = true;
       const scrollBtn = el('saScrollDownBtn');
       if(scrollBtn) scrollBtn.hidden = false;
-      // Hide preview + legal note until agent reaches bottom of agreement.
+      // Hide counter-sig + preview + legal note until agent reaches bottom of agreement.
+      const counter = el('saPopupCounter');
+      if(counter) counter.hidden = true;
       const preview = el('saPopupPreview');
       if(preview) preview.hidden = true;
       const legal = el('saPopupLegal');
@@ -10423,10 +10441,18 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         : '');
       setVal('saPreviewEmail', profile.email || '');
       setVal('saPreviewBrokerage', profile.brokerage || '');
-      // Today's date formatted readable
+      // Signature date · full timestamp with time and timezone (e.g. "Nov 17, 2025 at 3:47 PM ET")
       const now = new Date();
-      const dateStr = now.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' });
-      setVal('saPreviewDate', dateStr);
+      const datePart = now.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+      const timePart = now.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit', hour12:true });
+      // Pull the short timezone abbreviation (ET, PT, etc.) from Intl when available.
+      let tzAbbr = '';
+      try {
+        const parts = new Intl.DateTimeFormat('en-US', { timeZoneName:'short' }).formatToParts(now);
+        const tz = parts.find(p => p.type === 'timeZoneName');
+        if(tz) tzAbbr = ' ' + tz.value;
+      } catch(_){}
+      setVal('saPreviewDate', datePart + ' at ' + timePart + tzAbbr);
     }
 
     function close(){
@@ -10445,11 +10471,13 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const atBottom = scrolled >= (body.scrollHeight - 16);
       const check = el('saPopupAgree');
       const scrollBtn = el('saScrollDownBtn');
+      const counter = el('saPopupCounter');
       const preview = el('saPopupPreview');
       const legal = el('saPopupLegal');
       if(atBottom){
         if(check) check.disabled = false;
         if(scrollBtn) scrollBtn.hidden = true;
+        if(counter) counter.hidden = false;
         if(preview) preview.hidden = false;
         if(legal) legal.hidden = false;
       } else {
