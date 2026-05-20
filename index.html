@@ -5378,16 +5378,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
            Takes over the modal · all .intake-step sections hide when active.
            ============================================================ -->
       <div id="aariPathA" hidden>
-        <!-- Returning-agent signed-agreement history banner · shows only if localStorage has signed entries. -->
-        <div id="paSignedHistoryBanner" class="pa-signed-history-banner" hidden>
-          <span class="pa-signed-history-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/></svg>
-          </span>
-          <span class="pa-signed-history-text">
-            You have <strong id="paSignedHistoryCount">0</strong> signed agreement<span id="paSignedHistoryPlural">s</span> on file with Aari.
-          </span>
-          <button type="button" id="paSignedHistoryViewBtn" class="pa-signed-history-btn">View &rarr;</button>
-        </div>
+        <!-- Step 5 · signed-agreement history banner removed · Supabase agents.agreement_signed_at
+             is the source of truth. Agent's email + Netlify Forms admin provide their copy. -->
         <!-- Service-confirm chip · Option J · chip is clean (name + summary + price only),
              DETAILS + CHANGE controls live BELOW the chip, right-aligned, outside the black box. -->
         <div id="paServiceChipWrap" hidden>
@@ -9475,19 +9467,14 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
   (function aariIntakeGateV3(){
     'use strict';
 
-    const PROFILE_KEY_PREFIX = 'aari_agent_profile::';
+    // Step 5 · Supabase is the only source of truth for agent profiles.
+    // localStorage profile reads/writes have been removed · the gate uses agent_exists RPC.
 
     function normalizeEmail(raw){
       return String(raw || '').trim().toLowerCase();
     }
     function isValidEmail(email){
       return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-    }
-    function lookupProfile(email){
-      try {
-        const raw = localStorage.getItem(PROFILE_KEY_PREFIX + email);
-        return raw ? JSON.parse(raw) : null;
-      } catch(_){ return null; }
     }
     function showError(msg){
       const el = document.getElementById('aariGateError');
@@ -9784,8 +9771,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     window.AariIntakeGateV3 = {
       handleGateContinue: handleGateContinue,
-      lookupProfile: lookupProfile,
-      PROFILE_KEY_PREFIX: PROFILE_KEY_PREFIX
+      handleForgotPassword: handleForgotPassword
     };
   })();
 
@@ -9947,24 +9933,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       });
     }
 
-    /* Show "You have N signed agreements" banner if localStorage has any for this email. */
-    function renderSignedHistoryBanner(){
-      const banner = document.getElementById('paSignedHistoryBanner');
-      if(!banner) return;
-      const email = (state.profile && state.profile.email) ? state.profile.email.toLowerCase().trim() : '';
-      if(!email){ banner.hidden = true; return; }
-      let history = [];
-      try {
-        const raw = localStorage.getItem('aari_signed_agreements::' + email);
-        if(raw) history = JSON.parse(raw) || [];
-      } catch(_){}
-      if(!history.length){ banner.hidden = true; return; }
-      const countEl = document.getElementById('paSignedHistoryCount');
-      const pluralEl = document.getElementById('paSignedHistoryPlural');
-      if(countEl) countEl.textContent = history.length;
-      if(pluralEl) pluralEl.textContent = history.length === 1 ? '' : 's';
-      banner.hidden = false;
-    }
+    /* Step 5 · signed-history banner removed · Supabase agents row is source of truth.
+       The signed-history modal + this banner relied on localStorage which is no longer used.
+       Kept as a no-op to preserve any lingering callers without throwing. */
+    function renderSignedHistoryBanner(){ /* no-op since Step 5 */ }
 
     /* V3 · After the gate, apply any stashed service from a pricing-card click.
        Auto-fills serviceType + servicePackage and jumps Path A to Step 3
@@ -10484,7 +10456,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
   (function aariPathB(){
     'use strict';
 
-    const PROFILE_KEY_PREFIX = 'aari_agent_profile::';
+    // Step 5 · localStorage profile keys removed · Supabase agents table is source of truth.
 
     // Ordered flow · welcome screen + 8 onboarding questions + nice-to-haves + done.
     const FLOW = ['welcome', 'name', 'phone', 'license', 'brokerage', 'broker', 'title', 'lender', 'sign', 'extras', 'done'];
@@ -11309,24 +11281,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
     }
 
-    /* Send signature to Netlify Forms + save to localStorage for agent's history.
-       Netlify auto-emails Marlenyi at the address configured in the Netlify Forms dashboard.
-       The agent's local copy persists in localStorage so they can re-view on return. */
+    /* Send signature to Netlify Forms · Supabase agents row is the source of truth.
+       Netlify auto-emails Marlenyi at the address configured in the Netlify Forms dashboard. */
     function sendAgreementCopies(payload){
-      // 1 · Save to localStorage · keyed by agent_email + signed_at_iso so multiple files per agent.
-      try {
-        const historyKey = 'aari_signed_agreements::' + (payload.agent_email || '').toLowerCase().trim();
-        let history = [];
-        try {
-          const raw = localStorage.getItem(historyKey);
-          if(raw) history = JSON.parse(raw) || [];
-        } catch(_){}
-        history.push(payload);
-        localStorage.setItem(historyKey, JSON.stringify(history));
-      } catch(err){
-        console.warn('[SA-POPUP] localStorage save failed', err);
-      }
-      // 2 · POST to Netlify Forms · netlify auto-emails Marlenyi.
+      // POST to Netlify Forms · netlify auto-emails Marlenyi.
       try {
         const formData = new URLSearchParams();
         formData.append('form-name', 'aari-sa-signature');
