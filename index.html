@@ -1410,7 +1410,23 @@
   .sa-popup-confirm-sub{font-family:var(--sans);font-size:13px;color:#5f5e5a;line-height:1.5;margin:0 0 10px}
   .sa-popup-confirm-list{list-style:none;padding:0;margin:0 0 18px;font-family:var(--sans);font-size:13px;color:#0f0f0f;line-height:1.7;text-align:center}
   .sa-popup-confirm-list li{font-weight:500}
-  .sa-popup-confirm-fineprint{font-family:var(--sans);font-size:11px;color:#8a8580;line-height:1.5;margin:0;letter-spacing:0.02em}
+  .sa-popup-confirm-fineprint{font-family:var(--sans);font-size:11px;color:#8a8580;line-height:1.5;margin:0 0 20px;letter-spacing:0.02em}
+  .sa-popup-confirm-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+  .sa-popup-confirm-btn{font-family:var(--sans);font-size:12.5px;font-weight:600;padding:11px 22px;border-radius:8px;border:1.5px solid #0f0f0f;letter-spacing:0.02em;cursor:pointer;display:inline-flex;align-items:center;transition:background 0.15s ease,color 0.15s ease}
+  .sa-popup-confirm-btn.primary{background:#0f0f0f;color:#fff}
+  .sa-popup-confirm-btn.primary:hover{opacity:0.92}
+  .sa-popup-confirm-btn.secondary{background:#fff;color:#0f0f0f}
+  .sa-popup-confirm-btn.secondary:hover{background:#f5f0e8}
+  /* Print stylesheet · agent clicks "Save your copy" → window.print() → save as PDF.
+     Hide everything except the SA popup body content for a clean printable agreement. */
+  @media print {
+    body > *:not(#saPopupOverlay), #intake-modal, .nav, footer { display: none !important; }
+    #saPopupOverlay { position: static; background: white; padding: 0; }
+    .sa-popup-box { max-height: none; box-shadow: none; border-radius: 0; max-width: 100%; }
+    .sa-popup-close, .sa-popup-foot, .sa-popup-confirm, .sa-scroll-anchor { display: none !important; }
+    .sa-popup-head { padding: 24px 32px 16px; border-bottom: 1px solid #ccc; text-align: center; }
+    .sa-popup-body { max-height: none; overflow: visible; padding: 24px 32px; }
+  }
   @media (max-width:560px){
     .sa-popup-overlay{padding:0}
     .sa-popup-box{max-height:100vh;border-radius:0}
@@ -5917,19 +5933,26 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       <p class="sa-popup-legal" id="saPopupLegal" hidden>By clicking Sign and continue you authorize Aari to capture this electronic signature under <em>Fla. Stat. &sect; 668.50</em> (Uniform Electronic Transaction Act). A countersigned PDF copy will be emailed to you, your broker, and tc@aaritransactions.com.</p>
       <button type="button" id="saPopupSubmit" class="sa-popup-submit" disabled>Sign and continue &rarr;</button>
     </div>
-    <!-- Confirmation state · shown after Sign and continue · replaces the popup body for 2 sec -->
+    <!-- Confirmation state · shown after Sign and continue · two actions, no auto-close. -->
     <div class="sa-popup-confirm" id="saPopupConfirm" hidden>
       <div class="sa-popup-confirm-check" aria-hidden="true">
         <svg viewBox="0 0 52 52" width="52" height="52"><circle cx="26" cy="26" r="25" fill="none" stroke="#0f0f0f" stroke-width="2"/><path d="M14 27 l8 8 l16-18" fill="none" stroke="#0f0f0f" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </div>
       <h3 class="sa-popup-confirm-h">Signed.</h3>
-      <p class="sa-popup-confirm-sub">Copy emailed to:</p>
+      <p class="sa-popup-confirm-sub">Notification sent to Aari. Your copy is saved.</p>
       <ul class="sa-popup-confirm-list">
-        <li id="saConfirmAgent">you</li>
-        <li id="saConfirmBroker">your broker</li>
-        <li>tc@aaritransactions.com</li>
+        <li><strong>You</strong> &middot; <span id="saConfirmAgent">—</span></li>
+        <li><strong>Your broker</strong> &middot; <span id="saConfirmBroker">—</span></li>
+        <li><strong>Aari Transactions</strong> &middot; tc@aaritransactions.com</li>
       </ul>
       <p class="sa-popup-confirm-fineprint">Audit trail saved &middot; v4.6 &middot; <span id="saConfirmTimestamp"></span></p>
+      <div class="sa-popup-confirm-actions">
+        <button type="button" id="saPopupSaveCopy" class="sa-popup-confirm-btn secondary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;margin-right:6px;vertical-align:-2px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Save your copy
+        </button>
+        <button type="button" id="saPopupConfirmContinue" class="sa-popup-confirm-btn primary">Continue &rarr;</button>
+      </div>
     </div>
   </div>
 </div>
@@ -10745,24 +10768,15 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     function showConfirmation(payload){
       const confirmEl = el('saPopupConfirm');
       if(!confirmEl) return;
-      // Populate the email + broker email + timestamp into the confirmation list.
+      // Populate the recipient + timestamp display.
       const agentLi = el('saConfirmAgent');
-      if(agentLi) agentLi.textContent = payload.agent_email || 'you';
+      if(agentLi) agentLi.textContent = payload.agent_email || 'agent';
       const brokerLi = el('saConfirmBroker');
-      if(brokerLi) brokerLi.textContent = payload.broker_email || 'your broker';
+      if(brokerLi) brokerLi.textContent = payload.broker_email || 'broker';
       const tsEl = el('saConfirmTimestamp');
-      if(tsEl){
-        try {
-          const d = new Date(payload.signed_at_iso);
-          tsEl.textContent = d.toLocaleString('en-US', { dateStyle:'medium', timeStyle:'short' });
-        } catch(_){ tsEl.textContent = payload.signed_at_iso; }
-      }
+      if(tsEl) tsEl.textContent = payload.signed_at_display || payload.signed_at_iso;
       confirmEl.hidden = false;
-      // Auto-close after 2 seconds so the agent sees the receipt then keeps moving.
-      setTimeout(() => {
-        confirmEl.hidden = true;
-        close();
-      }, 2000);
+      // No auto-close · agent clicks "Save your copy" or "Continue" themselves.
     }
 
     // Wire all the listeners.
@@ -10786,6 +10800,19 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(e.target.id === 'saPopupSubmit'){
         e.preventDefault();
         onSubmit();
+        return;
+      }
+      if(e.target.id === 'saPopupSaveCopy' || (e.target.closest && e.target.closest('#saPopupSaveCopy'))){
+        e.preventDefault();
+        // Browser-native print → save as PDF · uses the @media print stylesheet.
+        window.print();
+        return;
+      }
+      if(e.target.id === 'saPopupConfirmContinue'){
+        e.preventDefault();
+        const confirmEl = el('saPopupConfirm');
+        if(confirmEl) confirmEl.hidden = true;
+        close();
         return;
       }
     });
