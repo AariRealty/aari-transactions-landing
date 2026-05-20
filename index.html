@@ -10475,6 +10475,34 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     }
 
     function submit(){
+      // Option 1 enforcement · SA signature gated at file-submit time (not at login).
+      // If the agreement isn't on file, open the SA popup in 'resign' mode with the
+      // agent's profile · onComplete fires the actual file send.
+      const signed = !!(state.profile && state.profile.agreement_signed);
+      if(!signed){
+        if(window.AariSaPopup && typeof window.AariSaPopup.open === 'function'){
+          window.AariSaPopup.open({
+            mode: 'resign',
+            profile: state.profile || {},
+            onComplete: () => {
+              // SA popup just updated agents row · refresh local cache + send the file.
+              if(state.profile){
+                state.profile.agreement_signed = true;
+                state.profile.agreement_signed_at = new Date().toISOString();
+              }
+              actualSubmit();
+            }
+          });
+          return;
+        }
+        // Defensive: if popup module didn't load, block submission rather than send unsigned.
+        alert('Service agreement signature required · refresh the page and try again.');
+        return;
+      }
+      actualSubmit();
+    }
+
+    function actualSubmit(){
       // TODO · wire to real email/notification service.
       // Send confirmation to agent at state.profile.email
       // Send notification to tc@aaritransactions.com with full data + profile
@@ -11154,10 +11182,15 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
     }
 
-    /* Populate the identity preview from Path B state · runs on open and on any name input. */
+    /* Populate the identity preview · prefers profile passed in opts (Path A submit-time
+       enforcement) · falls back to legacy Path B getter only if no opts profile is provided. */
     function populatePreview(){
-      const profile = (window.AariPathB && typeof window.AariPathB.getProfile === 'function')
-        ? window.AariPathB.getProfile() : {};
+      let profile = {};
+      if(_openOpts && _openOpts.profile){
+        profile = _openOpts.profile;
+      } else if(window.AariPathB && typeof window.AariPathB.getProfile === 'function'){
+        profile = window.AariPathB.getProfile() || {};
+      }
       const setVal = (id, val) => {
         const e = el(id);
         if(!e) return;
