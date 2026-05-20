@@ -6031,12 +6031,13 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 </form>
 
 <!-- =========================================================
-     Path A file-submission form · sends every submitted file
-     to the central agreements/TC inbox. Multipart/form-data
-     because contract + additional docs are real file attachments.
+     Path A file-submission form · sends every file's METADATA + signed
+     Supabase Storage URLs to the central agreements/TC inbox. Files
+     themselves NEVER hit Netlify · they go directly to Supabase Storage
+     (private bucket, 30-day retention policy).
      Configure recipient in Netlify dashboard → Forms → aari-file-submission.
      ========================================================= -->
-<form name="aari-file-submission" data-netlify="true" enctype="multipart/form-data" netlify-honeypot="bot-field" hidden aria-hidden="true">
+<form name="aari-file-submission" data-netlify="true" netlify-honeypot="bot-field" hidden aria-hidden="true">
   <!-- Agent identity -->
   <input type="email" name="agent_email">
   <input type="text"  name="agent_name">
@@ -6071,13 +6072,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
   <!-- Commission + agent notes -->
   <textarea name="commission_notes"></textarea>
   <textarea name="agent_notes"></textarea>
-  <!-- Files -->
-  <input type="file"  name="contract">
-  <input type="file"  name="additional_doc_0">
-  <input type="file"  name="additional_doc_1">
-  <input type="file"  name="additional_doc_2">
-  <input type="file"  name="additional_doc_3">
-  <input type="file"  name="additional_doc_4">
+  <!-- File links · signed URLs to Supabase Storage, valid 7 days -->
+  <input type="text"  name="contract_url">
+  <input type="text"  name="contract_filename">
+  <textarea name="additional_docs_urls"></textarea>
+  <input type="text"  name="submission_id">
   <!-- Audit -->
   <input type="text"  name="submitted_at_iso">
   <input type="text"  name="submitted_at_display">
@@ -10961,92 +10960,164 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     async function actualSubmit(){
       // Persist saved title + lender to the agent's profile in the background.
-      // Doesn't block the submission · errors logged but swallowed.
       persistSavedContacts();
 
-      // Build the file-submission payload (multipart/form-data because
-      // contract + additional docs are real file attachments).
-      const nowIso = new Date().toISOString();
-      let submittedAtDisplay = nowIso;
+      const supabase = (window.AariAuth && window.AariAuth.client) || null;
+      if(!supabase){
+        alert('Account service unavailable · refresh the page and try again.');
+        return;
+      }
+
+      // Show in-progress state so the agent doesn't think the modal is frozen.
+      const submitBtn = document.getElementById('intakeSubmit');
+      const originalBtnHtml = submitBtn ? submitBtn.innerHTML : 'Send My File &rarr;';
+      if(submitBtn){
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = 'Uploading files&hellip;';
+      }
+
       try {
-        const d = new Date(nowIso);
-        const datePart = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-        const timePart = d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit', hour12:true });
-        let tz = '';
+        // --- 1. Resolve the auth user · we need the UID for the storage path. ---
+        const { data: userResp } = await supabase.auth.getUser();
+        const uid = userResp && userResp.user && userResp.user.id;
+        if(!uid) throw new Error('Not authenticated. Refresh and log in.');
+
+        // --- 2. Build paths · transaction-files/{uid}/{submission_id}/{filename}. ---
+        // submission_id is a UUID generated per submission · isolates this file's
+        // uploads from any other submission and makes cleanup easy.
+        const submissionId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+
+        // --- 3. Upload executed contract (required) to Supabase Storage. ---
+        const contractInput = document.getElementById('paContract');
+        const contractFile = contractInput && contractInput.files && contractInput.files[0];
+        if(!contractFile) throw new Error('Executed contract file is missing.');
+        const safeContractName = (contractFile.name || 'contract.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const contractPath = uid + '/' + submissionId + '/' + safeContractName;
+        const { error: contractUpErr } = await supabase.storage
+          .from('transaction-files')
+          .upload(contractPath, contractFile, { upsert: false, contentType: contractFile.type || 'application/octet-stream' });
+        if(contractUpErr) throw new Error('Contract upload failed · ' + contractUpErr.message);
+
+        // Signed URL · valid 7 days (604800 seconds).
+        const { data: contractUrlData, error: contractUrlErr } = await supabase.storage
+          .from('transaction-files')
+          .createSignedUrl(contractPath, 604800);
+        if(contractUrlErr) throw new Error('Could not generate signed URL for contract.');
+        const contractUrl = contractUrlData && contractUrlData.signedUrl ? contractUrlData.signedUrl : '';
+
+        // --- 4. Upload additional docs (up to 5) ---
+        if(submitBtn) submitBtn.innerHTML = 'Uploading additional docs&hellip;';
+        const additionalInput = document.getElementById('paAdditionalDocs');
+        const additionalUrls = [];
+        if(additionalInput && additionalInput.files && additionalInput.files.length){
+          const max = Math.min(additionalInput.files.length, 5);
+          for(let i = 0; i < max; i++){
+            const f = additionalInput.files[i];
+            const safeName = (f.name || 'doc_' + i).replace(/[^a-zA-Z0-9._-]/g, '_');
+            const path = uid + '/' + submissionId + '/additional/' + safeName;
+            const { error: upErr } = await supabase.storage
+              .from('transaction-files')
+              .upload(path, f, { upsert: false, contentType: f.type || 'application/octet-stream' });
+            if(upErr){
+              console.warn('[path-a] additional doc ' + i + ' upload failed', upErr);
+              continue;
+            }
+            const { data: urlData } = await supabase.storage
+              .from('transaction-files')
+              .createSignedUrl(path, 604800);
+            if(urlData && urlData.signedUrl){
+              additionalUrls.push({ filename: safeName, url: urlData.signedUrl });
+            }
+          }
+        }
+
+        // --- 5. Build audit timestamps. ---
+        const nowIso = new Date().toISOString();
+        let submittedAtDisplay = nowIso;
         try {
-          const parts = new Intl.DateTimeFormat('en-US', { timeZoneName:'short' }).formatToParts(d);
-          const tzPart = parts.find(p => p.type === 'timeZoneName');
-          if(tzPart) tz = ' ' + tzPart.value;
+          const d = new Date(nowIso);
+          const datePart = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+          const timePart = d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit', hour12:true });
+          let tz = '';
+          try {
+            const parts = new Intl.DateTimeFormat('en-US', { timeZoneName:'short' }).formatToParts(d);
+            const tzPart = parts.find(p => p.type === 'timeZoneName');
+            if(tzPart) tz = ' ' + tzPart.value;
+          } catch(_){}
+          submittedAtDisplay = datePart + ' at ' + timePart + tz;
         } catch(_){}
-        submittedAtDisplay = datePart + ' at ' + timePart + tz;
-      } catch(_){}
 
-      const fd = new FormData();
-      fd.append('form-name', 'aari-file-submission');
-      // Agent identity (from session profile)
-      fd.append('agent_email',     state.profile.email          || '');
-      fd.append('agent_name',      state.profile.name           || ((state.profile.first_name || '') + ' ' + (state.profile.last_name || '')).trim());
-      fd.append('agent_phone',     state.profile.phone          || '');
-      fd.append('agent_license',   state.profile.license_number || '');
-      fd.append('agent_brokerage', state.profile.brokerage      || '');
-      // Service
-      fd.append('service_type',    state.data.serviceType    || '');
-      fd.append('service_package', state.data.servicePackage || '');
-      fd.append('service_id',      state.data.serviceId      || '');
-      fd.append('representation',  state.data.representation || '');
-      // Property
-      fd.append('property_address', state.data.address     || '');
-      fd.append('closing_date',     state.data.closingDate || '');
-      // Title
-      fd.append('title_company',       state.data.titleCompany       || '');
-      fd.append('title_contact_name',  state.data.titleContactName   || '');
-      fd.append('title_contact_email', state.data.titleContactEmail  || '');
-      fd.append('title_contact_phone', state.data.titleContactPhone  || '');
-      // Lender
-      fd.append('lender',               state.data.lender              || '');
-      fd.append('lender_contact_name',  state.data.lenderContactName   || '');
-      fd.append('lender_contact_email', state.data.lenderContactEmail  || '');
-      fd.append('lender_contact_phone', state.data.lenderContactPhone  || '');
-      // Clients (TC Both Sides + Buyer / Seller representations)
-      fd.append('buyer_name',  state.data.buyer_name  || '');
-      fd.append('buyer_email', state.data.buyer_email || '');
-      fd.append('buyer_phone', state.data.buyer_phone || '');
-      fd.append('seller_name',  state.data.seller_name  || '');
-      fd.append('seller_email', state.data.seller_email || '');
-      fd.append('seller_phone', state.data.seller_phone || '');
-      // Commission + agent notes
-      fd.append('commission_notes', state.data.commissionNotes || '');
-      fd.append('agent_notes',      state.data.agentNotes      || '');
-      // Files · executed contract (required) + up to 5 additional docs
-      const contractInput = document.getElementById('paContract');
-      if(contractInput && contractInput.files && contractInput.files[0]){
-        fd.append('contract', contractInput.files[0]);
-      }
-      const additionalInput = document.getElementById('paAdditionalDocs');
-      if(additionalInput && additionalInput.files){
-        const max = Math.min(additionalInput.files.length, 5);
-        for(let i = 0; i < max; i++){
-          fd.append('additional_doc_' + i, additionalInput.files[i]);
-        }
-      }
-      // Audit
-      fd.append('submitted_at_iso',     nowIso);
-      fd.append('submitted_at_display', submittedAtDisplay);
-      fd.append('user_agent',           (navigator && navigator.userAgent) || '');
+        // --- 6. POST metadata + signed URLs to Netlify Forms (NO file payload). ---
+        if(submitBtn) submitBtn.innerHTML = 'Notifying TC&hellip;';
+        const params = new URLSearchParams();
+        params.append('form-name', 'aari-file-submission');
+        // Agent identity
+        params.append('agent_email',     state.profile.email          || '');
+        params.append('agent_name',      state.profile.name           || ((state.profile.first_name || '') + ' ' + (state.profile.last_name || '')).trim());
+        params.append('agent_phone',     state.profile.phone          || '');
+        params.append('agent_license',   state.profile.license_number || '');
+        params.append('agent_brokerage', state.profile.brokerage      || '');
+        // Service
+        params.append('service_type',    state.data.serviceType    || '');
+        params.append('service_package', state.data.servicePackage || '');
+        params.append('service_id',      state.data.serviceId      || '');
+        params.append('representation',  state.data.representation || '');
+        // Property
+        params.append('property_address', state.data.address     || '');
+        params.append('closing_date',     state.data.closingDate || '');
+        // Title
+        params.append('title_company',       state.data.titleCompany       || '');
+        params.append('title_contact_name',  state.data.titleContactName   || '');
+        params.append('title_contact_email', state.data.titleContactEmail  || '');
+        params.append('title_contact_phone', state.data.titleContactPhone  || '');
+        // Lender
+        params.append('lender',               state.data.lender              || '');
+        params.append('lender_contact_name',  state.data.lenderContactName   || '');
+        params.append('lender_contact_email', state.data.lenderContactEmail  || '');
+        params.append('lender_contact_phone', state.data.lenderContactPhone  || '');
+        // Clients
+        params.append('buyer_name',  state.data.buyer_name  || '');
+        params.append('buyer_email', state.data.buyer_email || '');
+        params.append('buyer_phone', state.data.buyer_phone || '');
+        params.append('seller_name',  state.data.seller_name  || '');
+        params.append('seller_email', state.data.seller_email || '');
+        params.append('seller_phone', state.data.seller_phone || '');
+        // Commission + agent notes
+        params.append('commission_notes', state.data.commissionNotes || '');
+        params.append('agent_notes',      state.data.agentNotes      || '');
+        // File links
+        params.append('contract_url',       contractUrl);
+        params.append('contract_filename',  safeContractName);
+        params.append('additional_docs_urls',
+          additionalUrls.length
+            ? additionalUrls.map(d => d.filename + ' · ' + d.url).join('\n')
+            : ''
+        );
+        params.append('submission_id', submissionId);
+        // Audit
+        params.append('submitted_at_iso',     nowIso);
+        params.append('submitted_at_display', submittedAtDisplay);
+        params.append('user_agent',           (navigator && navigator.userAgent) || '');
 
-      // POST to Netlify Forms · multipart/form-data set automatically by browser.
-      try {
-        const res = await fetch('/', { method: 'POST', body: fd });
+        const res = await fetch('/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: params.toString()
+        });
         if(!res.ok && res.status !== 200){
-          throw new Error('Submission failed · status ' + res.status);
+          throw new Error('TC notification failed · status ' + res.status);
         }
-        console.log('[path-a] file submitted to aari-file-submission · status', res.status);
+
+        console.log('[path-a] file submission shipped · contract + ' + additionalUrls.length + ' addl docs in Supabase, metadata in Netlify, submission_id=' + submissionId);
         state.step = 'done';
         render();
       } catch(err){
         console.error('[path-a] file submission failed', err);
         alert('We could not send your file · ' + (err.message || 'check your connection and try again.'));
-        // Keep state.step at 'final' so the agent can retry the Send My File button.
+        if(submitBtn){
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalBtnHtml;
+        }
       }
     }
 
