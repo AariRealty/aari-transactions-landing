@@ -6529,12 +6529,18 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     ]);
     function saveProgress(){
       if(suspendSave) return;
+      // V3 · skip save entirely while Path A or Path B owns the modal · they manage their own
+      // persistence (Path B writes to localStorage profile · Path A submits via Netlify forms).
+      // Saving here would leak agent-specific values into sessionStorage across sessions.
+      if(window.AariPathA && typeof window.AariPathA.isActive === 'function' && window.AariPathA.isActive()) return;
+      if(window.AariPathB && typeof window.AariPathB.isActive === 'function' && window.AariPathB.isActive()) return;
       const rawFormData = Object.fromEntries(new FormData(form).entries());
-      // Strip client-identifying fields before persisting · per broker direction,
-      // each file submission is a new client and must not carry data over.
+      // Strip client-identifying fields + any Path A/B field names (defense in depth).
       const formData = {};
       Object.entries(rawFormData).forEach(([k, v]) => {
-        if(!CLIENT_FIELDS_EXCLUDED.has(k)) formData[k] = v;
+        if(CLIENT_FIELDS_EXCLUDED.has(k)) return;
+        if(k.startsWith('pa_') || k.startsWith('pb_') || k.startsWith('aari_') || k === 'gate_email') return;
+        formData[k] = v;
       });
       const data = {
         currentIndex: state.step,
@@ -9253,7 +9259,33 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     function hasUnsavedIntakeWork(){
       // Auth gate showing · no entries yet, nothing to discard
       if(modalBox && modalBox.classList.contains('auth-gate-active')) return false;
-      // Past Step 1 or service picked counts as in-flight work
+      // V3 · Path A active and past Step 1 OR has any captured data
+      if(window.AariPathA && typeof window.AariPathA.isActive === 'function' && window.AariPathA.isActive()){
+        const profile = window.AariPathA.getProfile ? window.AariPathA.getProfile() : null;
+        // Any field captured (representation, address, closing date, etc.) counts.
+        // serviceId being set also counts since picking a service is committed work.
+        const paInputs = ['paAddress','paClosingDate','paTitleCompany','paLender','paCommissionNotes','paAgentNotes'];
+        for(const id of paInputs){
+          const inp = document.getElementById(id);
+          if(inp && inp.value && String(inp.value).trim() !== '') return true;
+        }
+        const contractInp = document.getElementById('paContract');
+        if(contractInp && contractInp.files && contractInp.files.length) return true;
+        // If profile carries email · they're at least past the gate (in-flight)
+        if(profile && profile.email) return true;
+      }
+      // V3 · Path B active counts as in-flight work (any state past welcome)
+      if(window.AariPathB && typeof window.AariPathB.isActive === 'function' && window.AariPathB.isActive()){
+        const pbInputs = ['pbName','pbPhone','pbLicenseNumber','pbBrokerage','pbBrokerName','pbBrokerEmail','pbTitleCompany','pbLender'];
+        for(const id of pbInputs){
+          const inp = document.getElementById(id);
+          if(inp && inp.value && String(inp.value).trim() !== '') return true;
+        }
+        // Has email from the gate · counts as work-in-progress
+        const profile = window.AariPathB.getProfile ? window.AariPathB.getProfile() : null;
+        if(profile && profile.email) return true;
+      }
+      // Past Step 1 or service picked counts as in-flight work (legacy intake)
       if(state.serviceId) return true;
       if(state.step && state.step > 1) return true;
       // Any user-typed visible value
@@ -9517,9 +9549,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         { id:'tc_both_sides', name:'Transaction Coordination · Both Sides', price:599, billing:'closing', summary:'Everything in One Side × 2 + joint scheduling', representation:'both_sides' }
       ],
       listing: [
-        { id:'lc',           name:'Listing Coordinator', price:225, billing:'upfront', summary:'Listing package + disclosures + HOA + MLS + status updates' },
-        { id:'listing_docs', name:'Listing Docs',        price:99,  billing:'upfront', summary:'Listing package + disclosures + compliance docs (you handle MLS)' },
-        { id:'mls_setup',    name:'MLS Setup',           price:149, billing:'upfront', summary:'MLS entry + photos + documents + ShowingTime (you handle docs)' }
+        { id:'lc',           name:'Listing Coordinator', price:225, billing:'upfront', summary:'Listing package + disclosures + HOA + MLS + status updates',           representation:'seller' },
+        { id:'listing_docs', name:'Listing Docs',        price:99,  billing:'upfront', summary:'Listing package + disclosures + compliance docs (you handle MLS)',   representation:'seller' },
+        { id:'mls_setup',    name:'MLS Setup',           price:149, billing:'upfront', summary:'MLS entry + photos + documents + ShowingTime (you handle docs)',     representation:'seller' }
       ],
       addons: [
         { id:'op_basic',    name:'Offer Prep · Basic',    price:69,  billing:'upfront', summary:'BBA + Offer + GG (Contingency) + Compensation',           representation:'buyer' },
@@ -9603,10 +9635,31 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       // Restore it so Path A's progress dots actually appear.
       const progressEl = document.querySelector('.modal-box.intake-v2 .intake-progress');
       if(progressEl) progressEl.style.display = '';
+      // Clear stale DOM inputs from any prior session · prefillFromProfile() then
+      // re-fills title + lender from the saved profile.
+      clearPathAInputs();
       prefillFromProfile();
       applyPendingPrefill();
       renderSignedHistoryBanner();
       render();
+    }
+
+    /* Reset all Path A per-file inputs so a re-open with a different agent starts clean. */
+    function clearPathAInputs(){
+      ['paAddress','paClosingDate','paTitleCompany','paLender','paCommissionNotes','paAgentNotes'].forEach(id => {
+        const inp = document.getElementById(id);
+        if(inp) inp.value = '';
+      });
+      // File inputs · reset by setting value to empty string (works in modern browsers).
+      ['paContract','paAdditionalDocs'].forEach(id => {
+        const inp = document.getElementById(id);
+        if(inp){ try { inp.value = ''; } catch(_){} }
+      });
+      // Clear prefill tags (they show only when profile pre-fills the field).
+      ['paTitlePrefill','paLenderPrefill'].forEach(id => {
+        const tag = document.getElementById(id);
+        if(tag) tag.hidden = true;
+      });
     }
 
     /* Show "You have N signed agreements" banner if localStorage has any for this email. */
@@ -9670,7 +9723,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     /* Change button on the service-confirm chip · clears prefill, resets to Step 1
        so the agent re-picks type + package from scratch within Path A. */
     document.addEventListener('click', function(e){
-      if(e.target && (e.target.id === 'paServiceChipChange' || e.target.closest && e.target.closest('#paServiceChipChange'))){
+      if(e.target && (e.target.id === 'paServiceChipChange' || (e.target.closest && e.target.closest('#paServiceChipChange')))){
         e.preventDefault();
         if(!state.active) return;
         state.data.serviceId = null;
@@ -10115,12 +10168,18 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       document.querySelectorAll('.intake-step').forEach(s => {
         s.style.display = '';
       });
+      // Restore the step label that renderDots hid · the legacy intake uses it.
+      const stepLabel = document.getElementById('intakeStepLabel');
+      if(stepLabel) stepLabel.style.display = '';
       // Clear the Path A palette scope so the old intake can re-render with its own accents.
       const modalBox = document.getElementById('intake-modal-box');
       if(modalBox) modalBox.removeAttribute('data-pa-active');
     }
 
-    window.AariPathA = { init, advance, back, submit, isActive, deactivate };
+    // Expose state.profile so the signed-history modal can resolve the agent's email.
+    function getProfile(){ return state.profile || {}; }
+
+    window.AariPathA = { init, advance, back, submit, isActive, deactivate, getProfile };
   })();
 
   /* ============================================================
@@ -10210,10 +10269,29 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         root().style.display = 'block';
       }
       // Restore the .intake-progress container that showStep(0) hid for the gate.
-      // (Path B's updateHead toggles per-step, but on first render we need it visible.)
       const progressEl = document.querySelector('.modal-box.intake-v2 .intake-progress');
       if(progressEl) progressEl.style.display = '';
+      // Clear stale DOM inputs from any prior session.
+      clearPathBInputs();
       render();
+    }
+
+    /* Reset all Path B onboarding inputs + signature state so a fresh agent starts clean. */
+    function clearPathBInputs(){
+      ['pbName','pbPhone','pbLicenseNumber','pbBrokerage','pbBrokerName','pbBrokerEmail','pbTitleCompany','pbLender','pbBirthday','pbFavFlower','pbFavFood','pbFavRestaurant'].forEach(id => {
+        const inp = document.getElementById(id);
+        if(inp) inp.value = '';
+      });
+      // Signature hidden fields + button label state.
+      const pbSaName = document.getElementById('pbSaName');
+      if(pbSaName) pbSaName.value = '';
+      const pbSaAgree = document.getElementById('pbSaAgree');
+      if(pbSaAgree) pbSaAgree.value = '';
+      const subEl = document.getElementById('pbSaOpenSub');
+      if(subEl){
+        subEl.textContent = 'Not yet signed';
+        subEl.removeAttribute('data-signed');
+      }
     }
 
     function render(){
@@ -10484,6 +10562,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       });
       const pathA = document.getElementById('aariPathA');
       if(pathA) pathA.style.display = '';
+      // Restore the step label that Path B's updateHead may have hidden.
+      const stepLabel = document.getElementById('intakeStepLabel');
+      if(stepLabel) stepLabel.style.display = '';
       const modalBox = document.getElementById('intake-modal-box');
       if(modalBox) modalBox.removeAttribute('data-pa-active');
     }
@@ -10934,6 +11015,124 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     });
 
     window.AariSaPopup = { open: open, close: close };
+  })();
+
+  /* ============================================================
+     SIGNED AGREEMENTS HISTORY MODAL · standalone module
+     Lists agent's signed agreements from localStorage when banner is clicked.
+     Each row has Print/Save action (browser native window.print()).
+     ============================================================ */
+  (function aariSignedHistory(){
+    'use strict';
+
+    function el(id){ return document.getElementById(id); }
+
+    function escapeHtml(str){
+      return String(str).replace(/[&<>"']/g, ch => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      })[ch]);
+    }
+
+    function open(email){
+      const overlay = el('signedHistoryOverlay');
+      if(!overlay) return;
+      const list = el('signedHistoryList');
+      if(list) list.innerHTML = renderRows(email);
+      overlay.hidden = false;
+      document.body.style.overflow = 'hidden';
+    }
+
+    function close(){
+      const overlay = el('signedHistoryOverlay');
+      if(!overlay) return;
+      overlay.hidden = true;
+      document.body.style.overflow = '';
+    }
+
+    function renderRows(email){
+      let history = [];
+      try {
+        const raw = localStorage.getItem('aari_signed_agreements::' + (email || '').toLowerCase().trim());
+        if(raw) history = JSON.parse(raw) || [];
+      } catch(_){}
+      if(!history.length){
+        return '<p class="signed-history-empty">No signed agreements on this device yet.</p>';
+      }
+      // Newest first.
+      const sorted = history.slice().sort((a, b) => {
+        const ta = a.signed_at_iso || '';
+        const tb = b.signed_at_iso || '';
+        return tb.localeCompare(ta);
+      });
+      return sorted.map((entry, idx) => {
+        const name = escapeHtml(entry.document_name || 'Service Agreement');
+        const version = escapeHtml(entry.agreement_version || '');
+        const signedDisplay = escapeHtml(entry.signed_at_display || entry.signed_at_iso || '');
+        const typedName = escapeHtml(entry.typed_name || '');
+        const license = escapeHtml((entry.agent_license || '') + (entry.agent_license_state ? ' · ' + entry.agent_license_state : ''));
+        return '<div class="signed-history-row">'
+             +   '<div class="signed-history-row-head">'
+             +     '<p class="signed-history-row-name">' + name + '</p>'
+             +     '<span class="signed-history-row-version">' + version + '</span>'
+             +   '</div>'
+             +   '<div class="signed-history-row-meta">'
+             +     '<div class="signed-history-row-meta-line"><span class="signed-history-row-meta-key">Signed</span><span class="signed-history-row-meta-val">' + signedDisplay + '</span></div>'
+             +     '<div class="signed-history-row-meta-line"><span class="signed-history-row-meta-key">Signature</span><span class="signed-history-row-meta-val">' + typedName + '</span></div>'
+             +     '<div class="signed-history-row-meta-line"><span class="signed-history-row-meta-key">License</span><span class="signed-history-row-meta-val">' + license + '</span></div>'
+             +   '</div>'
+             +   '<div class="signed-history-row-actions">'
+             +     '<button type="button" class="signed-history-row-btn" data-history-print="' + idx + '">Print / Save PDF</button>'
+             +   '</div>'
+             + '</div>';
+      }).join('');
+    }
+
+    // Wire all interactions.
+    document.addEventListener('click', function(e){
+      if(!e.target) return;
+      // Open from Path A banner.
+      if(e.target.id === 'paSignedHistoryViewBtn'){
+        e.preventDefault();
+        const profile = (window.AariPathA && typeof window.AariPathA.getProfile === 'function')
+          ? window.AariPathA.getProfile() : {};
+        open(profile.email || '');
+        return;
+      }
+      // Close.
+      if(e.target.id === 'signedHistoryClose' || (e.target.closest && e.target.closest('#signedHistoryClose'))){
+        e.preventDefault();
+        close();
+        return;
+      }
+      // Print/save action · re-opens the SA popup in print mode via window.print().
+      // For now · trigger browser print so user can save current view as PDF.
+      const printBtn = e.target.closest('[data-history-print]');
+      if(printBtn){
+        e.preventDefault();
+        window.print();
+        return;
+      }
+    });
+
+    // Close on overlay click (outside box).
+    document.addEventListener('click', function(e){
+      const overlay = el('signedHistoryOverlay');
+      if(!overlay || overlay.hidden) return;
+      if(e.target === overlay) close();
+    });
+
+    // Close on Escape.
+    document.addEventListener('keydown', function(e){
+      if(e.key !== 'Escape') return;
+      const overlay = el('signedHistoryOverlay');
+      if(overlay && !overlay.hidden){
+        // Stop the intake modal's Escape from also closing the modal underneath.
+        e.stopPropagation();
+        close();
+      }
+    });
+
+    window.AariSignedHistory = { open: open, close: close };
   })();
 
   /* =========================================================
