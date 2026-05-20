@@ -11152,6 +11152,14 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(!overlay) return;
       overlay.hidden = true;
       document.body.style.overflow = '';
+      // Fire onComplete callback if it was passed in opts (used by Path A resign flow)
+      if(_openOpts && typeof _openOpts.onComplete === 'function'){
+        const cb = _openOpts.onComplete;
+        _openOpts = null;
+        try { cb(); } catch(err){ console.warn('[sa-popup] onComplete callback threw', err); }
+      } else {
+        _openOpts = null;
+      }
     }
 
     /* Detect whether the user has scrolled to (or near) the bottom · 16px tolerance.
@@ -11204,15 +11212,21 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       updateSubmitState();
     }
 
-    function onSubmit(){
+    async function onSubmit(){
       const check = el('saPopupAgree');
       const name = el('saPopupName');
       if(!check || !check.checked || !name || !name.value.trim()) return;
       const typedName = name.value.trim();
       const nowIso = new Date().toISOString();
-      // Pull agent + broker email from Path B's current state so we can stub the recipients.
-      const profile = (window.AariPathB && typeof window.AariPathB.getProfile === 'function')
-        ? window.AariPathB.getProfile() : {};
+      // Determine context · resign (Path A returning agent) vs Path B onboarding
+      const isResign = _openOpts && _openOpts.mode === 'resign';
+      // Pull profile from whichever path is active · Path A in resign, Path B in onboarding
+      let profile = {};
+      if(isResign && _openOpts.profile){
+        profile = _openOpts.profile;
+      } else if(window.AariPathB && typeof window.AariPathB.getProfile === 'function'){
+        profile = window.AariPathB.getProfile() || {};
+      }
       const agentEmail = profile.email || '';
       const brokerEmail = profile.broker_email || '';
       // Build full audit trail payload · everything needed to execute this document.
@@ -11256,21 +11270,43 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         signing_law:       'Fla. Stat. § 668.50 (Uniform Electronic Transaction Act)'
         // ip_address · captured server-side when real backend wires the send.
       };
-      // Stub the email send · clearly marks the trigger point for backend wiring.
+      // Send to Netlify Forms for email notification (both modes use this)
       sendAgreementCopies(payload);
-      // Persist signature into Path B's hidden form fields for validate('sign').
-      const pbAgree = el('pbSaAgree');
-      const pbName = el('pbSaName');
-      if(pbAgree) pbAgree.value = 'true';
-      if(pbName) pbName.value = typedName;
-      // Update the "Review & sign" button sub-line to confirm signed status.
-      const sub = el('pbSaOpenSub');
-      if(sub){
-        sub.textContent = 'Signed · ' + typedName;
-        sub.setAttribute('data-signed', 'true');
+
+      if(isResign){
+        // Step 5 · returning agent re-signing · update Supabase agents row directly
+        try {
+          const supabase = (window.AariAuth && window.AariAuth.client) || null;
+          if(supabase){
+            const { data: userResp } = await supabase.auth.getUser();
+            const uid = userResp && userResp.user && userResp.user.id;
+            if(uid){
+              await supabase.from('agents').update({
+                agreement_signed: true,
+                agreement_signed_at: nowIso,
+                agreement_version: payload.agreement_version,
+                agreement_typed_name: typedName
+              }).eq('id', uid);
+            }
+          }
+        } catch(err){
+          console.warn('[sa-popup] resign · agents update failed', err);
+        }
+        showConfirmation(payload);
+      } else {
+        // Path B onboarding · persist signature into Path B's hidden fields for validate('sign').
+        const pbAgree = el('pbSaAgree');
+        const pbName = el('pbSaName');
+        if(pbAgree) pbAgree.value = 'true';
+        if(pbName) pbName.value = typedName;
+        // Update the "Review & sign" button sub-line to confirm signed status.
+        const sub = el('pbSaOpenSub');
+        if(sub){
+          sub.textContent = 'Signed · ' + typedName;
+          sub.setAttribute('data-signed', 'true');
+        }
+        showConfirmation(payload);
       }
-      // Show confirmation state inside popup · auto-close after 2s.
-      showConfirmation(payload);
     }
 
     /* Send signature to Netlify Forms + save to localStorage for agent's history.
