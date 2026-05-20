@@ -10879,6 +10879,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         submitBtn.disabled = true;
         submitBtn.innerHTML = '<span class="aari-spinner"></span> Creating account&hellip;';
 
+        // Capture the typed signature as a PNG dataURL · stored in agents.signature_image_url.
+        state.signatureDataUrl = captureSignatureImage();
+
         try {
           if(!window.AariAuth || typeof window.AariAuth.signUp !== 'function'){
             throw new Error('Account service unavailable. Refresh the page and try again.');
@@ -11091,10 +11094,12 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const agreeBox = el('pb2AgreementAgree');
       const scrollBtn = el('pb2ScrollBtn');
       const sigClear = el('pb2SigClear');
+      const sigType = el('pb2SigType');
       const submitBtn = el('pb2CreateBtn');
       if(agreeBlock) agreeBlock.removeAttribute('data-unlocked');
       if(sigBlock) sigBlock.removeAttribute('data-unlocked');
       if(agreeBox){ agreeBox.checked = false; agreeBox.disabled = true; }
+      if(sigType){ sigType.value = ''; sigType.disabled = true; }
       if(scrollBtn) scrollBtn.hidden = false;
       if(sigClear) sigClear.disabled = true;
       if(submitBtn) submitBtn.disabled = true;
@@ -11136,17 +11141,20 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           body.scrollTo({ top: body.scrollHeight, behavior: 'smooth' });
         });
       }
-      // Checkbox · unlock signature pad when checked.
+      // Checkbox · unlock typed-signature input when checked.
       if(agreeBox && !agreeBox._bound){
         agreeBox._bound = true;
         agreeBox.addEventListener('change', () => {
           agreementGate.checked = agreeBox.checked;
+          const sigType = el('pb2SigType');
           if(agreeBox.checked){
             if(sigBlock) sigBlock.setAttribute('data-unlocked', 'true');
+            if(sigType){ sigType.disabled = false; try { sigType.focus(); } catch(_){} }
             const clr = el('pb2SigClear');
             if(clr) clr.disabled = false;
           } else {
             if(sigBlock) sigBlock.removeAttribute('data-unlocked');
+            if(sigType) sigType.disabled = true;
             clearSignature();
             agreementGate.signed = false;
           }
@@ -11184,67 +11192,40 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       target.innerHTML = '<p><strong>Aari Transactions Service Agreement</strong></p><p>The full agreement could not be loaded. Please refresh the page.</p>';
     }
 
-    /* ------- Signature pad · simple canvas drawing (no external lib) ------- */
+    /* ------- Signature · typed-name in italic Cormorant + canvas-rendered image
+       Florida UETA (Fla. Stat. § 668.50) treats a typed name + manifest intent
+       (acknowledgment + button click) as a valid electronic signature. We render
+       the typed name into an off-screen canvas at signature time so we still
+       capture a signature_image_url for audit. ------- */
     function bindSignaturePad(){
-      const canvas = el('pb2SigCanvas');
+      const input = el('pb2SigType');
+      const previewText = el('pb2SigPreviewText');
       const clearBtn = el('pb2SigClear');
-      if(!canvas || canvas._bound) return;
-      canvas._bound = true;
-      // Resize canvas backing store to match its CSS size for crisp lines.
-      function resize(){
-        const ratio = window.devicePixelRatio || 1;
-        const rect = canvas.getBoundingClientRect();
-        canvas.width = rect.width * ratio;
-        canvas.height = rect.height * ratio;
-        const ctx = canvas.getContext('2d');
-        ctx.scale(ratio, ratio);
-        ctx.lineWidth = 2;
-        ctx.lineCap = 'round';
-        ctx.strokeStyle = '#0f0f0f';
-      }
-      resize();
-      window.addEventListener('resize', () => { resize(); });
-      const ctx = canvas.getContext('2d');
-      let drawing = false;
-      let hasInk = false;
-      function pos(e){
-        const rect = canvas.getBoundingClientRect();
-        const p = (e.touches && e.touches[0]) ? e.touches[0] : e;
-        return { x: p.clientX - rect.left, y: p.clientY - rect.top };
-      }
-      function start(e){
-        if(!agreementGate.checked) return;
-        drawing = true;
-        const { x, y } = pos(e);
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-      }
-      function move(e){
-        if(!drawing) return;
-        e.preventDefault();
-        const { x, y } = pos(e);
-        ctx.lineTo(x, y);
-        ctx.stroke();
-        if(!hasInk){
-          hasInk = true;
-          agreementGate.signed = true;
-          state.signatureDataUrl = canvas.toDataURL('image/png');
+      if(!input || input._bound) return;
+      input._bound = true;
+      function update(){
+        const v = input.value.trim();
+        if(previewText){
+          if(v){
+            previewText.textContent = v;
+            previewText.removeAttribute('data-empty');
+          } else {
+            previewText.textContent = '—';
+            previewText.setAttribute('data-empty', 'true');
+          }
+        }
+        const hasName = v.length >= 2;
+        if(hasName !== agreementGate.signed){
+          agreementGate.signed = hasName;
           updateGateState();
         }
       }
-      function end(){
-        if(!drawing) return;
-        drawing = false;
-        // Refresh the data URL on every stroke release · captures full signature.
-        if(hasInk) state.signatureDataUrl = canvas.toDataURL('image/png');
-      }
-      canvas.addEventListener('mousedown', start);
-      canvas.addEventListener('mousemove', move);
-      canvas.addEventListener('mouseup', end);
-      canvas.addEventListener('mouseleave', end);
-      canvas.addEventListener('touchstart', start, { passive: false });
-      canvas.addEventListener('touchmove', move, { passive: false });
-      canvas.addEventListener('touchend', end);
+      // Default to empty + em-dash placeholder · update on every keystroke.
+      input.value = '';
+      if(previewText){ previewText.textContent = '—'; previewText.setAttribute('data-empty', 'true'); }
+      input.addEventListener('input', update);
+      input.addEventListener('change', update);
+      input.addEventListener('keyup', update);
       if(clearBtn && !clearBtn._bound){
         clearBtn._bound = true;
         clearBtn.addEventListener('click', e => {
@@ -11254,13 +11235,52 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
     }
     function clearSignature(){
-      const canvas = el('pb2SigCanvas');
-      if(!canvas) return;
-      const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const input = el('pb2SigType');
+      const previewText = el('pb2SigPreviewText');
+      if(input) input.value = '';
+      if(previewText){ previewText.textContent = '—'; previewText.setAttribute('data-empty', 'true'); }
       agreementGate.signed = false;
       state.signatureDataUrl = null;
       updateGateState();
+    }
+    /* Render the typed signature to a 600x140 canvas at signature time so we
+       can store a signature_image_url alongside agreement_typed_name. */
+    function captureSignatureImage(){
+      const input = el('pb2SigType');
+      const name = input ? input.value.trim() : '';
+      if(!name) return null;
+      try {
+        const c = document.createElement('canvas');
+        const w = 600, h = 140;
+        const ratio = window.devicePixelRatio || 1;
+        c.width = w * ratio;
+        c.height = h * ratio;
+        const ctx = c.getContext('2d');
+        ctx.scale(ratio, ratio);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#0f0f0f';
+        ctx.font = 'italic 500 56px "Cormorant Garamond", Georgia, serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(name, w / 2, h / 2 - 6);
+        // Subtle baseline under the signature.
+        ctx.strokeStyle = 'rgba(15,15,15,0.18)';
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(40, h - 28);
+        ctx.lineTo(w - 40, h - 28);
+        ctx.stroke();
+        // Date stamp under the baseline.
+        const stamp = new Date().toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+        ctx.fillStyle = 'rgba(15,15,15,0.55)';
+        ctx.font = '500 11px Inter, sans-serif';
+        ctx.fillText('Signed ' + stamp, w / 2, h - 14);
+        return c.toDataURL('image/png');
+      } catch(err){
+        console.warn('[pathB2] captureSignatureImage failed', err);
+        return null;
+      }
     }
 
     /* ------- Success screen buttons ------- */
@@ -11437,6 +11457,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       document.querySelectorAll('#aariPathB2 [data-pb2-review]').forEach(b => b.removeAttribute('data-selected'));
       const agreementBox = el('pb2AgreementAgree');
       if(agreementBox){ agreementBox.checked = false; agreementBox.disabled = true; }
+      const sigType = el('pb2SigType');
+      if(sigType){ sigType.value = ''; sigType.disabled = true; }
+      const sigPreviewText = el('pb2SigPreviewText');
+      if(sigPreviewText){ sigPreviewText.textContent = '—'; sigPreviewText.setAttribute('data-empty','true'); }
       const headshotInput = el('pb2Headshot');
       if(headshotInput) headshotInput.value = '';
       const headshotLabel = el('pb2HeadshotLabel');
