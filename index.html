@@ -10560,7 +10560,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     /* Reset all Path B onboarding inputs + signature state so a fresh agent starts clean. */
     function clearPathBInputs(){
-      ['pbName','pbPhone','pbLicenseNumber','pbBrokerage','pbBrokerName','pbBrokerEmail','pbTitleCompany','pbLender','pbBirthday','pbFavFlower','pbFavFood','pbFavRestaurant'].forEach(id => {
+      ['pbName','pbPassword','pbPasswordConfirm','pbPhone','pbLicenseNumber','pbBrokerage','pbBrokerName','pbBrokerEmail','pbTitleCompany','pbLender','pbBirthday','pbFavFlower','pbFavFood','pbFavRestaurant'].forEach(id => {
         const inp = document.getElementById(id);
         if(inp) inp.value = '';
       });
@@ -10791,44 +10791,138 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       render();
     }
 
-    function completeOnboarding(){
-      // Build final profile + save to localStorage keyed by email.
-      const profile = {
-        email: state.data.email,
-        name: state.data.name,
-        phone: state.data.phone,
-        license_number: state.data.license_number,
-        license_state: state.data.license_state,
-        brokerage: state.data.brokerage,
-        broker_name: state.data.broker_name,
-        broker_email: state.data.broker_email,
-        title_company: state.data.title_company,
-        lender: state.data.lender,
-        sa_signed: state.data.sa_signed,
-        sa_name: state.data.sa_name,
-        sa_version: state.data.sa_version,
-        sa_timestamp: state.data.sa_timestamp,
-        birthday: state.data.birthday,
-        fav_flower: state.data.fav_flower,
-        fav_food: state.data.fav_food,
-        fav_restaurant: state.data.fav_restaurant,
-        created_at: new Date().toISOString()
-      };
-      try {
-        localStorage.setItem(PROFILE_KEY_PREFIX + (profile.email || '').toLowerCase().trim(), JSON.stringify(profile));
-      } catch(_){}
-      // Fire notification to TC team · stubbed until backend is wired.
-      // TODO · POST profile to tc@aaritransactions.com via email service.
-      console.log('[path-b] new agent profile saved', profile);
-      // Brief "Profile saved" screen, then hand off to Path A.
+    async function completeOnboarding(){
+      // Show "Profile saved" intermediate state immediately so agent sees progress
       state.step = 'done';
       render();
-      setTimeout(() => {
-        deactivate();
-        if(window.AariPathA && typeof window.AariPathA.init === 'function'){
-          window.AariPathA.init(profile);
-        }
-      }, 1200);
+
+      // Get Supabase client (with CDN fallback if AariAuth didn't load)
+      const supabase = (window.AariAuth && window.AariAuth.client) || null;
+      if(!supabase){
+        alert('Auth service unavailable · refresh the page and try again.');
+        state.step = 'extras';
+        render();
+        return;
+      }
+
+      try {
+        // 1 · Create Supabase auth user · auto-creates session (Confirm email is OFF)
+        const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+          email: state.data.email,
+          password: state.data.password
+        });
+        if(signUpErr) throw signUpErr;
+        const userId = signUpData.user && signUpData.user.id;
+        if(!userId) throw new Error('Sign-up did not return a user ID');
+
+        // 2 · Split typed name into first + last for the schema
+        const fullName = (state.data.name || '').trim();
+        const parts = fullName.split(/\s+/);
+        const firstName = parts[0] || '';
+        const lastName = parts.slice(1).join(' ') || '';
+
+        // 3 · Insert agent profile · id must equal auth.users.id for RLS
+        const { error: insertErr } = await supabase.from('agents').insert({
+          id: userId,
+          email: (state.data.email || '').toLowerCase().trim(),
+          first_name: firstName,
+          last_name: lastName,
+          phone: state.data.phone || null,
+          license_number: state.data.license_number || null,
+          license_state: state.data.license_state || 'FL',
+          brokerage: state.data.brokerage || null,
+          broker_name: state.data.broker_name || null,
+          broker_email: state.data.broker_email || null,
+          title_company: state.data.title_company || null,
+          lender: state.data.lender || null,
+          birthday: state.data.birthday || null,
+          fav_flower: state.data.fav_flower || null,
+          fav_food: state.data.fav_food || null,
+          fav_restaurant: state.data.fav_restaurant || null,
+          agreement_signed: !!state.data.sa_signed,
+          agreement_signed_at: state.data.sa_timestamp || null,
+          agreement_version: state.data.sa_version || null,
+          agreement_typed_name: state.data.sa_name || null
+        });
+        if(insertErr) throw insertErr;
+
+        // 4 · Notify Aari TC team via Netlify Forms
+        sendNewAgentNotification({
+          agent_email:        state.data.email || '',
+          first_name:         firstName,
+          last_name:          lastName,
+          phone:              state.data.phone || '',
+          license_number:     state.data.license_number || '',
+          license_state:      state.data.license_state || 'FL',
+          brokerage:          state.data.brokerage || '',
+          broker_name:        state.data.broker_name || '',
+          broker_email:       state.data.broker_email || '',
+          title_company:      state.data.title_company || '',
+          lender:             state.data.lender || '',
+          birthday:           state.data.birthday || '',
+          fav_flower:         state.data.fav_flower || '',
+          fav_food:           state.data.fav_food || '',
+          fav_restaurant:     state.data.fav_restaurant || '',
+          agreement_version:  state.data.sa_version || '',
+          agreement_signed_at: state.data.sa_timestamp || '',
+          signed_up_at:       new Date().toISOString()
+        });
+
+        // 5 · Clear password from memory · don't keep it after signUp
+        state.data.password = null;
+
+        // 6 · Auto-hand-off to Path A with full profile · agent already logged in
+        setTimeout(() => {
+          deactivate();
+          if(window.AariPathA && typeof window.AariPathA.init === 'function'){
+            window.AariPathA.init({
+              email: state.data.email,
+              name: fullName,
+              first_name: firstName,
+              last_name: lastName,
+              phone: state.data.phone,
+              license_number: state.data.license_number,
+              license_state: state.data.license_state || 'FL',
+              brokerage: state.data.brokerage,
+              broker_name: state.data.broker_name,
+              broker_email: state.data.broker_email,
+              title_company: state.data.title_company,
+              lender: state.data.lender,
+              agreement_signed: !!state.data.sa_signed
+            });
+          }
+        }, 1200);
+
+      } catch(err){
+        console.error('[path-b] signUp/insert failed', err);
+        const msg = (err && err.message) ? err.message : 'try again.';
+        alert('Account creation failed · ' + msg);
+        // Roll back so the agent can retry without losing their data
+        state.step = 'extras';
+        render();
+      }
+    }
+
+    /* Notify tc@aaritransactions.com via Netlify Forms when a new agent signs up. */
+    function sendNewAgentNotification(payload){
+      try {
+        const formData = new URLSearchParams();
+        formData.append('form-name', 'aari-new-agent');
+        Object.keys(payload).forEach(k => formData.append(k, payload[k] || ''));
+        formData.append('bot-field', '');
+        fetch('/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: formData.toString()
+        })
+        .then(resp => {
+          if(resp.ok) console.log('[path-b] new-agent Netlify POST OK · email queued');
+          else console.warn('[path-b] new-agent Netlify POST failed · status ' + resp.status);
+        })
+        .catch(err => console.warn('[path-b] new-agent Netlify fetch failed', err));
+      } catch(err){
+        console.warn('[path-b] new-agent notification threw', err);
+      }
     }
 
     function isActive(){
