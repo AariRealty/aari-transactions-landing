@@ -8948,9 +8948,17 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     }
 
     function render(){
-      document.querySelectorAll('#aariPathA .pa-step').forEach(s => s.hidden = true);
+      document.querySelectorAll('#aariPathA .pa-step').forEach(s => {
+        s.hidden = true;
+        s.removeAttribute('data-stack');
+      });
       const el = stepEl(state.step);
       if(el) el.hidden = false;
+      renderQwizStack();
+      // Mark the active step as in-stack mode so it picks up the connecting top border.
+      if(el && state.step !== 1 && state.step !== 2 && state.step !== 3){
+        el.setAttribute('data-stack', 'true');
+      }
       updateHead();
       renderDots();
       updateFootButtons();
@@ -8959,6 +8967,80 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(state.step === 2) renderPackages();
       if(state.step === 3) renderRepresentation();
     }
+
+    /* Continuous qwiz · build compact "answered" rows for every completed step
+       from 3 to (state.step - 1). Steps 1+2 (type/package) are confirmed via the
+       service chip up top · they don't need rows. Step 3+ flows into the stack. */
+    const QWIZ_STACK_ROWS = [
+      { step: 3,  label: 'Representing',      get: (s) => {
+        const map = { buyer:'Buyer', seller:'Seller', both_sides:'Both Sides' };
+        return s.data.representation ? (map[s.data.representation] || s.data.representation) : '';
+      }},
+      { step: 4,  label: 'Property address',  get: (s) => s.data.address || '' },
+      { step: 5,  label: 'Closing date',      get: (s) => formatDate(s.data.closingDate) },
+      { step: 6,  label: 'Title company',     get: (s) => s.data.titleCompany || '' },
+      { step: 7,  label: 'Lender',            get: (s) => s.data.lender || 'Cash deal · no lender' },
+      { step: 8,  label: 'Commission notes',  get: (s) => s.data.commissionNotes || 'None' },
+      { step: 9,  label: 'Contract',          get: (s) => s.data.contract || '' },
+      { step: 10, label: 'Additional',        get: (s) => {
+        const docs = s.data.additionalDocs && s.data.additionalDocs.length
+                     ? s.data.additionalDocs.length + ' file' + (s.data.additionalDocs.length > 1 ? 's' : '')
+                     : '';
+        const notes = s.data.agentNotes ? '"' + s.data.agentNotes.slice(0, 40) + (s.data.agentNotes.length > 40 ? '…' : '') + '"' : '';
+        return [docs, notes].filter(Boolean).join(' · ') || 'None';
+      }}
+    ];
+
+    function formatDate(d){
+      if(!d) return '';
+      try {
+        const dt = new Date(d + 'T00:00:00');
+        if(isNaN(dt.getTime())) return d;
+        return dt.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+      } catch(_){ return d; }
+    }
+
+    function renderQwizStack(){
+      const stackEl = document.getElementById('paQwizStack');
+      if(!stackEl) return;
+      // Stack appears once the agent is past Step 3 (i.e. has answered at least Representation).
+      const stepNum = typeof state.step === 'number' ? state.step : null;
+      if(stepNum === null || stepNum <= 3){
+        stackEl.hidden = true;
+        stackEl.innerHTML = '';
+        return;
+      }
+      const rows = QWIZ_STACK_ROWS
+        .filter(r => r.step < stepNum)
+        .map(r => {
+          const value = r.get(state) || '—';
+          return '<div class="pa-answered-row" data-edit-step="' + r.step + '">'
+               +   '<span class="pa-ans-q">' + r.label + '</span>'
+               +   '<span class="pa-ans-v">' + escapeHtml(value) + '</span>'
+               +   '<button type="button" class="pa-ans-edit" data-edit-step="' + r.step + '">Edit</button>'
+               + '</div>';
+        }).join('');
+      stackEl.innerHTML = rows;
+      stackEl.hidden = !rows;
+    }
+
+    function escapeHtml(str){
+      return String(str).replace(/[&<>"']/g, ch => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      })[ch]);
+    }
+
+    /* Edit-button delegation · click on any answered row's Edit jumps state.step to it.
+       Preserved state.data lets the agent re-submit with one Continue when they're done. */
+    document.addEventListener('click', function(e){
+      const btn = e.target.closest('.pa-ans-edit');
+      if(!btn) return;
+      if(!state.active) return;
+      const targetStep = parseInt(btn.getAttribute('data-edit-step'), 10);
+      if(!targetStep || isNaN(targetStep)) return;
+      state.step = targetStep;
+      render();
+    });
 
     /* Service-confirm chip · Option J · clean chip with DETAILS/CHANGE below outside.
        Shows on Path A from Step 3 onward once a service is locked in.
