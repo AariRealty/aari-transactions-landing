@@ -9173,7 +9173,13 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     }));
     closeBtn.addEventListener('click', close);
     overlay.addEventListener('click', e => { if(e.target === overlay) close(); });
-    document.addEventListener('keydown', e => { if(e.key === 'Escape' && !overlay.hasAttribute('hidden')) close(); });
+    document.addEventListener('keydown', e => {
+      if(e.key !== 'Escape' || overlay.hasAttribute('hidden')) return;
+      // Don't close the intake modal if the SA popup is open · its own Escape listener handles that.
+      const saOverlay = document.getElementById('saPopupOverlay');
+      if(saOverlay && !saOverlay.hidden) return;
+      close();
+    });
     backBtn.addEventListener('click', prevStep);
     nextBtn.addEventListener('click', nextStep);
 
@@ -9455,6 +9461,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         root().hidden = false;
         root().style.display = 'block';
       }
+      // The gate's showStep(0) set .intake-progress to display:none (hideProgress flag).
+      // Restore it so Path A's progress dots actually appear.
+      const progressEl = document.querySelector('.modal-box.intake-v2 .intake-progress');
+      if(progressEl) progressEl.style.display = '';
       prefillFromProfile();
       applyPendingPrefill();
       render();
@@ -9481,13 +9491,22 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       };
       const m = PREFILL_MAP[svcId];
       try { sessionStorage.removeItem('aari-pending-prefill-svc'); } catch(_){}
-      // Always stash serviceId · chip can look up name/summary/price/details even when
-      // the package fallback isn't supported in Path A's PACKAGES yet.
+      // Always stash serviceId · chip can look up name/summary/price/details.
       state.data.serviceId = svcId;
       if(!m) return;
       state.data.serviceType    = m.type;
       state.data.servicePackage = m.pkg;
-      state.step = 3; // Skip past type + package pickers · land on representation.
+      // If the picked package LOCKS representation (TC Both Sides, Offer Prep Basic/Complete),
+      // auto-set the representation value AND skip Step 3 entirely.
+      // Otherwise · skip just Steps 1 + 2 · land on the Representation picker.
+      const list = PACKAGES[m.type] || [];
+      const pkg = list.find(p => p.id === m.pkg);
+      if(pkg && pkg.representation){
+        state.data.representation = pkg.representation;
+        state.step = 4; // Skip 1 + 2 + 3 · land on Property Address
+      } else {
+        state.step = 3; // Skip 1 + 2 · land on Representation picker
+      }
     }
 
     /* Change button on the service-confirm chip · clears prefill, resets to Step 1
@@ -10032,6 +10051,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         root().hidden = false;
         root().style.display = 'block';
       }
+      // Restore the .intake-progress container that showStep(0) hid for the gate.
+      // (Path B's updateHead toggles per-step, but on first render we need it visible.)
+      const progressEl = document.querySelector('.modal-box.intake-v2 .intake-progress');
+      if(progressEl) progressEl.style.display = '';
       render();
     }
 
