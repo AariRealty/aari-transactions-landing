@@ -5419,6 +5419,36 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             <div class="pa-chip-stack" id="paRepresentation"></div>
           </div>
         </section>
+        <!-- Clients step (buyer side) · shown when representation = buyer OR both_sides -->
+        <section class="pa-step" data-pa-step="clients-buyer" hidden>
+          <div class="field">
+            <label for="paBuyerName">Full name</label>
+            <input type="text" id="paBuyerName" name="pa_buyer_name" placeholder="John Doe" autocomplete="off">
+          </div>
+          <div class="field" style="margin-top:14px">
+            <label for="paBuyerEmail">Email</label>
+            <input type="email" id="paBuyerEmail" name="pa_buyer_email" placeholder="john@email.com" autocomplete="off" inputmode="email" spellcheck="false">
+          </div>
+          <div class="field" style="margin-top:14px">
+            <label for="paBuyerPhone">Phone</label>
+            <input type="tel" id="paBuyerPhone" name="pa_buyer_phone" placeholder="239.555.1234" autocomplete="off" inputmode="tel">
+          </div>
+        </section>
+        <!-- Clients step (seller side) · shown when representation = seller OR both_sides -->
+        <section class="pa-step" data-pa-step="clients-seller" hidden>
+          <div class="field">
+            <label for="paSellerName">Full name</label>
+            <input type="text" id="paSellerName" name="pa_seller_name" placeholder="Jane Smith" autocomplete="off">
+          </div>
+          <div class="field" style="margin-top:14px">
+            <label for="paSellerEmail">Email</label>
+            <input type="email" id="paSellerEmail" name="pa_seller_email" placeholder="jane@email.com" autocomplete="off" inputmode="email" spellcheck="false">
+          </div>
+          <div class="field" style="margin-top:14px">
+            <label for="paSellerPhone">Phone</label>
+            <input type="tel" id="paSellerPhone" name="pa_seller_phone" placeholder="239.555.5678" autocomplete="off" inputmode="tel">
+          </div>
+        </section>
         <section class="pa-step" data-pa-step="4" hidden>
           <div class="field">
             <label for="paAddress">Property address</label>
@@ -5500,8 +5530,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
            Activated by AariIntakeGateV3 when email lookup finds NO profile.
            On completion · saves profile to localStorage and hands off to Path A. -->
       <div id="aariPathB" hidden>
-        <!-- Welcome screen · Alternative 1 · cream banner with roadmap -->
-        <section class="pb-step" data-pb-step="welcome">
+        <!-- Welcome screen · Alternative 1 · cream banner with roadmap
+             DEPRECATED · removed from FLOW · agents now land directly on the 'name' step.
+             Kept in DOM for archival but always hidden. -->
+        <section class="pb-step" data-pb-step="welcome" hidden>
           <p class="pb-eyebrow">New here</p>
           <div class="pb-welcome-block">
             <p class="pb-welcome-sub">Quick onboarding before your first file. Saved to your profile so next time it's 30 seconds.</p>
@@ -9299,7 +9331,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         const profile = window.AariPathA.getProfile ? window.AariPathA.getProfile() : null;
         // Any field captured (representation, address, closing date, etc.) counts.
         // serviceId being set also counts since picking a service is committed work.
-        const paInputs = ['paAddress','paClosingDate','paTitleCompany','paLender','paCommissionNotes','paAgentNotes'];
+        const paInputs = ['paAddress','paClosingDate','paTitleCompany','paLender','paCommissionNotes','paAgentNotes',
+                          'paBuyerName','paBuyerEmail','paBuyerPhone','paSellerName','paSellerEmail','paSellerPhone'];
         for(const id of paInputs){
           const inp = document.getElementById(id);
           if(inp && inp.value && String(inp.value).trim() !== '') return true;
@@ -9819,6 +9852,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       1:  { h:'Service <em>type?</em>',           s:'Pick the lane.' },
       2:  { h:'Service <em>package?</em>',        s:'Pick the specific tier.' },
       3:  { h:'Who are you <em>representing?</em>', s:'One pick.' },
+      'clients-buyer':  { h:'Buyer <em>client?</em>',  s:'Name, email, phone · how we identify your buyer.' },
+      'clients-seller': { h:'Seller <em>client?</em>', s:'Name, email, phone · how we identify your seller.' },
       4:  { h:'<em>Property</em> address?',       s:'Street address only.' },
       5:  { h:'<em>Closing</em> date?',           s:'When does this deal close?' },
       6:  { h:'<em>Title</em> company?',          s:'From your profile. Update if different.' },
@@ -9830,7 +9865,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       'done':  { h:'',                             s:'' }
     };
 
-    const ALL_STEPS = [1,2,3,4,5,6,7,8,9,10,'final','done'];
+    const ALL_STEPS = [1,2,3,'clients-buyer','clients-seller',4,5,6,7,8,9,10,'final','done'];
 
     let state = { step: 1, data: {}, profile: null, active: false };
 
@@ -9840,13 +9875,28 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       // Step 3 (Representation) is skipped only when the picked package locks it in:
       //   TC Both Sides → always "Both Sides"
       //   Offer Prep Basic / Complete → always "Buyer"
+      //   Listing services → always "Seller"
       // All other packages ask the agent explicitly.
       const list = PACKAGES[state.data.serviceType] || [];
       const pkg = list.find(p => p.id === state.data.servicePackage);
+      let steps = ALL_STEPS.slice();
       if(pkg && pkg.representation){
-        return ALL_STEPS.filter(s => s !== 3);
+        steps = steps.filter(s => s !== 3);
       }
-      return ALL_STEPS;
+      // Filter Clients steps by representation · auto-set by validate(2) or step 3.
+      const rep = state.data.representation;
+      if(rep === 'buyer'){
+        // Skip seller-side client question
+        steps = steps.filter(s => s !== 'clients-seller');
+      } else if(rep === 'seller'){
+        steps = steps.filter(s => s !== 'clients-buyer');
+      } else if(rep === 'both_sides'){
+        // Keep both client steps
+      } else {
+        // No representation set yet (e.g., at step 1 or 2) · keep both for now,
+        // they'll be filtered correctly once representation is decided.
+      }
+      return steps;
     }
 
     function init(profile){
@@ -9899,7 +9949,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     /* Reset all Path A per-file inputs so a re-open with a different agent starts clean. */
     function clearPathAInputs(){
-      ['paAddress','paClosingDate','paTitleCompany','paLender','paCommissionNotes','paAgentNotes'].forEach(id => {
+      ['paAddress','paClosingDate','paTitleCompany','paLender','paCommissionNotes','paAgentNotes',
+       'paBuyerName','paBuyerEmail','paBuyerPhone','paSellerName','paSellerEmail','paSellerPhone'].forEach(id => {
         const inp = document.getElementById(id);
         if(inp) inp.value = '';
       });
@@ -10019,6 +10070,20 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         const map = { buyer:'Buyer', seller:'Seller', both_sides:'Both Sides' };
         return s.data.representation ? (map[s.data.representation] || s.data.representation) : '';
       }},
+      { step: 'clients-buyer',  label: 'Buyer', get: (s) => {
+        if(!s.data.buyer_name) return '';
+        const parts = [s.data.buyer_name];
+        if(s.data.buyer_email) parts.push(s.data.buyer_email);
+        if(s.data.buyer_phone) parts.push(s.data.buyer_phone);
+        return parts.join(' · ');
+      }},
+      { step: 'clients-seller', label: 'Seller', get: (s) => {
+        if(!s.data.seller_name) return '';
+        const parts = [s.data.seller_name];
+        if(s.data.seller_email) parts.push(s.data.seller_email);
+        if(s.data.seller_phone) parts.push(s.data.seller_phone);
+        return parts.join(' · ');
+      }},
       { step: 4,  label: 'Property address',  get: (s) => s.data.address || '' },
       { step: 5,  label: 'Closing date',      get: (s) => formatDate(s.data.closingDate) },
       { step: 6,  label: 'Title company',     get: (s) => s.data.titleCompany || '' },
@@ -10048,12 +10113,18 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(!stackEl) return;
       // Stack appears once the agent is past Step 3. On 'final', show ALL answered rows
       // as the review summary. On 'done', hide (the confirmation message replaces it).
+      // Use position in ALL_STEPS so string-keyed steps (clients-buyer/seller) compare correctly.
       const s = state.step;
-      let cutoff = null;
-      if(s === 'final') cutoff = 999;
-      else if(s === 'done') cutoff = null;
-      else if(typeof s === 'number' && s > 3) cutoff = s;
-      if(cutoff === null){
+      const stepIdx = (st) => ALL_STEPS.indexOf(st);
+      const step3Idx = stepIdx(3);
+      let cutoffIdx = null;
+      if(s === 'final') cutoffIdx = 999;
+      else if(s === 'done') cutoffIdx = null;
+      else {
+        const idx = stepIdx(s);
+        if(idx > step3Idx) cutoffIdx = idx;
+      }
+      if(cutoffIdx === null){
         stackEl.hidden = true;
         stackEl.innerHTML = '';
         return;
@@ -10067,7 +10138,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const valueStyle = 'font-size:13.5px;color:#0f0f0f;font-weight:500;flex:1;text-align:right;padding:0 12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:0;text-transform:none';
       const editStyle = 'color:rgba(15,15,15,0.35);flex-shrink:0;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center';
       const rows = QWIZ_STACK_ROWS
-        .filter(r => r.step < cutoff)
+        .filter(r => stepIdx(r.step) < cutoffIdx)
         .map(r => {
           const value = r.get(state);
           if(!value) return '';
@@ -10095,8 +10166,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const row = e.target.closest('#paQwizStack .pa-answered-row');
       if(!row) return;
       if(!state.active) return;
-      const targetStep = parseInt(row.getAttribute('data-edit-step'), 10);
-      if(!targetStep || isNaN(targetStep)) return;
+      const raw = row.getAttribute('data-edit-step');
+      if(!raw) return;
+      // String-keyed steps (clients-buyer/seller) coexist with numeric steps.
+      const asNum = parseInt(raw, 10);
+      const targetStep = (!isNaN(asNum) && String(asNum) === raw) ? asNum : raw;
       state.step = targetStep;
       render();
     });
@@ -10332,6 +10406,30 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           state.data.representation = v.value;
           return true;
         }
+        case 'clients-buyer': {
+          const n = document.getElementById('paBuyerName').value.trim();
+          const e = document.getElementById('paBuyerEmail').value.trim();
+          const p = document.getElementById('paBuyerPhone').value.trim();
+          if(!n){ alert('Buyer name is required.'); return false; }
+          if(!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ alert('Valid buyer email is required.'); return false; }
+          if(!p){ alert('Buyer phone is required.'); return false; }
+          state.data.buyer_name = n;
+          state.data.buyer_email = e;
+          state.data.buyer_phone = p;
+          return true;
+        }
+        case 'clients-seller': {
+          const n = document.getElementById('paSellerName').value.trim();
+          const e = document.getElementById('paSellerEmail').value.trim();
+          const p = document.getElementById('paSellerPhone').value.trim();
+          if(!n){ alert('Seller name is required.'); return false; }
+          if(!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ alert('Valid seller email is required.'); return false; }
+          if(!p){ alert('Seller phone is required.'); return false; }
+          state.data.seller_name = n;
+          state.data.seller_email = e;
+          state.data.seller_phone = p;
+          return true;
+        }
         case 4: {
           const v = document.getElementById('paAddress').value.trim();
           if(!v){ alert('Property address is required.'); return false; }
@@ -10441,7 +10539,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     // Step 5 · localStorage profile keys removed · Supabase agents table is source of truth.
 
     // Ordered flow · welcome screen + 8 onboarding questions + nice-to-haves + done.
-    const FLOW = ['welcome', 'name', 'phone', 'license', 'brokerage', 'broker', 'title', 'lender', 'sign', 'extras', 'done'];
+    // Welcome screen removed from FLOW · agents land straight on 'name' from the gate.
+    // The welcome <section> still exists in the DOM but is unreachable via advance/back.
+    const FLOW = ['name', 'phone', 'license', 'brokerage', 'broker', 'title', 'lender', 'sign', 'extras', 'done'];
 
     const STEP_META = {
       welcome:   { h:"Let's get you <em>set up.</em>",  s:'Quick onboarding before your first file.' },
@@ -10491,7 +10591,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     function stepEl(n){ return document.querySelector('#aariPathB [data-pb-step="' + n + '"]'); }
 
     function init(seed){
-      state = { step: 'welcome', data: {}, profile: seed || {}, active: true };
+      // Skip the welcome / "New here" interstitial · land straight on the first question.
+      state = { step: 'name', data: {}, profile: seed || {}, active: true };
       // Pre-fill email from gate · agent doesn't re-type it.
       if(seed && seed.email) state.data.email = seed.email;
       try {
@@ -10588,12 +10689,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         back.hidden = true; next.hidden = true; submit.hidden = true;
         return;
       }
-      // Back hidden on welcome (it's the entry screen).
-      back.hidden = (state.step === 'welcome');
+      // Back hidden on 'name' (the new entry step after gate hand-off).
+      back.hidden = (state.step === 'name');
       submit.hidden = true;
       next.hidden = false;
-      // Welcome shows "Let's go" · all other steps show "Continue".
-      next.innerHTML = state.step === 'welcome' ? "Let's go <span class=\"arr\">→</span>" : 'Continue <span class="arr">→</span>';
+      next.innerHTML = 'Continue <span class="arr">→</span>';
     }
 
     function renderQwizStack(){
