@@ -6031,6 +6031,61 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 </form>
 
 <!-- =========================================================
+     Path A file-submission form · sends every submitted file
+     to the central agreements/TC inbox. Multipart/form-data
+     because contract + additional docs are real file attachments.
+     Configure recipient in Netlify dashboard → Forms → aari-file-submission.
+     ========================================================= -->
+<form name="aari-file-submission" data-netlify="true" enctype="multipart/form-data" netlify-honeypot="bot-field" hidden aria-hidden="true">
+  <!-- Agent identity -->
+  <input type="email" name="agent_email">
+  <input type="text"  name="agent_name">
+  <input type="text"  name="agent_phone">
+  <input type="text"  name="agent_license">
+  <input type="text"  name="agent_brokerage">
+  <!-- Service -->
+  <input type="text"  name="service_type">
+  <input type="text"  name="service_package">
+  <input type="text"  name="service_id">
+  <input type="text"  name="representation">
+  <!-- Property -->
+  <input type="text"  name="property_address">
+  <input type="text"  name="closing_date">
+  <!-- Title -->
+  <input type="text"  name="title_company">
+  <input type="text"  name="title_contact_name">
+  <input type="email" name="title_contact_email">
+  <input type="text"  name="title_contact_phone">
+  <!-- Lender -->
+  <input type="text"  name="lender">
+  <input type="text"  name="lender_contact_name">
+  <input type="email" name="lender_contact_email">
+  <input type="text"  name="lender_contact_phone">
+  <!-- Clients (TC Both Sides + Buyer / Seller representations) -->
+  <input type="text"  name="buyer_name">
+  <input type="email" name="buyer_email">
+  <input type="text"  name="buyer_phone">
+  <input type="text"  name="seller_name">
+  <input type="email" name="seller_email">
+  <input type="text"  name="seller_phone">
+  <!-- Commission + agent notes -->
+  <textarea name="commission_notes"></textarea>
+  <textarea name="agent_notes"></textarea>
+  <!-- Files -->
+  <input type="file"  name="contract">
+  <input type="file"  name="additional_doc_0">
+  <input type="file"  name="additional_doc_1">
+  <input type="file"  name="additional_doc_2">
+  <input type="file"  name="additional_doc_3">
+  <input type="file"  name="additional_doc_4">
+  <!-- Audit -->
+  <input type="text"  name="submitted_at_iso">
+  <input type="text"  name="submitted_at_display">
+  <input type="text"  name="user_agent">
+  <input type="text"  name="bot-field">
+</form>
+
+<!-- =========================================================
      Service Agreement Popup · opens from Path B's sign step.
      Full agreement text, scroll-to-bottom floating button,
      checkbox + name signature once scrolled, then "Sign and continue."
@@ -10904,16 +10959,95 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       actualSubmit();
     }
 
-    function actualSubmit(){
-      // TODO · wire to real email/notification service.
-      // Send confirmation to agent at state.profile.email
-      // Send notification to tc@aaritransactions.com with full data + profile
-      console.log('[path-a] submit', { profile: state.profile, data: state.data });
-      // Persist this file's title + lender contacts to the agent's saved list.
-      // Best-effort · doesn't block the submission · errors logged but swallowed.
+    async function actualSubmit(){
+      // Persist saved title + lender to the agent's profile in the background.
+      // Doesn't block the submission · errors logged but swallowed.
       persistSavedContacts();
-      state.step = 'done';
-      render();
+
+      // Build the file-submission payload (multipart/form-data because
+      // contract + additional docs are real file attachments).
+      const nowIso = new Date().toISOString();
+      let submittedAtDisplay = nowIso;
+      try {
+        const d = new Date(nowIso);
+        const datePart = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+        const timePart = d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit', hour12:true });
+        let tz = '';
+        try {
+          const parts = new Intl.DateTimeFormat('en-US', { timeZoneName:'short' }).formatToParts(d);
+          const tzPart = parts.find(p => p.type === 'timeZoneName');
+          if(tzPart) tz = ' ' + tzPart.value;
+        } catch(_){}
+        submittedAtDisplay = datePart + ' at ' + timePart + tz;
+      } catch(_){}
+
+      const fd = new FormData();
+      fd.append('form-name', 'aari-file-submission');
+      // Agent identity (from session profile)
+      fd.append('agent_email',     state.profile.email          || '');
+      fd.append('agent_name',      state.profile.name           || ((state.profile.first_name || '') + ' ' + (state.profile.last_name || '')).trim());
+      fd.append('agent_phone',     state.profile.phone          || '');
+      fd.append('agent_license',   state.profile.license_number || '');
+      fd.append('agent_brokerage', state.profile.brokerage      || '');
+      // Service
+      fd.append('service_type',    state.data.serviceType    || '');
+      fd.append('service_package', state.data.servicePackage || '');
+      fd.append('service_id',      state.data.serviceId      || '');
+      fd.append('representation',  state.data.representation || '');
+      // Property
+      fd.append('property_address', state.data.address     || '');
+      fd.append('closing_date',     state.data.closingDate || '');
+      // Title
+      fd.append('title_company',       state.data.titleCompany       || '');
+      fd.append('title_contact_name',  state.data.titleContactName   || '');
+      fd.append('title_contact_email', state.data.titleContactEmail  || '');
+      fd.append('title_contact_phone', state.data.titleContactPhone  || '');
+      // Lender
+      fd.append('lender',               state.data.lender              || '');
+      fd.append('lender_contact_name',  state.data.lenderContactName   || '');
+      fd.append('lender_contact_email', state.data.lenderContactEmail  || '');
+      fd.append('lender_contact_phone', state.data.lenderContactPhone  || '');
+      // Clients (TC Both Sides + Buyer / Seller representations)
+      fd.append('buyer_name',  state.data.buyer_name  || '');
+      fd.append('buyer_email', state.data.buyer_email || '');
+      fd.append('buyer_phone', state.data.buyer_phone || '');
+      fd.append('seller_name',  state.data.seller_name  || '');
+      fd.append('seller_email', state.data.seller_email || '');
+      fd.append('seller_phone', state.data.seller_phone || '');
+      // Commission + agent notes
+      fd.append('commission_notes', state.data.commissionNotes || '');
+      fd.append('agent_notes',      state.data.agentNotes      || '');
+      // Files · executed contract (required) + up to 5 additional docs
+      const contractInput = document.getElementById('paContract');
+      if(contractInput && contractInput.files && contractInput.files[0]){
+        fd.append('contract', contractInput.files[0]);
+      }
+      const additionalInput = document.getElementById('paAdditionalDocs');
+      if(additionalInput && additionalInput.files){
+        const max = Math.min(additionalInput.files.length, 5);
+        for(let i = 0; i < max; i++){
+          fd.append('additional_doc_' + i, additionalInput.files[i]);
+        }
+      }
+      // Audit
+      fd.append('submitted_at_iso',     nowIso);
+      fd.append('submitted_at_display', submittedAtDisplay);
+      fd.append('user_agent',           (navigator && navigator.userAgent) || '');
+
+      // POST to Netlify Forms · multipart/form-data set automatically by browser.
+      try {
+        const res = await fetch('/', { method: 'POST', body: fd });
+        if(!res.ok && res.status !== 200){
+          throw new Error('Submission failed · status ' + res.status);
+        }
+        console.log('[path-a] file submitted to aari-file-submission · status', res.status);
+        state.step = 'done';
+        render();
+      } catch(err){
+        console.error('[path-a] file submission failed', err);
+        alert('We could not send your file · ' + (err.message || 'check your connection and try again.'));
+        // Keep state.step at 'final' so the agent can retry the Send My File button.
+      }
     }
 
     function isActive(){
