@@ -8819,10 +8819,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     // Full catalog matches the homepage's 8 locked services across 3 types.
     // Each package carries its locked summary (synced with homepage Standalone services + intake sub-panel rows).
+    // `representation` field auto-sets the answer + skips Step 3 when the side is implicit.
     const PACKAGES = {
       tc: [
         { id:'tc_one_side',   name:'Transaction Coordination · One Side',   price:399, billing:'closing', summary:'Contract + deadlines + escrow + title/lender comms + close' },
-        { id:'tc_both_sides', name:'Transaction Coordination · Both Sides', price:599, billing:'closing', summary:'Everything in One Side × 2 + joint scheduling' }
+        { id:'tc_both_sides', name:'Transaction Coordination · Both Sides', price:599, billing:'closing', summary:'Everything in One Side × 2 + joint scheduling', representation:'both_sides' }
       ],
       listing: [
         { id:'lc',           name:'Listing Coordinator', price:225, billing:'upfront', summary:'Listing package + disclosures + HOA + MLS + status updates' },
@@ -8830,8 +8831,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         { id:'mls_setup',    name:'MLS Setup',           price:149, billing:'upfront', summary:'MLS entry + photos + documents + ShowingTime (you handle docs)' }
       ],
       addons: [
-        { id:'op_basic',    name:'Offer Prep · Basic',    price:69,  billing:'upfront', summary:'BBA + Offer + GG (Contingency) + Compensation' },
-        { id:'op_complete', name:'Offer Prep · Complete', price:149, billing:'upfront', summary:'Basic + HOA disclosures + counter coordination + revisions' },
+        { id:'op_basic',    name:'Offer Prep · Basic',    price:69,  billing:'upfront', summary:'BBA + Offer + GG (Contingency) + Compensation',           representation:'buyer' },
+        { id:'op_complete', name:'Offer Prep · Complete', price:149, billing:'upfront', summary:'Basic + HOA disclosures + counter coordination + revisions', representation:'buyer' },
         { id:'file_org',    name:'File Organization',     price:99,  billing:'upfront', summary:'Full upload + execution verification + broker review' }
       ]
     };
@@ -8870,9 +8871,15 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     function root(){ return document.getElementById('aariPathA'); }
     function stepEl(n){ return document.querySelector('#aariPathA [data-pa-step="' + n + '"]'); }
     function activeSteps(){
-      // Representation (Step 3) is asked for ALL service types now ·
-      // Listing flows used to skip it (assumed seller) but Marlenyi wants the question
-      // explicit so the agent confirms intent every time.
+      // Step 3 (Representation) is skipped only when the picked package locks it in:
+      //   TC Both Sides → always "Both Sides"
+      //   Offer Prep Basic / Complete → always "Buyer"
+      // All other packages ask the agent explicitly.
+      const list = PACKAGES[state.data.serviceType] || [];
+      const pkg = list.find(p => p.id === state.data.servicePackage);
+      if(pkg && pkg.representation){
+        return ALL_STEPS.filter(s => s !== 3);
+      }
       return ALL_STEPS;
     }
 
@@ -9033,19 +9040,22 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         stackEl.innerHTML = '';
         return;
       }
-      // Only show rows for steps that are part of the ACTIVE flow for this service type.
-      // Listing services skip Step 3 (representation) · no row should appear for it.
-      const active = activeSteps();
+      // Show rows for completed steps that have a value. Skipped steps (e.g. Representation
+      // auto-set by TC Both Sides or Offer Prep) still show their auto-set value as a row.
+      // Steps with no value at all are hidden (e.g. Lender skipped on a cash deal · pre-step).
       const rows = QWIZ_STACK_ROWS
-        .filter(r => r.step < cutoff && active.indexOf(r.step) !== -1)
+        .filter(r => r.step < cutoff)
         .map(r => {
-          const value = r.get(state) || '—';
+          const value = r.get(state);
+          if(!value) return '';
           return '<div class="pa-answered-row" data-edit-step="' + r.step + '">'
                +   '<span class="pa-ans-q">' + r.label + '</span>'
                +   '<span class="pa-ans-v">' + escapeHtml(value) + '</span>'
                +   '<button type="button" class="pa-ans-edit" data-edit-step="' + r.step + '">Edit</button>'
                + '</div>';
-        }).join('');
+        })
+        .filter(Boolean)
+        .join('');
       stackEl.innerHTML = rows;
       stackEl.hidden = !rows;
     }
@@ -9269,10 +9279,19 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           const v = document.querySelector('input[name="pa_service_package"]:checked');
           if(!v){ alert('Pick a package to continue.'); return false; }
           state.data.servicePackage = v.value;
-          // Also stash serviceId so the chip can render · package IDs that match
-          // SERVICE_BY_ID (tc_one_side/tc_both_sides) get full chip details;
-          // others fall back to the PACKAGES-based mini chip.
           state.data.serviceId = v.value;
+          // Auto-set representation when the package locks it in:
+          //   TC Both Sides → both_sides (definition)
+          //   Offer Prep · Basic / Complete → buyer (offer prep is always buyer-side)
+          // For these, Step 3 is skipped via activeSteps() · agent never sees the question.
+          const list = PACKAGES[state.data.serviceType] || [];
+          const pkg = list.find(p => p.id === v.value);
+          if(pkg && pkg.representation){
+            state.data.representation = pkg.representation;
+          } else {
+            // Re-pick · clear any stale auto-set value so user gets asked
+            state.data.representation = null;
+          }
           return true;
         }
         case 3: {
