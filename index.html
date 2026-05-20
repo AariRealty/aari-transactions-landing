@@ -9522,6 +9522,32 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(hint) hint.textContent = "New here? Same field · we'll set you up after.";
     }
 
+    /* Wait for AariAuth.client (Supabase) to be ready · auth.js is deferred so
+       it may not be loaded yet when the agent clicks Continue right after page load.
+       Tries ensureClient() first, then polls for window.AariAuth.client up to 4 seconds. */
+    async function getSupabaseClient(){
+      // Try the canonical helper if it exists
+      if(window.AariAuth && typeof window.AariAuth.ensureClient === 'function'){
+        try {
+          const c = await window.AariAuth.ensureClient();
+          if(c) return c;
+        } catch(_){}
+      }
+      // Fast path · client is already attached
+      if(window.AariAuth && (window.AariAuth.client || window.AariAuth.supabase)){
+        return window.AariAuth.client || window.AariAuth.supabase;
+      }
+      // Poll for up to 4 seconds while auth.js finishes initializing
+      const start = Date.now();
+      while(Date.now() - start < 4000){
+        if(window.AariAuth && (window.AariAuth.client || window.AariAuth.supabase)){
+          return window.AariAuth.client || window.AariAuth.supabase;
+        }
+        await new Promise(r => setTimeout(r, 50));
+      }
+      return null;
+    }
+
     async function handleGateContinue(){
       showError(''); showStatus('');
       const emailInput = document.getElementById('aariGateEmail');
@@ -9529,8 +9555,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const email = normalizeEmail(emailInput.value);
       if(!email){ showError('Email is required.'); return; }
       if(!isValidEmail(email)){ showError("That doesn't look like a valid email."); return; }
-      const supabase = (window.AariAuth && window.AariAuth.client) || null;
-      if(!supabase){ showError('Auth not ready · refresh the page.'); return; }
+      showStatus('Connecting...');
+      const supabase = await getSupabaseClient();
+      if(!supabase){ showError('Auth service did not load · refresh the page.'); return; }
+      showStatus('');
 
       // STATE 1 · email → check if account exists in Supabase auth
       if(gateState === 'email'){
@@ -9608,8 +9636,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const emailInput = document.getElementById('aariGateEmail');
       const email = normalizeEmail(emailInput ? emailInput.value : '');
       if(!email || !isValidEmail(email)){ showError('Enter your email first.'); return; }
-      const supabase = (window.AariAuth && window.AariAuth.client) || null;
-      if(!supabase){ showError('Auth not ready · refresh.'); return; }
+      const supabase = await getSupabaseClient();
+      if(!supabase){ showError('Auth service did not load · refresh.'); return; }
       showStatus('Sending reset link...');
       try {
         const { error } = await supabase.auth.resetPasswordForEmail(email);
