@@ -4292,10 +4292,7 @@ Password:"></textarea>
           <input type="email" id="aariGateEmail" name="gate_email" placeholder="you@yourbrokerage.com" autocomplete="email">
           <div class="help" id="aariGateError" aria-live="polite" style="color:#b14a4a;margin-top:6px;display:none"></div>
         </div>
-        <!-- Self-contained Continue + visible status · doesn't rely on shared modal-foot -->
-        <div style="margin-top:18px;display:flex;justify-content:flex-end">
-          <button type="button" id="aariGateContinueInline" style="display:inline-flex;align-items:center;gap:8px;padding:13px 26px;font-family:Inter,sans-serif;font-size:14px;font-weight:600;border:1px solid #0f0f0f;background:#0f0f0f;color:#ffffff;border-radius:10px;cursor:pointer">Continue &rarr;</button>
-        </div>
+        <!-- Status banner only · Continue is the shared modal-foot button (#intakeNext) -->
         <div id="aariGateStatus" style="margin-top:14px;padding:10px 14px;background:#f5f0e8;border:1px solid #e6e2d8;border-left:3px solid #967a4a;border-radius:6px;font-family:Inter,sans-serif;font-size:13px;color:#3a3328;display:none"></div>
       </section>
 
@@ -8523,10 +8520,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     document.querySelectorAll('[data-intake-trigger]').forEach(b => b.addEventListener('click', e => {
       e.preventDefault();
-      // If this button also has data-prefill-service, the dedicated prefill handler
-      // below owns the open() call (skipToStep: 2). Don't double-open.
+      // V3 · ALL Submit a File buttons land on Step 0 (the email gate). No exceptions.
+      // If the button also has data-prefill-service, the dedicated prefill handler
+      // below will stash the chosen service so Path A can auto-apply it after the gate.
+      // Both handlers fire on the same click; this one just opens the modal to the gate.
       if (b.hasAttribute('data-prefill-service')) return;
-      // Generic "Submit a File" CTAs always open the goal picker (Step 1) with NO pre-selection.
       open();
     }));
     closeBtn.addEventListener('click', close);
@@ -8535,11 +8533,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     backBtn.addEventListener('click', prevStep);
     nextBtn.addEventListener('click', nextStep);
 
-    /* --- Pre-fill service when coming from a pricing-card CTA ---
-       "My Pick" / "Add" buttons on the homepage already represent an explicit service
-       choice. Skip the "What do you need?" picker entirely · open directly to Step 2
-       with the service pre-selected and the service-confirm chip visible. Agent can
-       tap "change" on the chip if the auto-pick was wrong. */
+    /* --- V3 · Stash pre-fill, ALWAYS go through the gate ---
+       "My Pick" / "Add" buttons on the homepage represent an explicit service choice.
+       Per V3 brief: every Submit a File click MUST land on Step 0 (email gate) first.
+       This handler stashes the chosen service so Path A can auto-apply it after the
+       gate passes · no more skipToStep:2 bypass. */
     document.querySelectorAll('[data-prefill-service]').forEach(btn => {
       btn.addEventListener('click', e => {
         e.preventDefault();
@@ -8559,17 +8557,18 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           'Both Sides ($599)': 'tc_both_sides',
           'Transaction Coordination ($399)': 'tc_one_side'
         };
-        const svcId = map[target];
-        if(svcId){
-          state.serviceId = svcId;
-          state.intakeSvcTab = SVC_CATEGORY_BY_ID[svcId] || 'tc';
-          state.servicePreselected = true;
-          setIntakeServiceFields(svcId);
-          try { sessionStorage.setItem('aari-intake-opened', '1'); } catch(_){}
-          open({skipToStep: 2});
-        } else {
-          open();
-        }
+        const svcId = map[target] || null;
+        // Stash for Path A to consume after the gate. Persist across the brief modal
+        // open so a stray re-render doesn't lose it. Cleared by AariPathA after apply.
+        try {
+          if(svcId){
+            sessionStorage.setItem('aari-pending-prefill-svc', svcId);
+          } else {
+            sessionStorage.removeItem('aari-pending-prefill-svc');
+          }
+        } catch(_){}
+        // Always open the gate · never skip.
+        open();
       });
     });
 
@@ -8769,10 +8768,50 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     function init(profile){
       state = { step: 1, data: {}, profile: profile || {}, active: true };
-      document.querySelectorAll('.intake-step').forEach(s => s.hidden = true);
-      if(root()) root().hidden = false;
+      // Force-hide every .intake-step (gate + 1-5) with inline style override.
+      // Belt-and-suspenders: `hidden` attribute alone gets fought by stale display
+      // rules from other code paths (showStep, qwiz, listing-fields).
+      document.querySelectorAll('.intake-step').forEach(s => {
+        s.hidden = true;
+        s.style.display = 'none';
+      });
+      // Legacy Supabase auth gate is redundant under V3 · force it off.
+      const authGate = document.getElementById('intakeAuthGate');
+      if(authGate) authGate.style.display = 'none';
+      const modalBox = document.getElementById('intake-modal-box');
+      if(modalBox) modalBox.classList.remove('auth-gate-active');
+      // Reveal Path A container.
+      if(root()){
+        root().hidden = false;
+        root().style.display = 'block';
+      }
       prefillFromProfile();
+      applyPendingPrefill();
       render();
+    }
+
+    /* V3 · After the gate, apply any stashed service from a pricing-card click.
+       Auto-fills serviceType + servicePackage and jumps Path A to Step 3
+       (representation) so the agent doesn't re-pick what they already chose. */
+    function applyPendingPrefill(){
+      let svcId = null;
+      try { svcId = sessionStorage.getItem('aari-pending-prefill-svc'); } catch(_){}
+      if(!svcId) return;
+      // Map legacy homepage svcIds → Path A {type, packageId}.
+      // Only services Path A's PACKAGES catalog already supports get auto-applied;
+      // others fall through to the manual picker (Step 1+2).
+      const PREFILL_MAP = {
+        tc_one_side:    { type:'tc',      pkg:'tc_one_side'   },
+        tc_both_sides:  { type:'tc',      pkg:'tc_both_sides' },
+        listing_docs:   { type:'listing', pkg:'ls_docs_only'  }
+        // lc, op_basic, op_complete, mls_setup, file_org · Path A catalog gap · pick manually for now.
+      };
+      const m = PREFILL_MAP[svcId];
+      try { sessionStorage.removeItem('aari-pending-prefill-svc'); } catch(_){}
+      if(!m) return;
+      state.data.serviceType    = m.type;
+      state.data.servicePackage = m.pkg;
+      state.step = 3; // Skip past type + package pickers · land on representation.
     }
 
     function prefillFromProfile(){
