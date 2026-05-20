@@ -8808,7 +8808,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     /* V3 · After the gate, apply any stashed service from a pricing-card click.
        Auto-fills serviceType + servicePackage and jumps Path A to Step 3
-       (representation) so the agent doesn't re-pick what they already chose. */
+       (representation) so the agent doesn't re-pick what they already chose.
+       Also stashes serviceId so the service-confirm chip can render full details. */
     function applyPendingPrefill(){
       let svcId = null;
       try { svcId = sessionStorage.getItem('aari-pending-prefill-svc'); } catch(_){}
@@ -8824,11 +8825,28 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       };
       const m = PREFILL_MAP[svcId];
       try { sessionStorage.removeItem('aari-pending-prefill-svc'); } catch(_){}
+      // Always stash serviceId · chip can look up name/summary/price/details even when
+      // the package fallback isn't supported in Path A's PACKAGES yet.
+      state.data.serviceId = svcId;
       if(!m) return;
       state.data.serviceType    = m.type;
       state.data.servicePackage = m.pkg;
       state.step = 3; // Skip past type + package pickers · land on representation.
     }
+
+    /* Change button on the service-confirm chip · clears prefill, resets to Step 1
+       so the agent re-picks type + package from scratch within Path A. */
+    document.addEventListener('click', function(e){
+      if(e.target && (e.target.id === 'paServiceChipChange' || e.target.closest && e.target.closest('#paServiceChipChange'))){
+        e.preventDefault();
+        if(!state.active) return;
+        state.data.serviceId = null;
+        state.data.serviceType = null;
+        state.data.servicePackage = null;
+        state.step = 1;
+        render();
+      }
+    });
 
     function prefillFromProfile(){
       const p = state.profile || {};
@@ -8989,6 +9007,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           const v = document.querySelector('input[name="pa_service_package"]:checked');
           if(!v){ alert('Pick a package to continue.'); return false; }
           state.data.servicePackage = v.value;
+          // Also stash serviceId so the chip can render · package IDs that match
+          // SERVICE_BY_ID (tc_one_side/tc_both_sides) get full chip details;
+          // others fall back to the PACKAGES-based mini chip.
+          state.data.serviceId = v.value;
           return true;
         }
         case 3: {
