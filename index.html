@@ -9901,7 +9901,25 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         clearPathAInputs();
         prefillFromProfile();
         applyPendingPrefill();
-        renderSignedHistoryBanner();
+        // Step 5 · If agent hasn't signed the current agreement version, force re-sign
+        // before they can submit a file. Opens SA popup in resign mode · onComplete renders Path A.
+        const CURRENT_AGREEMENT_VERSION = 'v4.6';
+        const needsResign = !state.profile.agreement_signed
+          || state.profile.agreement_version !== CURRENT_AGREEMENT_VERSION;
+        if(needsResign && window.AariSaPopup && typeof window.AariSaPopup.open === 'function'){
+          window.AariSaPopup.open({
+            mode: 'resign',
+            profile: state.profile,
+            onComplete: () => {
+              // Mark profile as signed in memory · Supabase already updated by popup
+              state.profile.agreement_signed = true;
+              state.profile.agreement_version = CURRENT_AGREEMENT_VERSION;
+              render();
+            }
+          });
+          // Don't render yet · popup blocks until agent signs
+          return;
+        }
         render();
       } catch(err){
         // If anything throws mid-mutation · rollback so the modal isn't half-dead.
@@ -11031,7 +11049,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     function el(id){ return document.getElementById(id); }
 
-    function open(){
+    // Module state for the current open context · mode + onComplete callback
+    let _openOpts = null;
+
+    function open(opts){
+      _openOpts = opts || {};
       const overlay = el('saPopupOverlay');
       if(!overlay) return;
       // Reset all state on each open · agent must re-scroll, re-check, re-sign.
