@@ -10683,9 +10683,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     const TOP = ['Lee','Collier','Charlotte','Sarasota','Hendry','DeSoto'];
     const ALL_REMAINING = ['Alachua','Baker','Bay','Bradford','Brevard','Broward','Calhoun','Citrus','Clay','Columbia','Dixie','Duval','Escambia','Flagler','Franklin','Gadsden','Gilchrist','Glades','Gulf','Hamilton','Hardee','Hernando','Highlands','Hillsborough','Holmes','Indian River','Jackson','Jefferson','Lafayette','Lake','Leon','Levy','Liberty','Madison','Manatee','Marion','Martin','Miami-Dade','Monroe','Nassau','Okaloosa','Okeechobee','Orange','Osceola','Palm Beach','Pasco','Pinellas','Polk','Putnam','Santa Rosa','Seminole','St. Johns','St. Lucie','Sumter','Suwannee','Taylor','Union','Volusia','Wakulla','Walton','Washington'];
 
-    let state = { step: 1, profile: {}, active: false };
+    let state = { step: 1, profile: {}, active: false, headshotFile: null, headshotUrl: null, signatureDataUrl: null };
     const selectedCounties = new Set();
     let _wired = false;
+    let _reviewBound = false;
 
     function el(id){ return document.getElementById(id); }
     function root(){ return el('aariPathB2'); }
@@ -10786,38 +10787,50 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         lastName:  el('pb2Last').value.trim(),
         email:     el('pb2Email').value.trim(),
         phone:     el('pb2Phone').value.trim(),
-        serviceCounties: Array.from(selectedCounties),
+        password:  el('pb2Pw').value,
       };
+      const pw2 = el('pb2Pw2').value;
       if(!data.firstName || !data.lastName) return showError('Please enter your full name.');
       if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(data.email)) return showError('Please enter a valid email.');
       if(data.phone.replace(/\D/g,'').length < 10) return showError('Please enter a valid phone number.');
-      if(!data.serviceCounties.length) return showError('Select at least one Florida county.');
+      if(data.password.length < 8) return showError('Password must be at least 8 characters.');
+      if(!/[a-zA-Z]/.test(data.password) || !/\d/.test(data.password)) return showError('Password must include letters and numbers.');
+      if(data.password !== pw2) return showError('Passwords do not match.');
       Object.assign(state.profile, data);
       showStep(2);
     }
     function submitStep2(){
       const data = {
         licenseNumber:    el('pb2License').value.trim(),
-        licenseState:     el('pb2LicenseState').value,
+        licenseState:     el('pb2LicenseState').value || 'FL',
         licenseExpiresAt: el('pb2LicenseExp').value,
+        serviceCounties:  Array.from(selectedCounties),
       };
       if(!data.licenseNumber) return showError('Enter your license number.');
+      if(!data.licenseExpiresAt) return showError('Enter your license expiration date.');
+      if(!data.serviceCounties.length) return showError('Select at least one Florida county.');
+      if(!state.headshotFile) return showError('Please upload a headshot.');
       Object.assign(state.profile, data);
       showStep(3);
     }
     function submitStep3(){
       const data = {
-        brokerageName:    el('pb2Brokerage').value.trim(),
-        brokerageAddress: el('pb2BrokerageAddr').value.trim() || null,
-        brokerName:       el('pb2BrokerName').value.trim(),
-        brokerEmail:      el('pb2BrokerEmail').value.trim(),
-        brokerPhone:      el('pb2BrokerPhone').value.trim() || null,
+        brokerageName:      el('pb2Brokerage').value.trim(),
+        compliancePlatform: el('pb2CompliancePlatform').value.trim(),
+        signingPlatform:    el('pb2SigningPlatform').value.trim(),
+        reviewPreference:   el('pb2ReviewPref').value,
+        instagram:          el('pb2Instagram').value.trim() || null,
+        facebook:           el('pb2Facebook').value.trim() || null,
       };
       if(!data.brokerageName) return showError('Enter your brokerage name.');
-      if(!data.brokerName)    return showError("Enter your broker's name.");
-      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(data.brokerEmail)) return showError("Enter a valid broker email.");
+      if(!data.compliancePlatform) return showError('Enter the name of your compliance platform.');
+      if(!data.signingPlatform) return showError('Enter the name of your document signing platform.');
+      if(!data.reviewPreference) return showError('Please choose Yes or No for client reviews.');
       Object.assign(state.profile, data);
       showStep(4);
+      // Render the agreement on entry · reset gate state so scroll/check/sign sequence fires fresh.
+      renderAgreement();
+      resetAgreementGate();
     }
     function bindForm1(){
       const btn = el('pb2Continue1');
@@ -10838,61 +10851,70 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       btn.addEventListener('click', e => { e.preventDefault(); submitStep3(); });
     }
     function bindForm4(){
-      const btn = el('pb2CreateBtn');
-      if(!btn || btn._bound) return;
-      btn._bound = true;
-      btn.addEventListener('click', async e => {
+      const submitBtn = el('pb2CreateBtn');
+      if(!submitBtn || submitBtn._bound) return;
+      submitBtn._bound = true;
+      submitBtn.addEventListener('click', async e => {
         e.preventDefault();
-        const pw  = el('pb2Pw').value;
-        const pw2 = el('pb2Pw2').value;
-        const agree = el('pb2Agree').checked;
-        if(pw.length < 8) return showError('Password must be at least 8 characters.');
-        if(!/[a-zA-Z]/.test(pw) || !/\d/.test(pw)) return showError('Password must include letters and numbers.');
-        if(pw !== pw2) return showError('Passwords do not match.');
-        if(!agree) return showError('You must agree to the Terms and Privacy Policy.');
+        // Final gate check · all 3 prerequisites must be satisfied.
+        if(!agreementGate.scrolled) return showError('Please scroll to the bottom of the agreement first.');
+        if(!agreementGate.checked)  return showError('Please check the acknowledgment box.');
+        if(!agreementGate.signed)   return showError('Please draw your signature.');
 
-        const btn = el('pb2CreateBtn');
-        if(btn){ btn.disabled = true; btn.innerHTML = '<span class="aari-spinner"></span> Creating account&hellip;'; }
+        const pw = state.profile.password;
+        if(!pw){ return showError('Password missing · go back to Step 1 and re-enter.'); }
+
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="aari-spinner"></span> Creating account&hellip;';
 
         try {
           if(!window.AariAuth || typeof window.AariAuth.signUp !== 'function'){
             throw new Error('Account service unavailable. Refresh the page and try again.');
           }
+          // Step A · Supabase auth signup · handle_new_agent trigger writes the agents row.
           await window.AariAuth.signUp(state.profile, pw);
-          // Email verification OFF · auto-sign-in then hand off to Path A for the first file.
-          if(btn) btn.innerHTML = '<span class="aari-spinner"></span> Signing you in&hellip;';
+          submitBtn.innerHTML = '<span class="aari-spinner"></span> Signing you in&hellip;';
+
+          // Step B · auto-sign-in for the live session.
+          let signedIn = false;
           try {
             await window.AariAuth.signIn(state.profile.email, pw);
+            signedIn = true;
           } catch(signInErr){
             console.warn('[pathB2] auto-signin failed:', signInErr);
-            // Still show success · the agents row was created by the handle_new_agent trigger.
           }
-          showStep('success');
-          // Hand off to Path A after a brief confirmation.
-          setTimeout(() => {
-            if(window.AariPathA && typeof window.AariPathA.init === 'function'){
-              deactivate();
-              // Build a profile shape Path A expects (matches mapAgentRowToProfile output).
-              const handoff = {
-                email: state.profile.email,
-                name: [state.profile.firstName, state.profile.lastName].filter(Boolean).join(' '),
-                first_name: state.profile.firstName,
-                last_name: state.profile.lastName,
-                phone: state.profile.phone,
-                license_number: state.profile.licenseNumber,
-                license_state: state.profile.licenseState || 'FL',
-                license_expiration: state.profile.licenseExpiresAt || null,
-                brokerage: state.profile.brokerageName,
-                broker_name: state.profile.brokerName,
-                broker_email: state.profile.brokerEmail,
-                service_area: state.profile.serviceCounties || [],
-                agreement_signed: false  // SA enforced at file-submit time
-              };
-              window.AariPathA.init(handoff);
+
+          // Step C · upload headshot to Supabase Storage (best-effort · skipped if it fails).
+          if(signedIn && state.headshotFile){
+            try {
+              submitBtn.innerHTML = '<span class="aari-spinner"></span> Uploading headshot&hellip;';
+              await uploadHeadshot(state.headshotFile);
+            } catch(upErr){
+              console.warn('[pathB2] headshot upload failed:', upErr);
             }
-          }, 1200);
+          }
+
+          // Step D · persist agreement signature + extended fields to agents row.
+          if(signedIn){
+            try {
+              submitBtn.innerHTML = '<span class="aari-spinner"></span> Saving your agreement&hellip;';
+              await persistAgreementAndExtras();
+            } catch(persistErr){
+              console.warn('[pathB2] agreement persist failed:', persistErr);
+            }
+          }
+
+          // Step E · fire signature audit email via Netlify Forms.
+          try { sendAgreementSignatureEmail(); } catch(_){}
+
+          // Step F · clear password from memory · we never need it again.
+          state.profile.password = '';
+
+          showStep('success');
+          wireSuccessButtons();
         } catch(err){
-          if(btn){ btn.disabled = false; btn.innerHTML = 'Create account'; }
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = 'Sign and Complete Registration <span class="arr">&rarr;</span>';
           const msg = (err && err.message) ? err.message : 'Could not create account. Please try again.';
           if(/YOUR-PROJECT-REF/.test(msg) || /Failed to load Supabase/.test(msg)){
             showError('Account service unavailable. Please contact hello@aaritransactions.com.');
@@ -10901,6 +10923,375 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           }
         }
       });
+    }
+
+    /* ------- Headshot upload · Supabase Storage bucket "agent-headshots" -------
+       File is selected on Step 2 and held in state until submit on Step 4. ------- */
+    function bindHeadshot(){
+      const input = el('pb2Headshot');
+      const label = el('pb2HeadshotLabel');
+      const text = el('pb2HeadshotText');
+      const preview = el('pb2HeadshotPreview');
+      if(!input || input._bound) return;
+      input._bound = true;
+      input.addEventListener('change', e => {
+        const file = e.target.files && e.target.files[0];
+        if(!file) return;
+        if(file.size > 5 * 1024 * 1024){
+          showError('Headshot is too large · max 5MB.');
+          input.value = '';
+          return;
+        }
+        if(!/^image\/(jpeg|png|webp)$/.test(file.type)){
+          showError('Headshot must be a JPG, PNG, or WEBP image.');
+          input.value = '';
+          return;
+        }
+        state.headshotFile = file;
+        if(text) text.textContent = file.name;
+        if(label) label.setAttribute('data-filled', 'true');
+        if(preview){
+          preview.innerHTML = '';
+          const img = document.createElement('img');
+          img.src = URL.createObjectURL(file);
+          img.style.cssText = 'max-width:120px;max-height:120px;border-radius:8px;border:0.5px solid rgba(15,15,15,0.12)';
+          preview.appendChild(img);
+          preview.hidden = false;
+        }
+        clearError();
+      });
+    }
+    async function uploadHeadshot(file){
+      const supabase = (window.AariAuth && window.AariAuth.client) || null;
+      if(!supabase) throw new Error('Supabase client unavailable.');
+      const { data: userResp } = await supabase.auth.getUser();
+      const uid = userResp && userResp.user && userResp.user.id;
+      if(!uid) throw new Error('No authenticated user.');
+      const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+      const path = uid + '/headshot.' + ext;
+      const { error: upErr } = await supabase.storage.from('agent-headshots').upload(path, file, {
+        upsert: true,
+        contentType: file.type
+      });
+      if(upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from('agent-headshots').getPublicUrl(path);
+      state.headshotUrl = urlData && urlData.publicUrl ? urlData.publicUrl : null;
+      return state.headshotUrl;
+    }
+
+    /* ------- Agreement persistence · write signature, headshot URL, platforms,
+       review preference, and socials onto the agents row. The handle_new_agent
+       trigger writes the base row from signUp metadata · this fills the rest. ------- */
+    async function persistAgreementAndExtras(){
+      const supabase = (window.AariAuth && window.AariAuth.client) || null;
+      if(!supabase) return;
+      const { data: userResp } = await supabase.auth.getUser();
+      const uid = userResp && userResp.user && userResp.user.id;
+      if(!uid) return;
+      const nowIso = new Date().toISOString();
+      const typedName = (state.profile.firstName + ' ' + state.profile.lastName).trim();
+      await supabase.from('agents').update({
+        agreement_signed:       true,
+        agreement_signed_at:    nowIso,
+        agreement_version:      'v4.6',
+        agreement_typed_name:   typedName,
+        signature_image_url:    state.signatureDataUrl || null,
+        compliance_platform:    state.profile.compliancePlatform || null,
+        signing_platform:       state.profile.signingPlatform || null,
+        review_preference:      state.profile.reviewPreference || null,
+        instagram:              state.profile.instagram || null,
+        facebook:               state.profile.facebook || null,
+        headshot_url:           state.headshotUrl || null,
+        license_expiration:     state.profile.licenseExpiresAt || null
+      }).eq('id', uid);
+    }
+
+    /* ------- Netlify Forms · email signed agreement audit trail to TC + agent ------- */
+    function sendAgreementSignatureEmail(){
+      const nowIso = new Date().toISOString();
+      let signedAtDisplay = nowIso;
+      try {
+        const d = new Date(nowIso);
+        const datePart = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+        const timePart = d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit', hour12:true });
+        let tz = '';
+        try {
+          const parts = new Intl.DateTimeFormat('en-US', { timeZoneName:'short' }).formatToParts(d);
+          const tzPart = parts.find(p => p.type === 'timeZoneName');
+          if(tzPart) tz = ' ' + tzPart.value;
+        } catch(_){}
+        signedAtDisplay = datePart + ' at ' + timePart + tz;
+      } catch(_){}
+      const formData = new URLSearchParams();
+      formData.append('form-name', 'aari-sa-signature');
+      formData.append('agreement_version', 'v4.6');
+      formData.append('document_name', 'Aari Transactions Service Agreement');
+      formData.append('typed_name', (state.profile.firstName + ' ' + state.profile.lastName).trim());
+      formData.append('agent_email', state.profile.email || '');
+      formData.append('agent_license', state.profile.licenseNumber || '');
+      formData.append('agent_license_state', state.profile.licenseState || 'FL');
+      formData.append('agent_phone', state.profile.phone || '');
+      formData.append('agent_brokerage', state.profile.brokerageName || '');
+      formData.append('broker_contact_name', '');
+      formData.append('broker_email', '');
+      formData.append('aari_signatory', 'Marlenyi Paredes, Founder');
+      formData.append('aari_entity', 'Aari Transactions LLC');
+      formData.append('signed_at_iso', nowIso);
+      formData.append('signed_at_display', signedAtDisplay);
+      formData.append('recipient_aari', 'tc@aaritransactions.com');
+      formData.append('user_agent', (navigator && navigator.userAgent) || '');
+      formData.append('locale', (navigator && navigator.language) || '');
+      formData.append('signing_law', 'Fla. Stat. § 668.50 (Uniform Electronic Transaction Act)');
+      fetch('/', { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded' }, body: formData.toString() })
+        .catch(err => console.warn('[pathB2] sa-signature netlify post failed', err));
+    }
+
+    /* ------- Review-preference toggle (Yes/No) ------- */
+    function bindReviewToggle(){
+      if(_reviewBound) return;
+      _reviewBound = true;
+      document.addEventListener('click', e => {
+        const btn = e.target.closest && e.target.closest('#aariPathB2 [data-pb2-review]');
+        if(!btn) return;
+        e.preventDefault();
+        const val = btn.getAttribute('data-pb2-review');
+        const hidden = el('pb2ReviewPref');
+        if(hidden) hidden.value = val;
+        document.querySelectorAll('#aariPathB2 [data-pb2-review]').forEach(b => {
+          b.setAttribute('data-selected', b.getAttribute('data-pb2-review') === val ? 'true' : 'false');
+        });
+      });
+    }
+
+    /* ------- Agreement gate · scroll → check → sign · sequential reveal ------- */
+    const agreementGate = { scrolled: false, checked: false, signed: false };
+    function resetAgreementGate(){
+      agreementGate.scrolled = false;
+      agreementGate.checked = false;
+      agreementGate.signed = false;
+      const agreeBlock = el('pb2AgreeBlock');
+      const sigBlock = el('pb2SigBlock');
+      const agreeBox = el('pb2AgreementAgree');
+      const scrollBtn = el('pb2ScrollBtn');
+      const sigClear = el('pb2SigClear');
+      const submitBtn = el('pb2CreateBtn');
+      if(agreeBlock) agreeBlock.removeAttribute('data-unlocked');
+      if(sigBlock) sigBlock.removeAttribute('data-unlocked');
+      if(agreeBox){ agreeBox.checked = false; agreeBox.disabled = true; }
+      if(scrollBtn) scrollBtn.hidden = false;
+      if(sigClear) sigClear.disabled = true;
+      if(submitBtn) submitBtn.disabled = true;
+      clearSignature();
+    }
+    function updateGateState(){
+      const submitBtn = el('pb2CreateBtn');
+      if(submitBtn){
+        submitBtn.disabled = !(agreementGate.scrolled && agreementGate.checked && agreementGate.signed);
+      }
+    }
+    function bindAgreementGate(){
+      const body = el('pb2AgreementBody');
+      const scrollBtn = el('pb2ScrollBtn');
+      const agreeBox = el('pb2AgreementAgree');
+      const agreeBlock = el('pb2AgreeBlock');
+      const sigBlock = el('pb2SigBlock');
+      if(!body || body._bound) return;
+      body._bound = true;
+      // Scroll detection · unlock checkbox when bottom reached (16px tolerance).
+      function onScroll(){
+        const atBottom = body.scrollTop + body.clientHeight >= (body.scrollHeight - 16);
+        if(atBottom && !agreementGate.scrolled){
+          agreementGate.scrolled = true;
+          if(agreeBlock) agreeBlock.setAttribute('data-unlocked', 'true');
+          if(agreeBox) agreeBox.disabled = false;
+          if(scrollBtn) scrollBtn.hidden = true;
+        }
+        if(scrollBtn) scrollBtn.hidden = atBottom;
+      }
+      body.addEventListener('scroll', onScroll);
+      // Initial check · if content already fits without scrolling, unlock immediately.
+      setTimeout(onScroll, 200);
+      // Scroll-to-bottom pill button.
+      if(scrollBtn && !scrollBtn._bound){
+        scrollBtn._bound = true;
+        scrollBtn.addEventListener('click', e => {
+          e.preventDefault();
+          body.scrollTo({ top: body.scrollHeight, behavior: 'smooth' });
+        });
+      }
+      // Checkbox · unlock signature pad when checked.
+      if(agreeBox && !agreeBox._bound){
+        agreeBox._bound = true;
+        agreeBox.addEventListener('change', () => {
+          agreementGate.checked = agreeBox.checked;
+          if(agreeBox.checked){
+            if(sigBlock) sigBlock.setAttribute('data-unlocked', 'true');
+            const clr = el('pb2SigClear');
+            if(clr) clr.disabled = false;
+          } else {
+            if(sigBlock) sigBlock.removeAttribute('data-unlocked');
+            clearSignature();
+            agreementGate.signed = false;
+          }
+          updateGateState();
+        });
+      }
+    }
+
+    /* ------- Render the FULL agreement text into Step 4's scroll box.
+       Source: existing SA popup (#saPopupBody) which holds the v4.6 master text.
+       We clone its inner HTML so we stay in sync with future agreement edits. ------- */
+    function renderAgreement(){
+      const target = el('pb2AgreementBody');
+      const source = el('saPopupBody');
+      if(!target) return;
+      if(source){
+        target.innerHTML = source.innerHTML;
+        // The SA popup's counter-signature block uses different class names; normalize
+        // to our scoped styles so the counter-sig still reads correctly inside Path B v2.
+        const counter = target.querySelector('.sa-popup-counter');
+        if(counter){
+          counter.classList.add('pb2-counter-block');
+          counter.querySelectorAll('.sa-popup-counter-eb').forEach(e => e.classList.add('pb2-counter-eb'));
+          counter.querySelectorAll('.sa-popup-counter-sig').forEach(e => e.classList.add('pb2-counter-sig'));
+          counter.querySelectorAll('.sa-popup-counter-meta').forEach(e => e.classList.add('pb2-counter-meta'));
+        }
+        // Remove the SA popup's "identity preview" block · not relevant in our flow.
+        const preview = target.querySelector('.sa-popup-preview');
+        if(preview) preview.remove();
+        return;
+      }
+      // Defensive fallback · short stub if the SA popup isn't in the DOM.
+      target.innerHTML = '<p><strong>Aari Transactions Service Agreement</strong></p><p>The full agreement could not be loaded. Please refresh the page.</p>';
+    }
+
+    /* ------- Signature pad · simple canvas drawing (no external lib) ------- */
+    function bindSignaturePad(){
+      const canvas = el('pb2SigCanvas');
+      const clearBtn = el('pb2SigClear');
+      if(!canvas || canvas._bound) return;
+      canvas._bound = true;
+      // Resize canvas backing store to match its CSS size for crisp lines.
+      function resize(){
+        const ratio = window.devicePixelRatio || 1;
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = rect.width * ratio;
+        canvas.height = rect.height * ratio;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(ratio, ratio);
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = '#0f0f0f';
+      }
+      resize();
+      window.addEventListener('resize', () => { resize(); });
+      const ctx = canvas.getContext('2d');
+      let drawing = false;
+      let hasInk = false;
+      function pos(e){
+        const rect = canvas.getBoundingClientRect();
+        const p = (e.touches && e.touches[0]) ? e.touches[0] : e;
+        return { x: p.clientX - rect.left, y: p.clientY - rect.top };
+      }
+      function start(e){
+        if(!agreementGate.checked) return;
+        drawing = true;
+        const { x, y } = pos(e);
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+      }
+      function move(e){
+        if(!drawing) return;
+        e.preventDefault();
+        const { x, y } = pos(e);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+        if(!hasInk){
+          hasInk = true;
+          agreementGate.signed = true;
+          state.signatureDataUrl = canvas.toDataURL('image/png');
+          updateGateState();
+        }
+      }
+      function end(){
+        if(!drawing) return;
+        drawing = false;
+        // Refresh the data URL on every stroke release · captures full signature.
+        if(hasInk) state.signatureDataUrl = canvas.toDataURL('image/png');
+      }
+      canvas.addEventListener('mousedown', start);
+      canvas.addEventListener('mousemove', move);
+      canvas.addEventListener('mouseup', end);
+      canvas.addEventListener('mouseleave', end);
+      canvas.addEventListener('touchstart', start, { passive: false });
+      canvas.addEventListener('touchmove', move, { passive: false });
+      canvas.addEventListener('touchend', end);
+      if(clearBtn && !clearBtn._bound){
+        clearBtn._bound = true;
+        clearBtn.addEventListener('click', e => {
+          e.preventDefault();
+          clearSignature();
+        });
+      }
+    }
+    function clearSignature(){
+      const canvas = el('pb2SigCanvas');
+      if(!canvas) return;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      agreementGate.signed = false;
+      state.signatureDataUrl = null;
+      updateGateState();
+    }
+
+    /* ------- Success screen buttons ------- */
+    function wireSuccessButtons(){
+      const submitBtn = el('pb2SuccessSubmit');
+      const laterBtn = el('pb2SuccessLater');
+      if(submitBtn && !submitBtn._bound){
+        submitBtn._bound = true;
+        submitBtn.addEventListener('click', e => {
+          e.preventDefault();
+          if(window.AariPathA && typeof window.AariPathA.init === 'function'){
+            deactivate();
+            window.AariPathA.init(buildPathAHandoff());
+          }
+        });
+      }
+      if(laterBtn && !laterBtn._bound){
+        laterBtn._bound = true;
+        laterBtn.addEventListener('click', e => {
+          e.preventDefault();
+          // Close the entire intake modal · agent goes back to homepage.
+          deactivate();
+          const overlay = document.getElementById('intake-modal');
+          if(overlay){ overlay.setAttribute('hidden', ''); }
+          document.body.style.overflow = '';
+        });
+      }
+    }
+    function buildPathAHandoff(){
+      return {
+        email: state.profile.email,
+        name: [state.profile.firstName, state.profile.lastName].filter(Boolean).join(' '),
+        first_name: state.profile.firstName,
+        last_name: state.profile.lastName,
+        phone: state.profile.phone,
+        license_number: state.profile.licenseNumber,
+        license_state: state.profile.licenseState || 'FL',
+        license_expiration: state.profile.licenseExpiresAt || null,
+        brokerage: state.profile.brokerageName,
+        service_area: state.profile.serviceCounties || [],
+        compliance_platform: state.profile.compliancePlatform,
+        signing_platform: state.profile.signingPlatform,
+        review_preference: state.profile.reviewPreference,
+        instagram: state.profile.instagram,
+        facebook: state.profile.facebook,
+        headshot_url: state.headshotUrl,
+        agreement_signed: true,
+        agreement_signed_at: new Date().toISOString(),
+        agreement_version: 'v4.6'
+      };
     }
 
     /* ------- Password strength meter ------- */
@@ -10990,7 +11381,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     /* ------- Lifecycle ------- */
     function init(seed){
-      state = { step: 1, profile: {}, active: true };
+      state = { step: 1, profile: {}, active: true, headshotFile: null, headshotUrl: null, signatureDataUrl: null };
       selectedCounties.clear();
 
       // Hide all other modal surfaces · we own the modal now.
@@ -11016,14 +11407,25 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(r){ r.hidden = false; r.style.display = 'block'; }
 
       // Clear all inputs · fresh session.
-      ['pb2First','pb2Last','pb2Email','pb2Phone','pb2License','pb2LicenseExp',
-       'pb2Brokerage','pb2BrokerageAddr','pb2BrokerName','pb2BrokerEmail','pb2BrokerPhone',
-       'pb2Pw','pb2Pw2'].forEach(id => {
+      ['pb2First','pb2Last','pb2Email','pb2Phone','pb2Pw','pb2Pw2',
+       'pb2License','pb2LicenseExp',
+       'pb2Brokerage','pb2CompliancePlatform','pb2SigningPlatform','pb2Instagram','pb2Facebook'].forEach(id => {
         const inp = el(id);
         if(inp) inp.value = '';
       });
-      const agree = el('pb2Agree');
-      if(agree) agree.checked = false;
+      const reviewPref = el('pb2ReviewPref');
+      if(reviewPref) reviewPref.value = '';
+      document.querySelectorAll('#aariPathB2 [data-pb2-review]').forEach(b => b.removeAttribute('data-selected'));
+      const agreementBox = el('pb2AgreementAgree');
+      if(agreementBox){ agreementBox.checked = false; agreementBox.disabled = true; }
+      const headshotInput = el('pb2Headshot');
+      if(headshotInput) headshotInput.value = '';
+      const headshotLabel = el('pb2HeadshotLabel');
+      if(headshotLabel) headshotLabel.removeAttribute('data-filled');
+      const headshotText = el('pb2HeadshotText');
+      if(headshotText) headshotText.textContent = 'Click to upload · JPG or PNG, max 5MB';
+      const headshotPreview = el('pb2HeadshotPreview');
+      if(headshotPreview){ headshotPreview.innerHTML = ''; headshotPreview.hidden = true; }
 
       // Prefill email from the gate hand-off and LOCK it (matches register.html behavior).
       if(seed && seed.email){
@@ -11046,6 +11448,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       bindForm4();
       bindPwMeter();
       bindBackButtons();
+      bindHeadshot();
+      bindReviewToggle();
+      bindAgreementGate();
+      bindSignaturePad();
       _wired = true;
 
       showStep(1);
