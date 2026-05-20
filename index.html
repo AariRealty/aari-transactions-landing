@@ -5681,6 +5681,34 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 </div>
 
 <!-- =========================================================
+     Netlify Forms detector · static markup so Netlify's build parser
+     can register the "aari-sa-signature" form. JS submits via fetch
+     to "/" with form-name when an agent signs the agreement.
+     Configure email recipient in Netlify dashboard → Forms → aari-sa-signature.
+     ========================================================= -->
+<form name="aari-sa-signature" data-netlify="true" netlify-honeypot="bot-field" hidden aria-hidden="true">
+  <input type="text" name="agreement_version">
+  <input type="text" name="document_name">
+  <input type="text" name="typed_name">
+  <input type="email" name="agent_email">
+  <input type="text" name="agent_license">
+  <input type="text" name="agent_license_state">
+  <input type="text" name="agent_phone">
+  <input type="text" name="agent_brokerage">
+  <input type="text" name="broker_contact_name">
+  <input type="email" name="broker_email">
+  <input type="text" name="aari_signatory">
+  <input type="text" name="aari_entity">
+  <input type="text" name="signed_at_iso">
+  <input type="text" name="signed_at_display">
+  <input type="text" name="recipient_aari">
+  <input type="text" name="user_agent">
+  <input type="text" name="locale">
+  <input type="text" name="signing_law">
+  <input type="text" name="bot-field">
+</form>
+
+<!-- =========================================================
      Service Agreement Popup · opens from Path B's sign step.
      Full agreement text, scroll-to-bottom floating button,
      checkbox + name signature once scrolled, then "Sign and continue."
@@ -10597,6 +10625,20 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const agentEmail = profile.email || '';
       const brokerEmail = profile.broker_email || '';
       // Build full audit trail payload · everything needed to execute this document.
+      // Human-readable signed-at: "May 20, 2026 at 10:41 AM EDT"
+      let signedAtDisplay = '';
+      try {
+        const d = new Date(nowIso);
+        const datePart = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+        const timePart = d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit', hour12:true });
+        let tz = '';
+        try {
+          const parts = new Intl.DateTimeFormat('en-US', { timeZoneName:'short' }).formatToParts(d);
+          const tzPart = parts.find(p => p.type === 'timeZoneName');
+          if(tzPart) tz = ' ' + tzPart.value;
+        } catch(_){}
+        signedAtDisplay = datePart + ' at ' + timePart + tz;
+      } catch(_){ signedAtDisplay = nowIso; }
       const payload = {
         // Document identity
         document_name: 'Aari Transactions Service Agreement',
@@ -10615,6 +10657,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         aari_entity:       'Aari Transactions LLC',
         // Execution metadata
         signed_at_iso:     nowIso,
+        signed_at_display: signedAtDisplay,
         recipient_aari:    'tc@aaritransactions.com',
         user_agent:        (navigator && navigator.userAgent) || '',
         locale:            (navigator && navigator.language) || '',
@@ -10639,22 +10682,64 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       showConfirmation(payload);
     }
 
-    /* Email send · STUB · TODO wire to real email service (Postmark/SendGrid/Mailgun).
-       Real backend should:
-       1. Generate PDF of the signed agreement with the signature block
-       2. Send copies to agent, broker, tc@aaritransactions.com
-       3. Store PDF + audit row in Supabase keyed by agent_email + signed_at_iso
-       4. Capture server-side IP and include in audit row
-       For now · log to console so the trigger point is unambiguous. */
+    /* Send signature to Netlify Forms + save to localStorage for agent's history.
+       Netlify auto-emails Marlenyi at the address configured in the Netlify Forms dashboard.
+       The agent's local copy persists in localStorage so they can re-view on return. */
     function sendAgreementCopies(payload){
-      console.log('[SA-POPUP · STUB] would email agreement copy to 3 recipients', {
-        recipients: {
-          agent:  payload.agent_email || '(missing)',
-          broker: payload.broker_email || '(missing)',
-          aari:   payload.recipient_aari
-        },
-        audit: payload
-      });
+      // 1 · Save to localStorage · keyed by agent_email + signed_at_iso so multiple files per agent.
+      try {
+        const historyKey = 'aari_signed_agreements::' + (payload.agent_email || '').toLowerCase().trim();
+        let history = [];
+        try {
+          const raw = localStorage.getItem(historyKey);
+          if(raw) history = JSON.parse(raw) || [];
+        } catch(_){}
+        history.push(payload);
+        localStorage.setItem(historyKey, JSON.stringify(history));
+      } catch(err){
+        console.warn('[SA-POPUP] localStorage save failed', err);
+      }
+      // 2 · POST to Netlify Forms · netlify auto-emails Marlenyi.
+      try {
+        const formData = new URLSearchParams();
+        formData.append('form-name', 'aari-sa-signature');
+        formData.append('agreement_version',  payload.agreement_version || '');
+        formData.append('document_name',      payload.document_name || '');
+        formData.append('typed_name',         payload.typed_name || '');
+        formData.append('agent_email',        payload.agent_email || '');
+        formData.append('agent_license',      payload.agent_license || '');
+        formData.append('agent_license_state', payload.agent_license_state || '');
+        formData.append('agent_phone',        payload.agent_phone || '');
+        formData.append('agent_brokerage',    payload.agent_brokerage || '');
+        formData.append('broker_contact_name', payload.broker_contact_name || '');
+        formData.append('broker_email',       payload.broker_email || '');
+        formData.append('aari_signatory',     payload.aari_signatory || '');
+        formData.append('aari_entity',        payload.aari_entity || '');
+        formData.append('signed_at_iso',      payload.signed_at_iso || '');
+        formData.append('signed_at_display',  payload.signed_at_display || '');
+        formData.append('recipient_aari',     payload.recipient_aari || '');
+        formData.append('user_agent',         payload.user_agent || '');
+        formData.append('locale',             payload.locale || '');
+        formData.append('signing_law',        payload.signing_law || '');
+        formData.append('bot-field',          '');
+        fetch('/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: formData.toString()
+        })
+        .then(resp => {
+          if(resp.ok){
+            console.log('[SA-POPUP] Netlify form submission OK · email queued to Marlenyi');
+          } else {
+            console.warn('[SA-POPUP] Netlify form submission failed · status ' + resp.status);
+          }
+        })
+        .catch(err => {
+          console.warn('[SA-POPUP] Netlify form fetch failed', err);
+        });
+      } catch(err){
+        console.warn('[SA-POPUP] Netlify form submission threw', err);
+      }
     }
 
     function showConfirmation(payload){
