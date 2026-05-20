@@ -1332,6 +1332,20 @@
   .sa-popup-submit{display:block;width:100%;background:#0f0f0f;color:#fff;font-family:var(--sans);font-size:13px;font-weight:600;padding:14px 22px;border-radius:8px;border:none;letter-spacing:0.02em;cursor:pointer;margin-top:14px;transition:opacity 0.15s ease}
   .sa-popup-submit:disabled{opacity:0.4;cursor:not-allowed}
   .sa-popup-submit:not(:disabled):hover{opacity:0.92}
+  /* Identity preview block · shows the agent what's being captured */
+  .sa-popup-preview{background:#f5f0e8;border:1px solid #e6e2d8;border-radius:8px;padding:14px 16px;margin:0 0 14px}
+  .sa-popup-preview[hidden]{display:none}
+  .sa-popup-preview-eb{font-family:var(--sans);font-size:10px;letter-spacing:0.16em;text-transform:uppercase;color:#5f5e5a;font-weight:700;margin:0 0 10px}
+  .sa-popup-preview-grid{display:flex;flex-direction:column;gap:6px}
+  .sa-popup-preview-row{display:flex;justify-content:space-between;align-items:baseline;gap:14px;font-family:var(--sans);font-size:12.5px;line-height:1.4}
+  .sa-popup-preview-key{color:#5f5e5a;font-weight:500;flex-shrink:0;letter-spacing:0;text-transform:none}
+  .sa-popup-preview-val{color:#0f0f0f;font-weight:500;text-align:right;min-width:0;overflow-wrap:break-word;letter-spacing:0;text-transform:none}
+  .sa-popup-preview-val:empty::before,
+  .sa-popup-preview-val[data-empty="true"]{color:#8a8580;font-style:italic}
+  /* Legal disclaimer below the sign button area */
+  .sa-popup-legal{font-family:var(--sans);font-size:11px;color:#5f5e5a;line-height:1.55;margin:12px 0 0;letter-spacing:0}
+  .sa-popup-legal[hidden]{display:none}
+  .sa-popup-legal em{font-style:italic;color:#0f0f0f}
   /* Path B · the "Review &amp; sign" button · BLACK default with WHITE text + attention pulse.
      Hover inverts to white bg + black text. Pulse stops once signed (data-signed). */
   @keyframes pbSaPulse{
@@ -5792,6 +5806,37 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;margin-left:6px"><polyline points="6 9 12 15 18 9"/></svg>
     </button>
     <div class="sa-popup-foot">
+      <!-- Identity preview · shows the agent exactly what's being captured as their signature.
+           Auto-populates from Path B state · the typed-name input updates the Name row live. -->
+      <div class="sa-popup-preview" id="saPopupPreview" hidden>
+        <p class="sa-popup-preview-eb">Your electronic signature will capture</p>
+        <div class="sa-popup-preview-grid">
+          <div class="sa-popup-preview-row">
+            <span class="sa-popup-preview-key">Name</span>
+            <span class="sa-popup-preview-val" id="saPreviewName">—</span>
+          </div>
+          <div class="sa-popup-preview-row">
+            <span class="sa-popup-preview-key">License</span>
+            <span class="sa-popup-preview-val" id="saPreviewLicense">—</span>
+          </div>
+          <div class="sa-popup-preview-row">
+            <span class="sa-popup-preview-key">Email</span>
+            <span class="sa-popup-preview-val" id="saPreviewEmail">—</span>
+          </div>
+          <div class="sa-popup-preview-row">
+            <span class="sa-popup-preview-key">Brokerage</span>
+            <span class="sa-popup-preview-val" id="saPreviewBrokerage">—</span>
+          </div>
+          <div class="sa-popup-preview-row">
+            <span class="sa-popup-preview-key">Effective date</span>
+            <span class="sa-popup-preview-val" id="saPreviewDate">—</span>
+          </div>
+          <div class="sa-popup-preview-row">
+            <span class="sa-popup-preview-key">Document</span>
+            <span class="sa-popup-preview-val">Aari Transactions Service Agreement &middot; v4.6</span>
+          </div>
+        </div>
+      </div>
       <label class="sa-popup-check" id="saPopupCheckWrap">
         <input type="checkbox" id="saPopupAgree" disabled>
         <span>I have read and agree to the Aari Transactions Service Agreement (v4.6).</span>
@@ -5800,6 +5845,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         <label for="saPopupName">Type your full legal name to sign *</label>
         <input type="text" id="saPopupName" placeholder="Your full legal name as on your license" autocomplete="name">
       </div>
+      <p class="sa-popup-legal" id="saPopupLegal" hidden>By clicking Sign and continue you authorize Aari to capture this electronic signature under <em>Fla. Stat. &sect; 668.50</em> (Uniform Electronic Transaction Act). A countersigned PDF copy will be emailed to you, your broker, and tc@aaritransactions.com.</p>
       <button type="button" id="saPopupSubmit" class="sa-popup-submit" disabled>Sign and continue &rarr;</button>
     </div>
     <!-- Confirmation state · shown after Sign and continue · replaces the popup body for 2 sec -->
@@ -10342,8 +10388,45 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(submit) submit.disabled = true;
       const scrollBtn = el('saScrollDownBtn');
       if(scrollBtn) scrollBtn.hidden = false;
+      // Hide preview + legal note until agent reaches bottom of agreement.
+      const preview = el('saPopupPreview');
+      if(preview) preview.hidden = true;
+      const legal = el('saPopupLegal');
+      if(legal) legal.hidden = true;
+      // Pre-populate preview from Path B's current state · license + email + brokerage + today.
+      populatePreview();
       // Recompute scroll-end state · in case content is small enough that no scroll is needed.
       setTimeout(checkScrollEnd, 50);
+    }
+
+    /* Populate the identity preview from Path B state · runs on open and on any name input. */
+    function populatePreview(){
+      const profile = (window.AariPathB && typeof window.AariPathB.getProfile === 'function')
+        ? window.AariPathB.getProfile() : {};
+      const setVal = (id, val) => {
+        const e = el(id);
+        if(!e) return;
+        if(val){
+          e.textContent = val;
+          e.removeAttribute('data-empty');
+        } else {
+          e.textContent = '—';
+          e.setAttribute('data-empty', 'true');
+        }
+      };
+      // Name comes from the typed-name input · falls back to em-dash until they type.
+      const nameInput = el('saPopupName');
+      setVal('saPreviewName', nameInput ? nameInput.value.trim() : '');
+      // License formatted as "SL3123456 · FL"
+      setVal('saPreviewLicense', profile.license_number
+        ? (profile.license_number + (profile.license_state ? ' · ' + profile.license_state : ''))
+        : '');
+      setVal('saPreviewEmail', profile.email || '');
+      setVal('saPreviewBrokerage', profile.brokerage || '');
+      // Today's date formatted readable
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' });
+      setVal('saPreviewDate', dateStr);
     }
 
     function close(){
@@ -10353,7 +10436,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       document.body.style.overflow = '';
     }
 
-    /* Detect whether the user has scrolled to (or near) the bottom · 16px tolerance. */
+    /* Detect whether the user has scrolled to (or near) the bottom · 16px tolerance.
+       Once at bottom · checkbox enables + identity preview reveals + legal note shows. */
     function checkScrollEnd(){
       const body = el('saPopupBody');
       if(!body) return;
@@ -10361,11 +10445,14 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const atBottom = scrolled >= (body.scrollHeight - 16);
       const check = el('saPopupAgree');
       const scrollBtn = el('saScrollDownBtn');
+      const preview = el('saPopupPreview');
+      const legal = el('saPopupLegal');
       if(atBottom){
         if(check) check.disabled = false;
         if(scrollBtn) scrollBtn.hidden = true;
+        if(preview) preview.hidden = false;
+        if(legal) legal.hidden = false;
       } else {
-        // Only re-disable check if the agent hasn't already checked it.
         if(scrollBtn) scrollBtn.hidden = false;
       }
     }
@@ -10410,16 +10497,30 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         ? window.AariPathB.getProfile() : {};
       const agentEmail = profile.email || '';
       const brokerEmail = profile.broker_email || '';
-      // Build full audit trail payload.
+      // Build full audit trail payload · everything needed to execute this document.
       const payload = {
+        // Document identity
+        document_name: 'Aari Transactions Service Agreement',
         agreement_version: 'v4.6',
-        signed_at_iso: nowIso,
-        typed_name: typedName,
-        agent_email: agentEmail,
-        broker_email: brokerEmail,
-        recipient_aari: 'tc@aaritransactions.com',
-        user_agent: (navigator && navigator.userAgent) || '',
-        locale: (navigator && navigator.language) || ''
+        // Signer identity (Agent)
+        typed_name:        typedName,
+        agent_email:       agentEmail,
+        agent_license:     profile.license_number || '',
+        agent_license_state: profile.license_state || 'FL',
+        agent_phone:       profile.phone || '',
+        agent_brokerage:   profile.brokerage || '',
+        broker_contact_name:  profile.broker_name || '',
+        broker_email:      brokerEmail,
+        // Aari counter-signature (constant)
+        aari_signatory:    'Marlenyi Paredes, Founder',
+        aari_entity:       'Aari Transactions LLC',
+        // Execution metadata
+        signed_at_iso:     nowIso,
+        recipient_aari:    'tc@aaritransactions.com',
+        user_agent:        (navigator && navigator.userAgent) || '',
+        locale:            (navigator && navigator.language) || '',
+        // Compliance under Fla. Stat. § 668.50
+        signing_law:       'Fla. Stat. § 668.50 (Uniform Electronic Transaction Act)'
         // ip_address · captured server-side when real backend wires the send.
       };
       // Stub the email send · clearly marks the trigger point for backend wiring.
@@ -10510,7 +10611,21 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     });
 
     document.addEventListener('input', function(e){
-      if(e.target && e.target.id === 'saPopupName') updateSubmitState();
+      if(e.target && e.target.id === 'saPopupName'){
+        updateSubmitState();
+        // Update the Name row in the identity preview live as the agent types.
+        const previewName = el('saPreviewName');
+        if(previewName){
+          const v = e.target.value.trim();
+          if(v){
+            previewName.textContent = v;
+            previewName.removeAttribute('data-empty');
+          } else {
+            previewName.textContent = '—';
+            previewName.setAttribute('data-empty', 'true');
+          }
+        }
+      }
     });
 
     // Watch scroll within the popup body to enable checkbox at bottom.
