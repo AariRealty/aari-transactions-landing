@@ -1199,6 +1199,9 @@
   .qwiz-sub{font-size:13px;color:var(--muted);line-height:1.55;max-width:520px;margin-bottom:8px}
   .qwiz-active fieldset[data-service-form] [data-q],
   .qwiz-active fieldset[data-shared-form="agent"] [data-q]{margin-bottom:22px;animation:qwizIn 0.32s cubic-bezier(.22,.61,.36,1)}
+  /* Skip button on optional qwiz questions */
+  .qwiz-skip{background:transparent;border:0;color:#967a4a;font-size:11px;font-weight:600;cursor:pointer;margin-top:10px;padding:6px 0;font-family:var(--sans);letter-spacing:0.02em;text-decoration:underline;text-underline-offset:3px;display:inline-block}
+  .qwiz-skip:hover{color:#0f0f0f}
   @keyframes qwizIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
   /* Subtle separator after each answered question so it feels like a chat thread */
   .qwiz-active .qwiz-q-head:not(:first-of-type){border-top:1px solid rgba(150,122,74,0.18);padding-top:22px;margin-top:10px}
@@ -6692,7 +6695,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
 
       function isAnswered(el) {
-        if (el.hasAttribute('data-q-optional')) return true;
+        // Explicitly-skipped optional questions count as answered (Skip button)
+        if (el.dataset.qwizSkipped === '1') return true;
         // Manual override · components that don't fit the standard input mold
         // (e.g., the listing property-type picker built from chip <button>s + a
         // hidden input) can set data-q-answered="1" to declare the question
@@ -6729,8 +6733,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       function ensureHead(el, idx, total) {
         const headline = el.getAttribute('data-q') || '';
         const sub = el.getAttribute('data-q-sub') || '';
+        const isOptional = el.hasAttribute('data-q-optional');
         const counterText = `QUESTION ${idx + 1} OF ${total}`;
-        const html = `<div class="qwiz-counter">${counterText}</div><h2 class="qwiz-headline">${headline}</h2>${sub ? `<p class="qwiz-sub">${sub}</p>` : ''}`;
+        const skipBtn = isOptional ? `<button type="button" class="qwiz-skip" data-qwiz-skip>Skip this question &rarr;</button>` : '';
+        const html = `<div class="qwiz-counter">${counterText}</div><h2 class="qwiz-headline">${headline}</h2>${sub ? `<p class="qwiz-sub">${sub}</p>` : ''}${skipBtn}`;
         let head = el.previousElementSibling;
         if (head && head.classList && head.classList.contains('qwiz-q-head') && head.dataset.qwizFor === el.getAttribute('data-q')) {
           head.innerHTML = html;
@@ -6817,13 +6823,31 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }, true);
       // Instant on change (radio pills, selects, files) · single-click commits
       document.addEventListener('change', () => { if (active){ clearTimeout(inputDebounce); refresh(); } }, true);
+      // Skip button on optional questions · marks the question as explicitly skipped
+      document.addEventListener('click', (e) => {
+        if (!active) return;
+        const skip = e.target.closest('[data-qwiz-skip]');
+        if (!skip) return;
+        e.preventDefault();
+        const head = skip.closest('.qwiz-q-head');
+        if (!head) return;
+        let target = head.nextElementSibling;
+        while (target && !target.hasAttribute('data-q')) target = target.nextElementSibling;
+        if (target) {
+          target.dataset.qwizSkipped = '1';
+          refresh();
+        }
+      });
 
       window.AariGenericQwiz = {
         activate, deactivate, refresh,
         isActive: () => active,
         allAnswered: () => {
           if (!active) return true;
-          return visible().every(el => el.hasAttribute('data-q-optional') || isAnswered(el));
+          // Step-level Continue may advance past optional questions even when blank ·
+          // qwiz still shows them one at a time with a Skip button, but Continue at
+          // the bottom of Step 2 doesn't block on unfilled optionals.
+          return visible().every(el => isAnswered(el) || el.hasAttribute('data-q-optional'));
         }
       };
     })();
