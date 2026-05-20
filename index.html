@@ -9522,30 +9522,71 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(hint) hint.textContent = "New here? Same field · we'll set you up after.";
     }
 
-    /* Wait for AariAuth.client (Supabase) to be ready · auth.js is deferred so
-       it may not be loaded yet when the agent clicks Continue right after page load.
-       Tries ensureClient() first, then polls for window.AariAuth.client up to 4 seconds. */
+    /* Wait for Supabase client · tries AariAuth wrapper first, then CDN fallback if
+       auth.js didn't load or failed to initialize. Logs to console for debugging. */
+    let _aariGateClientCache = null;
     async function getSupabaseClient(){
-      // Try the canonical helper if it exists
+      if(_aariGateClientCache) return _aariGateClientCache;
+      console.log('[gate] getSupabaseClient · checking sources', {
+        AariAuth: !!window.AariAuth,
+        AariAuthClient: !!(window.AariAuth && window.AariAuth.client),
+        AariAuthEnsureClient: !!(window.AariAuth && window.AariAuth.ensureClient),
+        AariConfig: !!window.AARI_SUPABASE_CONFIG,
+        globalSupabase: !!window.supabase
+      });
+      // 1 · Try the canonical helper if exposed
       if(window.AariAuth && typeof window.AariAuth.ensureClient === 'function'){
         try {
           const c = await window.AariAuth.ensureClient();
-          if(c) return c;
-        } catch(_){}
+          if(c){ _aariGateClientCache = c; return c; }
+        } catch(err){ console.warn('[gate] AariAuth.ensureClient failed', err); }
       }
-      // Fast path · client is already attached
+      // 2 · Fast path · client already attached
       if(window.AariAuth && (window.AariAuth.client || window.AariAuth.supabase)){
-        return window.AariAuth.client || window.AariAuth.supabase;
+        _aariGateClientCache = window.AariAuth.client || window.AariAuth.supabase;
+        return _aariGateClientCache;
       }
-      // Poll for up to 4 seconds while auth.js finishes initializing
+      // 3 · Poll for up to 3 seconds while auth.js finishes init
       const start = Date.now();
-      while(Date.now() - start < 4000){
+      while(Date.now() - start < 3000){
         if(window.AariAuth && (window.AariAuth.client || window.AariAuth.supabase)){
-          return window.AariAuth.client || window.AariAuth.supabase;
+          _aariGateClientCache = window.AariAuth.client || window.AariAuth.supabase;
+          return _aariGateClientCache;
         }
         await new Promise(r => setTimeout(r, 50));
       }
-      return null;
+      // 4 · CDN FALLBACK · load supabase-js from jsDelivr + create client directly from config
+      console.warn('[gate] AariAuth never loaded · attempting CDN fallback');
+      if(!window.AARI_SUPABASE_CONFIG || !window.AARI_SUPABASE_CONFIG.SUPABASE_URL){
+        console.error('[gate] AARI_SUPABASE_CONFIG missing · cannot init client', window.AARI_SUPABASE_CONFIG);
+        return null;
+      }
+      try {
+        // Load supabase-js UMD bundle if not already present
+        if(!window.supabase || !window.supabase.createClient){
+          await new Promise((resolve, reject) => {
+            const s = document.createElement('script');
+            s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js';
+            s.onload = resolve;
+            s.onerror = () => reject(new Error('Failed to load supabase-js from CDN'));
+            document.head.appendChild(s);
+          });
+        }
+        const sb = window.supabase.createClient(
+          window.AARI_SUPABASE_CONFIG.SUPABASE_URL,
+          window.AARI_SUPABASE_CONFIG.SUPABASE_ANON_KEY,
+          { auth: { persistSession: true, storageKey: 'aari-auth-session' } }
+        );
+        // Stash so the rest of the app can use it
+        window.AariAuth = window.AariAuth || {};
+        window.AariAuth.client = sb;
+        _aariGateClientCache = sb;
+        console.log('[gate] CDN fallback Supabase client initialized');
+        return sb;
+      } catch(err){
+        console.error('[gate] CDN fallback failed', err);
+        return null;
+      }
     }
 
     async function handleGateContinue(){
