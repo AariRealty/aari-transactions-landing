@@ -8406,7 +8406,12 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     }
 
     function nextStep(){
-      console.log('[step] next clicked · current state.step:', state.step, '· PathA active:', !!(window.AariPathA && window.AariPathA.isActive()));
+      console.log('[step] next clicked · current state.step:', state.step, '· PathA:', !!(window.AariPathA && window.AariPathA.isActive()), '· PathB:', !!(window.AariPathB && window.AariPathB.isActive()));
+      // V3 · Path B new-agent onboarding takes over · delegate Continue
+      if(window.AariPathB && window.AariPathB.isActive()){
+        window.AariPathB.advance();
+        return;
+      }
       // V3 · Path A returning-agent short form takes over · delegate Continue
       if(window.AariPathA && window.AariPathA.isActive()){
         window.AariPathA.advance();
@@ -8447,6 +8452,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(idx < validSteps.length - 1) showStep(validSteps[idx + 1]);
     }
     function prevStep(){
+      // V3 · Path B active · delegate Back to Path B
+      if(window.AariPathB && window.AariPathB.isActive()){
+        window.AariPathB.back();
+        return;
+      }
       // V3 · Path A active · delegate Back to Path A
       if(window.AariPathA && window.AariPathA.isActive()){
         window.AariPathA.back();
@@ -8710,10 +8720,13 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       // pricing CTAs skip via opts.skipToStep, handled earlier).
       state.servicePreselected = false;
       state.serviceId = null;
-      // Also deactivate Path A if it was active from a prior session · prevents it
-      // from stealing Continue clicks meant for the gate.
+      // Also deactivate Path A + Path B if either was active from a prior session ·
+      // prevents them from stealing Continue clicks meant for the gate.
       if(window.AariPathA && typeof window.AariPathA.deactivate === 'function'){
         window.AariPathA.deactivate();
+      }
+      if(window.AariPathB && typeof window.AariPathB.deactivate === 'function'){
+        window.AariPathB.deactivate();
       }
       // Clear stale gate state from any prior session · stale status banner +
       // pre-filled email + error message all wipe so the gate looks fresh.
@@ -8926,22 +8939,19 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
     }
 
-    /* Path B · new agent · full onboarding.
-       Stubbed until Path B (brief Step 3) is built and approved. */
+    /* Path B · new agent · full onboarding (Direction B · cream welcome card).
+       Email is unknown to localStorage · agent walks through onboarding,
+       profile saves, then auto-hands off to Path A for the first file submission. */
     function routeToPathB(email){
       console.log('[aari-gate] route Path B · new agent', { email: email });
-      // Path B (full onboarding) is NOT YET BUILT per the brief.
-      // For now, route new agents to Path A with an empty profile so the flow
-      // works end-to-end · Path B onboarding will be built in the next round.
-      if(window.AariPathA && typeof window.AariPathA.init === 'function'){
+      if(window.AariPathB && typeof window.AariPathB.init === 'function'){
         try {
-          window.AariPathA.init({ email: email });
-          showStatus('Path A loaded successfully · v3.2');
+          window.AariPathB.init({ email: email });
         } catch(err){
-          showStatus('Path A init crashed: ' + (err && err.message ? err.message : String(err)));
+          showStatus('Path B init crashed: ' + (err && err.message ? err.message : String(err)));
         }
       } else {
-        showStatus('AariPathA module not loaded · hard refresh the page (Cmd+Shift+R).');
+        showStatus('AariPathB module not loaded · hard refresh the page (Cmd+Shift+R).');
       }
     }
 
@@ -9568,6 +9578,322 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     }
 
     window.AariPathA = { init, advance, back, submit, isActive, deactivate };
+  })();
+
+  /* ============================================================
+     V3 · Path B · New Agent Onboarding (May 2026 · Direction B)
+     Cream welcome card → continuous qwiz of onboarding questions →
+     save profile to localStorage → hand off to Path A for file submission.
+     ============================================================ */
+  (function aariPathB(){
+    'use strict';
+
+    const PROFILE_KEY_PREFIX = 'aari_agent_profile::';
+
+    // Ordered flow · welcome screen + 8 onboarding questions + nice-to-haves + done.
+    const FLOW = ['welcome', 'name', 'phone', 'license', 'brokerage', 'broker', 'title', 'lender', 'sign', 'extras', 'done'];
+
+    const STEP_META = {
+      welcome:   { h:"Let's get you <em>set up.</em>",  s:'Quick onboarding before your first file.' },
+      name:      { h:'Your <em>full name?</em>',        s:'As it appears on your license.' },
+      phone:     { h:'Your <em>phone number?</em>',     s:'Where we text you file updates.' },
+      license:   { h:'Your <em>license number?</em>',   s:'Florida only · we verify against DBPR.' },
+      brokerage: { h:'Your <em>brokerage?</em>',        s:'Where your license hangs.' },
+      broker:    { h:'Your <em>broker</em> contact?',   s:'Name + email · where compliance docs get copied.' },
+      title:     { h:'Title <em>company?</em>',         s:'Optional · who you usually close with.' },
+      lender:    { h:'Lender you usually <em>work with?</em>', s:'Optional · cash deal? Skip this one.' },
+      sign:      { h:'Sign the <em>service agreement.</em>', s:'One signature covers every file you submit.' },
+      extras:    { h:'A few <em>nice-to-haves.</em>',   s:'Skip if you are in a hurry.' },
+      done:      { h:'', s:'' }
+    };
+
+    // Compact qwiz stack labels · row appears once a question is answered.
+    const STACK_ROWS = [
+      { step:'name',      label:'Full name',     get: s => s.data.name || '' },
+      { step:'phone',     label:'Phone',         get: s => s.data.phone || '' },
+      { step:'license',   label:'License',       get: s => s.data.license_number || '' },
+      { step:'brokerage', label:'Brokerage',     get: s => s.data.brokerage || '' },
+      { step:'broker',    label:'Broker',        get: s => {
+        const name = s.data.broker_name || '';
+        const email = s.data.broker_email || '';
+        return name && email ? (name + ' · ' + email) : (name || email || '');
+      }},
+      { step:'title',     label:'Title company', get: s => s.data.title_company || 'Skipped' },
+      { step:'lender',    label:'Lender',        get: s => s.data.lender || 'Cash deal · skipped' },
+      { step:'sign',      label:'Signature',     get: s => s.data.sa_signed ? 'Signed · ' + (s.data.sa_name || '') : '' }
+    ];
+
+    let state = { step: 'welcome', data: {}, profile: null, active: false };
+
+    function root(){ return document.getElementById('aariPathB'); }
+    function stepEl(n){ return document.querySelector('#aariPathB [data-pb-step="' + n + '"]'); }
+
+    function init(seed){
+      state = { step: 'welcome', data: {}, profile: seed || {}, active: true };
+      // Pre-fill email from gate · agent doesn't re-type it.
+      if(seed && seed.email) state.data.email = seed.email;
+      // Force-hide every .intake-step + #aariPathA · Path B takes over the modal.
+      document.querySelectorAll('.intake-step').forEach(s => {
+        s.hidden = true;
+        s.style.display = 'none';
+      });
+      const pathA = document.getElementById('aariPathA');
+      if(pathA){ pathA.hidden = true; pathA.style.display = 'none'; }
+      // Suppress the auth gate.
+      const authGate = document.getElementById('intakeAuthGate');
+      if(authGate) authGate.style.display = 'none';
+      const modalBox = document.getElementById('intake-modal-box');
+      if(modalBox){
+        modalBox.classList.remove('auth-gate-active');
+        modalBox.setAttribute('data-pa-active', 'true');
+      }
+      // Reveal Path B container.
+      if(root()){
+        root().hidden = false;
+        root().style.display = 'block';
+      }
+      render();
+    }
+
+    function render(){
+      document.querySelectorAll('#aariPathB .pb-step').forEach(s => {
+        s.hidden = true;
+        s.removeAttribute('data-stack');
+      });
+      const el = stepEl(state.step);
+      if(el) el.hidden = false;
+      renderQwizStack();
+      // Stack treatment applies once the agent is past the welcome screen.
+      if(el && state.step !== 'welcome' && state.step !== 'done'){
+        el.setAttribute('data-stack', 'true');
+      }
+      updateHead();
+      updateFootButtons();
+    }
+
+    function updateHead(){
+      const meta = STEP_META[state.step];
+      if(!meta) return;
+      const titleEl = document.getElementById('intakeStepTitle');
+      const subEl = document.getElementById('intakeStepSub');
+      if(titleEl) titleEl.innerHTML = meta.h;
+      if(subEl) subEl.innerHTML = meta.s;
+      // Hide the dot progress bar on welcome + done · onboarding pace is unknown to the agent.
+      const progressEl = document.querySelector('.modal-box.intake-v2 .intake-progress');
+      if(progressEl){
+        progressEl.style.display = (state.step === 'welcome' || state.step === 'done') ? 'none' : '';
+      }
+    }
+
+    function updateFootButtons(){
+      const back = document.getElementById('intakeBack');
+      const next = document.getElementById('intakeNext');
+      const submit = document.getElementById('intakeSubmit');
+      if(!back || !next || !submit) return;
+      if(state.step === 'done'){
+        back.hidden = true; next.hidden = true; submit.hidden = true;
+        return;
+      }
+      // Back hidden on welcome (it's the entry screen).
+      back.hidden = (state.step === 'welcome');
+      submit.hidden = true;
+      next.hidden = false;
+      // Welcome shows "Let's go" · all other steps show "Continue".
+      next.innerHTML = state.step === 'welcome' ? "Let's go <span class=\"arr\">→</span>" : 'Continue <span class="arr">→</span>';
+    }
+
+    function renderQwizStack(){
+      const stackEl = document.getElementById('pbQwizStack');
+      if(!stackEl) return;
+      // Show stack once past welcome AND not on done.
+      if(state.step === 'welcome' || state.step === 'done'){
+        stackEl.hidden = true;
+        stackEl.innerHTML = '';
+        return;
+      }
+      const idx = FLOW.indexOf(state.step);
+      const rows = STACK_ROWS
+        .filter(r => FLOW.indexOf(r.step) < idx)
+        .map(r => {
+          const value = r.get(state);
+          if(!value) return '';
+          return '<div class="pa-answered-row" data-edit-pb-step="' + r.step + '">'
+               +   '<span class="pa-ans-q">' + r.label + '</span>'
+               +   '<span class="pa-ans-v">' + escapeHtml(value) + '</span>'
+               +   '<button type="button" class="pa-ans-edit" data-edit-pb-step="' + r.step + '">Edit</button>'
+               + '</div>';
+        })
+        .filter(Boolean)
+        .join('');
+      stackEl.innerHTML = rows;
+      stackEl.hidden = !rows;
+    }
+
+    function escapeHtml(str){
+      return String(str).replace(/[&<>"']/g, ch => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      })[ch]);
+    }
+
+    function validate(){
+      switch(state.step){
+        case 'welcome': return true;
+        case 'name': {
+          const v = document.getElementById('pbName').value.trim();
+          if(!v){ alert('Your full name is required.'); return false; }
+          state.data.name = v; return true;
+        }
+        case 'phone': {
+          const v = document.getElementById('pbPhone').value.trim();
+          if(!v){ alert('Phone is required.'); return false; }
+          state.data.phone = v; return true;
+        }
+        case 'license': {
+          const v = document.getElementById('pbLicenseNumber').value.trim();
+          if(!v){ alert('License number is required.'); return false; }
+          state.data.license_number = v;
+          state.data.license_state = 'FL';
+          return true;
+        }
+        case 'brokerage': {
+          const v = document.getElementById('pbBrokerage').value.trim();
+          if(!v){ alert('Brokerage name is required.'); return false; }
+          state.data.brokerage = v; return true;
+        }
+        case 'broker': {
+          const n = document.getElementById('pbBrokerName').value.trim();
+          const e = document.getElementById('pbBrokerEmail').value.trim();
+          if(!n || !e){ alert('Broker name + email are both required.'); return false; }
+          if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ alert("That broker email doesn't look valid."); return false; }
+          state.data.broker_name = n;
+          state.data.broker_email = e;
+          return true;
+        }
+        case 'title': {
+          state.data.title_company = document.getElementById('pbTitleCompany').value.trim();
+          return true;
+        }
+        case 'lender': {
+          state.data.lender = document.getElementById('pbLender').value.trim();
+          return true;
+        }
+        case 'sign': {
+          const typed = document.getElementById('pbSaName').value.trim();
+          const agreed = document.getElementById('pbSaAgree').checked;
+          if(!typed){ alert('Type your full legal name to sign.'); return false; }
+          if(!agreed){ alert('Check the box to agree to the service agreement.'); return false; }
+          state.data.sa_signed = true;
+          state.data.sa_name = typed;
+          state.data.sa_version = 'v4.6';
+          state.data.sa_timestamp = new Date().toISOString();
+          return true;
+        }
+        case 'extras': {
+          state.data.birthday = document.getElementById('pbBirthday').value;
+          state.data.fav_flower = document.getElementById('pbFavFlower').value.trim();
+          state.data.fav_food = document.getElementById('pbFavFood').value.trim();
+          state.data.fav_restaurant = document.getElementById('pbFavRestaurant').value.trim();
+          return true;
+        }
+        default: return true;
+      }
+    }
+
+    function advance(){
+      if(!validate()) return;
+      const i = FLOW.indexOf(state.step);
+      if(i < 0 || i === FLOW.length - 1) return;
+      // 'extras' is the last data-collection step · after that we save + hand off.
+      if(state.step === 'extras'){
+        completeOnboarding();
+        return;
+      }
+      state.step = FLOW[i + 1];
+      render();
+    }
+
+    function back(){
+      const i = FLOW.indexOf(state.step);
+      if(i <= 0) return;
+      state.step = FLOW[i - 1];
+      render();
+    }
+
+    function completeOnboarding(){
+      // Build final profile + save to localStorage keyed by email.
+      const profile = {
+        email: state.data.email,
+        name: state.data.name,
+        phone: state.data.phone,
+        license_number: state.data.license_number,
+        license_state: state.data.license_state,
+        brokerage: state.data.brokerage,
+        broker_name: state.data.broker_name,
+        broker_email: state.data.broker_email,
+        title_company: state.data.title_company,
+        lender: state.data.lender,
+        sa_signed: state.data.sa_signed,
+        sa_name: state.data.sa_name,
+        sa_version: state.data.sa_version,
+        sa_timestamp: state.data.sa_timestamp,
+        birthday: state.data.birthday,
+        fav_flower: state.data.fav_flower,
+        fav_food: state.data.fav_food,
+        fav_restaurant: state.data.fav_restaurant,
+        created_at: new Date().toISOString()
+      };
+      try {
+        localStorage.setItem(PROFILE_KEY_PREFIX + (profile.email || '').toLowerCase().trim(), JSON.stringify(profile));
+      } catch(_){}
+      // Fire notification to TC team · stubbed until backend is wired.
+      // TODO · POST profile to tc@aaritransactions.com via email service.
+      console.log('[path-b] new agent profile saved', profile);
+      // Brief "Profile saved" screen, then hand off to Path A.
+      state.step = 'done';
+      render();
+      setTimeout(() => {
+        deactivate();
+        if(window.AariPathA && typeof window.AariPathA.init === 'function'){
+          window.AariPathA.init(profile);
+        }
+      }, 1200);
+    }
+
+    function isActive(){
+      if(!state.active) return false;
+      const rootEl = root();
+      return !!(rootEl && !rootEl.hidden);
+    }
+
+    function deactivate(){
+      state.active = false;
+      const rootEl = root();
+      if(rootEl){
+        rootEl.hidden = true;
+        rootEl.style.display = '';
+      }
+      // Clear inline display:none set on .intake-step + #aariPathA so they can be shown later.
+      document.querySelectorAll('.intake-step').forEach(s => {
+        s.style.display = '';
+      });
+      const pathA = document.getElementById('aariPathA');
+      if(pathA) pathA.style.display = '';
+      const modalBox = document.getElementById('intake-modal-box');
+      if(modalBox) modalBox.removeAttribute('data-pa-active');
+    }
+
+    /* Edit-button delegation · click on Path B's answered row Edit jumps to that step. */
+    document.addEventListener('click', function(e){
+      const btn = e.target.closest('.pa-ans-edit[data-edit-pb-step]');
+      if(!btn) return;
+      if(!state.active) return;
+      const target = btn.getAttribute('data-edit-pb-step');
+      if(!target) return;
+      state.step = target;
+      render();
+    });
+
+    window.AariPathB = { init, advance, back, isActive, deactivate };
   })();
 
   /* =========================================================
