@@ -6553,45 +6553,35 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       function refresh(){
         if(!active) return;
         const list = visible();
-        // Hide everything first · inline display:none + restore hidden attribute as a backup
+        // Hide ALL data-q elements + remove all heads (ADHD-strict: only one visible at a time)
         Q.forEach(q => {
           allEls(q).forEach(el => { el.style.display = 'none'; });
         });
-        // Reveal accumulator
-        let revealUpTo = 0;
+        document.querySelectorAll('.qwiz-q-head').forEach(h => h.remove());
+        if(list.length === 0) return;
+        // Find the FIRST unanswered question (the current one)
+        let currentIdx = -1;
         for(let i = 0; i < list.length; i++){
-          revealUpTo = i;
-          if(!isAnswered(list[i])) break;
-          if(i === list.length - 1) revealUpTo = i + 1; // last one was answered
+          if(!isAnswered(list[i])){ currentIdx = i; break; }
         }
-        // Remove orphan heads first
-        document.querySelectorAll('.qwiz-q-head').forEach(h => {
-          const stillNeeded = list.some(q => q.key === h.dataset.qwizKey);
-          if(!stillNeeded) h.remove();
+        if(currentIdx === -1){
+          // All answered · keep the last question visible
+          currentIdx = list.length - 1;
+        }
+        // Reveal ONLY the current question
+        const q = list[currentIdx];
+        ensureHeadFor(q, currentIdx, list.length);
+        allEls(q).forEach(el => {
+          el.removeAttribute('hidden');
+          el.style.display = '';
         });
-        // Render heads + reveal up to revealUpTo (inclusive)
-        // The [hidden] attribute acts like display:none !important so it must
-        // be removed for the field to actually show. Empty string lets CSS
-        // pick the correct display (block for .field, grid for .field-row, etc.).
-        for(let i = 0; i <= Math.min(revealUpTo, list.length - 1); i++){
-          const q = list[i];
-          ensureHeadFor(q, i, list.length);
-          allEls(q).forEach(el => {
-            el.removeAttribute('hidden');
-            el.style.display = '';
+        // Auto-scroll the revealed question into view
+        const el = firstEl(q);
+        const head = el && el.previousElementSibling;
+        if(head && head.classList.contains('qwiz-q-head')){
+          requestAnimationFrame(() => {
+            try { head.scrollIntoView({ behavior:'smooth', block:'start' }); } catch(_) {}
           });
-        }
-        // Auto-scroll to the most recently revealed question (the one just unlocked)
-        if(revealUpTo > 0 && revealUpTo < list.length){
-          const justRevealed = list[revealUpTo];
-          const el = firstEl(justRevealed);
-          const head = el && el.previousElementSibling;
-          if(head && head.classList.contains('qwiz-q-head')){
-            // Use rAF so the just-shown element has layout
-            requestAnimationFrame(() => {
-              try { head.scrollIntoView({ behavior:'smooth', block:'start' }); } catch(_) {}
-            });
-          }
         }
       }
 
@@ -6759,38 +6749,30 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         const list = visible();
         const scopes = allScopes();
         if (!scopes.length || list.length === 0) return;
-        // Hide all data-q elements across both scopes (agent + service)
+        // Hide ALL data-q elements (across agent + service scopes) and remove all heads
         scopes.forEach(scope => {
           scope.querySelectorAll('[data-q]').forEach(el => { el.style.display = 'none'; });
+          scope.querySelectorAll('.qwiz-q-head').forEach(h => h.remove());
         });
-        // Hide orphan heads · only those tied to currently visible questions stay
-        scopes.forEach(scope => {
-          scope.querySelectorAll('.qwiz-q-head').forEach(h => {
-            const stillNeeded = list.some(el => el.getAttribute('data-q') === h.dataset.qwizFor);
-            if (!stillNeeded) h.remove();
-          });
-        });
-        // Reveal accumulator
-        let revealUpTo = 0;
+        // Find the FIRST unanswered question · that's the only one we reveal
+        let currentIdx = -1;
         for (let i = 0; i < list.length; i++) {
-          revealUpTo = i;
-          if (!isAnswered(list[i])) break;
-          if (i === list.length - 1) revealUpTo = i + 1;
+          if (!isAnswered(list[i])) { currentIdx = i; break; }
         }
-        for (let i = 0; i <= Math.min(revealUpTo, list.length - 1); i++) {
-          const el = list[i];
-          ensureHead(el, i, list.length);
-          el.removeAttribute('hidden');
-          el.style.display = '';
+        if (currentIdx === -1) {
+          // All answered · keep the last question visible so the form isn't empty
+          currentIdx = list.length - 1;
         }
-        // Scroll the newly revealed question into view
-        if (revealUpTo > 0 && revealUpTo < list.length) {
-          const justRevealed = list[revealUpTo];
-          if (justRevealed && justRevealed.previousElementSibling && justRevealed.previousElementSibling.classList.contains('qwiz-q-head')) {
-            requestAnimationFrame(() => {
-              try { justRevealed.previousElementSibling.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
-            });
-          }
+        // Reveal ONLY the current question (true one-at-a-time, ADHD-strict)
+        const el = list[currentIdx];
+        ensureHead(el, currentIdx, list.length);
+        el.removeAttribute('hidden');
+        el.style.display = '';
+        // Scroll the revealed question into view
+        if (el.previousElementSibling && el.previousElementSibling.classList && el.previousElementSibling.classList.contains('qwiz-q-head')) {
+          requestAnimationFrame(() => {
+            try { el.previousElementSibling.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
+          });
         }
       }
 
