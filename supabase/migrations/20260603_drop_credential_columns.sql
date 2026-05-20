@@ -1,0 +1,61 @@
+-- ============================================================================
+-- Aari Transactions · Drop stored credential columns (May 2026 · compliance)
+-- ============================================================================
+-- Removes four columns that violate the "no stored credentials" architecture:
+--   · compliance_username
+--   · compliance_password
+--   · signing_username
+--   · signing_password
+--
+-- These columns were added in 20260517_agent_profile_extended_fields.sql. They
+-- store third-party platform credentials (SkySlope, Brokermint, Dotloop,
+-- DocuSign, Authentisign, etc.) inside the agents table. That's:
+--   · A class-action liability if the agents row is ever exposed.
+--   · A violation of those platforms' Terms of Service (credential sharing /
+--     storage is prohibited by SkySlope, DocuSign, Dotloop, etc.).
+--   · An E&O policy gap · most carriers exclude breaches tied to stored
+--     third-party credentials.
+--
+-- The new architecture (Path B v2 signup, May 2026):
+--   · agents.compliance_platform · NAME only (text)
+--   · agents.signing_platform    · NAME only (text)
+--   · credentials live exclusively in 1Password Business (SOC 2 Type II vault)
+--     OR are exchanged via platform-native delegated access (Dotloop People,
+--     DocuSign Shared Access, SkySlope Team Members, etc.).
+--
+-- ============================================================================
+-- BEFORE RUNNING THIS MIGRATION
+-- ============================================================================
+-- Execute the preflight below to see if any agent rows currently hold credential
+-- data. Anything returned MUST be copied to 1Password Business FIRST, or that
+-- access is lost.
+--
+-- ---------- PREFLIGHT QUERY (copy/paste into SQL Editor first) -----------
+-- SELECT
+--   id,
+--   email,
+--   compliance_platform,
+--   compliance_username,
+--   (compliance_password IS NOT NULL AND compliance_password <> '') AS has_compliance_pw,
+--   signing_platform,
+--   signing_username,
+--   (signing_password IS NOT NULL AND signing_password <> '')       AS has_signing_pw
+-- FROM public.agents
+-- WHERE compliance_username IS NOT NULL
+--    OR compliance_password IS NOT NULL
+--    OR signing_username    IS NOT NULL
+--    OR signing_password    IS NOT NULL;
+-- ---------- END PREFLIGHT QUERY ------------------------------------------
+--
+-- If the preflight returns ZERO rows · run the DROP below immediately.
+-- If the preflight returns ANY rows · stop, copy credentials to 1Password
+-- Business per the brokerage credential policy, THEN run the DROP.
+--
+-- Idempotent (drop column if exists) · safe to re-run.
+-- ============================================================================
+
+alter table public.agents
+  drop column if exists compliance_username,
+  drop column if exists compliance_password,
+  drop column if exists signing_username,
+  drop column if exists signing_password;
