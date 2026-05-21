@@ -1076,6 +1076,114 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
     wireDragDrop();
   }
 
+  // ===== Submit Pay panel · checkbox totals + submit + history =====
+  function spRecalc(){
+    const checks = document.querySelectorAll('#sp-eligible .sp-check');
+    let total = 0, count = 0;
+    checks.forEach(c => { if(c.checked){ total += parseFloat(c.getAttribute('data-pay')) || 0; count++; } });
+    const totalEl = document.getElementById('sp-total');
+    const metaEl = document.getElementById('sp-meta');
+    const listMetaEl = document.getElementById('sp-list-meta');
+    if(totalEl) totalEl.textContent = '$' + total.toLocaleString();
+    if(metaEl) metaEl.textContent = count + (count === 1 ? ' file' : ' files') + ' · TC pay this week';
+    if(listMetaEl) listMetaEl.textContent = count + ' selected';
+  }
+  function wireSpChecks(){
+    document.querySelectorAll('#sp-eligible .sp-check').forEach(c => c.addEventListener('change', spRecalc));
+  }
+
+  window.toggleSubmitHistory = function(){
+    const h = document.getElementById('sp-history');
+    if(h) h.style.display = h.style.display === 'none' ? 'block' : 'none';
+  };
+
+  // Generate local invoice number (year-sequence). Real numbering by Supabase function on insert.
+  function localInvoiceNo(){
+    const yr = new Date().getFullYear();
+    const seq = parseInt(localStorage.getItem('aari-pay-seq:' + yr) || '0', 10) + 1;
+    localStorage.setItem('aari-pay-seq:' + yr, String(seq));
+    return yr + '-' + String(seq).padStart(3, '0');
+  }
+
+  window.submitPayRequest = async function(){
+    const checks = document.querySelectorAll('#sp-eligible .sp-check:checked');
+    if(!checks.length){ alert('Select at least one file to submit.'); return; }
+    const files = [];
+    let totalPay = 0, totalRev = 0;
+    checks.forEach(c => {
+      const pay = parseFloat(c.getAttribute('data-pay')) || 0;
+      const rev = parseFloat(c.getAttribute('data-rev')) || 0;
+      files.push({
+        address: c.getAttribute('data-addr'),
+        service: c.getAttribute('data-svc'),
+        client: c.getAttribute('data-client'),
+        revenue: rev, pay: pay
+      });
+      totalPay += pay; totalRev += rev;
+    });
+    const invoice = localInvoiceNo();
+    const submission = {
+      invoice_no: invoice,
+      submitted_at: new Date().toISOString(),
+      status: 'pending',
+      files: files,
+      total_pay: totalPay,
+      total_revenue: totalRev
+    };
+    // Save to localStorage history
+    const hist = JSON.parse(localStorage.getItem('aari-pay-history') || '[]');
+    hist.unshift(submission);
+    localStorage.setItem('aari-pay-history', JSON.stringify(hist));
+    // Fire-and-forget Supabase upsert
+    (async () => {
+      try {
+        const tcId = await pipeGetTcId();
+        if(!tcId) return;
+        const client = await window.AariAuth.ensureClient();
+        if(!client) return;
+        await client.from('pay_requests').insert({
+          invoice_no: invoice,
+          tc_id: tcId,
+          status: 'pending',
+          files: files,
+          total_pay: totalPay,
+          total_revenue: totalRev
+        });
+      } catch(e){ /* silent · localStorage already saved */ }
+    })();
+    alert('Submitted! Invoice #' + invoice + ' · $' + totalPay.toLocaleString() + ' sent to Marlenyi for review.');
+    renderSpHistory();
+  };
+
+  function renderSpHistory(){
+    const hist = JSON.parse(localStorage.getItem('aari-pay-history') || '[]');
+    const yr = new Date().getFullYear();
+    const paid = hist.filter(h => h.status === 'paid');
+    const ytdTotal = paid.reduce((s,h) => s + (h.total_pay || 0), 0);
+    const yc = document.getElementById('sp-yearly-count');
+    const yt = document.getElementById('sp-yearly-total');
+    if(yc) yc.textContent = paid.length + ' paid in ' + yr;
+    if(yt) yt.textContent = '$' + ytdTotal.toLocaleString() + ' YTD';
+    const histEl = document.getElementById('sp-history');
+    if(!histEl) return;
+    if(!hist.length){
+      histEl.innerHTML = '<div class="sp-history-head">Submission history</div><div class="sp-history-empty">No past submissions yet · your first will show here after you submit.</div>';
+      return;
+    }
+    let html = '<div class="sp-history-head">Submission history · ' + hist.length + '</div>';
+    hist.forEach(h => {
+      const date = new Date(h.submitted_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+      html += '<div class="sp-history-row"><span class="sp-h-invoice">#' + h.invoice_no + '</span><span class="sp-h-date">' + date + ' · ' + h.files.length + ' files</span><span class="sp-h-total">$' + (h.total_pay||0).toLocaleString() + '</span><span class="sp-h-status ' + h.status + '">' + h.status + '</span></div>';
+    });
+    histEl.innerHTML = html;
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => { wireSpChecks(); renderSpHistory(); });
+  } else {
+    wireSpChecks(); renderSpHistory();
+  }
+
   // Nav panel switcher
   window.goPanel = function(id, btn){
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
