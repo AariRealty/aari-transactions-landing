@@ -125,7 +125,6 @@
     }).join('');
 
     container.innerHTML =
-      '<span class="aari-hdr-viewas-label">View as</span>' +
       '<div class="aari-hdr-viewas-pills">' + pillsHtml + '</div>';
 
     wireViewAs();
