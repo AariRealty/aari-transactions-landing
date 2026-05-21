@@ -51,7 +51,7 @@
   // inside the intake IIFE in index.html (which we no longer let run for
   // upfront submissions, since we own the redirect ourselves).
   const SERVICE_STRIPE_URLS = {
-    lc:                'https://buy.stripe.com/6oU14f9g32272q78MOcAo06',
+    lc:                'https://buy.stripe.com/dRm3cn77V6in5Cj9QScAo0h',
     op_basic:          'https://buy.stripe.com/3cI5kv63R227ggXbZ0cAo07',
     op_complete:       'https://buy.stripe.com/6oUfZ99g3gX18Ov4wycAo05',
     listing_docs:      'https://buy.stripe.com/6oU7sD8bZbCH3ubfbccAo08',
