@@ -718,7 +718,7 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
 
   </div>
   </div>
-  <div class="pipe-hint">Click any card to open file detail · drag-and-drop between stages coming next</div>
+  <div class="pipe-hint">Drag cards between stages · click any card for detail · checklist + notes save locally (real save when Supabase wires)</div>
 </div>
 
 <!-- ============== PIPELINE CARD DETAIL MODAL ============== -->
@@ -754,8 +754,8 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
       </div>
 
       <div class="pm-section">
-        <div class="pm-section-title">Notes</div>
-        <div class="pm-notes">No notes yet · click to add (wiring next)</div>
+        <div class="pm-section-title">Notes · saves as you type</div>
+        <textarea id="pm-notes-area" class="pm-notes" style="width:100%;min-height:80px;font-family:inherit;font-size:13px;color:var(--ink);font-style:normal;resize:vertical" placeholder="Add notes about this file…"></textarea>
       </div>
 
     </div>
@@ -1742,50 +1742,110 @@ window.__triggerEileenLoad = async function () {
 <script>
 (function(){
   'use strict';
+  // Drag-and-drop, clipboard copy, localStorage save for checklist/notes,
+  // working Move stage button (visual only · DB persist when Supabase wires).
   const PIPE_STAGES = [
-    {key:'s-signed',     name:'Signed',       sub:'signed, not started'},
-    {key:'s-escrow',     name:'Escrow',       sub:'earnest money in'},
-    {key:'s-inspection', name:'Inspection',   sub:'scheduled or done'},
-    {key:'s-remedy',     name:'Remedy',       sub:'repairs or credits'},
-    {key:'s-title',      name:'Title',        sub:'title review'},
-    {key:'s-appraisal',  name:'Appraisal',    sub:'ordered or in'},
-    {key:'s-loan',       name:'Loan',         sub:'underwriting'},
-    {key:'s-prep',       name:'Closing Prep', sub:'CD + walkthrough'},
-    {key:'s-closing',    name:'Closing',      sub:'scheduled'},
-    {key:'s-post',       name:'Post Closing', sub:'funding + possession'},
-    {key:'s-closed',     name:'Closed',       sub:'deal funded'}
+    {key:'s-signed',     name:'Signed',       sub:'signed, not started',  col:0},
+    {key:'s-escrow',     name:'Escrow',       sub:'earnest money in',     col:1},
+    {key:'s-inspection', name:'Inspection',   sub:'scheduled or done',    col:2},
+    {key:'s-remedy',     name:'Remedy',       sub:'repairs or credits',   col:3},
+    {key:'s-title',      name:'Title',        sub:'title review',         col:4},
+    {key:'s-appraisal',  name:'Appraisal',    sub:'ordered or in',        col:5},
+    {key:'s-loan',       name:'Loan',         sub:'underwriting',         col:6},
+    {key:'s-prep',       name:'Closing Prep', sub:'CD + walkthrough',     col:7},
+    {key:'s-closing',    name:'Closing',      sub:'scheduled',            col:8},
+    {key:'s-post',       name:'Post Closing', sub:'funding + possession', col:9},
+    {key:'s-closed',     name:'Closed',       sub:'deal funded',          col:10}
   ];
+  const _e = (a,t,s,b) => ({action:a, to:t, subject:s, body:b});
   const PIPE_PLAYBOOK = {
-    's-signed':     {dates:['Buyer Rep Agreement Signed','Preapproval Verified'],                         checks:['Buyer rep agreement signed','Preapproval verified with lender','MLS auto search set up'],                                 emails:['Welcome + next steps · To: Buyer','Preapproval confirmation · To: Lender','MLS search live · To: Buyer']},
-    's-escrow':     {dates:['Escrow Open','Earnest Money Wired','EMD Receipt'],                           checks:['Confirm escrow company + wire instructions','Wire earnest money deposit','Confirm deposit received'],                       emails:['Escrow + wire info request · To: Seller\'s Agent','Wire instructions · To: Buyer','Deposit confirmation · To: Title Company']},
-    's-inspection': {dates:['Inspection Scheduled','Inspection Completed','Report Received'],             checks:['Schedule inspection with inspector','Request access from listing side','Review report with buyer'],                       emails:['Inspection request · To: Inspector','Access request · To: Seller\'s Agent','Report + next steps · To: Buyer']},
-    's-remedy':     {dates:['Remedy Request Sent','Remedy Resolution Date'],                              checks:['Submit remedy request','Negotiate credits or repairs','Document agreement'],                                                  emails:['Remedy request · To: Seller\'s Agent','Counter terms · To: Seller\'s Agent','Agreement summary · To: Buyer']},
-    's-title':      {dates:['Title Commitment Received','Title Issues Cleared'],                          checks:['Confirm title commitment received','Review title for issues','Confirm title clearance'],                                    emails:['Title commitment status · To: Title Company','Title review summary · To: Buyer','Title clearance · To: Title Company']},
-    's-appraisal':  {dates:['Appraisal Ordered','Appraisal Completed','Value Received'],                  checks:['Confirm appraisal ordered','Track appraisal completion','Confirm value meets contract'],                                  emails:['Appraisal order · To: Lender','Status check · To: Lender','Appraisal came in · To: Buyer']},
-    's-loan':       {dates:['Loan Application','Underwriting Submitted','Loan Commitment','Clear to Close'], checks:['Confirm loan application submitted','Track underwriting conditions','Receive Clear to Close'],                            emails:['Loan application status · To: Lender','Underwriting update · To: Lender','CTC confirmation · To: Lender']},
-    's-prep':       {dates:['Closing Disclosure','Final Walkthrough','Funds Wired'],                      checks:['Review CD with buyer','Schedule final walkthrough','Confirm wire instructions'],                                              emails:['CD review · To: Buyer','Walkthrough request · To: Seller\'s Agent','Wire verification · To: Title Company']},
-    's-closing':    {dates:['Signing Time','Funds Received'],                                             checks:['Confirm signing time + location','Attend closing','Confirm funds + recording'],                                              emails:['Closing confirmation · To: Title Company','Closing checklist · To: Buyer','Funds confirmation · To: Title Company']},
-    's-post':       {dates:['Recording','Keys Delivered','File Closed'],                                  checks:['Confirm recording complete','Deliver keys + possession','Send thank you + review request'],                                   emails:['Recording confirmation · To: Title Company','Keys + welcome home · To: Buyer','Thank you + review · To: Buyer']},
-    's-closed':     {dates:['Funded Date','File Archived'],                                               checks:['Disbursement received','File archived','Review request sent'],                                                                  emails:['Final thank you · To: Buyer']}
+    's-signed':     {dates:['Buyer Rep Agreement Signed','Preapproval Verified'], checks:['Buyer rep agreement signed','Preapproval verified with lender','MLS auto search set up'], emails:[
+      _e('Welcome + next steps','Buyer','Next Steps After Signing - Welcome','Hi [Buyer Name],\n\nThank you for signing on. Next steps:\n1. Confirm your preapproval matches our price point\n2. Share any updates to your must-have list\n3. Let me know preferred showing days/times\n\nI will set up your MLS search today.'),
+      _e('Preapproval confirmation','Lender','Preapproval Confirmation - [Buyer Name]','Good afternoon, Marlenyi Paredes with Aari Realty.\n\nI am representing [Buyer Name]. Please confirm:\n1. Current preapproval amount\n2. Loan program / product\n3. Any conditions outstanding\n\nThank you.'),
+      _e('MLS search live','Buyer','Your MLS Search Is Live','Hi [Buyer Name],\n\nYour auto search is set. New matches will hit your inbox the minute they go live.\n\nWhen you see something you like, text me the MLS number and I will line up a showing same day.')
+    ]},
+    's-escrow':     {dates:['Escrow Open','Earnest Money Wired','EMD Receipt'], checks:['Confirm escrow company + wire instructions','Wire earnest money deposit','Confirm deposit received'], emails:[
+      _e('Escrow + wire info request',"Seller's Agent",'Escrow + Wire Info Request - [Property Address]','Marlenyi Paredes with Aari Realty, representing the buyer.\n\nPlease confirm the title company handling closing and forward wire instructions for the earnest money deposit.\n\nMy buyer is ready to wire per the contract deadline.'),
+      _e('Wire instructions','Buyer','Earnest Money - Wire Instructions','Hi [Buyer Name], attached are wire instructions for your earnest money deposit. Please wire $[amount] to the title company by [deadline].\n\nIMPORTANT: Always call the title company to verify before sending.'),
+      _e('Deposit confirmation','Title Company','Deposit Receipt Confirmation','Please confirm receipt of the earnest money deposit and send over the escrow receipt at your earliest convenience.')
+    ]},
+    's-inspection': {dates:['Inspection Scheduled','Inspection Completed','Report Received'], checks:['Schedule inspection with inspector','Request access from listing side','Review report with buyer'], emails:[
+      _e('Inspection request','Inspector','Inspection Request - [Property Address]','Marlenyi Paredes with Aari Realty. I represent the buyer on the property below and would like to schedule a full inspection.\n\nPlease confirm availability, scope of inspection, and total cost.'),
+      _e('Access request',"Seller's Agent",'Inspection Access Request','The inspection has been scheduled. Please confirm lockbox code or access arrangements. I will be on-site.'),
+      _e('Report + next steps','Buyer','Inspection Report + Next Steps','Hi [Buyer Name], inspection report attached. Let us walk through it together so we can decide on next steps before the remedy deadline of [date].')
+    ]},
+    's-remedy':     {dates:['Remedy Request Sent','Remedy Resolution Date'], checks:['Submit remedy request','Negotiate credits or repairs','Document agreement'], emails:[
+      _e('Remedy request',"Seller's Agent",'Inspection Remedy Request','Following inspection, we are submitting the following remedy request: [List]. Please respond by [deadline date] per contract.'),
+      _e('Counter terms',"Seller's Agent",'Remedy Counter','Thanks for your seller\'s response. My buyer\'s counter is: [terms]. Let us get this locked in before the [deadline].'),
+      _e('Agreement summary','Buyer','Remedy Agreed + Documented','Good news: remedy has been agreed. Here is what we landed on: [summary]. I will prepare the addendum.')
+    ]},
+    's-title':      {dates:['Title Commitment Received','Title Issues Cleared'], checks:['Confirm title commitment received','Review title for issues','Confirm title clearance'], emails:[
+      _e('Title commitment status','Title Company','Title Commitment Status','Please confirm the title commitment has been issued and forward a copy. Flag any exceptions, liens, or requirements immediately.'),
+      _e('Title review summary','Buyer','Title Review Summary','Title commitment is in. A few items worth flagging: [list exceptions]. None are deal-breakers but let us talk through them.'),
+      _e('Title clearance','Title Company','Title Clearance Confirmation','Please confirm all title requirements have been cleared. Closing is scheduled for [closing date].')
+    ]},
+    's-appraisal':  {dates:['Appraisal Ordered','Appraisal Completed','Value Received'], checks:['Confirm appraisal ordered','Track appraisal completion','Confirm value meets contract'], emails:[
+      _e('Appraisal order','Lender','Appraisal Order Confirmation','Please confirm the appraisal has been ordered and share: 1) Appraiser name, 2) Estimated completion date, 3) Access coordination needed.'),
+      _e('Status check','Lender','Appraisal Status Check','Following up on the appraisal. Has it been completed? We are tracking to a [closing date].'),
+      _e('Appraisal came in','Buyer','Appraisal Came In','Appraisal came back at $[value]. [If at/above contract: we are good. If below: we have options — renegotiate, bring cash, or re-evaluate.]')
+    ]},
+    's-loan':       {dates:['Loan Application','Underwriting Submitted','Loan Commitment','Clear to Close'], checks:['Confirm loan application submitted','Track underwriting conditions','Receive Clear to Close'], emails:[
+      _e('Loan application status','Lender','Loan Application Status','Please confirm: 1) Loan application submitted, 2) Outstanding documentation, 3) Expected timeline to conditional approval.'),
+      _e('Underwriting update','Lender','Underwriting Update','Checking in on underwriting. What conditions are open? Estimated CTC date?'),
+      _e('CTC confirmation','Lender','Clear to Close Confirmation','Please confirm: 1) Loan commitment issued, 2) Clear to close granted, 3) Any remaining items.')
+    ]},
+    's-prep':       {dates:['Closing Disclosure','Final Walkthrough','Funds Wired'], checks:['Review CD with buyer','Schedule final walkthrough','Confirm wire instructions'], emails:[
+      _e('CD review','Buyer','Closing Disclosure Review','The CD is in. Verify: 1) Loan amount + rate, 2) Closing costs, 3) Cash to close, 4) Prorations. Let us get on a 15-min call to walk through it.'),
+      _e('Walkthrough request',"Seller's Agent",'Final Walkthrough Request','Let us schedule the final walkthrough. Proposed: [Date/Time]. Within 24 hours of closing per contract.'),
+      _e('Wire verification','Title Company','Wire Instructions Verification','Confirming wire instructions for cash-to-close. My buyer will call to verify before sending.')
+    ]},
+    's-closing':    {dates:['Signing Time','Funds Received'], checks:['Confirm signing time + location','Attend closing','Confirm funds + recording'], emails:[
+      _e('Closing confirmation','Title Company','Closing Confirmation','Please confirm: 1) Date, 2) Time, 3) Location, 4) Documents prepared, 5) Buyer needs to bring: [ID, funds].'),
+      _e('Closing checklist','Buyer','Closing Day Checklist','Closing is [date] at [time]. Bring: 1) Government photo ID, 2) Any remaining cash to close, 3) A pen. I will meet you there.'),
+      _e('Funds confirmation','Title Company','Funds Confirmation + Recording','Confirm: 1) Buyer funds received, 2) Lender funds wired, 3) Recording scheduled. Notify me when recording is complete.')
+    ]},
+    's-post':       {dates:['Recording','Keys Delivered','File Closed'], checks:['Confirm recording complete','Deliver keys + possession','Send thank you + review request'], emails:[
+      _e('Recording confirmation','Title Company','Recording Confirmation','Please confirm the deed has been recorded and provide recording information (book/page or instrument number).'),
+      _e('Keys + welcome home','Buyer','Keys + Welcome Home','Recording is complete. The house is officially yours. Pick up keys at [location]. Change the locks. Transfer utilities. Update your address.'),
+      _e('Thank you + review','Buyer','Thank You + A Small Favor','It was a genuine honor to walk you through this. If you had a good experience, would you drop me a quick review? [Review Link]')
+    ]},
+    's-closed':     {dates:['Funded Date','File Archived'], checks:['Disbursement received','File archived','Review request sent'], emails:[
+      _e('Final thank you','Buyer','Thank You','Thank you for trusting Aari. Stay in touch.')
+    ]}
   };
   let _idx = 0;
+  let _cardId = '';
+  function cardIdFrom(n,m){return (n+'::'+m).toLowerCase().replace(/[^a-z0-9]/g,'-');}
   function getStageFromCard(card){for(let i=0;i<PIPE_STAGES.length;i++)if(card.classList.contains(PIPE_STAGES[i].key))return i;return 0;}
+  function lsKey(kind,id,extra){return 'aari-pipe:'+kind+':'+id+(extra!==undefined?':'+extra:'');}
+  function lsGet(k,def){try{const v=localStorage.getItem(k);return v===null?def:JSON.parse(v);}catch(_){return def;}}
+  function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(_){}}
   function renderModal(stageIdx,name,meta){
-    const s=PIPE_STAGES[stageIdx],p=PIPE_PLAYBOOK[s.key]||{dates:[],checks:[],emails:[]};_idx=stageIdx;
+    const s=PIPE_STAGES[stageIdx],p=PIPE_PLAYBOOK[s.key]||{dates:[],checks:[],emails:[]};
+    _idx=stageIdx; _cardId=cardIdFrom(name,meta);
     document.getElementById('pm-stage').textContent=s.name+' · stage '+(stageIdx+1)+' of 11 · '+s.sub;
     document.getElementById('pm-name').textContent=name;
     document.getElementById('pm-meta').textContent=meta;
     document.getElementById('pm-dates').innerHTML=(p.dates.length?p.dates:['No dates tracked']).map(d=>'<div class="pm-date"><div class="pm-date-lbl">'+d+'</div><div class="pm-date-val">—</div></div>').join('');
-    document.getElementById('pm-checklist-title').textContent='Checklist · 0 of '+p.checks.length+' done';
-    document.getElementById('pm-checklist').innerHTML=p.checks.map(c=>'<div class="pm-check" onclick="this.classList.toggle(\'done\')"><span class="pm-check-box">✓</span><span class="pm-check-txt">'+c+'</span></div>').join('')||'<div style="padding:20px;text-align:center;color:#9a9a9a;font-size:12px;font-style:italic">No checklist for this stage yet</div>';
-    document.getElementById('pm-emails').innerHTML=p.emails.map(e=>{const x=e.split(' · '),t=x[0]||e,u=x[1]||'';return '<div class="pm-email"><div class="pm-email-left"><div class="pm-email-title">'+t+'</div><div class="pm-email-sub">'+u+'</div></div><button class="pm-email-copy" onclick="alert(\'Email copy wiring coming next · template will copy to clipboard\')">Copy</button></div>';}).join('')||'<div style="padding:20px;text-align:center;color:#9a9a9a;font-size:12px;font-style:italic">No email templates yet</div>';
+    const cs=lsGet(lsKey('check',_cardId,s.key),[]);
+    const dc=p.checks.filter((_,i)=>cs[i]).length;
+    document.getElementById('pm-checklist-title').textContent='Checklist · '+dc+' of '+p.checks.length+' done';
+    document.getElementById('pm-checklist').innerHTML=p.checks.map((c,i)=>'<div class="pm-check '+(cs[i]?'done':'')+'" data-check-idx="'+i+'"><span class="pm-check-box">✓</span><span class="pm-check-txt">'+c+'</span></div>').join('')||'<div style="padding:20px;text-align:center;color:#9a9a9a;font-size:12px;font-style:italic">No checklist for this stage yet</div>';
+    document.querySelectorAll('#pm-checklist .pm-check').forEach(el=>{el.addEventListener('click',()=>{el.classList.toggle('done');const i=parseInt(el.getAttribute('data-check-idx'),10);const st=lsGet(lsKey('check',_cardId,s.key),[]);st[i]=el.classList.contains('done');lsSet(lsKey('check',_cardId,s.key),st);const nd=p.checks.filter((_,j)=>st[j]).length;document.getElementById('pm-checklist-title').textContent='Checklist · '+nd+' of '+p.checks.length+' done';});});
+    document.getElementById('pm-emails').innerHTML=p.emails.map((e,i)=>'<div class="pm-email"><div class="pm-email-left"><div class="pm-email-title">'+e.action+'</div><div class="pm-email-sub">To: '+e.to+' · Subject: '+e.subject+'</div></div><button class="pm-email-copy" data-email-idx="'+i+'">Copy</button></div>').join('')||'<div style="padding:20px;text-align:center;color:#9a9a9a;font-size:12px;font-style:italic">No email templates yet</div>';
+    document.querySelectorAll('#pm-emails .pm-email-copy').forEach(btn=>{btn.addEventListener('click',()=>{const i=parseInt(btn.getAttribute('data-email-idx'),10);const e=p.emails[i];const txt='To: '+e.to+'\nSubject: '+e.subject+'\n\n'+e.body;if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(()=>{const o=btn.textContent;btn.textContent='Copied ✓';btn.style.background='#a4b8a6';setTimeout(()=>{btn.textContent=o;btn.style.background='';},1400);}).catch(()=>alert('Copy failed'));}else{alert('Clipboard not available');}});});
+    const n=document.getElementById('pm-notes-area');if(n){n.value=lsGet(lsKey('notes',_cardId),'');n.oninput=()=>lsSet(lsKey('notes',_cardId),n.value);}
   }
   function openModal(card){const n=(card.querySelector('.pipe-card-name')||{}).textContent||'',m=(card.querySelector('.pipe-card-meta')||{}).textContent||'';renderModal(getStageFromCard(card),n,m);document.getElementById('pipe-modal').classList.add('open');document.body.style.overflow='hidden';}
   window.closePipeModal=function(){document.getElementById('pipe-modal').classList.remove('open');document.body.style.overflow='';};
-  window.movePipeStage=function(d){const n=_idx+d;if(n<0||n>=PIPE_STAGES.length)return;const nm=document.getElementById('pm-name').textContent,mt=document.getElementById('pm-meta').textContent;renderModal(n,nm,mt);};
-  function wire(){document.querySelectorAll('.pipe-card').forEach(c=>c.addEventListener('click',()=>openModal(c)));}
+  window.movePipeStage=function(d){const next=_idx+d;if(next<0||next>=PIPE_STAGES.length)return;const fs=PIPE_STAGES[_idx],ts=PIPE_STAGES[next];const cards=document.querySelectorAll('.pipe-card.'+fs.key);let mc=null;cards.forEach(c=>{const n=(c.querySelector('.pipe-card-name')||{}).textContent||'';const m=(c.querySelector('.pipe-card-meta')||{}).textContent||'';if(cardIdFrom(n,m)===_cardId)mc=c;});if(mc){mc.classList.remove(fs.key);mc.classList.add(ts.key);const tc=document.querySelectorAll('.pipe-col')[ts.col];if(tc)tc.appendChild(mc);}const nm=document.getElementById('pm-name').textContent,mt=document.getElementById('pm-meta').textContent;renderModal(next,nm,mt);};
+  function wireDragDrop(){
+    document.querySelectorAll('.pipe-card').forEach(card=>{card.setAttribute('draggable','true');card.addEventListener('dragstart',e=>{const n=(card.querySelector('.pipe-card-name')||{}).textContent||'',m=(card.querySelector('.pipe-card-meta')||{}).textContent||'';e.dataTransfer.setData('text/plain',cardIdFrom(n,m));e.dataTransfer.effectAllowed='move';card.style.opacity='0.5';});card.addEventListener('dragend',()=>{card.style.opacity='';});});
+    document.querySelectorAll('.pipe-col').forEach((col,colIdx)=>{col.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='move';col.style.background='#fafaf8';});col.addEventListener('dragleave',()=>{col.style.background='';});col.addEventListener('drop',e=>{e.preventDefault();col.style.background='';const id=e.dataTransfer.getData('text/plain');let mc=null;document.querySelectorAll('.pipe-card').forEach(c=>{const n=(c.querySelector('.pipe-card-name')||{}).textContent||'',m=(c.querySelector('.pipe-card-meta')||{}).textContent||'';if(cardIdFrom(n,m)===id)mc=c;});if(mc&&colIdx>=0&&colIdx<PIPE_STAGES.length){PIPE_STAGES.forEach(s=>mc.classList.remove(s.key));mc.classList.add(PIPE_STAGES[colIdx].key);col.appendChild(mc);}});});
+  }
+  function wire(){document.querySelectorAll('.pipe-card').forEach(c=>c.addEventListener('click',e=>{if(e.defaultPrevented)return;openModal(c);}));}
   document.addEventListener('keydown',e=>{if(e.key==='Escape')closePipeModal();});
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',wire);else wire();
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{wire();wireDragDrop();});else{wire();wireDragDrop();}
 })();
 </script>
 
