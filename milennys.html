@@ -154,6 +154,19 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
 .sp-h-status.disputed{background:var(--pastel-blush);color:#a32d2d}
 .sp-h-status.held{background:#f5f5f3;color:var(--muted)}
 .sp-history-empty{padding:20px;text-align:center;color:var(--muted);font-size:12px;font-style:italic}
+.sp-rates{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.sp-rates-head{padding:12px 18px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none}
+.sp-rates-head:hover{background:var(--soft-bg)}
+.sp-rates-head h3{font-family:var(--serif);font-size:14px;font-weight:600;color:var(--ink);margin:0}
+.sp-rates-head span{font-size:11px;color:var(--muted)}
+.sp-rates-body{display:none;border-top:1px solid var(--line)}
+.sp-rates-body.open{display:block}
+.sp-rate-row{display:flex;justify-content:space-between;align-items:center;padding:10px 18px;border-bottom:1px solid #f0f0ed;font-size:12px;gap:10px}
+.sp-rate-row:last-child{border-bottom:0}
+.sp-rate-row span:first-child{color:var(--ink-2);flex:1}
+.sp-rate-row div{text-align:right;display:flex;flex-direction:column;gap:2px}
+.sp-rate-pct{font-size:10px;color:var(--muted);letter-spacing:0.04em;text-transform:uppercase}
+.sp-rate-amt{font-family:var(--serif);font-size:15px;font-weight:600;color:#4a7a4a}
 
 /* ===== OTHER PANELS · placeholders for now (built later) ===== */
 .panel-placeholder{padding:60px 20px;text-align:center;color:var(--muted);background:var(--soft-bg);border:1px dashed var(--line-2);border-radius:var(--r-md)}
@@ -621,7 +634,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
 
       <div class="sp-anchor">
         <div>
-          <div class="sp-anchor-label">Ready to submit · Friday May 22</div>
+          <div class="sp-anchor-label">Loading pay cycle…</div>
           <div class="sp-anchor-total" id="sp-total">$717</div>
           <div class="sp-anchor-meta" id="sp-meta">3 files · TC pay this week</div>
         </div>
@@ -667,6 +680,24 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
       <div class="sp-history" id="sp-history" style="display:none">
         <div class="sp-history-head">Submission history</div>
         <div class="sp-history-empty">No past submissions yet · your first will show here after you submit.</div>
+      </div>
+
+      <!-- Per-file rates reference · quick lookup, collapsed by default -->
+      <div class="sp-rates" style="margin-top:24px">
+        <div class="sp-rates-head" onclick="toggleSpRates()">
+          <h3>How am I paid? · per-file rates</h3>
+          <span id="sp-rates-arrow">↓ show</span>
+        </div>
+        <div class="sp-rates-body" id="sp-rates-body">
+          <div class="sp-rate-row"><span>Transaction · One Side</span><div><span class="sp-rate-pct">60% of $399</span><span class="sp-rate-amt">$239</span></div></div>
+          <div class="sp-rate-row"><span>Transaction · Both Sides</span><div><span class="sp-rate-pct">60% of $599</span><span class="sp-rate-amt">$359</span></div></div>
+          <div class="sp-rate-row"><span>Offer Prep · Basic</span><div><span class="sp-rate-pct">60% of $69</span><span class="sp-rate-amt">$41</span></div></div>
+          <div class="sp-rate-row"><span>Offer Prep · Complete</span><div><span class="sp-rate-pct">60% of $149</span><span class="sp-rate-amt">$89</span></div></div>
+          <div class="sp-rate-row"><span>Listing Docs Only</span><div><span class="sp-rate-pct">60% of $99</span><span class="sp-rate-amt">$59</span></div></div>
+          <div class="sp-rate-row"><span>MLS Setup Only</span><div><span class="sp-rate-pct">60% of $149</span><span class="sp-rate-amt">$89</span></div></div>
+          <div class="sp-rate-row"><span>Listing Coordinator (Full)</span><div><span class="sp-rate-pct">60% of $199</span><span class="sp-rate-amt">$119</span></div></div>
+          <div class="sp-rate-row" style="border:none"><span>File Organization</span><div><span class="sp-rate-pct">60% of $99</span><span class="sp-rate-amt">$59</span></div></div>
+        </div>
       </div>
 
     </div>
@@ -1077,6 +1108,34 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
   }
 
   // ===== Submit Pay panel · checkbox totals + submit + history =====
+  // Pay cycle: Friday → Thursday. Deadline: Thursday 11:59pm. Payout: Friday.
+  function spPayCycle(){
+    const now = new Date();
+    const dow = now.getDay(); // 0=Sun ... 4=Thu, 5=Fri, 6=Sat
+    let daysToFri = (5 - dow + 7) % 7;
+    if (daysToFri === 0 && now.getHours() >= 8) daysToFri = 7; // If it's Friday 8am+, next Friday
+    const payday = new Date(now); payday.setDate(now.getDate() + daysToFri);
+    const deadline = new Date(payday); deadline.setDate(payday.getDate() - 1); deadline.setHours(23, 59, 0, 0);
+    const beforeDeadline = now <= deadline;
+    return {
+      payday: payday,
+      deadline: deadline,
+      beforeDeadline: beforeDeadline,
+      paydayStr: payday.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+      deadlineStr: deadline.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+    };
+  }
+  function spUpdateDeadlineMessaging(){
+    const c = spPayCycle();
+    const labelEl = document.querySelector('.sp-anchor-label');
+    if (!labelEl) return;
+    if (c.beforeDeadline) {
+      labelEl.innerHTML = 'Submit by <strong>' + c.deadlineStr + ' 11:59pm</strong> · paid <strong>' + c.paydayStr + '</strong>';
+    } else {
+      labelEl.innerHTML = '<span style="color:#a32d2d">Past Thursday deadline</span> · next payout <strong>' + c.paydayStr + '</strong>';
+    }
+  }
+
   function spRecalc(){
     const checks = document.querySelectorAll('#sp-eligible .sp-check');
     let total = 0, count = 0;
@@ -1095,6 +1154,14 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
   window.toggleSubmitHistory = function(){
     const h = document.getElementById('sp-history');
     if(h) h.style.display = h.style.display === 'none' ? 'block' : 'none';
+  };
+
+  window.toggleSpRates = function(){
+    const b = document.getElementById('sp-rates-body');
+    const a = document.getElementById('sp-rates-arrow');
+    if(!b) return;
+    const open = b.classList.toggle('open');
+    if(a) a.textContent = open ? '↑ hide' : '↓ show';
   };
 
   // Generate local invoice number (year-sequence). Real numbering by Supabase function on insert.
@@ -1151,7 +1218,11 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
         });
       } catch(e){ /* silent · localStorage already saved */ }
     })();
-    alert('Submitted! Invoice #' + invoice + ' · $' + totalPay.toLocaleString() + ' sent to Marlenyi for review.');
+    const c = spPayCycle();
+    const msg = c.beforeDeadline
+      ? 'Submitted! Invoice #' + invoice + ' · $' + totalPay.toLocaleString() + '\n\nMarlenyi will review and pay on ' + c.paydayStr + '.'
+      : 'Submitted! Invoice #' + invoice + ' · $' + totalPay.toLocaleString() + '\n\nThis week\'s Thursday deadline already passed · this submission will be paid on ' + c.paydayStr + '.';
+    alert(msg);
     renderSpHistory();
   };
 
@@ -1179,9 +1250,9 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { wireSpChecks(); renderSpHistory(); });
+    document.addEventListener('DOMContentLoaded', () => { wireSpChecks(); renderSpHistory(); spUpdateDeadlineMessaging(); });
   } else {
-    wireSpChecks(); renderSpHistory();
+    wireSpChecks(); renderSpHistory(); spUpdateDeadlineMessaging();
   }
 
   // Nav panel switcher
