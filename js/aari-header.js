@@ -1,77 +1,47 @@
-/* Aari Transactions · Shared interior-page header (May 2026)
- * Variant 1: pure cream/black/white. Zero gold. Drop-in component.
+/* Aari Transactions · Slim interior-page header (May 2026 · Option G + D)
+ * Brand chrome removed. Left: "← Back to website" sentence-case soft gray.
+ * Right: 36px avatar circle with dropdown (name/role · view-as · settings · sign out).
+ * Banner (aari-banner.js) owns all in-app navigation and CTAs.
  *
  * Usage in each interior page:
- *   <div id="aari-header" data-aari-view="VIEW_ID" data-aari-show-submit="yes|no"></div>
+ *   <div id="aari-header"></div>
  *   <script src="/js/aari-header.js" defer></script>
  *
- * VIEW_ID is one of: portal | broker-cockpit | client-tracker | eileen
+ * After auth resolves the profile:
+ *   window.AariHeader.setProfile(profile)
  *
- * After the page's auth flow resolves the profile, call:
- *   window.AariHeader.setProfile(profile)   // sets welcome name, avatar initials, role, filters nav
- *
- * Submit button (when data-aari-show-submit="yes") dispatches a custom event:
- *   document.addEventListener('aari:submit-file', () => { ... })
- *
- * Each page can host its own submit-file handler.
+ * data-aari-view and data-aari-show-submit attributes from old version are ignored
+ * (harmless if left in place · banner owns nav state now).
  */
-
 (function () {
   'use strict';
-
   var ROOT_ID = 'aari-header';
 
-  // ── Nav model ─────────────────────────────────────────────────────────
-  // Each entry: { id, label, href, roles[] }
-  // roles[] is a whitelist. If omitted, all roles see it.
-  // Three roles only: broker, tc, agent. No person-named pseudo-roles.
-  var NAV = [
-    { id: 'briefing',        label: "Start my day",  href: '/briefing.html',       roles: ['broker', 'tc', 'agent'], chip: 'ALL' },
-    { id: 'broker-cockpit',  label: "Run the team",  href: '/broker-cockpit.html', roles: ['broker'],                chip: 'BROKER' },
-    { id: 'client-crm',      label: "Track clients", href: '/aari-crm',            roles: ['broker', 'tc'],          chip: 'BROKER · TC' },
-    { id: 'tc-cockpit',      label: "Work the files",href: '/tc-cockpit.html',     roles: ['broker', 'tc'],          chip: 'TC' },
-    { id: 'portal',          label: "Submit a file", href: '/portal',              roles: ['broker', 'tc', 'agent'], chip: 'AGENT' }
-  ];
-
-  // ── CSS (injected once) ───────────────────────────────────────────────
   var CSS = [
-    '.aari-hdr{background:#fff;border-bottom:1px solid #e8e8e6;padding:14px 20px;display:flex;align-items:center;gap:14px;font-family:"Inter",-apple-system,BlinkMacSystemFont,sans-serif;position:relative;z-index:50}',
-    '.aari-hdr-brand{display:inline-flex;align-items:center;gap:12px;text-decoration:none;color:#0f0f0f}',
-    '.aari-hdr-mark{font-family:"Cormorant Garamond",Georgia,serif;font-weight:600;font-size:14px;color:#0f0f0f;padding:4px 10px;border:1.5px solid #0f0f0f;border-radius:5px;letter-spacing:2px;line-height:1}',
-    '.aari-hdr-name{display:flex;flex-direction:column;gap:4px;line-height:1}',
-    '.aari-hdr-page{font-family:"Cormorant Garamond",Georgia,serif;font-weight:500;font-size:18px;color:#0f0f0f;line-height:1;letter-spacing:-.3px}',
-    '.aari-hdr-sub{font-family:"Inter",sans-serif;font-weight:600;font-size:10px;color:#0f0f0f;opacity:.55;text-transform:uppercase;letter-spacing:1.3px;line-height:1}',
-    '.aari-hdr-spacer{flex:1;min-width:0}',
-    '.aari-hdr-switch{background:#fff;color:#0f0f0f;border:1px solid #0f0f0f;padding:7px 14px;border-radius:6px;font-size:11px;font-weight:600;letter-spacing:.3px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-family:inherit;line-height:1;white-space:nowrap;transition:all .15s}',
-    '.aari-hdr-switch:hover{background:#0f0f0f;color:#fff}',
-    '.aari-hdr-switch .caret{font-size:10px;line-height:1}',
-    '.aari-hdr-submit{background:#0f0f0f;color:#fff;border:none;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.3px;padding:9px 16px;cursor:pointer;font-family:inherit;white-space:nowrap;transition:opacity .15s}',
-    '.aari-hdr-submit:hover{opacity:.85}',
-    '.aari-hdr-avatar{background:#fff;color:#0f0f0f;border:1px solid #e8e8e6;border-radius:999px;padding:4px 4px 4px 10px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;font-size:11px;font-weight:500;font-family:inherit;line-height:1;transition:border-color .15s}',
-    '.aari-hdr-avatar:hover{border-color:#0f0f0f}',
-    '.aari-hdr-avatar:hover #aari-hdr-firstname{text-decoration:underline;text-underline-offset:3px}',
-    '.aari-hdr-avatar:focus-visible{outline:2px solid #0f0f0f;outline-offset:2px}',
-    '#aari-hdr-firstname{font-weight:600;letter-spacing:0.2px}',
-    '.aari-hdr-avatar .av{background:#0f0f0f;color:#fff;width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;overflow:hidden}',
-    '.aari-hdr-avatar .av img{width:100%;height:100%;object-fit:cover}',
-    '.aari-hdr-menu{position:absolute;top:calc(100% + 6px);background:#fff;border:1px solid #e8e8e6;border-radius:8px;padding:8px;width:240px;box-shadow:0 4px 16px rgba(0,0,0,.10);display:none;z-index:60}',
+    '.aari-hdr{background:#fff;border-bottom:1px solid #e8e8e6;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;font-family:"Inter",-apple-system,BlinkMacSystemFont,sans-serif;position:relative;z-index:50}',
+    '.aari-hdr-back{font-family:"Inter",-apple-system,sans-serif;font-size:12px;font-weight:400;color:#6b6760;text-decoration:none;display:inline-flex;align-items:center;gap:6px;line-height:1;transition:color .15s}',
+    '.aari-hdr-back:hover{color:#0f0f0f;text-decoration:underline;text-underline-offset:3px}',
+    '.aari-hdr-back .arrow{font-size:13px;line-height:1}',
+    '.aari-hdr-avatar{background:#0f0f0f;color:#fbf9f4;border:1px solid #0f0f0f;width:36px;height:36px;border-radius:50%;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-family:inherit;font-size:13px;font-weight:700;letter-spacing:.5px;line-height:1;transition:transform .15s,box-shadow .15s;overflow:hidden;padding:0}',
+    '.aari-hdr-avatar:hover{transform:scale(1.05);box-shadow:0 2px 8px rgba(0,0,0,.15)}',
+    '.aari-hdr-avatar:focus-visible{outline:2px solid #0f0f0f;outline-offset:3px}',
+    '.aari-hdr-avatar img{width:100%;height:100%;object-fit:cover}',
+    '.aari-hdr-menu{position:absolute;top:calc(100% + 8px);right:20px;background:#fff;border:1px solid #e8e8e6;border-radius:10px;padding:6px;width:240px;box-shadow:0 8px 24px rgba(0,0,0,.12);display:none;z-index:60}',
     '.aari-hdr-menu.open{display:block}',
-    '.aari-hdr-menu .hdr-label{padding:8px 12px;font-size:10px;color:#6b6760;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;border-bottom:1px solid #e8e8e6;margin-bottom:4px}',
-    '.aari-hdr-menu a{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;font-size:13px;color:#0f0f0f;text-decoration:none;border-radius:5px;cursor:pointer;font-weight:500;line-height:1.3}',
+    '.aari-hdr-menu .who{padding:12px;border-bottom:1px solid #e8e8e6;margin-bottom:6px}',
+    '.aari-hdr-menu .who-name{font-family:"Cormorant Garamond",Georgia,serif;font-weight:600;font-size:16px;color:#0f0f0f;line-height:1.2;letter-spacing:-.2px}',
+    '.aari-hdr-menu .who-role{font-family:"Inter",sans-serif;font-weight:600;font-size:10px;color:#6b6760;text-transform:uppercase;letter-spacing:1.3px;margin-top:4px}',
+    '.aari-hdr-menu .view-as{padding:10px 12px 12px;border-bottom:1px solid #e8e8e6;margin-bottom:6px}',
+    '.aari-hdr-menu .view-as-label{font-family:"Inter",sans-serif;font-weight:600;font-size:9px;color:#6b6760;text-transform:uppercase;letter-spacing:1.3px;margin-bottom:8px}',
+    '.aari-hdr-menu .view-as-pills{display:flex;gap:4px}',
+    '.aari-hdr-menu .view-as-pill{flex:1;padding:6px 8px;font-size:11px;font-weight:600;color:#0f0f0f;background:#f7f5ee;border:1px solid transparent;border-radius:5px;cursor:pointer;text-align:center;font-family:inherit;line-height:1.2;transition:background .12s}',
+    '.aari-hdr-menu .view-as-pill.active{background:#0f0f0f;color:#fbf9f4;border-color:#0f0f0f}',
+    '.aari-hdr-menu .view-as-pill:hover:not(.active){background:#efeadf}',
+    '.aari-hdr-menu a{display:flex;align-items:center;gap:10px;padding:9px 12px;font-size:13px;color:#0f0f0f;text-decoration:none;border-radius:6px;cursor:pointer;font-weight:500;line-height:1.3}',
     '.aari-hdr-menu a:hover{background:#f7f5ee}',
-    '.aari-hdr-menu a.active{background:#faf6ec;font-weight:600}',
-    '.aari-hdr-menu .nav-chip{font-family:"Inter",sans-serif;font-size:9px;font-weight:600;letter-spacing:.6px;padding:2px 6px;background:#f0e6d2;color:#6b4a18;border-radius:3px;white-space:nowrap;line-height:1.4}',
-    '.aari-hdr-menu a.active .nav-chip{background:#0f0f0f;color:#fff}',
-    '.aari-hdr-menu .menu-divider{border-top:1px solid #e8e8e6;margin:4px 0 0;padding-top:4px}',
-    '.aari-hdr-menu .menu-meta{color:#6b6760;font-weight:500}',
-    '#aari-switch-menu{left:auto;right:auto}',
     '@media(max-width:640px){',
-    '  .aari-hdr{padding:10px 14px;gap:8px;flex-wrap:wrap}',
-    '  .aari-hdr-name small{display:none}',
-    '  .aari-hdr-spacer{flex-basis:100%;height:0}',
-    '  .aari-hdr-submit{padding:8px 12px;font-size:10px}',
-    '  .aari-hdr-avatar span:not(.av){display:none}',
-    '  .aari-hdr-menu{width:calc(100vw - 28px);right:14px;left:14px;width:auto}',
+    '  .aari-hdr{padding:10px 14px}',
+    '  .aari-hdr-menu{right:14px;left:14px;width:auto}',
     '}'
   ].join('');
 
@@ -83,103 +53,89 @@
     document.head.appendChild(s);
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────
-  function initialsFrom(profile) {
-    if (!profile) return '–';
-    var a = (profile.first_name || '').trim();
-    var b = (profile.last_name || '').trim();
+  function initialsFrom(p) {
+    if (!p) return '–';
+    var a = (p.first_name || '').trim();
+    var b = (p.last_name || '').trim();
     if (a && b) return (a[0] + b[0]).toUpperCase();
     if (a) return a[0].toUpperCase();
-    if (profile.email) return profile.email[0].toUpperCase();
+    if (p.email) return p.email[0].toUpperCase();
     return '–';
   }
 
-  function effectiveRole(profile) {
-    if (!profile) return 'agent';
-    if (profile.role === 'broker') return 'broker';
-    if (profile.role === 'tc') return 'tc';
+  function effectiveRole(p) {
+    if (!p) return 'agent';
+    if (p.role === 'broker') return 'broker';
+    if (p.role === 'tc') return 'tc';
     return 'agent';
   }
 
-  function pageLabelFromView(view) {
-    var map = {
-      'portal': 'Agent Portal',
-      'broker-cockpit': 'Broker Cockpit',
-      'client-crm': 'Client CRM',
-      'tc-cockpit': 'TC Cockpit',
-      'briefing': 'Morning Briefing'
-    };
-    return map[view] || 'Aari Transactions';
-  }
-
-  function pageSubFromView(view) {
-    var map = {
-      'portal': 'Agent dashboard',
-      'broker-cockpit': 'Broker view',
-      'client-crm': 'Client relationships',
-      'tc-cockpit': 'TC workspace',
-      'briefing': 'Start your day'
-    };
-    return map[view] || '';
-  }
-
-  // ── Render ────────────────────────────────────────────────────────────
-  var root, currentView, showSubmit;
+  var root, currentProfile = null;
 
   function render() {
     if (!root) return;
-    var pageLabel = pageLabelFromView(currentView);
-    var pageSub = pageSubFromView(currentView);
     root.innerHTML = [
       '<div class="aari-hdr">',
-      '  <a href="/" class="aari-hdr-brand" aria-label="Aari Transactions home">',
-      '    <span class="aari-hdr-mark">AARI</span>',
-      '    <span class="aari-hdr-name">',
-      '      <span class="aari-hdr-page">' + escapeHtml(pageLabel) + '</span>',
-      '      <span class="aari-hdr-sub" id="aari-hdr-role">' + escapeHtml(pageSub) + '</span>',
-      '    </span>',
+      '  <a href="/" class="aari-hdr-back" aria-label="Back to website">',
+      '    <span class="arrow" aria-hidden="true">&larr;</span>',
+      '    <span>Back to website</span>',
       '  </a>',
-      '  <div class="aari-hdr-spacer"></div>',
       '  <div style="position:relative">',
-      '    <button type="button" class="aari-hdr-switch" id="aari-switch-btn" aria-haspopup="true" aria-expanded="false">Where to? <span class="caret">▾</span></button>',
-      '    <div class="aari-hdr-menu" id="aari-switch-menu" role="menu" aria-label="Where to?">',
-      '      <div class="hdr-label">Where to?</div>',
-      '      <div id="aari-switch-items"></div>',
-      '      <div class="menu-divider">',
-      '        <a href="/index.html" role="menuitem" class="menu-meta">← Back to website</a>',
-      '        <a href="#" id="aari-signout" role="menuitem" class="menu-meta">Sign out</a>',
-      '      </div>',
-      '    </div>',
+      '    <button type="button" class="aari-hdr-avatar" id="aari-avatar-btn" aria-haspopup="true" aria-expanded="false" aria-label="Open account menu" title="Account">',
+      '      <span id="aari-hdr-initials">&ndash;</span>',
+      '    </button>',
       '  </div>',
-      (showSubmit ? '  <button type="button" class="aari-hdr-submit" id="aari-submit-cta">+ Submit New File</button>' : ''),
-      '  <button type="button" class="aari-hdr-avatar" id="aari-avatar-btn" aria-label="Edit your profile" title="Edit your profile">',
-      '    <span id="aari-hdr-firstname">–</span>',
-      '    <span class="av" id="aari-hdr-avatar"><span id="aari-hdr-initials">–</span></span>',
-      '  </button>',
+      '  <div class="aari-hdr-menu" id="aari-hdr-menu" role="menu" aria-label="Account menu"></div>',
       '</div>'
     ].join('\n');
-
-    wireDropdown();
-    wireSubmit();
+    renderMenu();
     wireAvatar();
+  }
+
+  function renderMenu() {
+    var menu = document.getElementById('aari-hdr-menu');
+    if (!menu) return;
+    var p = currentProfile || {};
+    var role = effectiveRole(p);
+    var roleWord = { broker: 'Broker', tc: 'Transaction Coordinator', agent: 'Agent' }[role] || 'Agent';
+    var fullName = ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || (p.email || 'Account');
+    var viewAs = '';
+    try { viewAs = sessionStorage.getItem('aari-view-as') || ''; } catch (_) {}
+    var current = viewAs || role;
+
+    var parts = [
+      '<div class="who">',
+      '  <div class="who-name">' + esc(fullName) + '</div>',
+      '  <div class="who-role">' + esc(roleWord) + '</div>',
+      '</div>'
+    ];
+
+    if (role === 'broker') {
+      parts.push(
+        '<div class="view-as">',
+        '  <div class="view-as-label">View as</div>',
+        '  <div class="view-as-pills">',
+        '    <button type="button" class="view-as-pill ' + (current === 'broker' ? 'active' : '') + '" data-view="broker">Broker</button>',
+        '    <button type="button" class="view-as-pill ' + (current === 'tc' ? 'active' : '') + '" data-view="tc">TC</button>',
+        '    <button type="button" class="view-as-pill ' + (current === 'agent' ? 'active' : '') + '" data-view="agent">Agent</button>',
+        '  </div>',
+        '</div>'
+      );
+    }
+
+    parts.push(
+      '<a href="/portal.html#profile" role="menuitem">Settings</a>',
+      '<a href="#" id="aari-signout" role="menuitem">Sign out</a>'
+    );
+
+    menu.innerHTML = parts.join('\n');
+    wireViewAs();
     wireSignOut();
   }
 
-  function renderNavItems(role) {
-    var box = document.getElementById('aari-switch-items');
-    if (!box) return;
-    // Show all nav items · destination pages enforce auth. The role chip on
-    // each item still communicates who the view is intended for.
-    box.innerHTML = NAV.map(function (n) {
-      var active = n.id === currentView ? ' active' : '';
-      var chip = n.chip ? '<span class="nav-chip">' + escapeHtml(n.chip) + '</span>' : '';
-      return '<a href="' + n.href + '" role="menuitem" class="' + active.trim() + '"><span>' + escapeHtml(n.label) + '</span>' + chip + '</a>';
-    }).join('');
-  }
-
-  function wireDropdown() {
-    var btn = document.getElementById('aari-switch-btn');
-    var menu = document.getElementById('aari-switch-menu');
+  function wireAvatar() {
+    var btn = document.getElementById('aari-avatar-btn');
+    var menu = document.getElementById('aari-hdr-menu');
     if (!btn || !menu) return;
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -200,19 +156,20 @@
     });
   }
 
-  function wireSubmit() {
-    var btn = document.getElementById('aari-submit-cta');
-    if (!btn) return;
-    btn.addEventListener('click', function () {
-      document.dispatchEvent(new CustomEvent('aari:submit-file'));
-    });
-  }
-
-  function wireAvatar() {
-    var btn = document.getElementById('aari-avatar-btn');
-    if (!btn) return;
-    btn.addEventListener('click', function () {
-      document.dispatchEvent(new CustomEvent('aari:avatar-click'));
+  function wireViewAs() {
+    var pills = document.querySelectorAll('.aari-hdr-menu .view-as-pill');
+    pills.forEach(function (pill) {
+      pill.addEventListener('click', function () {
+        var v = pill.getAttribute('data-view');
+        try {
+          if (v && v !== effectiveRole(currentProfile)) {
+            sessionStorage.setItem('aari-view-as', v);
+          } else {
+            sessionStorage.removeItem('aari-view-as');
+          }
+        } catch (_) {}
+        location.reload();
+      });
     });
   }
 
@@ -235,43 +192,23 @@
 
   function setProfile(profile) {
     if (!profile) return;
-    var role = effectiveRole(profile);
-    var roleWord = {
-      'broker': 'Broker',
-      'tc-eileen': 'TC',
-      'tc': 'TC',
-      'agent': 'Agent'
-    }[role] || '';
-    var firstName = profile.first_name || 'Account';
-    // Page sub-label stays static per view (set in render()); we don't override it on profile load.
-    var firstNameEl = document.getElementById('aari-hdr-firstname');
-    var initEl = document.getElementById('aari-hdr-initials');
-    var avEl = document.getElementById('aari-hdr-avatar');
-    // Avatar pill carries "Name · Role" — this is where the viewer's identity lives.
-    if (firstNameEl) firstNameEl.textContent = roleWord ? (firstName + ' · ' + roleWord) : firstName;
-    // Avatar render · handles 4 cases: no headshot → initials, headshot loads → image,
-    // headshot fails → initials fallback (via onerror), headshot removed → initials restored
-    if (avEl) {
-      var initials = initialsFrom(profile);
-      var fullName = ((profile.first_name || '') + ' ' + (profile.last_name || '')).trim() || 'Agent';
-      // Start by guaranteeing the initials span is present
-      avEl.innerHTML = '<span id="aari-hdr-initials">' + escapeHtml(initials) + '</span>';
-      if (profile.headshot_url) {
-        var img = document.createElement('img');
-        img.alt = fullName;
-        img.onerror = function () {
-          // Image failed to load → restore initials
-          avEl.innerHTML = '<span id="aari-hdr-initials">' + escapeHtml(initials) + '</span>';
-        };
-        img.src = profile.headshot_url;
-        avEl.innerHTML = '';
-        avEl.appendChild(img);
-      }
+    currentProfile = profile;
+    var btn = document.getElementById('aari-avatar-btn');
+    if (!btn) return;
+    var initials = initialsFrom(profile);
+    btn.innerHTML = '<span id="aari-hdr-initials">' + esc(initials) + '</span>';
+    if (profile.headshot_url) {
+      var img = document.createElement('img');
+      img.alt = ((profile.first_name || '') + ' ' + (profile.last_name || '')).trim() || 'Account';
+      img.onerror = function () { btn.innerHTML = '<span id="aari-hdr-initials">' + esc(initials) + '</span>'; };
+      img.src = profile.headshot_url;
+      btn.innerHTML = '';
+      btn.appendChild(img);
     }
-    renderNavItems(role);
+    renderMenu();
   }
 
-  function escapeHtml(s) {
+  function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
     });
@@ -280,16 +217,9 @@
   function boot() {
     root = document.getElementById(ROOT_ID);
     if (!root) return;
-    currentView = root.getAttribute('data-aari-view') || '';
-    showSubmit = root.getAttribute('data-aari-show-submit') === 'yes';
     injectCss();
     render();
-    // Render nav with default agent role until setProfile() arrives.
-    renderNavItems('agent');
-    window.AariHeader = {
-      setProfile: setProfile,
-      effectiveRole: effectiveRole
-    };
+    window.AariHeader = { setProfile: setProfile, effectiveRole: effectiveRole };
   }
 
   if (document.readyState === 'loading') {
