@@ -80,8 +80,8 @@
       </a>`;
     }).join('');
 
-    // Pills only render for broker · TC and agent don't get the "view as" toggle.
-    const showPills = role === 'broker';
+    // View-as pills moved to slim aari-header chrome (May 2026). Banner no longer renders them.
+    const showPills = false;
     const pillsHtml = showPills ? `
       <div class="awb-pills-wrap">
         <span class="awb-pills-label">View as</span>
