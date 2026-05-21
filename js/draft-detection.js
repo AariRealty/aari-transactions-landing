@@ -197,7 +197,6 @@
       lc: 'Listing Coordinator', op_basic: 'Offer Prep · Basic',
       op_complete: 'Offer Prep · Complete', listing_docs: 'Listing Docs',
       mls_setup: 'MLS Setup', file_org: 'File Organization',
-      compliance: 'Compliance Review',
     };
     return map[t] || (t || 'file');
   }
