@@ -140,6 +140,26 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
   .col-stats{grid-template-columns:repeat(2,1fr)}
   .col-name{font-size:20px}
 }
+
+/* TC FILE WORKLOAD · per-TC active file counts (May 2026) */
+.tcwl-section{margin-bottom:30px}
+.tcwl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px}
+.tcwl-card{background:var(--soft-bg);border:1px solid var(--line);border-radius:var(--r-md);padding:16px 18px}
+.tcwl-card-head{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.tcwl-avatar{width:38px;height:38px;border-radius:50%;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-family:var(--sans);font-size:13px;font-weight:700;flex-shrink:0}
+.tcwl-name{font-family:var(--serif);font-size:18px;font-weight:600;color:var(--ink);line-height:1.1}
+.tcwl-role{font-family:var(--sans);font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--muted-2);font-weight:600;margin-top:3px}
+.tcwl-link{margin-left:auto;font-family:var(--sans);font-size:10px;letter-spacing:0.06em;text-transform:uppercase;color:var(--gold);text-decoration:none;font-weight:600;padding:5px 10px;border:1px solid var(--gold);border-radius:var(--r-sm);background:#fff;transition:all 0.18s ease;white-space:nowrap}
+.tcwl-link:hover{background:var(--gold);color:#fff}
+.tcwl-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.tcwl-metric{background:#fff;border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 6px;text-align:center}
+.tcwl-metric.amber{border-color:#ecdfb4}
+.tcwl-metric.red{border-color:#f0c9c9}
+.tcwl-metric-val{font-family:var(--serif);font-size:22px;font-weight:600;color:var(--ink);line-height:1}
+.tcwl-metric.amber .tcwl-metric-val{color:var(--amber)}
+.tcwl-metric.red .tcwl-metric-val{color:var(--red)}
+.tcwl-metric-lbl{font-family:var(--sans);font-size:9px;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);margin-top:4px;font-weight:600}
+@media(max-width:760px){.tcwl-grid{grid-template-columns:1fr}.tcwl-metrics{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
@@ -168,6 +188,15 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
   </div>
 
   <div class="content">
+
+    <!-- NEW · Active files by TC (May 2026) -->
+    <div class="tcwl-section">
+      <div class="section-head">
+        <h3>Active files by TC</h3>
+        <div class="meta" id="tcwl-meta">Loading…</div>
+      </div>
+      <div class="tcwl-grid" id="tcwl-grid"></div>
+    </div>
 
     <!-- Team-level aggregates -->
     <div class="team-strip" id="team-strip"></div>
@@ -265,19 +294,21 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
   async function loadCockpit(brokerProfile){
     const client = await window.AariAuth.ensureClient();
 
-    // Pull: all bd_contacts, all bd_daily_logs, all staff agents (tc + broker)
-    const [contactsR, logsR, agentsR] = await Promise.all([
+    // Pull: all bd_contacts, all bd_daily_logs, all staff agents (tc + broker), all active files
+    const [contactsR, logsR, agentsR, filesR] = await Promise.all([
       client.from('bd_contacts').select('*').order('last_touch_at',{ascending:false}),
       client.from('bd_daily_logs').select('*').order('log_date',{ascending:false}),
       client.from('agents').select('id, first_name, last_name, email, role').in('role',['tc','broker']),
+      client.from('files').select('id, assigned_tc_id, status, tc_accepted_at, closing_date'),
     ]);
 
-    if (contactsR.error || logsR.error || agentsR.error) {
-      console.error('[broker-cockpit] load error', contactsR.error || logsR.error || agentsR.error);
+    if (contactsR.error || logsR.error || agentsR.error || filesR.error) {
+      console.error('[broker-cockpit] load error', contactsR.error || logsR.error || agentsR.error || filesR.error);
     }
     const contacts = contactsR.data || [];
     const logs = logsR.data || [];
     const agents = agentsR.data || [];
+    const files = filesR.data || [];
 
     // Always show columns for: Eileen Hernandez, Marlenyi Paredes ("Mile"), then any other staff with bd activity
     const KNOWN_TEAM = ['eileen','marlenyi'];
@@ -292,6 +323,9 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
       if (ar !== br) return ar - br;
       return (a.first_name||'').localeCompare(b.first_name||'');
     });
+
+    // ---- TC FILE WORKLOAD (NEW · May 2026) ----
+    renderTcWorkload(team, files);
 
     // ---- TEAM AGGREGATE STRIP ----
     const today = new Date(); today.setHours(0,0,0,0);
