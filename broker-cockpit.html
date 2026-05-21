@@ -159,7 +159,17 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 .tcwl-metric.amber .tcwl-metric-val{color:var(--amber)}
 .tcwl-metric.red .tcwl-metric-val{color:var(--red)}
 .tcwl-metric-lbl{font-family:var(--sans);font-size:9px;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);margin-top:4px;font-weight:600}
-@media(max-width:760px){.tcwl-grid{grid-template-columns:1fr}.tcwl-metrics{grid-template-columns:repeat(2,1fr)}}
+/* Segmented control · TC view toggle */
+.tcwl-seg{display:inline-flex;background:var(--soft-bg);border:1px solid var(--line);border-radius:999px;padding:3px;gap:0;margin-bottom:14px}
+.tcwl-seg-btn{font-family:var(--sans);font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);background:transparent;border:0;border-radius:999px;padding:8px 18px;cursor:pointer;transition:all 0.18s ease;display:inline-flex;align-items:center;gap:7px;line-height:1}
+.tcwl-seg-btn:hover{color:var(--ink)}
+.tcwl-seg-btn.active{background:var(--ink);color:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.12)}
+.tcwl-seg-avatar{width:18px;height:18px;border-radius:50%;background:rgba(255,255,255,0.18);color:inherit;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;letter-spacing:0}
+.tcwl-seg-btn:not(.active) .tcwl-seg-avatar{background:var(--ink);color:#fff}
+.tcwl-single{display:block}
+.tcwl-single .tcwl-card{display:none}
+.tcwl-single .tcwl-card.active{display:block}
+@media(max-width:760px){.tcwl-grid{grid-template-columns:1fr}.tcwl-metrics{grid-template-columns:repeat(2,1fr)}.tcwl-seg{width:100%;justify-content:stretch}.tcwl-seg-btn{flex:1;justify-content:center}}
 </style>
 </head>
 <body>
@@ -195,7 +205,8 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
         <h3>Active files by TC</h3>
         <div class="meta" id="tcwl-meta">Loading…</div>
       </div>
-      <div class="tcwl-grid" id="tcwl-grid"></div>
+      <div class="tcwl-seg" id="tcwl-seg"></div>
+      <div class="tcwl-single" id="tcwl-grid"></div>
     </div>
 
     <!-- Team-level aggregates -->
@@ -364,7 +375,22 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     const today = new Date();
     const todayStr = today.toISOString().slice(0,10);
 
-    const html = team.map(person => {
+    // Sort: Eileen first (default active), then everyone else
+    const sorted = team.slice().sort((a,b) => {
+      const aE = (a.first_name||'').toLowerCase() === 'eileen' ? 0 : 1;
+      const bE = (b.first_name||'').toLowerCase() === 'eileen' ? 0 : 1;
+      return aE - bE;
+    });
+
+    const segHtml = sorted.map((person, i) => {
+      const initials = ((person.first_name||'').charAt(0) + (person.last_name||'').charAt(0)).toUpperCase() || '?';
+      const firstName = (person.first_name||'').trim() || 'Unnamed';
+      return `<button class="tcwl-seg-btn ${i === 0 ? 'active' : ''}" data-tc="${esc(person.id)}">
+        <span class="tcwl-seg-avatar">${esc(initials)}</span>${esc(firstName)}
+      </button>`;
+    }).join('');
+
+    const cardsHtml = sorted.map((person, i) => {
       const personFiles = files.filter(f => f.assigned_tc_id === person.id);
       const active = personFiles.filter(f => f.status !== 'closed' && f.status !== 'archived');
       const pending = active.filter(f => f.status === 'awaiting_tc_acceptance' || (f.assigned_tc_id && !f.tc_accepted_at));
@@ -378,7 +404,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
       const deepLink = firstLower === 'eileen' ? '/eileen.html' : '/tc-cockpit.html';
 
       return `
-        <div class="tcwl-card">
+        <div class="tcwl-card ${i === 0 ? 'active' : ''}" data-tc="${esc(person.id)}">
           <div class="tcwl-card-head">
             <div class="tcwl-avatar">${esc(initials)}</div>
             <div>
@@ -397,8 +423,20 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
       `;
     }).join('');
 
-    document.getElementById('tcwl-grid').innerHTML = html;
+    document.getElementById('tcwl-seg').innerHTML = segHtml;
+    document.getElementById('tcwl-grid').innerHTML = cardsHtml;
     document.getElementById('tcwl-meta').textContent = files.length + ' total files · ' + team.length + ' team member' + (team.length === 1 ? '' : 's');
+
+    // Wire segmented toggle
+    document.querySelectorAll('.tcwl-seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tcId = btn.getAttribute('data-tc');
+        document.querySelectorAll('.tcwl-seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+        document.querySelectorAll('.tcwl-single .tcwl-card').forEach(c => {
+          c.classList.toggle('active', c.getAttribute('data-tc') === tcId);
+        });
+      });
+    });
   }
 
   function renderPersonColumn(person, allContacts, allLogs){
