@@ -411,6 +411,15 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
 .sp-legacy-divider h3{font-family:var(--serif);font-size:16px;font-weight:600;color:var(--ink);font-style:italic;margin:0}
 .sp-legacy-divider p{font-size:11px;color:var(--muted-tc);margin-top:3px}
 
+/* Submit Pay toast · custom in-page notification (replaces browser alert) */
+.sp-toast{position:fixed;top:24px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;border-radius:12px;padding:20px 26px;box-shadow:0 10px 40px rgba(0,0,0,0.3);z-index:2000;min-width:320px;max-width:480px;animation:sp-toast-in 0.25s ease-out}
+.sp-toast-head{font-family:var(--serif);font-size:24px;font-weight:600;color:#fff;margin-bottom:6px;line-height:1.1;letter-spacing:-0.01em}
+.sp-toast-body{font-size:13px;color:#a8a49e;line-height:1.55;white-space:pre-line}
+.sp-toast-body strong{color:#fff}
+.sp-toast-close{position:absolute;top:10px;right:12px;background:transparent;border:0;color:#9a9a9a;font-size:20px;line-height:1;cursor:pointer;padding:4px 8px}
+.sp-toast-close:hover{color:#fff}
+@keyframes sp-toast-in{from{opacity:0;transform:translate(-50%,-20px)}to{opacity:1;transform:translate(-50%,0)}}
+
 /* ===== PIPELINE PANEL · 11-stage kanban (Editorial Lite · May 2026) ===== */
 /* Pipeline panel breaks out of the 900px flex wrapper to use full viewport */
 .panel#pipeline.active{width:100vw;position:relative;left:50%;transform:translateX(-50%)}
@@ -762,6 +771,13 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
   </div>
   </div>
   <div class="pipe-hint">Drag cards between stages · click any card for detail · checklist + notes save locally (real save when Supabase wires)</div>
+</div>
+
+<!-- ============== SUBMIT PAY TOAST ============== -->
+<div class="sp-toast" id="sp-toast" style="display:none">
+  <button class="sp-toast-close" onclick="document.getElementById('sp-toast').style.display='none'" aria-label="Close">&times;</button>
+  <div class="sp-toast-head" id="sp-toast-head">Sent!</div>
+  <div class="sp-toast-body" id="sp-toast-body"></div>
 </div>
 
 <!-- ============== PIPELINE CARD DETAIL MODAL ============== -->
@@ -1961,7 +1977,7 @@ window.__triggerEileenLoad = async function () {
   function localInvoiceNo(){const y=new Date().getFullYear();const s=parseInt(localStorage.getItem('aari-pay-seq:'+y)||'0',10)+1;localStorage.setItem('aari-pay-seq:'+y,String(s));return y+'-'+String(s).padStart(3,'0');}
   window.submitPayRequest=async function(){
     const checks=document.querySelectorAll('#sp-eligible .sp-check:checked');
-    if(!checks.length){alert('Select at least one file.');return;}
+    if(!checks.length){spToast('Hold on.','Select at least one file before submitting.');return;}
     const files=[];let tp=0,tr=0;
     checks.forEach(c=>{const p=parseFloat(c.getAttribute('data-pay'))||0,r=parseFloat(c.getAttribute('data-rev'))||0;
       files.push({address:c.getAttribute('data-addr'),service:c.getAttribute('data-svc'),client:c.getAttribute('data-client'),revenue:r,pay:p});tp+=p;tr+=r;});
@@ -1971,12 +1987,13 @@ window.__triggerEileenLoad = async function () {
     (async()=>{try{const tid=await pipeGetTcId();if(!tid)return;const c=await window.AariAuth.ensureClient();if(!c)return;
       await c.from('pay_requests').insert({invoice_no:inv,tc_id:tid,status:'pending',files:files,total_pay:tp,total_revenue:tr});}catch(e){}})();
     const c=spPayCycle();
-    const msg=c.beforeDeadline
-      ?'Sent. Invoice #'+inv+' · $'+tp.toLocaleString()+'.\n\nPaid '+c.paydayStr+'.'
-      :'Sent. Invoice #'+inv+' · $'+tp.toLocaleString()+'.\n\nThursday cutoff already passed — rides next Friday\'s payout ('+c.paydayStr+').';
-    alert(msg);
+    const body=c.beforeDeadline
+      ?'Invoice <strong>#'+inv+'</strong> · <strong>$'+tp.toLocaleString()+'</strong>\nPaid <strong>'+c.paydayStr+'</strong>'
+      :'Invoice <strong>#'+inv+'</strong> · <strong>$'+tp.toLocaleString()+'</strong>\nThursday cutoff already passed — rides next Friday\'s payout (<strong>'+c.paydayStr+'</strong>)';
+    spToast('Sent.',body);
     renderSpHistory();
   };
+  function spToast(h,b){const t=document.getElementById('sp-toast'),he=document.getElementById('sp-toast-head'),bo=document.getElementById('sp-toast-body');if(!t||!he||!bo)return;he.textContent=h;bo.innerHTML=b;t.style.display='block';clearTimeout(window._spToastTimer);window._spToastTimer=setTimeout(()=>{t.style.display='none';},4800);}
   function renderSpHistory(){
     const hist=JSON.parse(localStorage.getItem('aari-pay-history')||'[]');
     const yr=new Date().getFullYear();const paid=hist.filter(h=>h.status==='paid');const ytd=paid.reduce((s,h)=>s+(h.total_pay||0),0);
