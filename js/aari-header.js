@@ -21,7 +21,7 @@
   var ROOT_ID = 'aari-header';
 
   var CSS = [
-    '.aari-hdr{background:#fff;border-bottom:1px solid #e8e8e6;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;gap:14px;font-family:"Inter",-apple-system,BlinkMacSystemFont,sans-serif;position:relative;z-index:50}',
+    '.aari-hdr{background:#fff;border-bottom:1px solid #e8e8e6;padding:12px 20px;display:flex;align-items:center;justify-content:space-between;gap:14px;font-family:"Inter",-apple-system,BlinkMacSystemFont,sans-serif;position:sticky;top:0;z-index:100}',
     '.aari-hdr-back{font-family:"Inter",-apple-system,sans-serif;font-size:12px;font-weight:400;color:#6b6760;text-decoration:none;display:inline-flex;align-items:center;gap:6px;line-height:1;transition:color .15s;flex-shrink:0}',
     '.aari-hdr-back:hover{color:#0f0f0f;text-decoration:underline;text-underline-offset:3px}',
     '.aari-hdr-back .arrow{font-size:13px;line-height:1}',
