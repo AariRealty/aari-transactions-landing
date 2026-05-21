@@ -137,15 +137,10 @@
     if(existing) existing.remove();
     // Resolve role + render
     const { actual, viewing } = await resolveRole();
-    const url = window.location.pathname || '';
-    // Personal cockpit pages (May 2026): never mount the banner on these.
-    // The slim header at top already provides nav (Back to website + view-as + avatar).
-    // Banner only adds visual clutter on a TC's personal cockpit.
-    const PERSONAL_COCKPITS = ['/eileen', '/milennys'];
-    if (PERSONAL_COCKPITS.some(p => url.indexOf(p) >= 0)) return;
     // Self-reference check (May 2026): if the role's only visible card points to the current page,
     // the banner is dead weight (no nav value, just chrome). Skip mounting entirely.
     const visibleCards = CARDS.filter(c => !c.roles || c.roles.indexOf(viewing) >= 0);
+    const url = window.location.pathname || '';
     const isSelfReference = visibleCards.length === 1 &&
       visibleCards[0].match.some(m => url.indexOf(m) >= 0);
     if (isSelfReference) return;
