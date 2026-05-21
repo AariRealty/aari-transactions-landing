@@ -38,7 +38,7 @@
   // ----- CSS injected once -----
   const CSS = `
     :root{--awb-cream:#fbf9f4;--awb-ink:#0f0f0f;--awb-muted:#5f5e5a;--awb-line:rgba(15,15,15,0.12);--awb-line-soft:rgba(15,15,15,0.08)}
-    #aari-banner{background:var(--awb-cream);border-bottom:0.5px solid var(--awb-line);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Arial,sans-serif;position:sticky;top:60px;z-index:50}
+    #aari-banner{background:var(--awb-cream);border-bottom:0.5px solid var(--awb-line);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,Arial,sans-serif;position:relative;z-index:1}
     .awb-inner{max-width:1180px;margin:0 auto;padding:16px 24px 18px}
     .awb-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:12px;flex-wrap:wrap}
     .awb-q{font-family:Georgia,'Cormorant Garamond',serif;font-size:22px;font-weight:500;color:var(--awb-ink);letter-spacing:-0.4px;margin:0}
