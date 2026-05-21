@@ -17,13 +17,14 @@
 (function aariBanner(){
   'use strict';
 
-  // ----- Card destinations (placeholder · update after routing approval) -----
+  // ----- Card destinations (role-filtered · May 2026) -----
+  // Each role sees ONLY their own card(s). Brokers use View-as pills to switch into TC or Agent views.
   const CARDS = [
-    { id:'start',    label:'Start my day',   href:'/briefing.html',       icon:iconSun(),  match:['/briefing'] },
-    { id:'team',     label:'Run the team',   href:'/broker-cockpit.html', icon:iconUsers(),match:['/broker-cockpit','/tc-cockpit'] },
-    { id:'clients',  label:'Track clients',  href:'/aari-crm.html',       icon:iconBook(), match:['/aari-crm','/crm'] },
-    { id:'files',    label:'Work the files', href:'/pipeline.html',       icon:iconFolder(),match:['/pipeline'] },
-    { id:'submit',   label:'Submit a file',  href:'/#apply',              icon:iconUpload(),match:[], intake:true },
+    { id:'start',    label:'Start my day',   href:'/briefing.html',       icon:iconSun(),   match:['/briefing'],                       roles:['agent'] },
+    { id:'team',     label:'Run the team',   href:'/broker-cockpit.html', icon:iconUsers(), match:['/broker-cockpit','/tc-cockpit'],   roles:['broker'] },
+    { id:'clients',  label:'Track clients',  href:'/aari-crm.html',       icon:iconBook(),  match:['/aari-crm','/crm'],                roles:['tc'] },
+    { id:'files',    label:'Work the files', href:'/pipeline.html',       icon:iconFolder(),match:['/pipeline'],                       roles:['tc'] },
+    { id:'submit',   label:'Submit a file',  href:'/#apply',              icon:iconUpload(),match:[], intake:true,                     roles:['agent'] },
   ];
 
   // ----- Inline SVG icons (no external font dependency) -----
@@ -48,7 +49,7 @@
     .awb-pill{font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;padding:5px 11px;border:0.5px solid rgba(15,15,15,0.18);border-radius:999px;color:var(--awb-muted);background:#fff;cursor:pointer;font-family:inherit;transition:all 0.15s ease;-webkit-tap-highlight-color:transparent}
     .awb-pill:hover{border-color:var(--awb-ink);color:var(--awb-ink)}
     .awb-pill.active{background:var(--awb-ink);color:#fff;border-color:var(--awb-ink)}
-    .awb-cards{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+    .awb-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;max-width:1100px;margin:0 auto}
     .awb-card{background:#fff;border:1px solid var(--awb-line);border-radius:12px;padding:18px 10px 16px;display:flex;flex-direction:column;align-items:center;gap:8px;text-decoration:none;color:var(--awb-ink);transition:border-color 0.15s ease,transform 0.12s ease,background 0.15s ease;cursor:pointer;-webkit-tap-highlight-color:transparent}
     .awb-card:hover{border-color:var(--awb-ink);transform:translateY(-1px)}
     .awb-card.active{background:var(--awb-ink);color:#fff;border-color:var(--awb-ink)}
@@ -66,13 +67,13 @@
 
   // ----- Build banner HTML for a given role -----
   function buildHTML(role){
-    const cardsHtml = CARDS.map(c => {
+    // Role-filtered cards · only show cards whose roles array includes the current viewing role
+    const visibleCards = CARDS.filter(c => !c.roles || c.roles.indexOf(role) >= 0);
+    const cardsHtml = visibleCards.map(c => {
       const url = window.location.pathname || '';
       const isActive = c.match.some(m => url.indexOf(m) === 0 || url.indexOf(m) >= 0);
       const cls = ['awb-card'];
       if(isActive) cls.push('active');
-      // 'Run the team' is greyed for agent role
-      if(role === 'agent' && c.id === 'team') cls.push('muted');
       const intakeAttr = c.intake ? ' data-aw-intake="true"' : '';
       return `<a class="${cls.join(' ')}" href="${c.href}"${intakeAttr}>
         <span class="awb-card-ic">${c.icon}</span>
