@@ -81,22 +81,33 @@
     '.tct-form-actions button{font-size:11px;padding:7px 14px;border:1px solid #999;background:transparent;color:#555;border-radius:6px;cursor:pointer;font-family:inherit}',
     '.tct-form-actions button.primary{background:#0a0a0a;color:#fff;border-color:#0a0a0a}',
     '.tct-empty{padding:32px 16px;text-align:center;font-size:12px;color:#888;background:#fafaf7;border-radius:8px;border:1px dashed #d0d0d0}',
-    '.tct-row{padding:12px 14px;border:1px solid #eee;border-radius:8px;margin-bottom:8px;background:#fff}',
-    '.tct-row.editing{border-color:#bbb;background:#fafaf7}',
-    '.tct-row-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:4px}',
+    '.tct-row{padding:14px 16px;border:1px solid #efebe5;border-radius:10px;margin-bottom:8px;background:#fff;cursor:pointer;transition:background .12s ease,border-color .12s ease}',
+    '.tct-row:hover{background:#faf8f3;border-color:#e2dccd}',
+    '.tct-row-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}',
     '.tct-name{font-size:13px;font-weight:600;color:#0a0a0a}',
-    '.tct-meta{font-size:11px;color:#888;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:3px}',
+    '.tct-meta{font-size:11px;color:#9a958b;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:4px}',
     '.tct-stage-badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:11px;font-size:10px;font-weight:500;letter-spacing:.2px;white-space:nowrap}',
-    '.tct-row-actions{display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap}',
-    '.tct-row-actions select{font-size:11px;padding:4px 6px;border:1px solid #d0d0d0;border-radius:5px;font-family:inherit;background:#fff}',
-    '.tct-row-actions button{font-size:10px;padding:4px 8px;background:transparent;border:1px solid #d0d0d0;border-radius:5px;cursor:pointer;color:#666;font-family:inherit}',
-    '.tct-row-actions button:hover{background:#fafaf7}',
-    '.tct-row-actions button.danger{color:#A32D2D;border-color:#E8C8C8}',
-    '.tct-row-actions button.primary{background:#0a0a0a;color:#fff;border-color:#0a0a0a}',
-    '.tct-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;margin-top:8px}',
+    /* Modal */
+    '.tct-modal-overlay{display:none;position:fixed;inset:0;background:rgba(20,18,14,.45);z-index:250;align-items:flex-start;justify-content:center;padding:60px 16px;overflow-y:auto}',
+    '.tct-modal-overlay.open{display:flex}',
+    '.tct-modal{background:#fff;border-radius:14px;width:100%;max-width:540px;box-shadow:0 18px 60px rgba(0,0,0,.22);overflow:hidden;font-family:inherit}',
+    '.tct-modal-hdr{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid #f0ece4}',
+    '.tct-modal-title{font-family:"Cormorant Garamond",Georgia,serif;font-size:18px;font-weight:600;margin:0}',
+    '.tct-modal-x{background:transparent;border:none;font-size:20px;line-height:1;cursor:pointer;color:#9a958b;padding:0 4px}',
+    '.tct-modal-body{padding:18px 22px}',
+    '.tct-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px}',
     '.tct-edit-grid .full{grid-column:1/-1}',
-    '.tct-edit-grid label{display:block;font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:#888;font-weight:500;margin-bottom:2px}',
-    '.tct-edit-grid input,.tct-edit-grid select{width:100%;font-size:12px;padding:6px 8px;border:1px solid #d0d0d0;border-radius:5px;font-family:inherit;background:#fff;box-sizing:border-box}'
+    '.tct-edit-grid label{display:block;font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:#9a958b;font-weight:500;margin-bottom:3px}',
+    '.tct-edit-grid input,.tct-edit-grid select{width:100%;font-size:13px;padding:8px 10px;border:1px solid #e0dccf;border-radius:6px;font-family:inherit;background:#fff;box-sizing:border-box;color:#0a0a0a}',
+    '.tct-edit-grid input:focus,.tct-edit-grid select:focus{outline:none;border-color:#a8a39a}',
+    '.tct-modal-ftr{display:flex;justify-content:space-between;align-items:center;padding:14px 22px;border-top:1px solid #f0ece4;background:#faf8f3;gap:8px}',
+    '.tct-modal-ftr .right{display:flex;gap:8px}',
+    '.tct-modal-ftr button{font-size:12px;padding:8px 14px;border-radius:6px;cursor:pointer;font-family:inherit;border:1px solid #d8d3c6;background:transparent;color:#5a5650}',
+    '.tct-modal-ftr button:hover{background:#fff}',
+    '.tct-modal-ftr button.primary{background:#0a0a0a;color:#fff;border-color:#0a0a0a}',
+    '.tct-modal-ftr button.primary:hover{background:#1a1a1a}',
+    '.tct-modal-ftr button.danger{color:#A32D2D;border-color:#E8C8C8}',
+    '.tct-modal-ftr button.danger:hover{background:#FCEBEB;color:#A32D2D}'
   ].join('');
 
   function esc(s) {
@@ -133,6 +144,28 @@
       '    </div>',
       '  </div>',
       '  <div data-list></div>',
+      '  <div class="tct-modal-overlay" data-edit-overlay>',
+      '    <div class="tct-modal" data-edit-modal>',
+      '      <div class="tct-modal-hdr"><h3 class="tct-modal-title">Edit Contact</h3><button class="tct-modal-x" data-action="edit-close" aria-label="Close">×</button></div>',
+      '      <div class="tct-modal-body">',
+      '        <div class="tct-edit-grid">',
+      '          <div><label>Name</label><input type="text" data-edit-field="name"></div>',
+      '          <div><label>Instagram / Phone</label><input type="text" data-edit-field="handle"></div>',
+      '          <div><label>Brokerage</label><input type="text" data-edit-field="brok"></div>',
+      '          <div><label>Found via</label><select data-edit-field="source"><option>IG search</option><option>Referral</option><option>Post comment</option><option>Story view</option><option>Cold email</option><option>Mailer</option><option>Event</option><option>Other</option></select></div>',
+      '          <div class="full"><label>Stage</label><select data-edit-field="stage">' + formStageOpts + '</select></div>',
+      '          <div class="full"><label>Next Step</label><input type="text" data-edit-field="next"></div>',
+      '        </div>',
+      '      </div>',
+      '      <div class="tct-modal-ftr">',
+      '        <button class="danger" data-action="edit-delete">Delete</button>',
+      '        <div class="right">',
+      '          <button data-action="edit-close">Cancel</button>',
+      '          <button class="primary" data-action="edit-save">Save</button>',
+      '        </div>',
+      '      </div>',
+      '    </div>',
+      '  </div>',
       '</div>'
     ].join('\n');
   }
@@ -327,42 +360,77 @@
     var self = this;
     this.root.addEventListener('click', function (e) {
       var t = e.target;
-      var btn = t.closest ? t.closest('[data-action], [data-bucket], [data-delete-id], [data-edit-id], [data-edit-save], [data-edit-cancel]') : null;
+      // Modal overlay click (outside the modal box) → close
+      var overlay = self.root.querySelector('[data-edit-overlay]');
+      if (overlay && t === overlay) { self._closeEditModal(); return; }
+      var btn = t.closest ? t.closest('[data-action], [data-bucket], [data-row-id]') : null;
       if (!btn) return;
       var action = btn.getAttribute('data-action');
-      var delId = btn.getAttribute('data-delete-id');
-      var editId = btn.getAttribute('data-edit-id');
-      var saveId = btn.getAttribute('data-edit-save');
-      var cancelId = btn.getAttribute('data-edit-cancel');
-      if (delId) { self.deleteContact(delId); return; }
-      if (editId) { self.editingId = editId; self._renderList(); return; }
-      if (cancelId) { self.editingId = null; self._renderList(); return; }
-      if (saveId) { self._commitEdit(saveId); return; }
+      if (action === 'edit-close')  { self._closeEditModal(); return; }
+      if (action === 'edit-save')   { self._commitEdit(); return; }
+      if (action === 'edit-delete') { self._deleteFromModal(); return; }
+      if (action === 'add-toggle')  { self._toggleForm(); return; }
+      if (action === 'add-submit')  { self._submitAdd(); return; }
+      if (action === 'add-cancel')  { self._toggleForm(false); return; }
       var bucket = btn.getAttribute('data-bucket');
       if (bucket) { self._setBucket(bucket); return; }
-      if (action === 'add-toggle') self._toggleForm();
-      else if (action === 'add-submit') self._submitAdd();
-      else if (action === 'add-cancel') self._toggleForm(false);
-    });
-    this.root.addEventListener('change', function (e) {
-      var t = e.target;
-      if (t.matches && t.matches('select[data-stage-for]')) {
-        self.updateStage(t.getAttribute('data-stage-for'), t.value);
-      }
+      var rowId = btn.getAttribute('data-row-id');
+      if (rowId) { self._openEditModal(rowId); return; }
     });
   };
 
-  TcTracker.prototype._commitEdit = function (id) {
-    var row = this.root.querySelector('[data-row-id="' + id + '"]');
-    if (!row) return;
+  TcTracker.prototype._openEditModal = function (id) {
+    var c = null;
+    for (var i = 0; i < this.contacts.length; i++) if (this.contacts[i].id === id) { c = this.contacts[i]; break; }
+    if (!c) return;
+    this.editingId = id;
+    var parsed = parseNotes(c.notes);
+    var m = this.root.querySelector('[data-edit-overlay]');
+    var setField = function (k, v) {
+      var el = m.querySelector('[data-edit-field="' + k + '"]');
+      if (el) el.value = v == null ? '' : v;
+    };
+    setField('name', c.name);
+    setField('handle', c.handle);
+    setField('brok', parsed.brok);
+    setField('source', c.source || 'IG search');
+    setField('stage', c.stage || 'Contacted');
+    setField('next', parsed.next);
+    m.classList.add('open');
+    // focus name on open
+    setTimeout(function () {
+      var n = m.querySelector('[data-edit-field="name"]');
+      if (n) n.focus();
+    }, 40);
+  };
+
+  TcTracker.prototype._closeEditModal = function () {
+    this.editingId = null;
+    var m = this.root.querySelector('[data-edit-overlay]');
+    if (m) m.classList.remove('open');
+  };
+
+  TcTracker.prototype._commitEdit = function () {
+    var id = this.editingId;
+    if (!id) return;
+    var m = this.root.querySelector('[data-edit-overlay]');
     var get = function (k) {
-      var el = row.querySelector('[data-edit-field="' + k + '"]');
+      var el = m.querySelector('[data-edit-field="' + k + '"]');
       return el ? el.value.trim() : '';
     };
     this.updateContact(id, {
       name: get('name'), handle: get('handle'), brok: get('brok'),
       source: get('source'), stage: get('stage'), next: get('next')
     });
+    this._closeEditModal();
+  };
+
+  TcTracker.prototype._deleteFromModal = async function () {
+    var id = this.editingId;
+    if (!id) return;
+    // deleteContact prompts confirm internally
+    await this.deleteContact(id);
+    this._closeEditModal();
   };
 
   TcTracker.prototype._setBucket = function (bucket) {
@@ -448,61 +516,24 @@
       list.innerHTML = '<div class="tct-empty">' + esc(emptyMsg) + '</div>';
       return;
     }
-    var editingId = this.editingId;
-    var sourceOpts = ['IG search','Referral','Post comment','Story view','Cold email','Mailer','Event','Other'];
     list.innerHTML = filtered.map(function (c) {
       var s = stageMeta(c.stage);
       var b = bucketMeta(s.bucket);
-      var stageOpts = STAGES.map(function (o) {
-        return '<option' + (c.stage === o.key ? ' selected' : '') + ' value="' + esc(o.key) + '">' + esc(o.label) + '</option>';
-      }).join('') + '<option' + (c.stage === 'Not Interested' ? ' selected' : '') + ' value="Not Interested">Not Interested</option>';
       var badgeStyle = 'background:' + b.bg + ';color:' + b.fg;
       var parsed = parseNotes(c.notes);
-
-      // ── EDIT MODE ──
-      if (editingId === c.id) {
-        var srcOpts = sourceOpts.map(function (o) {
-          return '<option' + (c.source === o ? ' selected' : '') + ' value="' + esc(o) + '">' + esc(o) + '</option>';
-        }).join('');
-        var editStageOpts = STAGES.map(function (o) {
-          return '<option' + (c.stage === o.key ? ' selected' : '') + ' value="' + esc(o.key) + '">' + esc(o.label) + '</option>';
-        }).join('') + '<option' + (c.stage === 'Not Interested' ? ' selected' : '') + ' value="Not Interested">Not Interested</option>';
-        return '<div class="tct-row editing" data-row-id="' + esc(c.id) + '">' +
-          '<div class="tct-edit-grid">' +
-            '<div><label>Name</label><input type="text" data-edit-field="name" value="' + esc(c.name) + '"></div>' +
-            '<div><label>Instagram / Phone</label><input type="text" data-edit-field="handle" value="' + esc(c.handle || '') + '"></div>' +
-            '<div><label>Brokerage</label><input type="text" data-edit-field="brok" value="' + esc(parsed.brok) + '"></div>' +
-            '<div><label>Found via</label><select data-edit-field="source">' + srcOpts + '</select></div>' +
-            '<div class="full"><label>Stage</label><select data-edit-field="stage">' + editStageOpts + '</select></div>' +
-            '<div class="full"><label>Next Step</label><input type="text" data-edit-field="next" value="' + esc(parsed.next) + '"></div>' +
-          '</div>' +
-          '<div class="tct-row-actions">' +
-            '<button class="primary" data-edit-save="' + esc(c.id) + '">Save</button>' +
-            '<button data-edit-cancel="' + esc(c.id) + '">Cancel</button>' +
-            '<button class="danger" data-delete-id="' + esc(c.id) + '" style="margin-left:auto">Delete</button>' +
-          '</div>' +
-        '</div>';
-      }
-
-      // ── DISPLAY MODE ──
       var metaParts = [];
       if (c.handle) metaParts.push('<span>' + esc(c.handle) + '</span>');
       if (c.source) metaParts.push('<span>' + esc(c.source) + '</span>');
       if (parsed.brok) metaParts.push('<span>' + esc(parsed.brok) + '</span>');
       if (parsed.next) metaParts.push('<span>→ ' + esc(parsed.next) + '</span>');
       if (parsed.notes) metaParts.push('<span>' + esc(parsed.notes) + '</span>');
-      return '<div class="tct-row" data-row-id="' + esc(c.id) + '">' +
+      return '<div class="tct-row" data-row-id="' + esc(c.id) + '" tabindex="0" role="button" aria-label="Edit ' + esc(c.name) + '">' +
         '<div class="tct-row-top">' +
           '<div>' +
             '<div class="tct-name">' + esc(c.name) + '</div>' +
             '<div class="tct-meta">' + metaParts.join('') + '</div>' +
           '</div>' +
           '<span class="tct-stage-badge" style="' + badgeStyle + '">' + esc(s.label) + '</span>' +
-        '</div>' +
-        '<div class="tct-row-actions">' +
-          '<select data-stage-for="' + esc(c.id) + '">' + stageOpts + '</select>' +
-          '<button data-edit-id="' + esc(c.id) + '">Edit</button>' +
-          '<button data-delete-id="' + esc(c.id) + '">Delete</button>' +
         '</div>' +
       '</div>';
     }).join('');
