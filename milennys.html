@@ -175,6 +175,23 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
 .sp-strip-trend.up{color:var(--pastel-sage)}
 .sp-strip-trend.down{color:var(--pastel-blush)}
 @media(max-width:760px){.sp-strip{grid-template-columns:repeat(2,1fr);gap:14px}.sp-strip-cell{border-right:0;padding:0}}
+
+/* Monthly goal tracker */
+.sp-goal{background:#fff;border:1px solid var(--line);border-radius:12px;padding:18px 22px;margin-bottom:24px}
+.sp-goal.hit{border-color:var(--pastel-sage);background:var(--pastel-sage-soft)}
+.sp-goal.behind{border-color:var(--pastel-blush)}
+.sp-goal-row{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px}
+.sp-goal-label{font-size:10px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink)}
+.sp-goal-pct{font-family:var(--serif);font-size:18px;font-weight:600;color:var(--ink)}
+.sp-goal.hit .sp-goal-pct{color:#4a7a4a}
+.sp-goal-bar{height:8px;background:var(--soft-bg);border-radius:4px;overflow:hidden;margin-bottom:10px}
+.sp-goal-bar-fill{height:100%;background:var(--ink);border-radius:4px;transition:width .4s ease}
+.sp-goal.hit .sp-goal-bar-fill{background:var(--pastel-sage)}
+.sp-goal-meta{font-size:12px;color:var(--muted);line-height:1.5}
+.sp-goal-meta strong{color:var(--ink);font-weight:600}
+.sp-goal-edit{background:transparent;border:0;border-bottom:1px dashed var(--muted);font-family:inherit;font-size:12px;color:var(--ink);font-weight:600;cursor:pointer;padding:0 2px}
+.sp-goal-edit:hover{border-bottom-color:var(--ink);background:var(--soft-bg)}
+.sp-goal-need{color:var(--muted)}
 .sp-strip-cell{padding:0 16px;border-right:1px solid rgba(255,255,255,0.08)}
 .sp-strip-cell:first-child{padding-left:0}
 .sp-strip-cell:last-child{border-right:0;padding-right:0}
@@ -697,6 +714,19 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
         <div class="sp-strip-cell flight"><div class="sp-strip-lbl">In flight</div><div class="sp-strip-val" id="sp-strip-flight">$0</div><div class="sp-strip-sub" id="sp-strip-flight-sub">awaiting Marlenyi</div></div>
         <div class="sp-strip-cell"><div class="sp-strip-lbl">Ready</div><div class="sp-strip-val" id="sp-strip-ready">$717</div><div class="sp-strip-sub" id="sp-strip-ready-sub">3 files</div></div>
         <div class="sp-strip-cell"><div class="sp-strip-lbl">4-week avg</div><div class="sp-strip-val" id="sp-strip-avg">$0</div><div class="sp-strip-trend" id="sp-strip-trend">not enough data yet</div></div>
+      </div>
+
+      <!-- MONTHLY GOAL · click to edit (May 2026) -->
+      <div class="sp-goal">
+        <div class="sp-goal-row">
+          <span class="sp-goal-label">Monthly goal</span>
+          <span class="sp-goal-pct" id="sp-goal-pct">0%</span>
+        </div>
+        <div class="sp-goal-bar"><div class="sp-goal-bar-fill" id="sp-goal-fill" style="width:0%"></div></div>
+        <div class="sp-goal-meta" id="sp-goal-meta">
+          <strong id="sp-goal-current">$0</strong> of <button class="sp-goal-edit" id="sp-goal-edit" onclick="editGoal()" title="Click to change">$3,000</button>
+          <span id="sp-goal-need"></span>
+        </div>
       </div>
 
       <!-- ZONE 1: Ready to submit -->
@@ -1246,6 +1276,47 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
     if(stripReadySub) stripReadySub.textContent = visibleRows.length + (visibleRows.length === 1 ? ' file' : ' files');
   }
 
+  // ===== Monthly goal tracker =====
+  function getMonthlyGoal(){ return parseInt(localStorage.getItem('aari-pay-goal-monthly') || '3000', 10); }
+  window.editGoal = function(){
+    const cur = getMonthlyGoal();
+    const v = prompt('Set your monthly pay goal ($):', cur);
+    if (v === null) return;
+    const n = parseInt(String(v).replace(/[^0-9]/g, ''), 10);
+    if (isNaN(n) || n < 100) { alert('Enter a number ≥ $100'); return; }
+    localStorage.setItem('aari-pay-goal-monthly', String(n));
+    renderSpHistory();
+  };
+  function renderSpGoal(monthPaidTotal){
+    const goal = getMonthlyGoal();
+    const pct = Math.min(100, Math.round((monthPaidTotal / goal) * 100));
+    const need = Math.max(0, goal - monthPaidTotal);
+    const goalEl = document.querySelector('.sp-goal');
+    const pctEl = document.getElementById('sp-goal-pct');
+    const fillEl = document.getElementById('sp-goal-fill');
+    const curEl = document.getElementById('sp-goal-current');
+    const editEl = document.getElementById('sp-goal-edit');
+    const needEl = document.getElementById('sp-goal-need');
+    if (!goalEl) return;
+    if (pctEl) pctEl.textContent = pct + '%';
+    if (fillEl) fillEl.style.width = pct + '%';
+    if (curEl) curEl.textContent = '$' + monthPaidTotal.toLocaleString();
+    if (editEl) editEl.textContent = '$' + goal.toLocaleString();
+    goalEl.classList.toggle('hit', monthPaidTotal >= goal);
+    // Need-X-more line · estimate closings using avg pay
+    if (needEl) {
+      if (need <= 0) {
+        needEl.textContent = ' · goal hit · keep going for bonus territory';
+      } else {
+        const hist = JSON.parse(localStorage.getItem('aari-pay-history') || '[]');
+        const allFiles = hist.flatMap(h => h.files || []);
+        const avgPay = allFiles.length ? Math.round(allFiles.reduce((s,f) => s + (f.pay||0), 0) / allFiles.length) : 200;
+        const closingsNeeded = Math.ceil(need / avgPay);
+        needEl.textContent = ' · need $' + need.toLocaleString() + ' more · ~' + closingsNeeded + ' more closing' + (closingsNeeded === 1 ? '' : 's') + ' at avg pay';
+      }
+    }
+  }
+
   // Hide eligible rows that have already been submitted
   function spHideSubmittedFromReady(){
     const submitted = JSON.parse(localStorage.getItem('aari-pay-submitted-files') || '[]');
@@ -1388,6 +1459,8 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
     const monthPaidTotal = monthPaid.reduce((s,h) => s + (h.total_pay || 0), 0);
     document.getElementById('sp-strip-paid').textContent = '$' + monthPaidTotal.toLocaleString();
     document.getElementById('sp-strip-paid-sub').textContent = monthPaid.length + ' paid';
+    // Update monthly goal tracker
+    renderSpGoal(monthPaidTotal);
     document.getElementById('sp-strip-flight').textContent = '$' + flightTotal.toLocaleString();
     document.getElementById('sp-strip-flight-sub').textContent = flight.length === 0 ? 'awaiting submissions' : 'awaiting Marlenyi';
 
