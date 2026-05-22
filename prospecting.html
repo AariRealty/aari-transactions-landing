@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Prospecting · Aari Transactions</title>
+<meta name="robots" content="noindex, nofollow">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --serif:'Cormorant Garamond',Georgia,serif;
+  --sans:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+  --ink:#0a0a0a;
+  --muted:#5a5a5a;
+  --paper:#fafaf6;
+  --cream:#F4F2EE;
+  --line:#efebe5;
+}
+body{background:#fff;color:var(--ink);font-family:var(--sans);line-height:1.55;font-weight:400;font-size:15px;min-height:100vh}
+
+/* Gate */
+#gate-view{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:40px 20px;text-align:center}
+#gate-view .gate-card{max-width:380px}
+#gate-view h1{font-family:var(--serif);font-size:28px;font-weight:500;margin-bottom:12px}
+#gate-view p{color:var(--muted);font-size:14px;margin-bottom:18px}
+#gate-view .gate-back{display:inline-block;font-size:12px;padding:9px 16px;border:1px solid var(--ink);border-radius:8px;color:var(--ink);text-decoration:none;font-weight:500}
+
+/* App */
+#app-view{display:none;min-height:100vh}
+.app-shell{max-width:1080px;margin:0 auto;padding:0}
+
+/* Masthead */
+.masthead{background:var(--cream);padding:24px 32px;display:flex;align-items:center;justify-content:space-between;gap:20px}
+.masthead-left{flex:1;min-width:0}
+.masthead h2{font-family:var(--serif);font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1.1;margin:0 0 4px}
+.masthead-stats{font-size:13px;color:#9a958b;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.masthead-stats strong{color:var(--ink);font-weight:600}
+.masthead-stats .mh-warm strong{color:#8C5A45}
+.masthead-stats .mh-dot{color:#c9c2b3}
+
+/* Content shell */
+.content{padding:24px 32px 80px}
+@media (max-width:899px){
+  .masthead{padding:20px 18px}
+  .masthead h2{font-size:24px}
+  .content{padding:18px 16px 60px}
+}
+</style>
+</head>
+<body>
+
+<!-- Gate (auth) -->
+<div id="gate-view">
+  <div class="gate-card">
+    <h1>Prospecting</h1>
+    <p id="gate-msg">Loading…</p>
+    <a id="gate-back" class="gate-back" href="/briefing.html" style="display:none">← Back to portal</a>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app-view">
+  <div class="app-shell">
+    <!-- Stat-forward banner -->
+    <div class="masthead">
+      <div class="masthead-left">
+        <h2>Prospecting</h2>
+        <div class="masthead-stats">
+          <span><strong id="mh-contacts">0</strong> active contacts</span>
+          <span class="mh-dot">·</span>
+          <span class="mh-warm"><strong id="mh-raises">0</strong> hand raises waiting</span>
+          <span class="mh-dot">·</span>
+          <span><strong id="mh-signed">0</strong> closed this month</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tracker mount · the funnel · 4 buckets · search · edit modal -->
+    <div class="content">
+      <div id="trackerMount"></div>
+    </div>
+  </div>
+</div>
+
+<script src="js/supabase-config.js" defer></script>
+<script src="js/auth.js" defer></script>
+<script src="js/aari-banner.js" defer></script>
+<script src="js/tc-tracker.js" defer></script>
+<script>
+(function () {
+  'use strict';
+
+  function showGate(msg, showBack) {
+    document.getElementById('gate-msg').textContent = msg;
+    if (showBack) document.getElementById('gate-back').style.display = 'inline-block';
+  }
+  function reveal() {
+    document.getElementById('gate-view').style.display = 'none';
+    document.getElementById('app-view').style.display = 'block';
+  }
+
+  async function init() {
+    if (typeof window.AariAuth === 'undefined') { setTimeout(init, 120); return; }
+    try {
+      await window.AariAuth.ensureClient();
+      const session = await window.AariAuth.getCurrentSession();
+      if (!session) { showGate('Sign in required.', true); return; }
+      const profile = await window.AariAuth.getAgentProfile();
+      if (!profile) { showGate('No profile found.', true); return; }
+      const ok = profile.role === 'broker' || profile.role === 'tc';
+      if (!ok) { showGate('Prospecting is for broker and TC roles only.', true); return; }
+
+      // Push profile into shared header
+      function pushProfile(){
+        if (window.AariHeader && typeof window.AariHeader.setProfile === 'function') {
+          window.AariHeader.setProfile(profile); return true;
+        }
+        return false;
+      }
+      if (!pushProfile()) { let t=0; const iv=setInterval(()=>{if(pushProfile()||++t>25)clearInterval(iv);},80); }
+
+      reveal();
+
+      // Mount the shared Tracker · pinned to Eileen for now (she's the BD pilot).
+      // When future TCs join prospecting, pass their first_name instead.
+      if (typeof window.mountTcTracker === 'function') {
+        try {
+          await window.mountTcTracker('#trackerMount', { cockpitOwnerFirstName: 'eileen' });
+          if (window.AariTracker) {
+            window.AariTracker.onChange(updateMastheadStats);
+            updateMastheadStats(window.AariTracker.getContacts());
+          }
+        } catch (e) { console.error('[prospecting] tracker mount failed', e); }
+      }
+    } catch (e) {
+      console.error('[prospecting]', e);
+      showGate('Error: ' + (e.message || 'unknown'), true);
+    }
+  }
+
+  function updateMastheadStats(contacts) {
+    contacts = contacts || [];
+    const active = contacts.filter(c => c.stage !== 'Not Interested').length;
+    const raises = contacts.filter(c => c.stage === 'Hand Raise').length;
+    // "Closed this month" — derive from contacts marked Signed with last_touch_at in current month.
+    // (No bd_daily_logs query here; this page is funnel-focused.)
+    const now = new Date();
+    const signedThisMonth = contacts.filter(c => {
+      if (c.stage !== 'Signed' || !c.last_touch_at) return false;
+      const d = new Date(c.last_touch_at);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    }).length;
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    set('mh-contacts', active);
+    set('mh-raises', raises);
+    set('mh-signed', signedThisMonth);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>
