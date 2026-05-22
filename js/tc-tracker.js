@@ -29,7 +29,7 @@
     { key: 'Replied',          label: 'Replied',       bucket: 'cold',    cls: 's-replied',   desc: 'One message back. Not yet a real conversation.' },
     { key: 'In Conversation',  label: 'In Convo',      bucket: 'talking', cls: 's-convo',     desc: 'Real back and forth. Add to ActiveCampaign.' },
     { key: 'Added to AC',      label: 'In AC',         bucket: 'talking', cls: 's-ac',        desc: 'In email nurture. Keep the DM warm.' },
-    { key: 'Hand Raise',       label: '✋ Hand Raise', bucket: 'hot',     cls: 's-raise',     desc: 'Asked for pricing or how to start. Book a discovery.' },
+    { key: 'Hand Raise',       label: '✋ Hand Raise', bucket: 'talking', cls: 's-raise',     desc: 'Asked for pricing or how to start. Book a discovery.' },
     { key: 'Discovery Booked', label: 'Discovery',     bucket: 'hot',     cls: 's-disco',     desc: 'Call on the calendar. Your job is to close.' },
     { key: 'Signed',           label: 'Signed',        bucket: 'won',     cls: 's-signed',    desc: 'Client. Go find the next one.' }
   ];
@@ -59,8 +59,18 @@
 
   var CSS = [
     '.tct{font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;color:#0a0a0a}',
+    '.tct-search-row{position:relative;margin:4px 0 12px}',
+    '.tct-search{width:100%;font-size:13px;padding:9px 36px 9px 36px;border:1px solid #e0dccf;border-radius:8px;font-family:inherit;background:#fff;box-sizing:border-box;color:#0a0a0a}',
+    '.tct-search:focus{outline:none;border-color:#a8a39a}',
+    '.tct-search::placeholder{color:#a8a39a}',
+    '.tct-search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#a8a39a;font-size:14px;pointer-events:none}',
+    '.tct-search-clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:none;font-size:16px;color:#a8a39a;cursor:pointer;padding:4px 8px;line-height:1;display:none}',
+    '.tct-search-clear.visible{display:block}',
+    '.tct-search-clear:hover{color:#5a5650}',
+    '.tct-search-count{font-size:11px;color:#9a958b;margin:-6px 0 10px;padding:0 4px}',
     '.tct-top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 14px}',
     '.tct-filters{display:flex;gap:8px;flex-wrap:wrap;flex:1}',
+    '.tct-filters.dimmed{opacity:.45}',
     '.tct-add{font-size:11px;padding:6px 12px;border:1px solid #999;background:transparent;color:#555;border-radius:6px;cursor:pointer;font-family:inherit}',
     '.tct-add:hover{background:#fafaf7}',
     '.tct-pill{font-size:11px;padding:5px 14px;border-radius:13px;cursor:pointer;font-family:inherit;font-weight:500;border:1px solid transparent;display:inline-flex;align-items:center;gap:8px;transition:transform .08s ease}',
@@ -123,6 +133,12 @@
 
     return [
       '<div class="tct">',
+      '  <div class="tct-search-row">',
+      '    <span class="tct-search-icon">⌕</span>',
+      '    <input class="tct-search" type="search" placeholder="Search by name, handle, brokerage..." data-search autocomplete="off">',
+      '    <button class="tct-search-clear" data-action="search-clear" aria-label="Clear search">×</button>',
+      '  </div>',
+      '  <div class="tct-search-count" data-search-count style="display:none"></div>',
       '  <div class="tct-top">',
       '    <div class="tct-filters" data-filters></div>',
       '    <button class="tct-add" data-action="add-toggle">+ Add</button>',
@@ -177,6 +193,7 @@
     this.cb = 'hot';                    // current bucket (4-way filter)
     this.cbAutoDefault = true;          // auto-land on highest-priority non-empty bucket
     this.editingId = null;              // id of contact row currently in edit mode
+    this.searchQuery = '';              // active search query (overrides bucket filter)
     this.ownerId = null;
     this.client = null;
     this.listeners = [];
@@ -386,17 +403,35 @@
       var btn = t.closest ? t.closest('[data-action], [data-bucket], [data-row-id]') : null;
       if (!btn) return;
       var action = btn.getAttribute('data-action');
-      if (action === 'edit-close')  { self._closeEditModal(); return; }
-      if (action === 'edit-save')   { self._commitEdit(); return; }
-      if (action === 'edit-delete') { self._deleteFromModal(); return; }
-      if (action === 'add-toggle')  { self._toggleForm(); return; }
-      if (action === 'add-submit')  { self._submitAdd(); return; }
-      if (action === 'add-cancel')  { self._toggleForm(false); return; }
+      if (action === 'edit-close')   { self._closeEditModal(); return; }
+      if (action === 'edit-save')    { self._commitEdit(); return; }
+      if (action === 'edit-delete')  { self._deleteFromModal(); return; }
+      if (action === 'add-toggle')   { self._toggleForm(); return; }
+      if (action === 'add-submit')   { self._submitAdd(); return; }
+      if (action === 'add-cancel')   { self._toggleForm(false); return; }
+      if (action === 'search-clear') { self._setSearch(''); return; }
       var bucket = btn.getAttribute('data-bucket');
       if (bucket) { self._setBucket(bucket); return; }
       var rowId = btn.getAttribute('data-row-id');
       if (rowId) { self._openEditModal(rowId); return; }
     });
+    // Search input: live filter
+    this.root.addEventListener('input', function (e) {
+      if (e.target && e.target.matches && e.target.matches('[data-search]')) {
+        self._setSearch(e.target.value);
+      }
+    });
+  };
+
+  TcTracker.prototype._setSearch = function (q) {
+    this.searchQuery = (q || '').trim();
+    var input = this.root.querySelector('[data-search]');
+    if (input && input.value !== this.searchQuery) input.value = this.searchQuery;
+    var clearBtn = this.root.querySelector('[data-action="search-clear"]');
+    if (clearBtn) clearBtn.classList.toggle('visible', this.searchQuery.length > 0);
+    var filters = this.root.querySelector('[data-filters]');
+    if (filters) filters.classList.toggle('dimmed', this.searchQuery.length > 0);
+    this._renderList();
   };
 
   TcTracker.prototype._openEditModal = function (id) {
@@ -524,15 +559,37 @@
   TcTracker.prototype._renderList = function () {
     var list = this.root.querySelector('[data-list]');
     if (!list) return;
-    var stagesInBucket = bucketStages(this.cb);
-    var filtered = this.contacts.filter(function (c) { return stagesInBucket.indexOf(c.stage) >= 0; });
+    var countEl = this.root.querySelector('[data-search-count]');
+    var filtered;
+    if (this.searchQuery) {
+      var q = this.searchQuery.toLowerCase();
+      filtered = this.contacts.filter(function (c) {
+        return (c.name && c.name.toLowerCase().indexOf(q) >= 0) ||
+               (c.handle && c.handle.toLowerCase().indexOf(q) >= 0) ||
+               (c.notes && c.notes.toLowerCase().indexOf(q) >= 0) ||
+               (c.source && c.source.toLowerCase().indexOf(q) >= 0);
+      });
+      if (countEl) {
+        countEl.style.display = 'block';
+        countEl.textContent = filtered.length + (filtered.length === 1 ? ' match' : ' matches') + ' for "' + this.searchQuery + '"';
+      }
+    } else {
+      if (countEl) { countEl.style.display = 'none'; countEl.textContent = ''; }
+      var stagesInBucket = bucketStages(this.cb);
+      filtered = this.contacts.filter(function (c) { return stagesInBucket.indexOf(c.stage) >= 0; });
+    }
     if (!filtered.length) {
-      var emptyMsg = ({
-        cold:    'No cold contacts. Keep DMing.',
-        talking: 'No active conversations yet.',
-        hot:     'Nothing hot right now. Work the cold pile.',
-        won:     'No closed clients yet. The next one is in your pipeline.'
-      })[this.cb] || 'Empty bucket.';
+      var emptyMsg;
+      if (this.searchQuery) {
+        emptyMsg = 'No contacts matching "' + this.searchQuery + '".';
+      } else {
+        emptyMsg = ({
+          cold:    'No cold contacts. Keep DMing.',
+          talking: 'No active conversations yet.',
+          hot:     'Nothing hot right now. Work the cold pile.',
+          won:     'No closed clients yet. The next one is in your pipeline.'
+        })[this.cb] || 'Empty bucket.';
+      }
       list.innerHTML = '<div class="tct-empty">' + esc(emptyMsg) + '</div>';
       return;
     }
