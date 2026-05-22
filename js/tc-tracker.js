@@ -170,7 +170,7 @@
     ].join('\n');
   }
 
-  function TcTracker(root) {
+  function TcTracker(root, opts) {
     this.root = root;
     this.contacts = [];
     this.counts = { cold: 0, talking: 0, hot: 0, won: 0 };
@@ -180,6 +180,9 @@
     this.ownerId = null;
     this.client = null;
     this.listeners = [];
+    // Cockpit-owner override · when set, Tracker always reads/writes for this person,
+    // regardless of who's logged in. Lets broker preview a TC's tracker correctly.
+    this.cockpitOwnerFirstName = (opts && opts.cockpitOwnerFirstName) || null;
   }
 
   // Parse "Brokerage: X · Next: Y · ...notes..." from the notes column
@@ -220,8 +223,25 @@
     }
     try {
       this.client = await global.AariAuth.ensureClient();
-      var auth = await this.client.auth.getUser();
-      this.ownerId = (auth && auth.data && auth.data.user) ? auth.data.user.id : null;
+      // If a cockpit-owner override was provided, look up that person's id from the agents table.
+      // Otherwise fall back to the currently-logged-in user.
+      if (this.cockpitOwnerFirstName) {
+        var r = await this.client
+          .from('agents')
+          .select('id')
+          .ilike('first_name', this.cockpitOwnerFirstName)
+          .limit(1)
+          .maybeSingle();
+        if (r && r.data && r.data.id) {
+          this.ownerId = r.data.id;
+        } else {
+          console.warn('[TcTracker] could not resolve cockpit owner:', this.cockpitOwnerFirstName);
+        }
+      }
+      if (!this.ownerId) {
+        var auth = await this.client.auth.getUser();
+        this.ownerId = (auth && auth.data && auth.data.user) ? auth.data.user.id : null;
+      }
     } catch (e) {
       console.error('[TcTracker] supabase connect failed', e);
     }
@@ -547,10 +567,10 @@
     document.head.appendChild(s);
   }
 
-  global.mountTcTracker = async function (selector) {
+  global.mountTcTracker = async function (selector, opts) {
     var root = (typeof selector === 'string') ? document.querySelector(selector) : selector;
     if (!root) { console.warn('[TcTracker] mount target not found:', selector); return null; }
-    var t = new TcTracker(root);
+    var t = new TcTracker(root, opts);
     await t.init();
     global.AariTracker = t;
     return t;
