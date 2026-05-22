@@ -2232,11 +2232,17 @@ window.__triggerEileenLoad = async function () {
         let tries = 0;
         const t = setInterval(() => { if (pushProfile() || ++tries > 25) clearInterval(t); }, 80);
       }
-      // Set the owner id for db reads/writes.
-      // Broker viewing → still uses session user id; data is filtered by RLS.
-      // For broker visibility into Eileen specifically, use the BD Pipeline view in /aari-crm.
-      window.__currentOwnerId = profile.id;
-      if (typeof window.__setOwnerId === 'function') window.__setOwnerId(profile.id);
+      // Pin ownerId to EILEEN's id always (not the session user's).
+      // Lets broker preview Eileen's cockpit and see her actual BD + TC stats,
+      // not the broker's zeros. Falls back to session user if Eileen lookup fails.
+      let pinnedOwnerId = profile.id;
+      try {
+        const c = await window.AariAuth.ensureClient();
+        const er = await c.from('agents').select('id').ilike('first_name', 'eileen').limit(1).maybeSingle();
+        if (er && er.data && er.data.id) pinnedOwnerId = er.data.id;
+      } catch (_) { /* fall back to session user */ }
+      window.__currentOwnerId = pinnedOwnerId;
+      if (typeof window.__setOwnerId === 'function') window.__setOwnerId(pinnedOwnerId);
       renderEileenHero(profile);
       reveal();
       // Kick off the data load now that auth is settled.
