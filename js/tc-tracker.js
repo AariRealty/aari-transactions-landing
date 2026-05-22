@@ -448,28 +448,60 @@
       list.innerHTML = '<div class="tct-empty">' + esc(emptyMsg) + '</div>';
       return;
     }
+    var editingId = this.editingId;
+    var sourceOpts = ['IG search','Referral','Post comment','Story view','Cold email','Mailer','Event','Other'];
     list.innerHTML = filtered.map(function (c) {
       var s = stageMeta(c.stage);
       var b = bucketMeta(s.bucket);
       var stageOpts = STAGES.map(function (o) {
         return '<option' + (c.stage === o.key ? ' selected' : '') + ' value="' + esc(o.key) + '">' + esc(o.label) + '</option>';
       }).join('') + '<option' + (c.stage === 'Not Interested' ? ' selected' : '') + ' value="Not Interested">Not Interested</option>';
-      var notesHtml = c.notes ? '<span>' + esc(c.notes) + '</span>' : '';
       var badgeStyle = 'background:' + b.bg + ';color:' + b.fg;
-      return '<div class="tct-row">' +
+      var parsed = parseNotes(c.notes);
+
+      // ── EDIT MODE ──
+      if (editingId === c.id) {
+        var srcOpts = sourceOpts.map(function (o) {
+          return '<option' + (c.source === o ? ' selected' : '') + ' value="' + esc(o) + '">' + esc(o) + '</option>';
+        }).join('');
+        var editStageOpts = STAGES.map(function (o) {
+          return '<option' + (c.stage === o.key ? ' selected' : '') + ' value="' + esc(o.key) + '">' + esc(o.label) + '</option>';
+        }).join('') + '<option' + (c.stage === 'Not Interested' ? ' selected' : '') + ' value="Not Interested">Not Interested</option>';
+        return '<div class="tct-row editing" data-row-id="' + esc(c.id) + '">' +
+          '<div class="tct-edit-grid">' +
+            '<div><label>Name</label><input type="text" data-edit-field="name" value="' + esc(c.name) + '"></div>' +
+            '<div><label>Instagram / Phone</label><input type="text" data-edit-field="handle" value="' + esc(c.handle || '') + '"></div>' +
+            '<div><label>Brokerage</label><input type="text" data-edit-field="brok" value="' + esc(parsed.brok) + '"></div>' +
+            '<div><label>Found via</label><select data-edit-field="source">' + srcOpts + '</select></div>' +
+            '<div class="full"><label>Stage</label><select data-edit-field="stage">' + editStageOpts + '</select></div>' +
+            '<div class="full"><label>Next Step</label><input type="text" data-edit-field="next" value="' + esc(parsed.next) + '"></div>' +
+          '</div>' +
+          '<div class="tct-row-actions">' +
+            '<button class="primary" data-edit-save="' + esc(c.id) + '">Save</button>' +
+            '<button data-edit-cancel="' + esc(c.id) + '">Cancel</button>' +
+            '<button class="danger" data-delete-id="' + esc(c.id) + '" style="margin-left:auto">Delete</button>' +
+          '</div>' +
+        '</div>';
+      }
+
+      // ── DISPLAY MODE ──
+      var metaParts = [];
+      if (c.handle) metaParts.push('<span>' + esc(c.handle) + '</span>');
+      if (c.source) metaParts.push('<span>' + esc(c.source) + '</span>');
+      if (parsed.brok) metaParts.push('<span>' + esc(parsed.brok) + '</span>');
+      if (parsed.next) metaParts.push('<span>→ ' + esc(parsed.next) + '</span>');
+      if (parsed.notes) metaParts.push('<span>' + esc(parsed.notes) + '</span>');
+      return '<div class="tct-row" data-row-id="' + esc(c.id) + '">' +
         '<div class="tct-row-top">' +
           '<div>' +
             '<div class="tct-name">' + esc(c.name) + '</div>' +
-            '<div class="tct-meta">' +
-              (c.handle ? '<span>' + esc(c.handle) + '</span>' : '') +
-              (c.source ? '<span>' + esc(c.source) + '</span>' : '') +
-              notesHtml +
-            '</div>' +
+            '<div class="tct-meta">' + metaParts.join('') + '</div>' +
           '</div>' +
           '<span class="tct-stage-badge" style="' + badgeStyle + '">' + esc(s.label) + '</span>' +
         '</div>' +
         '<div class="tct-row-actions">' +
           '<select data-stage-for="' + esc(c.id) + '">' + stageOpts + '</select>' +
+          '<button data-edit-id="' + esc(c.id) + '">Edit</button>' +
           '<button data-delete-id="' + esc(c.id) + '">Delete</button>' +
         '</div>' +
       '</div>';
