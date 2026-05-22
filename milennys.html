@@ -1513,7 +1513,6 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
         '<span class="sp-inv">#' + h.invoice_no + '</span>' +
         '<span class="sp-meta-line">' + fileCount + ' file' + (fileCount===1?'':'s') + ' · ' + spAge(h.submitted_at) + '</span>' +
         '<span class="sp-amt">$' + (h.total_pay||0).toLocaleString() + '</span>' +
-        '<button class="sp-flight-del" onclick="deleteSpEntry(event,' + idx + ')" title="Delete">&times;</button>' +
       '</div>' +
       '<div class="sp-flight-expand">' + filesHtml + '</div>' +
     '</div>';
@@ -1532,44 +1531,40 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
     const expand = rowEl.parentElement.querySelector('.sp-flight-expand');
     if (expand) expand.classList.toggle('open');
   };
-  window.deleteSpEntry = function(e, idx){
-    e.stopPropagation();
-    if (!confirm('Delete this invoice from your history?')) return;
-    const hist = JSON.parse(localStorage.getItem('aari-pay-history') || '[]');
-    const removed = hist.splice(idx, 1)[0];
-    localStorage.setItem('aari-pay-history', JSON.stringify(hist));
-    // Also remove submitted-file lock so those files reappear in Ready
-    if (removed && Array.isArray(removed.files)) {
-      const sa = JSON.parse(localStorage.getItem('aari-pay-submitted-files') || '[]');
-      const addrsToRemove = removed.files.map(f => f.address);
-      const remaining = sa.filter(a => !addrsToRemove.includes(a));
-      localStorage.setItem('aari-pay-submitted-files', JSON.stringify(remaining));
-    }
-    // Also delete from Supabase if available
-    (async () => {
-      try {
-        if (!removed || !removed.invoice_no) return;
-        const client = await window.AariAuth.ensureClient();
-        if (!client) return;
-        await client.from('pay_requests').delete().eq('invoice_no', removed.invoice_no);
-      } catch (e) {}
-    })();
-    // Re-render: restore hidden rows for removed addresses, then recalc
-    document.querySelectorAll('#sp-eligible .sp-row.sp-hidden').forEach(r => {
-      const a = r.querySelector('.sp-check')?.getAttribute('data-addr');
-      const sa = JSON.parse(localStorage.getItem('aari-pay-submitted-files') || '[]');
-      if (a && !sa.includes(a)) r.classList.remove('sp-hidden');
-    });
-    spRecalc();
-    renderSpHistory();
-  };
+
+  // Pull pay_requests from Supabase · source of truth · overwrites local cache
+  // This way when broker deletes/updates an invoice, TC's view reflects it.
+  async function spSyncHistoryFromDb(){
+    if (typeof window.AariAuth === 'undefined') return;
+    try {
+      const tcId = await pipeGetTcId();
+      if (!tcId) return;
+      const client = await window.AariAuth.ensureClient();
+      if (!client) return;
+      const { data, error } = await client.from('pay_requests')
+        .select('invoice_no, status, files, total_pay, total_revenue, submitted_at, paid_at')
+        .eq('tc_id', tcId)
+        .order('submitted_at', { ascending: false });
+      if (error || !data) return;
+      // Replace localStorage with DB truth
+      localStorage.setItem('aari-pay-history', JSON.stringify(data));
+      // Rebuild submitted-files lock from DB data
+      const allAddrs = data.flatMap(h => (h.files || []).map(f => f.address)).filter(Boolean);
+      localStorage.setItem('aari-pay-submitted-files', JSON.stringify(Array.from(new Set(allAddrs))));
+      // Re-render with fresh state
+      document.querySelectorAll('#sp-eligible .sp-row.sp-hidden').forEach(r => r.classList.remove('sp-hidden'));
+      spHideSubmittedFromReady();
+      spRecalc();
+      renderSpHistory();
+    } catch (e) {}
+  }
   // Keep old renderSpHistory as alias for backwards compatibility
   function renderSpHistory(){ renderSpZones(); }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { spHideSubmittedFromReady(); wireSpChecks(); spRecalc(); renderSpHistory(); spUpdateDeadlineMessaging(); });
+    document.addEventListener('DOMContentLoaded', () => { spHideSubmittedFromReady(); wireSpChecks(); spRecalc(); renderSpHistory(); spUpdateDeadlineMessaging(); setTimeout(spSyncHistoryFromDb, 1000); });
   } else {
-    spHideSubmittedFromReady(); wireSpChecks(); spRecalc(); renderSpHistory(); spUpdateDeadlineMessaging();
+    spHideSubmittedFromReady(); wireSpChecks(); spRecalc(); renderSpHistory(); spUpdateDeadlineMessaging(); setTimeout(spSyncHistoryFromDb, 1000);
   }
 
   // Nav panel switcher

@@ -2154,22 +2154,27 @@ window.__triggerEileenLoad = async function () {
   function renderSpFlightRow(h,idx){
     const s=h.status==='approved'?'Approved':'Pending',fc=(h.files||[]).length;
     const fh=(h.files||[]).map(f=>'<div class="sp-flight-expand-file"><span>'+(f.address||'')+' · '+(f.service||'')+'</span><span>$'+(f.pay||0).toLocaleString()+'</span></div>').join('');
-    return '<div class="sp-flight-wrap"><div class="sp-flight-row" onclick="toggleSpFlightExpand(this)"><span class="sp-status '+h.status+'">'+s+'</span><span class="sp-inv">#'+h.invoice_no+'</span><span class="sp-meta-line">'+fc+' file'+(fc===1?'':'s')+' · '+spAge(h.submitted_at)+'</span><span class="sp-amt">$'+(h.total_pay||0).toLocaleString()+'</span><button class="sp-flight-del" onclick="deleteSpEntry(event,'+idx+')" title="Delete">&times;</button></div><div class="sp-flight-expand">'+fh+'</div></div>';
+    return '<div class="sp-flight-wrap"><div class="sp-flight-row" onclick="toggleSpFlightExpand(this)"><span class="sp-status '+h.status+'">'+s+'</span><span class="sp-inv">#'+h.invoice_no+'</span><span class="sp-meta-line">'+fc+' file'+(fc===1?'':'s')+' · '+spAge(h.submitted_at)+'</span><span class="sp-amt">$'+(h.total_pay||0).toLocaleString()+'</span></div><div class="sp-flight-expand">'+fh+'</div></div>';
   }
   function renderSpPaidRow(h,idx){
     const pd=h.paid_at?new Date(h.paid_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'recently',fc=(h.files||[]).length;
     return '<div class="sp-paid-row"><span class="sp-status paid">Paid</span><span class="sp-inv">#'+h.invoice_no+'</span><span class="sp-meta-line">'+fc+' file'+(fc===1?'':'s')+' · paid '+pd+'</span><span class="sp-amt">$'+(h.total_pay||0).toLocaleString()+'</span></div>';
   }
   window.toggleSpFlightExpand=function(r){const e=r.parentElement.querySelector('.sp-flight-expand');if(e)e.classList.toggle('open');};
-  window.deleteSpEntry=function(e,idx){e.stopPropagation();if(!confirm('Delete this invoice from your history?'))return;
-    const hist=JSON.parse(localStorage.getItem('aari-pay-history')||'[]');const rm=hist.splice(idx,1)[0];
-    localStorage.setItem('aari-pay-history',JSON.stringify(hist));
-    if(rm&&Array.isArray(rm.files)){const sa=JSON.parse(localStorage.getItem('aari-pay-submitted-files')||'[]');const toRm=rm.files.map(f=>f.address);localStorage.setItem('aari-pay-submitted-files',JSON.stringify(sa.filter(a=>!toRm.includes(a))));}
-    (async()=>{try{if(!rm||!rm.invoice_no)return;const c=await window.AariAuth.ensureClient();if(!c)return;await c.from('pay_requests').delete().eq('invoice_no',rm.invoice_no);}catch(e){}})();
-    document.querySelectorAll('#sp-eligible .sp-row.sp-hidden').forEach(r=>{const a=r.querySelector('.sp-check')?.getAttribute('data-addr');const sa=JSON.parse(localStorage.getItem('aari-pay-submitted-files')||'[]');if(a&&!sa.includes(a))r.classList.remove('sp-hidden');});
-    spRecalc();renderSpHistory();
-  };
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{spHideSubmittedFromReady();wireSpChecks();spRecalc();renderSpHistory();spUpdateDeadlineMessaging();});else{spHideSubmittedFromReady();wireSpChecks();spRecalc();renderSpHistory();spUpdateDeadlineMessaging();}
+  // Sync pay_requests from Supabase · DB is source of truth · broker-mediated cleanup
+  async function spSyncHistoryFromDb(){
+    if(typeof window.AariAuth==='undefined')return;
+    try{const tid=await pipeGetTcId();if(!tid)return;const c=await window.AariAuth.ensureClient();if(!c)return;
+      const r=await c.from('pay_requests').select('invoice_no,status,files,total_pay,total_revenue,submitted_at,paid_at').eq('tc_id',tid).order('submitted_at',{ascending:false});
+      if(r.error||!r.data)return;
+      localStorage.setItem('aari-pay-history',JSON.stringify(r.data));
+      const aa=r.data.flatMap(h=>(h.files||[]).map(f=>f.address)).filter(Boolean);
+      localStorage.setItem('aari-pay-submitted-files',JSON.stringify(Array.from(new Set(aa))));
+      document.querySelectorAll('#sp-eligible .sp-row.sp-hidden').forEach(r=>r.classList.remove('sp-hidden'));
+      spHideSubmittedFromReady();spRecalc();renderSpHistory();
+    }catch(e){}
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>{spHideSubmittedFromReady();wireSpChecks();spRecalc();renderSpHistory();spUpdateDeadlineMessaging();setTimeout(spSyncHistoryFromDb,1000);});else{spHideSubmittedFromReady();wireSpChecks();spRecalc();renderSpHistory();spUpdateDeadlineMessaging();setTimeout(spSyncHistoryFromDb,1000);}
 })();
 </script>
 
