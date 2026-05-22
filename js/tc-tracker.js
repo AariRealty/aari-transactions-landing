@@ -4,7 +4,10 @@
  *
  * Data layer: Supabase only. No localStorage. Per-TC isolation via owner_id = auth.uid().
  *
- * Usage on a TC page:
+ * UI: 4 buckets (Cold / Talking / Hot / Won) that group the 7 underlying BD stages.
+ * Underlying data model keeps the granular stages — the card badge surfaces the sub-stage.
+ *
+ * Usage:
  *   <div id="trackerMount"></div>
  *   <script src="js/tc-tracker.js" defer></script>
  *   <script>document.addEventListener('DOMContentLoaded', () => mountTcTracker('#trackerMount'));</script>
@@ -12,35 +15,59 @@
  * Public API after mount: window.AariTracker
  *   .getContacts()                     → snapshot of current contacts
  *   .addContact({name, handle, ...})   → insert a new contact
- *   .updateStage(id, stage)            → change a contact's stage
- *   .deleteContact(id)                 → soft-delete via confirm
+ *   .updateStage(id, stage)            → change a contact's stage (granular)
+ *   .deleteContact(id)                 → confirm + delete
  *   .reload()                          → refetch from Supabase
  *   .onChange(callback)                → subscribe to contact-list changes
  */
 (function (global) {
   'use strict';
 
+  // ── 7 granular stages (data model · unchanged) ──
   var STAGES = [
-    { key: 'Hand Raise',       label: '✋ Raises', prio: 1, tone: 'hot',  cls: 's-raise',     desc: 'Asked for pricing or how to start. Book a discovery call immediately.' },
-    { key: 'Discovery Booked', label: 'Discovery',     prio: 2, tone: 'hot',  cls: 's-disco',     desc: 'Call on the calendar. Your job is to close.' },
-    { key: 'Added to AC',      label: 'In AC',         prio: 3, tone: 'hot',  cls: 's-ac',        desc: 'Getting daily emails. Keep the DM warm. Watch for hand raises.' },
-    { key: 'In Conversation',  label: 'In Convo',      prio: 4, tone: 'warm', cls: 's-convo',     desc: 'Real back and forth. Add to AC now.' },
-    { key: 'Replied',          label: 'Replied',       prio: 5, tone: 'cool', cls: 's-replied',   desc: 'One message back. Not a two-way conversation. Do NOT add to AC yet.' },
-    { key: 'Contacted',        label: 'Contacted',     prio: 6, tone: 'cool', cls: 's-contacted', desc: 'DM sent. No reply. Add to tracker now. Not AC yet.' },
-    { key: 'Signed',           label: 'Signed',        prio: 7, tone: 'cool', cls: 's-signed',    desc: 'Client. Notify Marlenyi. Go find the next one.' }
+    { key: 'Contacted',        label: 'Contacted',     bucket: 'cold',    cls: 's-contacted', desc: 'DM sent. No reply yet.' },
+    { key: 'Replied',          label: 'Replied',       bucket: 'cold',    cls: 's-replied',   desc: 'One message back. Not yet a real conversation.' },
+    { key: 'In Conversation',  label: 'In Convo',      bucket: 'talking', cls: 's-convo',     desc: 'Real back and forth. Add to ActiveCampaign.' },
+    { key: 'Added to AC',      label: 'In AC',         bucket: 'talking', cls: 's-ac',        desc: 'In email nurture. Keep the DM warm.' },
+    { key: 'Hand Raise',       label: '✋ Hand Raise', bucket: 'hot',     cls: 's-raise',     desc: 'Asked for pricing or how to start. Book a discovery.' },
+    { key: 'Discovery Booked', label: 'Discovery',     bucket: 'hot',     cls: 's-disco',     desc: 'Call on the calendar. Your job is to close.' },
+    { key: 'Signed',           label: 'Signed',        bucket: 'won',     cls: 's-signed',    desc: 'Client. Go find the next one.' }
+  ];
+
+  // ── 4 visual buckets (UI · what the user sees) ──
+  // Settled palette · earthy washes, not pastel pops.
+  var BUCKETS = [
+    { key: 'cold',    label: 'Cold',    bg: '#F4F2EE', fg: '#6B6862', accent: '#A8A39A' },
+    { key: 'talking', label: 'Talking', bg: '#F1ECE5', fg: '#8C7B5E', accent: '#B8A789' },
+    { key: 'hot',     label: 'Hot',     bg: '#EFE3DC', fg: '#8C5A45', accent: '#B58370' },
+    { key: 'won',     label: 'Won',     bg: '#E8EAE3', fg: '#5A6B57', accent: '#8A9C85' }
   ];
 
   var IN_AC_STAGES = ['Added to AC', 'Hand Raise', 'Discovery Booked', 'Signed'];
 
+  function stageMeta(key) {
+    for (var i = 0; i < STAGES.length; i++) if (STAGES[i].key === key) return STAGES[i];
+    return { key: key, label: key, bucket: 'cold', cls: 's-contacted' };
+  }
+  function bucketMeta(key) {
+    for (var i = 0; i < BUCKETS.length; i++) if (BUCKETS[i].key === key) return BUCKETS[i];
+    return BUCKETS[0];
+  }
+  function bucketStages(key) {
+    return STAGES.filter(function (s) { return s.bucket === key; }).map(function (s) { return s.key; });
+  }
+
   var CSS = [
     '.tct{font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;color:#0a0a0a}',
-    '.tct-intro h3{margin:0 0 4px;font-family:"Cormorant Garamond",Georgia,serif;font-size:18px;font-weight:600}',
-    '.tct-intro p{margin:0 0 14px;font-size:12px;color:#555;line-height:1.5}',
-    '.tct-hdr{display:flex;justify-content:space-between;align-items:center;margin:8px 0 12px;gap:10px;flex-wrap:wrap}',
-    '.tct-hdr h3{margin:0;font-size:14px;font-weight:600}',
-    '.tct-count{font-size:11px;color:#888;font-weight:400;margin-left:6px}',
-    '.tct-btn{font-size:11px;padding:6px 12px;border:1px solid #999;background:transparent;color:#555;border-radius:6px;cursor:pointer;font-family:inherit}',
-    '.tct-btn-primary{background:#0a0a0a;color:#fff;border-color:#0a0a0a}',
+    '.tct-top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 14px}',
+    '.tct-filters{display:flex;gap:8px;flex-wrap:wrap;flex:1}',
+    '.tct-add{font-size:11px;padding:6px 12px;border:1px solid #999;background:transparent;color:#555;border-radius:6px;cursor:pointer;font-family:inherit}',
+    '.tct-add:hover{background:#fafaf7}',
+    '.tct-pill{font-size:11px;padding:5px 14px;border-radius:13px;cursor:pointer;font-family:inherit;font-weight:500;border:1px solid transparent;display:inline-flex;align-items:center;gap:8px;transition:transform .08s ease}',
+    '.tct-pill:active{transform:scale(.97)}',
+    '.tct-pill.active{background:#0a0a0a;color:#fff;border-color:#0a0a0a}',
+    '.tct-pill-count{font-size:10px;opacity:.85;font-weight:500}',
+    '.tct-pill.active .tct-pill-count{opacity:1}',
     '.tct-form{display:none;background:#fafaf7;border:1px solid #e0e0e0;border-radius:8px;padding:14px;margin-bottom:14px}',
     '.tct-form.open{display:block}',
     '.tct-form h4{margin:0 0 4px;font-size:13px;font-weight:600}',
@@ -51,40 +78,18 @@
     '.tct-af label{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:#888;font-weight:500}',
     '.tct-af input,.tct-af select{font-size:13px;padding:7px 9px;border:1px solid #d0d0d0;border-radius:6px;font-family:inherit;background:#fff}',
     '.tct-form-actions{display:flex;gap:8px}',
-    '.tct-filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}',
-    '.tct-filter{background:none;border:1px solid #d0d0d0;border-radius:100px;font-family:inherit;font-size:10px;padding:3px 10px;cursor:pointer;color:#666;display:inline-flex;align-items:center;gap:6px}',
-    '.tct-filter.active{background:#0a0a0a;color:#fff;border-color:#0a0a0a}',
-    '.tct-fc{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:16px;padding:0 5px;border-radius:8px;background:#eee;color:#666;font-size:9px;font-weight:600;line-height:1}',
-    '.tct-filter.active .tct-fc{background:rgba(255,255,255,.2);color:#fff}',
-    '.tct-fc.hot{background:#FCEBEB;color:#A32D2D}',
-    '.tct-fc.warm{background:#FAEEDA;color:#854F0B}',
-    '.tct-filter.active .tct-fc.hot,.tct-filter.active .tct-fc.warm{background:rgba(255,255,255,.22);color:#fff}',
-    '.tct-empty{padding:30px 16px;text-align:center;font-size:12px;color:#888;background:#fafaf7;border-radius:8px;border:1px dashed #d0d0d0}',
+    '.tct-form-actions button{font-size:11px;padding:7px 14px;border:1px solid #999;background:transparent;color:#555;border-radius:6px;cursor:pointer;font-family:inherit}',
+    '.tct-form-actions button.primary{background:#0a0a0a;color:#fff;border-color:#0a0a0a}',
+    '.tct-empty{padding:32px 16px;text-align:center;font-size:12px;color:#888;background:#fafaf7;border-radius:8px;border:1px dashed #d0d0d0}',
     '.tct-row{padding:12px 14px;border:1px solid #eee;border-radius:8px;margin-bottom:8px;background:#fff}',
-    '.tct-row-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:6px}',
+    '.tct-row-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:4px}',
     '.tct-name{font-size:13px;font-weight:600;color:#0a0a0a}',
-    '.tct-name .tct-handle{color:#777;font-weight:400;font-size:11px;margin-left:6px}',
     '.tct-meta{font-size:11px;color:#888;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:3px}',
-    '.tct-sp{display:inline-flex;align-items:center;padding:2px 8px;border-radius:100px;font-size:10px;font-weight:500;letter-spacing:.3px;white-space:nowrap}',
-    '.tct-sp.s-contacted{background:#eee;color:#555}',
-    '.tct-sp.s-replied{background:#FAEEDA;color:#854F0B}',
-    '.tct-sp.s-convo{background:#FAEEDA;color:#854F0B}',
-    '.tct-sp.s-ac{background:#FCEBEB;color:#A32D2D}',
-    '.tct-sp.s-raise{background:#FCEBEB;color:#A32D2D}',
-    '.tct-sp.s-disco{background:#FCEBEB;color:#A32D2D}',
-    '.tct-sp.s-signed{background:#E1F5EE;color:#0F6E56}',
-    '.tct-sp.s-out{background:#eee;color:#888}',
+    '.tct-stage-badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:11px;font-size:10px;font-weight:500;letter-spacing:.2px;white-space:nowrap}',
     '.tct-row-actions{display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap}',
     '.tct-row-actions select{font-size:11px;padding:4px 6px;border:1px solid #d0d0d0;border-radius:5px;font-family:inherit;background:#fff}',
     '.tct-row-actions button{font-size:10px;padding:4px 8px;background:transparent;border:1px solid #d0d0d0;border-radius:5px;cursor:pointer;color:#666;font-family:inherit}',
-    '.tct-defs{margin-top:18px;border-top:1px solid #eee;padding-top:14px}',
-    '.tct-defs-hdr{display:flex;justify-content:space-between;align-items:center;cursor:pointer}',
-    '.tct-defs-hdr h3{margin:0;font-size:12px;font-weight:600}',
-    '.tct-defs-hdr .tct-arrow{font-size:11px;color:#888}',
-    '.tct-defs-body{display:none;margin-top:10px}',
-    '.tct-defs.open .tct-defs-body{display:block}',
-    '.tct-def-row{display:flex;gap:10px;padding:6px 0;font-size:11px;color:#555;align-items:flex-start;border-bottom:1px solid #f4f4f1}',
-    '.tct-def-row:last-child{border-bottom:none}'
+    '.tct-row-actions button:hover{background:#fafaf7}'
   ].join('');
 
   function esc(s) {
@@ -93,31 +98,16 @@
     });
   }
 
-  function stageMeta(key) {
-    for (var i = 0; i < STAGES.length; i++) if (STAGES[i].key === key) return STAGES[i];
-    return { key: key, label: key, cls: 's-contacted', tone: 'cool' };
-  }
-
   function buildTemplate() {
     var formStageOpts = STAGES.map(function (s) {
       return '<option value="' + esc(s.key) + '">' + esc(s.label) + '</option>';
     }).join('') + '<option value="Not Interested">Not Interested</option>';
 
-    var defsRows = STAGES.map(function (s) {
-      return '<div class="tct-def-row"><span class="tct-sp ' + s.cls + '">' + esc(s.label) + '</span><span>' + esc(s.desc) + '</span></div>';
-    }).join('');
-
     return [
       '<div class="tct">',
-      '  <div class="tct-intro">',
-      '    <h3>Your Contact Tracker</h3>',
-      '    <p>Everyone you DM goes here — all 15 per day. <strong>Only "In Conversation" or beyond gets added to ActiveCampaign.</strong></p>',
-      '  </div>',
-      '  <div class="tct-hdr">',
-      '    <h3>All Contacts <span class="tct-count" data-total>(0 active · 0 in AC)</span></h3>',
-      '    <div style="display:flex;gap:8px;flex-wrap:wrap">',
-      '      <button class="tct-btn" data-action="add-toggle">+ Add</button>',
-      '    </div>',
+      '  <div class="tct-top">',
+      '    <div class="tct-filters" data-filters></div>',
+      '    <button class="tct-add" data-action="add-toggle">+ Add</button>',
       '  </div>',
       '  <div class="tct-form" data-form>',
       '    <h4>New Contact</h4>',
@@ -131,16 +121,11 @@
       '      <div class="tct-af full"><label>Next Step</label><input type="text" data-field="next" placeholder="e.g. Follow up Friday..."></div>',
       '    </div>',
       '    <div class="tct-form-actions">',
-      '      <button class="tct-btn tct-btn-primary" data-action="add-submit">Add →</button>',
-      '      <button class="tct-btn" data-action="add-cancel">Cancel</button>',
+      '      <button class="primary" data-action="add-submit">Add →</button>',
+      '      <button data-action="add-cancel">Cancel</button>',
       '    </div>',
       '  </div>',
-      '  <div class="tct-filters" data-filters></div>',
       '  <div data-list></div>',
-      '  <div class="tct-defs" data-defs>',
-      '    <div class="tct-defs-hdr" data-action="defs-toggle"><h3>What does each stage mean?</h3><span class="tct-arrow">↓ expand</span></div>',
-      '    <div class="tct-defs-body">' + defsRows + '</div>',
-      '  </div>',
       '</div>'
     ].join('\n');
   }
@@ -148,9 +133,9 @@
   function TcTracker(root) {
     this.root = root;
     this.contacts = [];
-    this.counts = {};
-    this.cf = 'Hand Raise';
-    this.cfAutoDefault = true;
+    this.counts = { cold: 0, talking: 0, hot: 0, won: 0 };
+    this.cb = 'hot';                    // current bucket (4-way filter)
+    this.cbAutoDefault = true;          // auto-land on highest-priority non-empty bucket
     this.ownerId = null;
     this.client = null;
     this.listeners = [];
@@ -205,7 +190,6 @@
   TcTracker.prototype.addContact = async function (input) {
     if (!this.client || !this.ownerId) { console.warn('[TcTracker] not authed'); return null; }
     var nowIso = new Date().toISOString();
-    // Pack brok/next into notes for storage (schema-safe)
     var notesParts = [];
     if (input.brok) notesParts.push('Brokerage: ' + input.brok);
     if (input.next) notesParts.push('Next: ' + input.next);
@@ -262,7 +246,6 @@
 
   TcTracker.prototype.getContacts = function () { return this.contacts.slice(); };
   TcTracker.prototype.getCounts = function () { return Object.assign({}, this.counts); };
-
   TcTracker.prototype.onChange = function (cb) { if (typeof cb === 'function') this.listeners.push(cb); };
 
   TcTracker.prototype._fireChange = function () {
@@ -273,34 +256,31 @@
   TcTracker.prototype._renderFilters = function () {
     var wrap = this.root.querySelector('[data-filters]');
     if (!wrap) return;
-    wrap.innerHTML = STAGES.map(function (s) {
-      var toneCls = s.tone === 'hot' ? ' hot' : s.tone === 'warm' ? ' warm' : '';
-      var activeCls = (s.key === this.cf) ? ' active' : '';
-      return '<button class="tct-filter' + activeCls + '" data-filter="' + esc(s.key) + '">' +
-             esc(s.label) +
-             ' <span class="tct-fc' + toneCls + '" data-count="' + esc(s.key) + '">0</span>' +
+    var self = this;
+    wrap.innerHTML = BUCKETS.map(function (b) {
+      var active = (b.key === self.cb);
+      var style = active ? '' : 'background:' + b.bg + ';color:' + b.fg + ';';
+      return '<button class="tct-pill' + (active ? ' active' : '') + '" data-bucket="' + esc(b.key) + '" style="' + style + '">' +
+             esc(b.label) +
+             ' <span class="tct-pill-count">0</span>' +
              '</button>';
-    }.bind(this)).join('');
+    }).join('');
   };
 
   TcTracker.prototype._wireEvents = function () {
     var self = this;
     this.root.addEventListener('click', function (e) {
       var t = e.target;
-      var btn = t.closest ? t.closest('[data-action], .tct-filter, [data-delete-id]') : null;
+      var btn = t.closest ? t.closest('[data-action], [data-bucket], [data-delete-id]') : null;
       if (!btn) return;
       var action = btn.getAttribute('data-action');
       var delId = btn.getAttribute('data-delete-id');
       if (delId) { self.deleteContact(delId); return; }
-      if (btn.classList.contains('tct-filter')) {
-        var stage = btn.getAttribute('data-filter');
-        if (stage) self._setFilter(stage);
-        return;
-      }
+      var bucket = btn.getAttribute('data-bucket');
+      if (bucket) { self._setBucket(bucket); return; }
       if (action === 'add-toggle') self._toggleForm();
       else if (action === 'add-submit') self._submitAdd();
       else if (action === 'add-cancel') self._toggleForm(false);
-      else if (action === 'defs-toggle') self._toggleDefs();
     });
     this.root.addEventListener('change', function (e) {
       var t = e.target;
@@ -310,11 +290,11 @@
     });
   };
 
-  TcTracker.prototype._setFilter = function (stage) {
-    this.cf = stage;
-    this.cfAutoDefault = false;
-    var btns = this.root.querySelectorAll('.tct-filter');
-    btns.forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-filter') === stage); });
+  TcTracker.prototype._setBucket = function (bucket) {
+    this.cb = bucket;
+    this.cbAutoDefault = false;
+    this._renderFilters();
+    this._updateCountsDom();
     this._renderList();
   };
 
@@ -323,14 +303,6 @@
     if (!f) return;
     var willOpen = (force === undefined) ? !f.classList.contains('open') : !!force;
     f.classList.toggle('open', willOpen);
-  };
-
-  TcTracker.prototype._toggleDefs = function () {
-    var d = this.root.querySelector('[data-defs]');
-    if (!d) return;
-    d.classList.toggle('open');
-    var arr = d.querySelector('.tct-arrow');
-    if (arr) arr.textContent = d.classList.contains('open') ? '↑ collapse' : '↓ expand';
   };
 
   TcTracker.prototype._submitAdd = async function () {
@@ -355,54 +327,60 @@
 
   TcTracker.prototype._render = function () {
     this._updateCounts();
-    if (this.cfAutoDefault) this._applyAutoDefault();
+    if (this.cbAutoDefault) this._applyAutoDefault();
+    this._renderFilters();
+    this._updateCountsDom();
     this._renderList();
-    this._renderTotal();
   };
 
   TcTracker.prototype._updateCounts = function () {
-    var counts = {};
-    STAGES.forEach(function (s) { counts[s.key] = 0; });
-    this.contacts.forEach(function (c) { if (counts.hasOwnProperty(c.stage)) counts[c.stage]++; });
+    var counts = { cold: 0, talking: 0, hot: 0, won: 0 };
+    this.contacts.forEach(function (c) {
+      var s = stageMeta(c.stage);
+      if (s && counts.hasOwnProperty(s.bucket)) counts[s.bucket]++;
+    });
     this.counts = counts;
-    STAGES.forEach(function (s) {
-      var el = this.root.querySelector('[data-count="' + s.key + '"]');
-      if (el) el.textContent = counts[s.key];
-    }.bind(this));
+  };
+
+  TcTracker.prototype._updateCountsDom = function () {
+    var self = this;
+    BUCKETS.forEach(function (b) {
+      var btn = self.root.querySelector('[data-bucket="' + b.key + '"] .tct-pill-count');
+      if (btn) btn.textContent = self.counts[b.key];
+    });
   };
 
   TcTracker.prototype._applyAutoDefault = function () {
-    var prio = STAGES.slice().sort(function (a, b) { return a.prio - b.prio; });
-    var first = null;
-    for (var i = 0; i < prio.length; i++) if (this.counts[prio[i].key] > 0) { first = prio[i]; break; }
-    var target = first ? first.key : 'Hand Raise';
-    this.cf = target;
-    var btns = this.root.querySelectorAll('.tct-filter');
-    btns.forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-filter') === target); });
-  };
-
-  TcTracker.prototype._renderTotal = function () {
-    var total = this.contacts.filter(function (c) { return c.stage !== 'Not Interested'; }).length;
-    var inAC = this.contacts.filter(function (c) { return IN_AC_STAGES.indexOf(c.stage) >= 0; }).length;
-    var el = this.root.querySelector('[data-total]');
-    if (el) el.textContent = '(' + total + ' active · ' + inAC + ' in AC)';
+    // Priority: hot → talking → cold → won. Land on first non-empty bucket.
+    var prio = ['hot', 'talking', 'cold', 'won'];
+    var target = null;
+    for (var i = 0; i < prio.length; i++) if (this.counts[prio[i]] > 0) { target = prio[i]; break; }
+    this.cb = target || 'hot';
   };
 
   TcTracker.prototype._renderList = function () {
     var list = this.root.querySelector('[data-list]');
     if (!list) return;
-    var cf = this.cf;
-    var filtered = this.contacts.filter(function (c) { return c.stage === cf; });
+    var stagesInBucket = bucketStages(this.cb);
+    var filtered = this.contacts.filter(function (c) { return stagesInBucket.indexOf(c.stage) >= 0; });
     if (!filtered.length) {
-      list.innerHTML = '<div class="tct-empty">No contacts in this stage yet.</div>';
+      var emptyMsg = ({
+        cold:    'No cold contacts. Keep DMing.',
+        talking: 'No active conversations yet.',
+        hot:     'Nothing hot right now. Work the cold pile.',
+        won:     'No closed clients yet. The next one is in your pipeline.'
+      })[this.cb] || 'Empty bucket.';
+      list.innerHTML = '<div class="tct-empty">' + esc(emptyMsg) + '</div>';
       return;
     }
     list.innerHTML = filtered.map(function (c) {
       var s = stageMeta(c.stage);
+      var b = bucketMeta(s.bucket);
       var stageOpts = STAGES.map(function (o) {
         return '<option' + (c.stage === o.key ? ' selected' : '') + ' value="' + esc(o.key) + '">' + esc(o.label) + '</option>';
       }).join('') + '<option' + (c.stage === 'Not Interested' ? ' selected' : '') + ' value="Not Interested">Not Interested</option>';
       var notesHtml = c.notes ? '<span>' + esc(c.notes) + '</span>' : '';
+      var badgeStyle = 'background:' + b.bg + ';color:' + b.fg;
       return '<div class="tct-row">' +
         '<div class="tct-row-top">' +
           '<div>' +
@@ -413,7 +391,7 @@
               notesHtml +
             '</div>' +
           '</div>' +
-          '<span class="tct-sp ' + s.cls + '">' + esc(s.label) + '</span>' +
+          '<span class="tct-stage-badge" style="' + badgeStyle + '">' + esc(s.label) + '</span>' +
         '</div>' +
         '<div class="tct-row-actions">' +
           '<select data-stage-for="' + esc(c.id) + '">' + stageOpts + '</select>' +
@@ -441,4 +419,5 @@
   };
 
   global.TcTrackerStages = STAGES;
+  global.TcTrackerBuckets = BUCKETS;
 })(window);
