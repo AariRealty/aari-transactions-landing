@@ -170,7 +170,11 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
 .sp-rate-amt{font-family:var(--serif);font-size:15px;font-weight:600;color:#4a7a4a}
 
 /* Submit Pay zones · Ready / In flight / Paid */
-.sp-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:0;background:var(--ink);color:#fff;border-radius:12px;padding:18px 22px;margin-bottom:24px}
+.sp-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:0;background:var(--ink);color:#fff;border-radius:12px;padding:18px 22px;margin-bottom:24px}
+.sp-strip-trend{font-size:10px;color:#a8a49e;margin-top:4px}
+.sp-strip-trend.up{color:var(--pastel-sage)}
+.sp-strip-trend.down{color:var(--pastel-blush)}
+@media(max-width:760px){.sp-strip{grid-template-columns:repeat(2,1fr);gap:14px}.sp-strip-cell{border-right:0;padding:0}}
 .sp-strip-cell{padding:0 16px;border-right:1px solid rgba(255,255,255,0.08)}
 .sp-strip-cell:first-child{padding-left:0}
 .sp-strip-cell:last-child{border-right:0;padding-right:0}
@@ -687,11 +691,12 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
     <div class="panel" id="panel-submit-pay">
       <!-- DEMO DATA · replace with Supabase query of files where status='closed' -->
 
-      <!-- TOP SUMMARY STRIP · This month paid · In flight · Ready -->
+      <!-- TOP SUMMARY STRIP · This month · In flight · Ready · 4-week avg -->
       <div class="sp-strip">
         <div class="sp-strip-cell paid"><div class="sp-strip-lbl">This month</div><div class="sp-strip-val" id="sp-strip-paid">$0</div><div class="sp-strip-sub" id="sp-strip-paid-sub">0 paid</div></div>
         <div class="sp-strip-cell flight"><div class="sp-strip-lbl">In flight</div><div class="sp-strip-val" id="sp-strip-flight">$0</div><div class="sp-strip-sub" id="sp-strip-flight-sub">awaiting Marlenyi</div></div>
         <div class="sp-strip-cell"><div class="sp-strip-lbl">Ready</div><div class="sp-strip-val" id="sp-strip-ready">$717</div><div class="sp-strip-sub" id="sp-strip-ready-sub">3 files</div></div>
+        <div class="sp-strip-cell"><div class="sp-strip-lbl">4-week avg</div><div class="sp-strip-val" id="sp-strip-avg">$0</div><div class="sp-strip-trend" id="sp-strip-trend">not enough data yet</div></div>
       </div>
 
       <!-- ZONE 1: Ready to submit -->
@@ -1385,6 +1390,38 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
     document.getElementById('sp-strip-paid-sub').textContent = monthPaid.length + ' paid';
     document.getElementById('sp-strip-flight').textContent = '$' + flightTotal.toLocaleString();
     document.getElementById('sp-strip-flight-sub').textContent = flight.length === 0 ? 'awaiting submissions' : 'awaiting Marlenyi';
+
+    // 4-week avg + trend vs prior 4 weeks
+    const ms28 = 28 * 86400000;
+    const fourWksAgo = now.getTime() - ms28;
+    const eightWksAgo = now.getTime() - (ms28 * 2);
+    const recent = paid.filter(h => {
+      const t = h.paid_at ? new Date(h.paid_at).getTime() : new Date(h.submitted_at).getTime();
+      return t >= fourWksAgo;
+    });
+    const prior = paid.filter(h => {
+      const t = h.paid_at ? new Date(h.paid_at).getTime() : new Date(h.submitted_at).getTime();
+      return t >= eightWksAgo && t < fourWksAgo;
+    });
+    const recentTotal = recent.reduce((s,h) => s + (h.total_pay || 0), 0);
+    const priorTotal = prior.reduce((s,h) => s + (h.total_pay || 0), 0);
+    const avgWeekly = Math.round(recentTotal / 4);
+    const avgEl = document.getElementById('sp-strip-avg');
+    const trendEl = document.getElementById('sp-strip-trend');
+    if (avgEl) avgEl.textContent = '$' + avgWeekly.toLocaleString() + (avgWeekly > 0 ? '/wk' : '');
+    if (trendEl) {
+      trendEl.className = 'sp-strip-trend';
+      if (recent.length === 0) {
+        trendEl.textContent = 'not enough data yet';
+      } else if (prior.length === 0) {
+        trendEl.textContent = 'first 4 weeks · keep going';
+      } else {
+        const pct = Math.round((recentTotal - priorTotal) / priorTotal * 100);
+        if (pct > 2) { trendEl.textContent = '↑ ' + pct + '% vs prior'; trendEl.classList.add('up'); }
+        else if (pct < -2) { trendEl.textContent = '↓ ' + Math.abs(pct) + '% vs prior'; trendEl.classList.add('down'); }
+        else { trendEl.textContent = '→ flat vs prior'; }
+      }
+    }
   }
   function spAge(iso){
     const now = Date.now(), then = new Date(iso).getTime(), mins = Math.round((now - then) / 60000);
