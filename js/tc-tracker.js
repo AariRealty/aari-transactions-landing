@@ -82,6 +82,7 @@
     '.tct-form-actions button.primary{background:#0a0a0a;color:#fff;border-color:#0a0a0a}',
     '.tct-empty{padding:32px 16px;text-align:center;font-size:12px;color:#888;background:#fafaf7;border-radius:8px;border:1px dashed #d0d0d0}',
     '.tct-row{padding:12px 14px;border:1px solid #eee;border-radius:8px;margin-bottom:8px;background:#fff}',
+    '.tct-row.editing{border-color:#bbb;background:#fafaf7}',
     '.tct-row-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:4px}',
     '.tct-name{font-size:13px;font-weight:600;color:#0a0a0a}',
     '.tct-meta{font-size:11px;color:#888;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:3px}',
@@ -89,7 +90,13 @@
     '.tct-row-actions{display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap}',
     '.tct-row-actions select{font-size:11px;padding:4px 6px;border:1px solid #d0d0d0;border-radius:5px;font-family:inherit;background:#fff}',
     '.tct-row-actions button{font-size:10px;padding:4px 8px;background:transparent;border:1px solid #d0d0d0;border-radius:5px;cursor:pointer;color:#666;font-family:inherit}',
-    '.tct-row-actions button:hover{background:#fafaf7}'
+    '.tct-row-actions button:hover{background:#fafaf7}',
+    '.tct-row-actions button.danger{color:#A32D2D;border-color:#E8C8C8}',
+    '.tct-row-actions button.primary{background:#0a0a0a;color:#fff;border-color:#0a0a0a}',
+    '.tct-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;margin-top:8px}',
+    '.tct-edit-grid .full{grid-column:1/-1}',
+    '.tct-edit-grid label{display:block;font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:#888;font-weight:500;margin-bottom:2px}',
+    '.tct-edit-grid input,.tct-edit-grid select{width:100%;font-size:12px;padding:6px 8px;border:1px solid #d0d0d0;border-radius:5px;font-family:inherit;background:#fff;box-sizing:border-box}'
   ].join('');
 
   function esc(s) {
@@ -136,9 +143,32 @@
     this.counts = { cold: 0, talking: 0, hot: 0, won: 0 };
     this.cb = 'hot';                    // current bucket (4-way filter)
     this.cbAutoDefault = true;          // auto-land on highest-priority non-empty bucket
+    this.editingId = null;              // id of contact row currently in edit mode
     this.ownerId = null;
     this.client = null;
     this.listeners = [];
+  }
+
+  // Parse "Brokerage: X · Next: Y · ...notes..." from the notes column
+  function parseNotes(notes) {
+    var out = { brok: '', next: '', notes: '' };
+    if (!notes) return out;
+    var parts = String(notes).split(' · ');
+    var leftover = [];
+    parts.forEach(function (p) {
+      if (p.indexOf('Brokerage: ') === 0) out.brok = p.slice(11);
+      else if (p.indexOf('Next: ') === 0) out.next = p.slice(6);
+      else leftover.push(p);
+    });
+    out.notes = leftover.join(' · ');
+    return out;
+  }
+  function packNotes(brok, next, notes) {
+    var parts = [];
+    if (brok) parts.push('Brokerage: ' + brok);
+    if (next) parts.push('Next: ' + next);
+    if (notes) parts.push(notes);
+    return parts.length ? parts.join(' · ') : null;
   }
 
   TcTracker.prototype.init = async function () {
@@ -232,6 +262,32 @@
     } catch (e) { console.error('[TcTracker] updateStage error', e); }
   };
 
+  TcTracker.prototype.updateContact = async function (id, patch) {
+    if (!this.client) return;
+    var nowIso = new Date().toISOString();
+    var update = {
+      name: patch.name || '(unnamed)',
+      handle: patch.handle || null,
+      source: patch.source || null,
+      stage: patch.stage || 'Contacted',
+      notes: packNotes(patch.brok, patch.next, patch.notes),
+      last_touch_at: nowIso
+    };
+    try {
+      var r = await this.client.from('bd_contacts').update(update).eq('id', id);
+      if (r.error) { console.error('[TcTracker] updateContact', r.error); alert('Save failed'); return; }
+      for (var i = 0; i < this.contacts.length; i++) if (this.contacts[i].id === id) {
+        var c = this.contacts[i];
+        c.name = update.name; c.handle = update.handle; c.source = update.source;
+        c.stage = update.stage; c.notes = update.notes; c.last_touch_at = nowIso;
+        break;
+      }
+      this.editingId = null;
+      this._render();
+      this._fireChange();
+    } catch (e) { console.error('[TcTracker] updateContact error', e); }
+  };
+
   TcTracker.prototype.deleteContact = async function (id) {
     if (!this.client) return;
     if (!confirm('Delete this contact? This cannot be undone.')) return;
@@ -271,11 +327,17 @@
     var self = this;
     this.root.addEventListener('click', function (e) {
       var t = e.target;
-      var btn = t.closest ? t.closest('[data-action], [data-bucket], [data-delete-id]') : null;
+      var btn = t.closest ? t.closest('[data-action], [data-bucket], [data-delete-id], [data-edit-id], [data-edit-save], [data-edit-cancel]') : null;
       if (!btn) return;
       var action = btn.getAttribute('data-action');
       var delId = btn.getAttribute('data-delete-id');
+      var editId = btn.getAttribute('data-edit-id');
+      var saveId = btn.getAttribute('data-edit-save');
+      var cancelId = btn.getAttribute('data-edit-cancel');
       if (delId) { self.deleteContact(delId); return; }
+      if (editId) { self.editingId = editId; self._renderList(); return; }
+      if (cancelId) { self.editingId = null; self._renderList(); return; }
+      if (saveId) { self._commitEdit(saveId); return; }
       var bucket = btn.getAttribute('data-bucket');
       if (bucket) { self._setBucket(bucket); return; }
       if (action === 'add-toggle') self._toggleForm();
@@ -287,6 +349,19 @@
       if (t.matches && t.matches('select[data-stage-for]')) {
         self.updateStage(t.getAttribute('data-stage-for'), t.value);
       }
+    });
+  };
+
+  TcTracker.prototype._commitEdit = function (id) {
+    var row = this.root.querySelector('[data-row-id="' + id + '"]');
+    if (!row) return;
+    var get = function (k) {
+      var el = row.querySelector('[data-edit-field="' + k + '"]');
+      return el ? el.value.trim() : '';
+    };
+    this.updateContact(id, {
+      name: get('name'), handle: get('handle'), brok: get('brok'),
+      source: get('source'), stage: get('stage'), next: get('next')
     });
   };
 
