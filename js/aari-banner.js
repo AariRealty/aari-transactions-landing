@@ -22,8 +22,8 @@
   const CARDS = [
     { id:'start',    label:'Start my day',   href:'/briefing.html',       icon:iconSun(),   match:['/briefing'],                       roles:['agent'] },
     { id:'team',     label:'Run the team',   href:'/broker-cockpit.html', icon:iconUsers(), match:['/broker-cockpit','/tc-cockpit'],   roles:['broker'] },
-    { id:'prospecting', label:'Prospecting', href:'/prospecting.html', icon:iconBook(), match:['/prospecting','/bd'], roles:['tc'] },
-    { id:'files',    label:'Work the files', href:'/pipeline.html',       icon:iconFolder(),match:['/pipeline'],                       roles:['tc'] },
+    { id:'prospecting', label:'Prospecting', href:'/prospecting.html', icon:iconBook(), match:['/prospecting','/bd'], roles:['tc','broker'] },
+    { id:'files',    label:'Work the files', href:'/pipeline.html',       icon:iconFolder(),match:['/pipeline'],                       roles:['tc','broker'] },
     { id:'submit',   label:'Submit a file',  href:'/#apply',              icon:iconUpload(),match:[], intake:true,                     roles:['agent'] },
   ];
 
