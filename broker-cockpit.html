@@ -555,23 +555,21 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
   async function loadCockpit(brokerProfile){
     const client = await window.AariAuth.ensureClient();
 
-    // Pull: all bd_contacts, all bd_daily_logs, all staff agents (tc + broker), all active files, pay requests
-    const [contactsR, logsR, agentsR, filesR, payR] = await Promise.all([
-      client.from('bd_contacts').select('*').order('last_touch_at',{ascending:false}),
-      client.from('bd_daily_logs').select('*').order('log_date',{ascending:false}),
+    // Pull: all staff agents, files, pay requests, client reviews (May 2026 · BD queries dropped, reviews added)
+    const [agentsR, filesR, payR, reviewsR] = await Promise.all([
       client.from('agents').select('id, first_name, last_name, email, role'),
       client.from('files').select('id, property_address, service_type, agent_id, assigned_tc_id, status, tc_accepted_at, closing_date, created_at'),
       client.from('pay_requests').select('id, status, total_pay, paid_at, submitted_at').order('submitted_at',{ascending:false}),
+      client.from('client_reviews').select('id, tc_id, stars, status, submitted_at').then(r => r, err => ({ data:[], error:err })),
     ]);
 
-    if (contactsR.error || logsR.error || agentsR.error || filesR.error) {
-      console.error('[broker-cockpit] load error', contactsR.error || logsR.error || agentsR.error || filesR.error);
+    if (agentsR.error || filesR.error) {
+      console.error('[broker-cockpit] load error', agentsR.error || filesR.error);
     }
-    const contacts = contactsR.data || [];
-    const logs = logsR.data || [];
     const agents = agentsR.data || [];
     const files = filesR.data || [];
     const payRequests = (payR && !payR.error && payR.data) ? payR.data : [];
+    const reviews = (reviewsR && !reviewsR.error && reviewsR.data) ? reviewsR.data : [];
     // Expose for goal-bar wire (Section 2)
     window._brokerPayRequests = payRequests;
 
@@ -695,16 +693,22 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
   }
 
   // SECTION 1 · Run-the-team hero · auto-rank today's priorities (May 2026)
-  // Ranking order: past-closing > pay requests pending > TC acceptances pending > BD hand raises
-  function renderRunHero(files, payRequests, contacts){
-    const todayStr = new Date().toISOString().slice(0,10);
+  // Ranking order: past-closing > pay requests pending > TC acceptances pending > closing soon
+  function renderRunHero(files, payRequests, _ignoredContacts){
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0,10);
+    const in3 = new Date(now); in3.setDate(now.getDate() + 3);
     const activeFiles = (files||[]).filter(f => f.status !== 'closed' && f.status !== 'archived');
     const pastClosing = activeFiles.filter(f => f.closing_date && f.closing_date < todayStr).length;
     const acceptancesPending = activeFiles.filter(f => f.status === 'awaiting_tc_acceptance' || (f.assigned_tc_id && !f.tc_accepted_at)).length;
     const payPending = (payRequests||[]).filter(r => r.status === 'pending');
     const payPendingCount = payPending.length;
     const payPendingDollars = payPending.reduce((s,r) => s + parseFloat(r.total_pay||0), 0);
-    const handRaises = (contacts||[]).filter(c => c.stage === 'Hand Raise').length;
+    const closingSoon = activeFiles.filter(f => {
+      if (!f.closing_date) return false;
+      const d = new Date(f.closing_date + 'T00:00:00');
+      return d >= now && d <= in3;
+    }).length;
 
     // Build the candidate priority list
     const fmtMoney = n => n >= 1000 ? '$' + (n/1000).toFixed(1).replace('.0','') + 'K' : '$' + Math.round(n).toLocaleString();
@@ -712,7 +716,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
       { key:'past',    val: pastClosing,        display: String(pastClosing),       name:'Files past closing',      cta:'Open files ↗',  href:'#fm-past' },
       { key:'pay',     val: payPendingCount,    display: fmtMoney(payPendingDollars), name:'Pay requests waiting',  cta:'Approve ↗',     href:'#payreq-section' },
       { key:'accept',  val: acceptancesPending, display: String(acceptancesPending), name:'TC acceptances pending',  cta:'Review ↗',      href:'#fm-pending' },
-      { key:'raise',   val: handRaises,         display: String(handRaises),         name:'BD hand raises',          cta:'Follow up ↗',   href:'#cockpit-grid' },
+      { key:'soon',    val: closingSoon,        display: String(closingSoon),       name:'Closing in next 3 days',   cta:'View files ↗',  href:'#tcwl-section' },
     ];
 
     // Pick the #1 by ranking order; tie-breaker = order in the items array
