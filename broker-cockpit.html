@@ -1372,6 +1372,139 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     render();
   }
 
+  // SECTION 6 · TC performance scoreboard · monthly metrics per TC + team rollup (May 2026)
+  function renderTcPerformance(team, files, reviews){
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0,10);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthLbl = now.toLocaleDateString('en-US',{month:'long'});
+    document.getElementById('tcperf-title').textContent = 'TC performance · ' + monthLbl;
+
+    const CYCLE_TARGET = 28; // days
+
+    function fmtPct(n){ return Math.round(n) + '%'; }
+    function avg(arr){ return arr.length ? arr.reduce((a,b)=>a+b,0) / arr.length : 0; }
+
+    // Compute closed-this-month files (team-wide)
+    const closedMtd = files.filter(f =>
+      f.status === 'closed' && f.closing_date &&
+      new Date(f.closing_date + 'T00:00:00') >= monthStart &&
+      new Date(f.closing_date + 'T00:00:00') <= now
+    );
+    const teamActive = files.filter(f => f.status !== 'closed' && f.status !== 'archived');
+    const teamPastClosing = teamActive.filter(f => f.closing_date && f.closing_date < todayStr).length;
+    const teamCycleDays = closedMtd.map(f => {
+      if (!f.created_at || !f.closing_date) return null;
+      const days = (new Date(f.closing_date+'T00:00:00') - new Date(f.created_at)) / 86400000;
+      return days >= 0 && days < 365 ? days : null;
+    }).filter(d => d !== null);
+    const teamAvgCycle = teamCycleDays.length ? avg(teamCycleDays) : 0;
+    const teamReviews = (reviews||[]).filter(r => r.stars != null);
+    const teamAvgRating = teamReviews.length ? avg(teamReviews.map(r => parseFloat(r.stars))) : 0;
+    const teamPastPct = teamActive.length ? (teamPastClosing / teamActive.length) * 100 : 0;
+
+    document.getElementById('tcperf-meta').textContent =
+      `${closedMtd.length} closed · ${teamActive.length} active · ${teamReviews.length} review${teamReviews.length===1?'':'s'}`;
+
+    const mh = document.getElementById('tcperf-masthead');
+    mh.innerHTML = `
+      <div class="tcperf-mh-cell">
+        <div class="tcperf-mh-lbl">Closed MTD</div>
+        <div class="tcperf-mh-val">${closedMtd.length}</div>
+        <div class="tcperf-mh-sub">team total · ${monthLbl}</div>
+      </div>
+      <div class="tcperf-mh-cell">
+        <div class="tcperf-mh-lbl">Avg cycle</div>
+        <div class="tcperf-mh-val">${teamCycleDays.length ? Math.round(teamAvgCycle)+'d' : '—'}</div>
+        <div class="tcperf-mh-sub">target: ${CYCLE_TARGET}d</div>
+      </div>
+      <div class="tcperf-mh-cell">
+        <div class="tcperf-mh-lbl">Past closing</div>
+        <div class="tcperf-mh-val">${teamPastClosing}</div>
+        <div class="tcperf-mh-sub">${fmtPct(teamPastPct)} of active</div>
+      </div>
+      <div class="tcperf-mh-cell">
+        <div class="tcperf-mh-lbl">Avg rating</div>
+        <div class="tcperf-mh-val">${teamReviews.length ? teamAvgRating.toFixed(1) : '—'}</div>
+        <div class="tcperf-mh-sub">${teamReviews.length} review${teamReviews.length===1?'':'s'}</div>
+      </div>
+    `;
+
+    const grid = document.getElementById('tcperf-grid');
+    if (!team.length) {
+      grid.innerHTML = '<div class="tcperf-empty"><strong>No team members yet.</strong> Add a TC under role=\'tc\' or broker under role=\'broker\' in the agents table.</div>';
+      return;
+    }
+
+    grid.innerHTML = team.map(person => {
+      const personFiles = files.filter(f => f.assigned_tc_id === person.id);
+      const personClosed = personFiles.filter(f =>
+        f.status === 'closed' && f.closing_date &&
+        new Date(f.closing_date + 'T00:00:00') >= monthStart &&
+        new Date(f.closing_date + 'T00:00:00') <= now
+      );
+      const personActive = personFiles.filter(f => f.status !== 'closed' && f.status !== 'archived');
+      const personPast = personActive.filter(f => f.closing_date && f.closing_date < todayStr).length;
+      const cycleDays = personClosed.map(f => {
+        if (!f.created_at || !f.closing_date) return null;
+        const days = (new Date(f.closing_date+'T00:00:00') - new Date(f.created_at)) / 86400000;
+        return days >= 0 && days < 365 ? days : null;
+      }).filter(d => d !== null);
+      const avgCycle = cycleDays.length ? avg(cycleDays) : 0;
+      const personReviews = (reviews||[]).filter(r => r.tc_id === person.id && r.stars != null);
+      const avgRating = personReviews.length ? avg(personReviews.map(r => parseFloat(r.stars))) : 0;
+      const pastPct = personActive.length ? (personPast / personActive.length) * 100 : 0;
+
+      const initials = ((person.first_name||'?').charAt(0) + (person.last_name||'').charAt(0)).toUpperCase();
+      const fullName = ((person.first_name||'') + ' ' + (person.last_name||'')).trim() || 'Unnamed';
+      const roleLbl = person.role === 'broker' ? 'Broker · TC' : 'TC';
+      const firstLower = (person.first_name||'').toLowerCase();
+      const deepLink = firstLower === 'eileen' ? '/eileen.html'
+                     : firstLower === 'marlenyi' || firstLower === 'mile' ? '/milennys.html'
+                     : '#';
+
+      const noActivity = personClosed.length === 0 && personActive.length === 0;
+      const zeroClass = noActivity ? ' zero' : '';
+
+      // Cycle progress bar · how close to target (lower is better; 100% means at target, >100% means over)
+      const cyclePct = cycleDays.length
+        ? Math.min(100, (CYCLE_TARGET / Math.max(avgCycle, 1)) * 100)
+        : 0;
+
+      return `
+        <div class="tcperf-card${zeroClass}">
+          <div class="tcperf-card-head">
+            <div class="tcperf-avatar">${esc(initials)}</div>
+            <div>
+              <div class="tcperf-name">${esc(fullName)}</div>
+              <div class="tcperf-role">${esc(roleLbl)}</div>
+            </div>
+            ${deepLink !== '#' ? `<a class="tcperf-link" href="${deepLink}">Open ↗</a>` : ''}
+          </div>
+          <div class="tcperf-metrics">
+            <div class="tcperf-metric"><div class="tcperf-metric-val">${personClosed.length}</div><div class="tcperf-metric-lbl">Closed</div></div>
+            <div class="tcperf-metric"><div class="tcperf-metric-val">${cycleDays.length ? Math.round(avgCycle)+'d' : '—'}</div><div class="tcperf-metric-lbl">Cycle</div></div>
+            <div class="tcperf-metric"><div class="tcperf-metric-val">${personActive.length}</div><div class="tcperf-metric-lbl">Active</div></div>
+            <div class="tcperf-metric"><div class="tcperf-metric-val">${personReviews.length ? avgRating.toFixed(1) : '—'}</div><div class="tcperf-metric-lbl">Rating</div></div>
+          </div>
+          ${cycleDays.length ? `
+            <div class="tcperf-target-row">
+              <span>Cycle vs target (${CYCLE_TARGET}d)</span>
+              <strong>${Math.round(avgCycle)}d</strong>
+            </div>
+            <div class="tcperf-bar"><div class="tcperf-bar-fill" style="width:${cyclePct.toFixed(0)}%"></div></div>
+          ` : (noActivity ? '<div style="font-size:11px;color:var(--muted);">No activity this cycle.</div>' : `
+            <div class="tcperf-target-row">
+              <span>Past closing</span>
+              <strong>${personPast} of ${personActive.length} (${fmtPct(pastPct)})</strong>
+            </div>
+            <div class="tcperf-bar"><div class="tcperf-bar-fill" style="width:${Math.min(100, pastPct).toFixed(0)}%"></div></div>
+          `)}
+        </div>
+      `;
+    }).join('');
+  }
+
   function renderTcWorkload(team, files){
     const today = new Date();
     const todayStr = today.toISOString().slice(0,10);
