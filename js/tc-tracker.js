@@ -303,11 +303,12 @@
     out.notes = leftover.join(' · ');
     return out;
   }
-  function packNotes(brok, next, notes, email, touches, snoozes) {
+  function packNotes(brok, next, notes, email, touches, snoozes, in_campaign) {
     var parts = [];
     if (brok) parts.push('Brokerage: ' + brok);
     if (next) parts.push('Next: ' + next);
     if (email) parts.push('Email: ' + email);
+    if (in_campaign === true) parts.push('Campaign: yes');
     if (touches && (touches.t1 || touches.t2 || touches.t3)) {
       var tParts = [];
       if (touches.t1) tParts.push('t1=' + touches.t1);
@@ -421,6 +422,7 @@
   global.TcTrackerTouchStates = contactTouchStates;
   global.TcTrackerTodayIso = todayIsoDate;
   global.TcTrackerAddDaysIso = addDaysIso;
+  global.TcTrackerParseNotes = parseNotes;
   function isValidEmail(e){ return !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
 
   TcTracker.prototype.init = async function () {
@@ -504,7 +506,7 @@
       handle: input.handle || null,
       source: input.source || 'IG search',
       stage: normalizeStage(input.stage || 'Contacted'),
-      notes: packNotes(input.brok, input.next, input.notes, input.email),
+      notes: packNotes(input.brok, input.next, input.notes, input.email, null, null, input.in_campaign === true),
       dm_sent_at: nowIso,
       last_touch_at: nowIso
     };
@@ -564,7 +566,7 @@
       handle: patch.handle || null,
       source: patch.source || null,
       stage: normalizeStage(patch.stage || 'Contacted'),
-      notes: packNotes(patch.brok, patch.next, patch.notes, patch.email, patch.touches, patch.snoozes),
+      notes: packNotes(patch.brok, patch.next, patch.notes, patch.email, patch.touches, patch.snoozes, patch.in_campaign === true),
       last_touch_at: nowIso
     };
     try {
@@ -616,7 +618,7 @@
     await this.updateContact(id, {
       name: c.name, handle: c.handle, brok: parsed.brok, email: parsed.email,
       source: c.source, stage: c.stage, next: parsed.next,
-      notes: parsed.notes, touches: t, snoozes: sn
+      notes: parsed.notes, touches: t, snoozes: sn, in_campaign: parsed.in_campaign
     });
   };
 
@@ -641,7 +643,22 @@
     await this.updateContact(id, {
       name: c.name, handle: c.handle, brok: parsed.brok, email: parsed.email,
       source: c.source, stage: c.stage, next: parsed.next,
-      notes: parsed.notes, touches: parsed.touches, snoozes: sn
+      notes: parsed.notes, touches: parsed.touches, snoozes: sn, in_campaign: parsed.in_campaign
+    });
+  };
+
+  // Public · flip the in_campaign flag for a single contact (writes through updateContact).
+  // Used by the Campaign Upload modal's "Mark all as uploaded" action.
+  TcTracker.prototype.setInCampaign = async function (id, flag) {
+    var c = null;
+    for (var i = 0; i < this.contacts.length; i++) if (this.contacts[i].id === id) { c = this.contacts[i]; break; }
+    if (!c) return;
+    var parsed = parseNotes(c.notes);
+    await this.updateContact(id, {
+      name: c.name, handle: c.handle, brok: parsed.brok, email: parsed.email,
+      source: c.source, stage: c.stage, next: parsed.next,
+      notes: parsed.notes, touches: parsed.touches, snoozes: parsed.snoozes,
+      in_campaign: !!flag
     });
   };
 
@@ -827,9 +844,17 @@
     var brokHint = m.querySelector('[data-edit-brok-hint]');
     if (brokHint) brokHint.style.display = (parsed.brok && parsed.brok.trim()) ? 'none' : 'inline';
     setField('email', parsed.email);
+    // Inline monochrome hints for missing email + IG · edit stays non-blocking
+    var emailHint = m.querySelector('[data-edit-email-hint]');
+    if (emailHint) emailHint.style.display = (parsed.email && parsed.email.trim()) ? 'none' : 'inline';
+    var igHint = m.querySelector('[data-edit-ig-hint]');
+    if (igHint) igHint.style.display = (c.handle && String(c.handle).trim()) ? 'none' : 'inline';
     setField('source', c.source || 'IG search');
     setField('stage', normalizeStage(c.stage || 'Contacted'));
     setField('next', parsed.next);
+    // Campaign checkbox state · reads from notes blob
+    var icEl = m.querySelector('[data-edit-field="in_campaign"]');
+    if (icEl) icEl.checked = !!parsed.in_campaign;
     this._renderTouches(c, parsed.touches, parsed.snoozes);
     m.classList.add('open');
     // focus name on open
@@ -920,6 +945,9 @@
       var el = m.querySelector('[data-edit-field="' + k + '"]');
       return el ? el.value.trim() : '';
     };
+    // Preserve in_campaign value from current modal checkbox (if user toggled it but hasn't saved)
+    var icEl = m.querySelector('[data-edit-field="in_campaign"]');
+    var icVal = icEl ? !!icEl.checked : !!parsed.in_campaign;
     await this.updateContact(id, {
       name: get('name') || c.name,
       handle: get('handle'),
@@ -930,7 +958,8 @@
       next: get('next'),
       notes: parsed.notes,
       touches: t,
-      snoozes: parsed.snoozes
+      snoozes: parsed.snoozes,
+      in_campaign: icVal
     });
     // After updateContact, the contact has new notes. Re-fetch and re-render the timeline.
     var updated = null;
@@ -963,12 +992,16 @@
     // but must survive the round-trip through packNotes.
     var existing = null;
     for (var i = 0; i < this.contacts.length; i++) if (this.contacts[i].id === id) { existing = this.contacts[i]; break; }
-    var existingParsed = existing ? parseNotes(existing.notes) : { touches: { t1: null, t2: null, t3: null }, snoozes: { t1: null, t2: null, t3: null } };
+    var existingParsed = existing ? parseNotes(existing.notes) : { touches: { t1: null, t2: null, t3: null }, snoozes: { t1: null, t2: null, t3: null }, in_campaign: false };
+    // Read in_campaign from the checkbox in the edit modal
+    var icEl = m.querySelector('[data-edit-field="in_campaign"]');
+    var icVal = icEl ? !!icEl.checked : !!existingParsed.in_campaign;
     this.updateContact(id, {
       name: get('name'), handle: get('handle'), brok: get('brok'), email: get('email'),
       source: get('source'), stage: get('stage'), next: get('next'),
       touches: existingParsed.touches,
-      snoozes: existingParsed.snoozes
+      snoozes: existingParsed.snoozes,
+      in_campaign: icVal
     });
     this._closeEditModal();
   };
@@ -1018,6 +1051,24 @@
       if (errEl) { errEl.textContent = 'Brokerage is required.'; errEl.style.display = 'block'; }
       var brokInput = f.querySelector('[data-field="brok"]');
       if (brokInput) brokInput.focus();
+      return;
+    }
+    if (!input.handle) {
+      if (errEl) { errEl.textContent = 'Instagram handle is required.'; errEl.style.display = 'block'; }
+      var igInput = f.querySelector('[data-field="handle"]');
+      if (igInput) igInput.focus();
+      return;
+    }
+    if (!input.email) {
+      if (errEl) { errEl.textContent = 'Email is required.'; errEl.style.display = 'block'; }
+      var emInput = f.querySelector('[data-field="email"]');
+      if (emInput) emInput.focus();
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) {
+      if (errEl) { errEl.textContent = 'Email format looks wrong (need name@domain).'; errEl.style.display = 'block'; }
+      var emInput2 = f.querySelector('[data-field="email"]');
+      if (emInput2) emInput2.focus();
       return;
     }
     try {

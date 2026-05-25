@@ -354,7 +354,8 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
 .kanban-col-head{display:flex;align-items:baseline;justify-content:space-between;gap:6px;padding-bottom:8px;border-bottom:1px solid var(--line-tc)}
 .kanban-col-name{font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink)}
 .kanban-col-count{font-family:var(--serif);font-size:18px;font-weight:600;color:var(--ink);line-height:1}
-.kanban-card{background:#fff;border:1px solid var(--line-tc);border-left:3px solid #d4d4d2;border-radius:6px;padding:6px 10px;cursor:grab;font-family:var(--sans);font-size:12px;display:flex;flex-direction:column;gap:0;transition:border-color .12s,box-shadow .12s,transform .08s;min-width:0;overflow:hidden;user-select:none;-webkit-user-select:none}
+.kanban-card{background:#fff;border:1px solid var(--line-tc);border-left:3px solid #d4d4d2;border-radius:6px;padding:6px 10px;cursor:grab;font-family:var(--sans);font-size:12px;display:flex;flex-direction:column;gap:0;transition:border-color .12s,box-shadow .12s,transform .08s;min-width:0;overflow:hidden;user-select:none;-webkit-user-select:none;position:relative}
+.kanban-card-campaign-icon{position:absolute;top:6px;right:6px;width:10px;height:10px;color:#88857C;pointer-events:none;opacity:.7}
 .kanban-card:active{cursor:grabbing}
 .kanban-card:hover{border-color:#c8c4be;box-shadow:0 2px 8px rgba(0,0,0,.04)}
 .kanban-card.dragging{opacity:.45;transform:scale(.98)}
@@ -798,6 +799,12 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
     <span class="mh-inline-stat"><strong id="mh-disco" style="color:#0f0f0f;font-weight:600">0</strong> discovery</span>
     <span class="mh-sep" style="color:#c8c4be;padding:0 10px">&middot;</span>
     <span class="mh-inline-stat"><strong id="mh-signed" style="color:#0f0f0f;font-weight:600">0</strong> closed</span>
+    <!-- Campaign upload pill · only visible when count > 0. Click opens the upload modal. -->
+    <span class="mh-sep" id="mh-campaign-sep" style="color:#c8c4be;padding:0 10px;display:none">&middot;</span>
+    <span class="mh-inline-stat" id="mh-campaign-pill" onclick="openCampaignModal()" style="cursor:pointer;display:none;align-items:center;gap:6px">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#88857C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:inline-block;vertical-align:-2px"><rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="m22 7-10 5L2 7"></path></svg>
+      <strong id="mh-campaign-count" style="color:#0f0f0f;font-weight:700">0</strong> to add to campaign
+    </span>
   </div>
   <!-- Hidden legacy nodes · kept so older JS paths that read these IDs don't crash -->
   <span id="mh-dms-sub" style="display:none"></span>
@@ -863,9 +870,9 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
     <div class="qa-note">Only move someone to ActiveCampaign after a real back-and-forth. One reply is not a conversation.</div>
     <div class="qa-fields">
       <input class="qa-input" type="text" id="qa-name" placeholder="Name *" aria-required="true">
-      <input class="qa-input" type="text" id="qa-ig" placeholder="@instagram or phone">
+      <input class="qa-input" type="text" id="qa-ig" placeholder="@instagram *" aria-required="true">
       <input class="qa-input" type="text" id="qa-brok" placeholder="Brokerage *" aria-required="true">
-      <input class="qa-input" type="email" id="qa-email" placeholder="Email (optional)">
+      <input class="qa-input" type="email" id="qa-email" placeholder="Email *" aria-required="true">
       <button class="qa-btn" onclick="quickAdd()">Add →</button>
     </div>
     <div class="qa-added" id="qaAdded" role="status" aria-live="polite"></div>
@@ -1113,6 +1120,30 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
   </div>
 </div>
 
+<!-- Campaign Upload modal · lists contacts pending upload to the email campaign -->
+<div id="campaignOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto" onclick="if(event.target===this)closeCampaignModal()">
+  <div style="background:var(--white);border-radius:var(--r);max-width:680px;width:100%;display:flex;flex-direction:column;max-height:calc(100vh - 80px);overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:18px 22px;border-bottom:1px solid var(--g200)">
+      <div>
+        <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:20px;font-weight:600;color:var(--black)">Add to email campaign</div>
+        <div style="font-size:11px;color:var(--g600);margin-top:2px" id="campaignSubtitle">0 contacts ready to upload</div>
+      </div>
+      <button onclick="closeCampaignModal()" aria-label="Close" style="background:transparent;border:none;font-size:22px;color:var(--g600);cursor:pointer;line-height:1">&times;</button>
+    </div>
+    <div id="campaignBody" style="padding:14px 22px;overflow-y:auto;flex:1">
+      <p style="font-size:12px;color:var(--g600);text-align:center;padding:30px 0;font-style:italic">No contacts pending.</p>
+    </div>
+    <div style="padding:12px 22px;border-top:1px solid var(--g200);display:flex;justify-content:space-between;align-items:center;background:var(--off);gap:10px;flex-wrap:wrap">
+      <span id="campaignFooterMsg" style="font-size:11px;color:var(--green);min-height:14px;font-weight:500"></span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="campaignCopyEmails()" style="font-size:11px;padding:9px 14px;background:var(--white);border:1px solid var(--black);border-radius:var(--rs);color:var(--black);cursor:pointer;font-weight:500;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif">Copy all emails</button>
+        <button onclick="campaignDownloadCsv()" style="font-size:11px;padding:9px 14px;background:var(--white);border:1px solid var(--black);border-radius:var(--rs);color:var(--black);cursor:pointer;font-weight:500;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif">Download CSV</button>
+        <button onclick="campaignMarkAllUploaded()" style="font-size:11px;padding:9px 16px;background:var(--black);color:var(--white);border:none;border-radius:var(--rs);cursor:pointer;font-weight:600;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif">Mark all as uploaded</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── SUPABASE · main Aari project (replaces the old cockpit_state side-project) ──
 // Uses the same window.AARI_SUPABASE_CONFIG that powers /portal and /aari-crm.
@@ -1332,6 +1363,149 @@ function updateLiveStats(){
   try { if (typeof renderKanban === 'function') renderKanban(); } catch(_) {}
   // Keep Recap hero in sync with the latest data (May 2026 v3)
   try { if (typeof renderRecapHero === 'function') renderRecapHero(_recapPeriod || 'week'); } catch(_) {}
+  // Refresh the email-campaign masthead pill (hidden when count = 0)
+  try { refreshCampaignPill(); } catch(_) {}
+}
+
+// ── EMAIL CAMPAIGN · pending uploads + modal ──────────────────────────────────
+// A contact is "pending campaign upload" when it has a valid email, is not yet
+// flagged in_campaign, and isn't in the Not Interested graveyard.
+function campaignEmailValid(e){
+  return !!e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e).trim());
+}
+function campaignParse(c){
+  // Use the tracker's parseNotes when available so we stay in sync with how email/in_campaign are stored.
+  if (typeof window.TcTrackerParseNotes === 'function') return window.TcTrackerParseNotes(c && c.notes);
+  return { email:'', in_campaign:false, brok:'' };
+}
+function getCampaignPending(){
+  var cs = (window.AariTracker ? window.AariTracker.getContacts() : (S.contacts || []));
+  return cs.filter(function(c){
+    if (!c) return false;
+    if (c.stage === 'Not Interested') return false;
+    var p = campaignParse(c);
+    if (p.in_campaign) return false;
+    return campaignEmailValid(p.email);
+  });
+}
+function refreshCampaignPill(){
+  var pill = document.getElementById('mh-campaign-pill');
+  var sep  = document.getElementById('mh-campaign-sep');
+  var cnt  = document.getElementById('mh-campaign-count');
+  if (!pill || !cnt) return;
+  var pending = getCampaignPending();
+  if (pending.length > 0){
+    cnt.textContent = pending.length;
+    pill.style.display = 'inline-flex';
+    if (sep) sep.style.display = 'inline';
+  } else {
+    pill.style.display = 'none';
+    if (sep) sep.style.display = 'none';
+  }
+}
+function openCampaignModal(){
+  var ov = document.getElementById('campaignOverlay');
+  if (!ov) return;
+  ov.style.display = 'flex';
+  renderCampaignModal();
+}
+function closeCampaignModal(){
+  var ov = document.getElementById('campaignOverlay');
+  if (!ov) return;
+  ov.style.display = 'none';
+  var msg = document.getElementById('campaignFooterMsg');
+  if (msg) msg.textContent = '';
+}
+function _campaignEsc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function renderCampaignModal(){
+  var body = document.getElementById('campaignBody');
+  var sub  = document.getElementById('campaignSubtitle');
+  if (!body) return;
+  var pending = getCampaignPending();
+  if (sub) sub.textContent = pending.length + (pending.length === 1 ? ' contact' : ' contacts') + ' ready to upload';
+  if (!pending.length){
+    body.innerHTML = '<p style="font-size:12px;color:#6b6760;text-align:center;padding:30px 0;font-style:italic">All caught up. No emails pending upload.</p>';
+    return;
+  }
+  var rows = pending.map(function(c){
+    var p = campaignParse(c);
+    var brok = p.brok || '';
+    return '<div style="display:flex;align-items:baseline;gap:10px;padding:8px 0;border-bottom:1px solid #efebe5;font-family:\'Inter\',-apple-system,sans-serif;font-size:12.5px;color:#0f0f0f;line-height:1.4">'+
+      '<span style="flex:0 0 35%;font-weight:600;color:#0f0f0f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_campaignEsc(c.name || '(unnamed)')+'</span>'+
+      '<span style="flex:0 0 25%;color:#6b6760;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_campaignEsc(brok)+'</span>'+
+      '<span style="flex:1;color:#6b6760;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:break-all">'+_campaignEsc(p.email)+'</span>'+
+      '</div>';
+  }).join('');
+  body.innerHTML = rows;
+}
+function campaignCopyEmails(){
+  var pending = getCampaignPending();
+  if (!pending.length) return;
+  var emails = pending.map(function(c){ return campaignParse(c).email; }).filter(Boolean);
+  var txt = emails.join(', ');
+  var msg = document.getElementById('campaignFooterMsg');
+  var done = function(){ if (msg){ msg.textContent = 'Copied ' + emails.length + (emails.length === 1 ? ' email' : ' emails'); setTimeout(function(){ if (msg) msg.textContent=''; }, 2400); } };
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(done, function(){
+      // Fallback for older browsers
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = txt; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+        done();
+      } catch(_){
+        if (msg) msg.textContent = 'Copy failed — select manually.';
+      }
+    });
+  } else {
+    try {
+      var ta2 = document.createElement('textarea');
+      ta2.value = txt; document.body.appendChild(ta2); ta2.select();
+      document.execCommand('copy'); document.body.removeChild(ta2);
+      done();
+    } catch(_){ if (msg) msg.textContent = 'Copy failed.'; }
+  }
+}
+function _campaignCsvEscape(v){
+  var s = String(v == null ? '' : v);
+  if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+  return s;
+}
+function campaignDownloadCsv(){
+  var pending = getCampaignPending();
+  if (!pending.length) return;
+  var rows = [['Name','Email','Brokerage']];
+  pending.forEach(function(c){
+    var p = campaignParse(c);
+    rows.push([c.name || '', p.email || '', p.brok || '']);
+  });
+  var csv = rows.map(function(r){ return r.map(_campaignCsvEscape).join(','); }).join('\r\n');
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  var d = new Date();
+  var iso = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = 'aari-campaign-upload-' + iso + '.csv';
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ document.body.removeChild(a); URL.revokeObjectURL(url); }, 0);
+  var msg = document.getElementById('campaignFooterMsg');
+  if (msg){ msg.textContent = 'CSV downloaded.'; setTimeout(function(){ if (msg) msg.textContent=''; }, 2400); }
+}
+async function campaignMarkAllUploaded(){
+  var pending = getCampaignPending();
+  if (!pending.length) { closeCampaignModal(); return; }
+  if (!window.AariTracker || typeof window.AariTracker.setInCampaign !== 'function'){
+    alert('Tracker not ready — refresh and try again.');
+    return;
+  }
+  var msg = document.getElementById('campaignFooterMsg');
+  if (msg) msg.textContent = 'Marking ' + pending.length + '...';
+  for (var i = 0; i < pending.length; i++){
+    try { await window.AariTracker.setInCampaign(pending[i].id, true); }
+    catch (e) { console.error('[campaign] setInCampaign failed for', pending[i].id, e); }
+  }
+  refreshCampaignPill();
+  closeCampaignModal();
 }
 
 // ── NAVIGATION ──
@@ -1398,11 +1572,12 @@ async function quickAdd(){
   var brokEl=document.getElementById('qa-brok');
   var brok=brokEl?brokEl.value.trim():'';
   if(!brok){ showErr('Brokerage is required. Add a brokerage and try again.'); if(brokEl) brokEl.focus(); return; }
+  if(!handle){ showErr('Instagram handle is required.'); if(handleEl) handleEl.focus(); return; }
   var emailEl=document.getElementById('qa-email');
   var email=emailEl?emailEl.value.trim():'';
-  // Light email format check — only if user typed something
-  if(email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
-    showErr('Email "'+email+'" is not a valid address. Fix it or leave the field blank.');
+  if(!email){ showErr('Email is required.'); if(emailEl) emailEl.focus(); return; }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    showErr('Email format looks wrong (need name@domain).');
     if(emailEl) emailEl.focus();
     return;
   }
@@ -2200,7 +2375,17 @@ function renderKanban(){
       var brokLine = brok ? '<span class="kanban-card-brok">'+escK(brok)+'</span>' : '';
       // Touch dot row · 3 mini indicators reflecting t1/t2/t3 state. Skip for Signed / Not Interested.
       var touchLine = renderKanbanTouchDots(c);
+      // Subtle envelope icon · only when in_campaign === true. Renders top-right.
+      var inCamp = false;
+      try {
+        var _cp = (typeof window.TcTrackerParseNotes === 'function') ? window.TcTrackerParseNotes(c.notes) : null;
+        inCamp = !!(_cp && _cp.in_campaign);
+      } catch(_){}
+      var campIcon = inCamp
+        ? '<svg class="kanban-card-campaign-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="m22 7-10 5L2 7"></path></svg>'
+        : '';
       return '<div class="kanban-card" draggable="true" data-id="'+escK(c.id)+'" data-stage="'+escK(stage)+'">'+
+        campIcon +
         '<span class="kanban-card-name">'+escK(c.name||'(unnamed)')+'</span>'+
         brokLine +
         touchLine +
