@@ -4,9 +4,8 @@
  *
  * Data layer: Supabase only. No localStorage. Per-TC isolation via owner_id = auth.uid().
  *
- * UI: 4 buckets (Cold / Talking / Hot / Won) that group the 6 underlying BD stages.
- * Underlying data model keeps the granular stages — the card badge surfaces the sub-stage.
- * Stages: Contacted, Replied, In Convo, Hand Raise, Discovery, Signed (+ Not Interested as a side bin).
+ * UI: 7 filter buttons, one per stage (Contacted / Replied / In Convo / Hand Raise / Discovery / Signed / Not Interested).
+ * Each button shows the count at that exact stage. No bucketing / grouping.
  * Legacy stage values from older Supabase rows ("In Conversation", "Added to AC", "Discovery Booked")
  * are normalized on read by normalizeStage() so the UI only ever sees the canonical names.
  *
@@ -29,22 +28,27 @@
   // ── Unified stage list · display label = data value (May 2026 v3) ──
   // Stages: Contacted / Replied / In Convo / Hand Raise / Discovery / Signed / Not Interested.
   // Legacy stage values ('Added to AC', 'Discovery Booked', 'In Conversation') are normalized on read.
+  // `bucket` is now the stage's own filter-key (1 bucket = 1 stage) — no more grouping.
   var STAGES = [
-    { key: 'Contacted',     label: 'Contacted',     bucket: 'cold',    cls: 's-contacted', desc: 'DM sent. No reply yet.' },
-    { key: 'Replied',       label: 'Replied',       bucket: 'cold',    cls: 's-replied',   desc: 'One message back. Not yet a real conversation.' },
-    { key: 'In Convo',      label: 'In Convo',      bucket: 'talking', cls: 's-convo',     desc: 'Real back and forth.' },
-    { key: 'Hand Raise',    label: 'Hand Raise',    bucket: 'talking', cls: 's-raise',     desc: 'Asked for pricing or how to start. Book a discovery.' },
-    { key: 'Discovery',     label: 'Discovery',     bucket: 'hot',     cls: 's-disco',     desc: 'Call on the calendar. Your job is to close.' },
-    { key: 'Signed',        label: 'Signed',        bucket: 'won',     cls: 's-signed',    desc: 'Client. Go find the next one.' }
+    { key: 'Contacted',      label: 'Contacted',      bucket: 'contacted', cls: 's-contacted', desc: 'DM sent. No reply yet.' },
+    { key: 'Replied',        label: 'Replied',        bucket: 'replied',   cls: 's-replied',   desc: 'One message back. Not yet a real conversation.' },
+    { key: 'In Convo',       label: 'In Convo',       bucket: 'convo',     cls: 's-convo',     desc: 'Real back and forth.' },
+    { key: 'Hand Raise',     label: 'Hand Raise',     bucket: 'raise',     cls: 's-raise',     desc: 'Asked for pricing or how to start. Book a discovery.' },
+    { key: 'Discovery',      label: 'Discovery',      bucket: 'disco',     cls: 's-disco',     desc: 'Call on the calendar. Your job is to close.' },
+    { key: 'Signed',         label: 'Signed',         bucket: 'signed',    cls: 's-signed',    desc: 'Client. Go find the next one.' },
+    { key: 'Not Interested', label: 'Not Interested', bucket: 'notint',    cls: 's-out',       desc: 'Dead lead. Kept for the record.' }
   ];
 
-  // ── 4 visual buckets (UI · what the user sees) ──
-  // Settled palette · earthy washes, not pastel pops.
+  // ── 7 filter buttons · one per stage (UI · what the user sees) ──
+  // Each bucket key matches a single STAGES.bucket. Settled palette · earthy washes.
   var BUCKETS = [
-    { key: 'cold',    label: 'Cold',    bg: '#F4F2EE', fg: '#6B6862', accent: '#A8A39A' },
-    { key: 'talking', label: 'Talking', bg: '#F1ECE5', fg: '#8C7B5E', accent: '#B8A789' },
-    { key: 'hot',     label: 'Hot',     bg: '#EFE3DC', fg: '#8C5A45', accent: '#B58370' },
-    { key: 'won',     label: 'Won',     bg: '#E8EAE3', fg: '#5A6B57', accent: '#8A9C85' }
+    { key: 'contacted', label: 'Contacted',      bg: '#F4F2EE', fg: '#6B6862', accent: '#A8A39A' },
+    { key: 'replied',   label: 'Replied',        bg: '#F4F2EE', fg: '#6B6862', accent: '#C5BFB4' },
+    { key: 'convo',     label: 'In Convo',       bg: '#F1ECE5', fg: '#8C7B5E', accent: '#B8A789' },
+    { key: 'raise',     label: 'Hand Raise',     bg: '#EFE3DC', fg: '#8C5A45', accent: '#B58370' },
+    { key: 'disco',     label: 'Discovery',      bg: '#E5E9E2', fg: '#5A6B57', accent: '#8A9C85' },
+    { key: 'signed',    label: 'Signed',         bg: '#E8EAE3', fg: '#5A6B57', accent: '#8A9C85' },
+    { key: 'notint',    label: 'Not Interested', bg: '#F5F2F2', fg: '#9A958B', accent: '#D4C8C8' }
   ];
 
   // ── Backwards-compat shim · normalize legacy stage strings on read ──
@@ -160,7 +164,7 @@
     // Single source of truth for stage dropdowns · Contacted / Replied / In Convo / Hand Raise / Discovery / Signed / Not Interested.
     var formStageOpts = STAGES.map(function (s) {
       return '<option value="' + esc(s.key) + '">' + esc(s.label) + '</option>';
-    }).join('') + '<option value="Not Interested">Not Interested</option>';
+    }).join('');
 
     return [
       '<div class="tct">',
@@ -229,8 +233,8 @@
     this.root = root;
     this.contacts = [];
     this.counts = { cold: 0, talking: 0, hot: 0, won: 0 };
-    this.cb = 'hot';                    // current bucket (4-way filter)
-    this.cbAutoDefault = true;          // auto-land on highest-priority non-empty bucket
+    this.cb = 'raise';                  // current filter (1 bucket = 1 stage · 7 total)
+    this.cbAutoDefault = true;          // auto-land on highest-priority non-empty stage
     this.editingId = null;              // id of contact row currently in edit mode
     this.searchQuery = '';              // active search query (overrides bucket filter)
     this.ownerId = null;
@@ -811,7 +815,7 @@
   };
 
   TcTracker.prototype._updateCounts = function () {
-    var counts = { cold: 0, talking: 0, hot: 0, won: 0 };
+    var counts = { contacted: 0, replied: 0, convo: 0, raise: 0, disco: 0, signed: 0, notint: 0 };
     this.contacts.forEach(function (c) {
       var s = stageMeta(c.stage);
       if (s && counts.hasOwnProperty(s.bucket)) counts[s.bucket]++;
@@ -828,11 +832,12 @@
   };
 
   TcTracker.prototype._applyAutoDefault = function () {
-    // Priority: hot → talking → cold → won. Land on first non-empty bucket.
-    var prio = ['hot', 'talking', 'cold', 'won'];
+    // Priority order: leads needing action first, then earlier funnel, then dead.
+    // disco (call booked) → raise (asked for pricing) → convo → replied → contacted → signed → notint.
+    var prio = ['disco', 'raise', 'convo', 'replied', 'contacted', 'signed', 'notint'];
     var target = null;
     for (var i = 0; i < prio.length; i++) if (this.counts[prio[i]] > 0) { target = prio[i]; break; }
-    this.cb = target || 'hot';
+    this.cb = target || 'raise';
   };
 
   TcTracker.prototype._renderList = function () {
@@ -863,10 +868,13 @@
         emptyMsg = 'No contacts matching "' + this.searchQuery + '".';
       } else {
         emptyMsg = ({
-          cold:    'No cold contacts. Keep DMing.',
-          talking: 'No active conversations yet.',
-          hot:     'Nothing hot right now. Work the cold pile.',
-          won:     'No closed clients yet. The next one is in your pipeline.'
+          contacted: 'Nothing contacted yet. Keep DMing.',
+          replied:   'No replies yet.',
+          convo:     'No active conversations yet.',
+          raise:     'No hand raises right now. Work the earlier stages.',
+          disco:     'No discovery calls booked.',
+          signed:    'No signed clients yet. The next one is in your pipeline.',
+          notint:    'No dead leads filed here.'
         })[this.cb] || 'Empty bucket.';
       }
       list.innerHTML = '<div class="tct-empty">' + esc(emptyMsg) + '</div>';
