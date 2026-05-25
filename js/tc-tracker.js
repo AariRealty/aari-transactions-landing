@@ -150,10 +150,12 @@
       '      <div class="tct-af"><label>Name</label><input type="text" data-field="name" placeholder="Agent name"></div>',
       '      <div class="tct-af"><label>Instagram / Phone</label><input type="text" data-field="handle" placeholder="@handle"></div>',
       '      <div class="tct-af"><label>Brokerage</label><input type="text" data-field="brok" placeholder="e.g. KW..."></div>',
+      '      <div class="tct-af"><label>Email (optional)</label><input type="email" data-field="email" placeholder="agent@brokerage.com"></div>',
       '      <div class="tct-af"><label>Found via</label><select data-field="source"><option>IG search</option><option>Referral</option><option>Post comment</option><option>Story view</option><option>Cold email</option><option>Mailer</option><option>Event</option><option>Other</option></select></div>',
-      '      <div class="tct-af full"><label>Stage</label><select data-field="stage">' + formStageOpts + '</select></div>',
+      '      <div class="tct-af"><label>Stage</label><select data-field="stage">' + formStageOpts + '</select></div>',
       '      <div class="tct-af full"><label>Next Step</label><input type="text" data-field="next" placeholder="e.g. Follow up Friday..."></div>',
       '    </div>',
+      '    <div data-form-error style="display:none;font-size:12px;color:#A32D2D;background:#FCEBEB;border:1px solid #E8C8C8;border-radius:6px;padding:8px 10px;margin-bottom:10px"></div>',
       '    <div class="tct-form-actions">',
       '      <button class="primary" data-action="add-submit">Add →</button>',
       '      <button data-action="add-cancel">Cancel</button>',
@@ -168,8 +170,9 @@
       '          <div><label>Name</label><input type="text" data-edit-field="name"></div>',
       '          <div><label>Instagram / Phone</label><input type="text" data-edit-field="handle"></div>',
       '          <div><label>Brokerage</label><input type="text" data-edit-field="brok"></div>',
+      '          <div><label>Email</label><input type="email" data-edit-field="email" placeholder="agent@brokerage.com"></div>',
       '          <div><label>Found via</label><select data-edit-field="source"><option>IG search</option><option>Referral</option><option>Post comment</option><option>Story view</option><option>Cold email</option><option>Mailer</option><option>Event</option><option>Other</option></select></div>',
-      '          <div class="full"><label>Stage</label><select data-edit-field="stage">' + formStageOpts + '</select></div>',
+      '          <div><label>Stage</label><select data-edit-field="stage">' + formStageOpts + '</select></div>',
       '          <div class="full"><label>Next Step</label><input type="text" data-edit-field="next"></div>',
       '        </div>',
       '      </div>',
@@ -202,27 +205,31 @@
     this.cockpitOwnerFirstName = (opts && opts.cockpitOwnerFirstName) || null;
   }
 
-  // Parse "Brokerage: X · Next: Y · ...notes..." from the notes column
+  // Parse "Brokerage: X · Next: Y · Email: z@x · ...notes..." from the notes column.
+  // Email lives in notes as a fallback so we don't need a schema migration on bd_contacts.
   function parseNotes(notes) {
-    var out = { brok: '', next: '', notes: '' };
+    var out = { brok: '', next: '', email: '', notes: '' };
     if (!notes) return out;
     var parts = String(notes).split(' · ');
     var leftover = [];
     parts.forEach(function (p) {
       if (p.indexOf('Brokerage: ') === 0) out.brok = p.slice(11);
       else if (p.indexOf('Next: ') === 0) out.next = p.slice(6);
+      else if (p.indexOf('Email: ') === 0) out.email = p.slice(7);
       else leftover.push(p);
     });
     out.notes = leftover.join(' · ');
     return out;
   }
-  function packNotes(brok, next, notes) {
+  function packNotes(brok, next, notes, email) {
     var parts = [];
     if (brok) parts.push('Brokerage: ' + brok);
     if (next) parts.push('Next: ' + next);
+    if (email) parts.push('Email: ' + email);
     if (notes) parts.push(notes);
     return parts.length ? parts.join(' · ') : null;
   }
+  function isValidEmail(e){ return !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
 
   TcTracker.prototype.init = async function () {
     injectCss();
@@ -288,25 +295,41 @@
   };
 
   TcTracker.prototype.addContact = async function (input) {
-    if (!this.client || !this.ownerId) { console.warn('[TcTracker] not authed'); return null; }
+    if (!this.client || !this.ownerId) {
+      console.warn('[TcTracker] not authed');
+      throw new Error('Not signed in (auth not ready). Refresh the page and try again.');
+    }
+    // Field-specific validation — surfaces a useful message instead of generic "Save failed"
+    var name = (input.name || '').trim();
+    if (!name) throw new Error('Name is required.');
+    if (input.email && !isValidEmail(input.email)) {
+      throw new Error('Email "' + input.email + '" is not a valid address.');
+    }
     var nowIso = new Date().toISOString();
-    var notesParts = [];
-    if (input.brok) notesParts.push('Brokerage: ' + input.brok);
-    if (input.next) notesParts.push('Next: ' + input.next);
-    if (input.notes) notesParts.push(input.notes);
     var row = {
       owner_id: this.ownerId,
-      name: (input.name || '(unnamed)').trim(),
+      name: name,
       handle: input.handle || null,
       source: input.source || 'IG search',
       stage: input.stage || 'Contacted',
-      notes: notesParts.length ? notesParts.join(' · ') : null,
+      notes: packNotes(input.brok, input.next, input.notes, input.email),
       dm_sent_at: nowIso,
       last_touch_at: nowIso
     };
     try {
       var r = await this.client.from('bd_contacts').insert([row]).select();
-      if (r.error) { console.error('[TcTracker] insert', r.error); alert('Save failed'); return null; }
+      if (r.error) {
+        console.error('[TcTracker] insert', r.error);
+        // Surface a specific reason instead of generic "Save failed"
+        var msg = r.error.message || JSON.stringify(r.error);
+        if (/duplicate key/i.test(msg) || r.error.code === '23505') {
+          throw new Error('Looks like a duplicate row was rejected by the database. Refresh and try again.');
+        }
+        if (/permission|rls|policy/i.test(msg)) {
+          throw new Error('Permission denied by Supabase RLS. Check your login.');
+        }
+        throw new Error('Supabase rejected the save: ' + msg);
+      }
       if (r.data && r.data[0]) this.contacts.unshift({
         id: r.data[0].id, name: r.data[0].name, handle: r.data[0].handle,
         source: r.data[0].source, stage: r.data[0].stage, notes: r.data[0].notes,
@@ -315,7 +338,11 @@
       this._render();
       this._fireChange();
       return r.data && r.data[0];
-    } catch (e) { console.error('[TcTracker] addContact error', e); return null; }
+    } catch (e) {
+      console.error('[TcTracker] addContact error', e);
+      // Re-throw so the caller (quickAdd) can show the field-specific reason inline.
+      throw e;
+    }
   };
 
   TcTracker.prototype.updateStage = async function (id, stage) {
@@ -334,13 +361,17 @@
 
   TcTracker.prototype.updateContact = async function (id, patch) {
     if (!this.client) return;
+    if (patch.email && !isValidEmail(patch.email)) {
+      alert('Email "' + patch.email + '" is not a valid address.');
+      return;
+    }
     var nowIso = new Date().toISOString();
     var update = {
       name: patch.name || '(unnamed)',
       handle: patch.handle || null,
       source: patch.source || null,
       stage: patch.stage || 'Contacted',
-      notes: packNotes(patch.brok, patch.next, patch.notes),
+      notes: packNotes(patch.brok, patch.next, patch.notes, patch.email),
       last_touch_at: nowIso
     };
     try {
@@ -440,7 +471,25 @@
     if (!c) return;
     this.editingId = id;
     var parsed = parseNotes(c.notes);
-    var m = this.root.querySelector('[data-edit-overlay]');
+    var m = this.root.querySelector('[data-edit-overlay]') || document.querySelector('[data-edit-overlay]');
+    // Portal the modal overlay to document.body the first time we open it.
+    // This lets external views (e.g. the Kanban) trigger the modal even when
+    // the tracker's own container is display:none. Rewire click events on the
+    // portaled node since it's no longer a descendant of this.root.
+    if (m && m.parentNode !== document.body) {
+      var self = this;
+      document.body.appendChild(m);
+      m.addEventListener('click', function (e) {
+        var t = e.target;
+        if (t === m) { self._closeEditModal(); return; }
+        var btn = t.closest ? t.closest('[data-action]') : null;
+        if (!btn) return;
+        var action = btn.getAttribute('data-action');
+        if (action === 'edit-close')  { self._closeEditModal(); return; }
+        if (action === 'edit-save')   { self._commitEdit(); return; }
+        if (action === 'edit-delete') { self._deleteFromModal(); return; }
+      });
+    }
     var setField = function (k, v) {
       var el = m.querySelector('[data-edit-field="' + k + '"]');
       if (el) el.value = v == null ? '' : v;
@@ -448,6 +497,7 @@
     setField('name', c.name);
     setField('handle', c.handle);
     setField('brok', parsed.brok);
+    setField('email', parsed.email);
     setField('source', c.source || 'IG search');
     setField('stage', c.stage || 'Contacted');
     setField('next', parsed.next);
@@ -459,22 +509,25 @@
     }, 40);
   };
 
+  // Public alias · lets external views (Kanban, etc.) open the edit modal for a contact.
+  TcTracker.prototype.openEditModal = function (id) { return this._openEditModal(id); };
+
   TcTracker.prototype._closeEditModal = function () {
     this.editingId = null;
-    var m = this.root.querySelector('[data-edit-overlay]');
+    var m = this.root.querySelector('[data-edit-overlay]') || document.querySelector('[data-edit-overlay]');
     if (m) m.classList.remove('open');
   };
 
   TcTracker.prototype._commitEdit = function () {
     var id = this.editingId;
     if (!id) return;
-    var m = this.root.querySelector('[data-edit-overlay]');
+    var m = this.root.querySelector('[data-edit-overlay]') || document.querySelector('[data-edit-overlay]');
     var get = function (k) {
       var el = m.querySelector('[data-edit-field="' + k + '"]');
       return el ? el.value.trim() : '';
     };
     this.updateContact(id, {
-      name: get('name'), handle: get('handle'), brok: get('brok'),
+      name: get('name'), handle: get('handle'), brok: get('brok'), email: get('email'),
       source: get('source'), stage: get('stage'), next: get('next')
     });
     this._closeEditModal();
@@ -511,16 +564,31 @@
       return el ? el.value.trim() : '';
     };
     var input = {
-      name: get('name'), handle: get('handle'), brok: get('brok'),
+      name: get('name'), handle: get('handle'), brok: get('brok'), email: get('email'),
       source: get('source'), stage: get('stage'), next: get('next')
     };
-    if (!input.name) return;
-    await this.addContact(input);
-    ['name', 'handle', 'brok', 'next'].forEach(function (k) {
-      var el = f.querySelector('[data-field="' + k + '"]');
-      if (el) el.value = '';
-    });
-    this._toggleForm(false);
+    // Surface validation errors inline near the form instead of failing silently.
+    var errEl = f.querySelector('[data-form-error]');
+    if (errEl) { errEl.textContent = ''; errEl.style.display = 'none'; }
+    if (!input.name) {
+      if (errEl) { errEl.textContent = 'Name is required.'; errEl.style.display = 'block'; }
+      return;
+    }
+    try {
+      await this.addContact(input);
+      ['name', 'handle', 'brok', 'email', 'next'].forEach(function (k) {
+        var el = f.querySelector('[data-field="' + k + '"]');
+        if (el) el.value = '';
+      });
+      this._toggleForm(false);
+    } catch (e) {
+      if (errEl) {
+        errEl.textContent = '⚠ ' + (e && e.message ? e.message : 'Save failed.');
+        errEl.style.display = 'block';
+      } else {
+        alert('⚠ ' + (e && e.message ? e.message : 'Save failed.'));
+      }
+    }
   };
 
   TcTracker.prototype._render = function () {
@@ -604,11 +672,16 @@
       if (parsed.brok) metaParts.push('<span>' + esc(parsed.brok) + '</span>');
       if (parsed.next) metaParts.push('<span>→ ' + esc(parsed.next) + '</span>');
       if (parsed.notes) metaParts.push('<span>' + esc(parsed.notes) + '</span>');
+      // Email row · ONLY rendered when present (ADHD-friendly cleanliness)
+      var emailRow = parsed.email
+        ? '<div class="tct-meta" style="margin-top:2px"><span style="word-break:break-all">' + esc(parsed.email) + '</span></div>'
+        : '';
       return '<div class="tct-row" data-row-id="' + esc(c.id) + '" tabindex="0" role="button" aria-label="Edit ' + esc(c.name) + '">' +
         '<div class="tct-row-top">' +
           '<div>' +
             '<div class="tct-name">' + esc(c.name) + '</div>' +
             '<div class="tct-meta">' + metaParts.join('') + '</div>' +
+            emailRow +
           '</div>' +
           '<span class="tct-stage-badge" style="' + badgeStyle + '">' + esc(s.label) + '</span>' +
         '</div>' +
