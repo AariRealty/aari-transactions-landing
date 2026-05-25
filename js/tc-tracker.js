@@ -398,9 +398,25 @@
       dueToday: st.dueTodayFlags[st.nextIdx]
     };
   }
+  // Public · returns per-touch dot states for the 3-dot Kanban indicator.
+  // Returns null for no-touch stages (Signed / Not Interested) so callers can skip the row entirely.
+  // Otherwise returns ['done'|'upcoming'|'due'|'overdue', ..., ...] of length 3.
+  function contactTouchStates(contact) {
+    if (!contact) return null;
+    if (contact.stage === 'Signed' || contact.stage === 'Not Interested') return null;
+    var parsed = parseNotes(contact.notes);
+    var st = computeTouchState(parsed.touches, contact.stage, parsed.snoozes);
+    return [0, 1, 2].map(function (i) {
+      if (st.doneFlags[i]) return 'done';
+      if (st.overdueFlags[i]) return 'overdue';
+      if (st.dueTodayFlags[i]) return 'due';
+      return 'upcoming';
+    });
+  }
   // Expose helpers on the global namespace so prospecting.html can use them.
   global.TcTrackerTouchUrgency = contactTouchUrgency;
   global.TcTrackerNextDueTouch = contactNextDueTouch;
+  global.TcTrackerTouchStates = contactTouchStates;
   global.TcTrackerTodayIso = todayIsoDate;
   global.TcTrackerAddDaysIso = addDaysIso;
   function isValidEmail(e){ return !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
