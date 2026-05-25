@@ -2307,6 +2307,393 @@ function wireKanbanDnd(){
   });
 }
 
+// ── LINEUP TOOLBAR · search · filter popover · chips · find duplicates ──────────
+// Wire once on first contact-load. Idempotent.
+var LU_SEARCH_DEBOUNCE = null;
+function luWireToolbar(){
+  var input = document.getElementById('luSearchInput');
+  if (!input || input.__luWired) return;
+  input.__luWired = true;
+  input.addEventListener('input', function(){
+    var v = input.value;
+    var wrap = document.getElementById('luSearchWrap');
+    if (wrap) wrap.classList.toggle('has-text', !!v);
+    if (LU_SEARCH_DEBOUNCE) clearTimeout(LU_SEARCH_DEBOUNCE);
+    LU_SEARCH_DEBOUNCE = setTimeout(function(){
+      LINEUP_STATE.search = v;
+      renderKanban();
+      luRenderChips();
+    }, 150);
+  });
+  // Close filter popover when clicking outside it
+  document.addEventListener('click', function(e){
+    var pop = document.getElementById('luFilterPop');
+    var btn = document.getElementById('luFilterBtn');
+    if (!pop || !pop.classList.contains('open')) return;
+    if (pop.contains(e.target) || (btn && btn.contains(e.target))) return;
+    luCloseFilterPop();
+  });
+  // ESC closes filter popover + dupe modal
+  document.addEventListener('keydown', function(e){
+    if (e.key !== 'Escape') return;
+    var pop = document.getElementById('luFilterPop');
+    if (pop && pop.classList.contains('open')) luCloseFilterPop();
+    var mb = document.getElementById('dupeModalBd');
+    if (mb && mb.classList.contains('open')) luCloseDupes();
+  });
+  luRenderChips();
+}
+function luClearSearch(){
+  var input = document.getElementById('luSearchInput');
+  if (input){ input.value = ''; input.focus(); }
+  var wrap = document.getElementById('luSearchWrap');
+  if (wrap) wrap.classList.remove('has-text');
+  LINEUP_STATE.search = '';
+  renderKanban();
+  luRenderChips();
+}
+// Brokerage options · unique values from current contacts, sorted alpha. Empty → "No brokerage"
+function luGetBrokerageOptions(){
+  var contacts = (window.AariTracker ? window.AariTracker.getContacts() : (S.contacts || []));
+  var set = {};
+  contacts.forEach(function(c){
+    if (!c) return;
+    var b = luGetBrok(c);
+    set[b || ''] = true;
+  });
+  var keys = Object.keys(set);
+  // Sort: real brokerages alpha, "No brokerage" sentinel last
+  keys.sort(function(a, b){
+    if (a === '' && b !== '') return 1;
+    if (b === '' && a !== '') return -1;
+    return a.localeCompare(b, undefined, { sensitivity: 'base' });
+  });
+  return keys;
+}
+function luBuildFilterPop(){
+  var pop = document.getElementById('luFilterPop');
+  if (!pop) return;
+  var brokOpts = luGetBrokerageOptions();
+  var touchOpts = [
+    { key:'all',     label:'All' },
+    { key:'overdue', label:'Overdue' },
+    { key:'today',   label:'Due today' },
+    { key:'ontrack', label:'On track' },
+    { key:'none',    label:'No touches done' }
+  ];
+  var brokHtml = brokOpts.length
+    ? brokOpts.map(function(b){
+        var checked = LINEUP_STATE.brokerages.indexOf(b) !== -1 ? 'checked' : '';
+        var label = b ? escK(b) : 'No brokerage';
+        var val = escK(b);
+        return '<label class="lu-filter-opt"><input type="checkbox" data-lu-brok="'+val+'" '+checked+'><span>'+label+'</span></label>';
+      }).join('')
+    : '<div style="font-size:11px;color:#9a958b;font-style:italic">No brokerages yet.</div>';
+  var touchHtml = touchOpts.map(function(o){
+    var checked = LINEUP_STATE.touch === o.key ? 'checked' : '';
+    return '<label class="lu-filter-opt"><input type="radio" name="luTouch" value="'+o.key+'" '+checked+'><span>'+o.label+'</span></label>';
+  }).join('');
+  pop.innerHTML =
+    '<div class="lu-filter-section">'+
+      '<div class="lu-filter-section-hd">Brokerage</div>'+
+      brokHtml +
+    '</div>'+
+    '<div class="lu-filter-section">'+
+      '<div class="lu-filter-section-hd">Touch state</div>'+
+      touchHtml +
+    '</div>'+
+    '<div class="lu-filter-actions">'+
+      '<button type="button" onclick="luResetFilters()">Reset</button>'+
+      '<button type="button" onclick="luCloseFilterPop()">Done</button>'+
+    '</div>';
+  // Wire checkbox + radio events
+  pop.querySelectorAll('input[data-lu-brok]').forEach(function(cb){
+    cb.addEventListener('change', function(){
+      var v = cb.getAttribute('data-lu-brok') || '';
+      var idx = LINEUP_STATE.brokerages.indexOf(v);
+      if (cb.checked && idx === -1) LINEUP_STATE.brokerages.push(v);
+      else if (!cb.checked && idx !== -1) LINEUP_STATE.brokerages.splice(idx, 1);
+      luApplyFilters();
+    });
+  });
+  pop.querySelectorAll('input[name="luTouch"]').forEach(function(rb){
+    rb.addEventListener('change', function(){
+      if (rb.checked){ LINEUP_STATE.touch = rb.value; luApplyFilters(); }
+    });
+  });
+}
+function luToggleFilterPop(){
+  var pop = document.getElementById('luFilterPop');
+  var btn = document.getElementById('luFilterBtn');
+  if (!pop || !btn) return;
+  if (pop.classList.contains('open')){ luCloseFilterPop(); return; }
+  luBuildFilterPop();
+  pop.classList.add('open');
+  btn.classList.add('open');
+}
+function luCloseFilterPop(){
+  var pop = document.getElementById('luFilterPop');
+  var btn = document.getElementById('luFilterBtn');
+  if (pop) pop.classList.remove('open');
+  if (btn) btn.classList.remove('open');
+}
+function luResetFilters(){
+  LINEUP_STATE.brokerages = [];
+  LINEUP_STATE.touch = 'all';
+  luBuildFilterPop();
+  luApplyFilters();
+}
+function luApplyFilters(){
+  renderKanban();
+  luRenderChips();
+  luUpdateFilterCountBadge();
+}
+function luUpdateFilterCountBadge(){
+  var badge = document.getElementById('luFilterCount');
+  if (!badge) return;
+  var n = LINEUP_STATE.brokerages.length + (LINEUP_STATE.touch && LINEUP_STATE.touch !== 'all' ? 1 : 0);
+  if (n > 0){ badge.style.display = 'inline-flex'; badge.textContent = n; }
+  else { badge.style.display = 'none'; }
+}
+function luRenderChips(){
+  var box = document.getElementById('luChips');
+  if (!box) return;
+  var chips = [];
+  if (LINEUP_STATE.search){
+    chips.push({ label:'Search', val: LINEUP_STATE.search, kind:'search' });
+  }
+  LINEUP_STATE.brokerages.forEach(function(b){
+    chips.push({ label:'Brokerage', val: b || 'No brokerage', kind:'brok', raw:b });
+  });
+  if (LINEUP_STATE.touch && LINEUP_STATE.touch !== 'all'){
+    var TLBL = { overdue:'Overdue', today:'Due today', ontrack:'On track', none:'No touches done' };
+    chips.push({ label:'Touch', val: TLBL[LINEUP_STATE.touch] || LINEUP_STATE.touch, kind:'touch' });
+  }
+  if (!chips.length){ box.innerHTML = ''; luUpdateFilterCountBadge(); return; }
+  var html = chips.map(function(c){
+    var data = c.kind === 'brok' ? ' data-raw="'+escK(c.raw||'')+'"' : '';
+    return '<span class="lu-chip"><strong>'+escK(c.label)+':</strong> '+escK(c.val)+'<button type="button" data-kind="'+c.kind+'"'+data+' aria-label="Remove">&times;</button></span>';
+  }).join('') + '<button type="button" class="lu-chips-clear" onclick="luClearAllFilters()">Clear all</button>';
+  box.innerHTML = html;
+  // Wire chip × buttons
+  box.querySelectorAll('.lu-chip button').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var kind = btn.getAttribute('data-kind');
+      if (kind === 'search'){ luClearSearch(); return; }
+      if (kind === 'brok'){
+        var raw = btn.getAttribute('data-raw') || '';
+        var i = LINEUP_STATE.brokerages.indexOf(raw);
+        if (i !== -1) LINEUP_STATE.brokerages.splice(i, 1);
+      } else if (kind === 'touch'){
+        LINEUP_STATE.touch = 'all';
+      }
+      luApplyFilters();
+    });
+  });
+  luUpdateFilterCountBadge();
+}
+function luClearAllFilters(){
+  LINEUP_STATE.brokerages = [];
+  LINEUP_STATE.touch = 'all';
+  var input = document.getElementById('luSearchInput');
+  if (input) input.value = '';
+  var wrap = document.getElementById('luSearchWrap');
+  if (wrap) wrap.classList.remove('has-text');
+  LINEUP_STATE.search = '';
+  luApplyFilters();
+}
+
+// ── FIND DUPLICATES · IG handle · email · Levenshtein name similarity (≤2) ───────
+// localStorage key for groups Eileen has dismissed via "Keep all separate"
+var LU_DUPE_DISMISS_KEY = 'aari_dismissed_dupes';
+function luLevenshtein(a, b){
+  a = a || ''; b = b || '';
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  // Early exit · if length delta > 2 we can't be within threshold
+  if (Math.abs(a.length - b.length) > 2) return 99;
+  var prev = new Array(b.length + 1);
+  var curr = new Array(b.length + 1);
+  for (var j = 0; j <= b.length; j++) prev[j] = j;
+  for (var i = 1; i <= a.length; i++){
+    curr[0] = i;
+    var rowMin = curr[0];
+    for (var j2 = 1; j2 <= b.length; j2++){
+      var cost = a.charCodeAt(i-1) === b.charCodeAt(j2-1) ? 0 : 1;
+      curr[j2] = Math.min(curr[j2-1] + 1, prev[j2] + 1, prev[j2-1] + cost);
+      if (curr[j2] < rowMin) rowMin = curr[j2];
+    }
+    // Early termination · if every cell in this row is already > 2, no way to recover
+    if (rowMin > 2) return rowMin;
+    var tmp = prev; prev = curr; curr = tmp;
+  }
+  return prev[b.length];
+}
+function luNormHandle(h){
+  if (!h) return '';
+  return String(h).trim().replace(/^@+/, '').replace(/\s+/g,'').toLowerCase();
+}
+function luNormEmail(e){
+  if (!e) return '';
+  return String(e).trim().toLowerCase();
+}
+function luNormName(n){
+  if (!n) return '';
+  return String(n).toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+// Group dupes · union-find over all match pairs
+function luFindDuplicateGroups(contacts){
+  var arr = (contacts || []).filter(function(c){ return c && c.id; });
+  var n = arr.length;
+  if (n < 2) return [];
+  // Pre-compute normalized fields
+  var norm = arr.map(function(c){
+    return {
+      id: c.id,
+      handle: luNormHandle(c.handle),
+      email: luNormEmail(luGetEmail(c)),
+      name: luNormName(c.name)
+    };
+  });
+  // Union-find
+  var parent = arr.map(function(_, i){ return i; });
+  function find(i){ while (parent[i] !== i){ parent[i] = parent[parent[i]]; i = parent[i]; } return i; }
+  function union(i, j){ var ri = find(i), rj = find(j); if (ri !== rj) parent[ri] = rj; }
+  // Bucket by handle + email for O(n) exact-match pairing
+  var byHandle = {}, byEmail = {};
+  for (var i = 0; i < n; i++){
+    if (norm[i].handle){
+      if (byHandle[norm[i].handle] !== undefined) union(byHandle[norm[i].handle], i);
+      else byHandle[norm[i].handle] = i;
+    }
+    if (norm[i].email){
+      if (byEmail[norm[i].email] !== undefined) union(byEmail[norm[i].email], i);
+      else byEmail[norm[i].email] = i;
+    }
+  }
+  // Name similarity · O(n²) but bounded by length-delta early exit
+  for (var a = 0; a < n; a++){
+    if (!norm[a].name) continue;
+    for (var b = a + 1; b < n; b++){
+      if (!norm[b].name) continue;
+      if (find(a) === find(b)) continue; // already grouped
+      if (Math.abs(norm[a].name.length - norm[b].name.length) > 2) continue;
+      if (luLevenshtein(norm[a].name, norm[b].name) <= 2) union(a, b);
+    }
+  }
+  // Collect groups
+  var groups = {};
+  for (var k = 0; k < n; k++){
+    var root = find(k);
+    if (!groups[root]) groups[root] = [];
+    groups[root].push(arr[k]);
+  }
+  var out = [];
+  Object.keys(groups).forEach(function(rk){
+    if (groups[rk].length > 1) out.push(groups[rk]);
+  });
+  return out;
+}
+function luGroupHash(group){
+  return group.map(function(c){ return String(c.id); }).sort().join(':');
+}
+function luLoadDismissed(){
+  try {
+    var raw = localStorage.getItem(LU_DUPE_DISMISS_KEY);
+    if (!raw) return [];
+    var arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch (_){ return []; }
+}
+function luSaveDismissed(arr){
+  try { localStorage.setItem(LU_DUPE_DISMISS_KEY, JSON.stringify(arr)); } catch(_){}
+}
+function luDismissGroup(hash){
+  var arr = luLoadDismissed();
+  if (arr.indexOf(hash) === -1){ arr.push(hash); luSaveDismissed(arr); }
+}
+function luFmtDate(iso){
+  if (!iso) return '—';
+  var d = new Date(iso);
+  if (isNaN(d)) return '—';
+  return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'2-digit' });
+}
+function luOpenDupes(){
+  var contacts = (window.AariTracker ? window.AariTracker.getContacts() : (S.contacts || []));
+  var groups = luFindDuplicateGroups(contacts);
+  var dismissed = luLoadDismissed();
+  var visible = groups.filter(function(g){ return dismissed.indexOf(luGroupHash(g)) === -1; });
+  var body = document.getElementById('dupeModalBody');
+  if (!body) return;
+  if (!visible.length){
+    body.innerHTML =
+      '<div class="dupe-empty">'+
+        '<div class="dupe-empty-mark">&#10003;</div>'+
+        '<div>No likely duplicates found.</div>'+
+      '</div>';
+  } else {
+    body.innerHTML = visible.map(function(g){
+      var hash = luGroupHash(g);
+      var rowsHtml = g.map(function(c){
+        var brok = luGetBrok(c) || '';
+        var email = luGetEmail(c) || '';
+        var handle = c.handle ? (String(c.handle).indexOf('@') === 0 ? c.handle : '@'+c.handle) : '';
+        var stage = c.stage || '';
+        var dt = luFmtDate(c.dm_sent_at);
+        return '<div class="dupe-row">'+
+          '<span class="dupe-row-name">'+escK(c.name||'(unnamed)')+'</span>'+
+          '<span'+(handle?'':' class="muted"')+'>'+escK(handle || '—')+'</span>'+
+          '<span'+(brok?'':' class="muted"')+'>'+escK(brok || '—')+'</span>'+
+          '<span'+(email?'':' class="muted"')+'>'+escK(email || '—')+'</span>'+
+          '<span>'+escK(stage)+'</span>'+
+          '<span>'+escK(dt)+'</span>'+
+        '</div>';
+      }).join('');
+      return '<div class="dupe-group" data-hash="'+escK(hash)+'">'+
+        '<div class="dupe-group-hd">'+
+          '<span class="dupe-group-title">Duplicate group &middot; '+g.length+' contacts</span>'+
+        '</div>'+
+        rowsHtml +
+        '<div class="dupe-group-actions">'+
+          '<button type="button" class="dupe-act-btn secondary" data-act="keep" data-hash="'+escK(hash)+'">Keep all separate</button>'+
+          '<button type="button" class="dupe-act-btn" data-act="merge">Merge</button>'+
+        '</div>'+
+      '</div>';
+    }).join('');
+    // Wire actions
+    body.querySelectorAll('.dupe-act-btn').forEach(function(b){
+      b.addEventListener('click', function(){
+        var act = b.getAttribute('data-act');
+        if (act === 'keep'){
+          var hash = b.getAttribute('data-hash');
+          if (hash) luDismissGroup(hash);
+          var groupEl = b.closest('.dupe-group');
+          if (groupEl) groupEl.remove();
+          // If body now empty → show clean message
+          if (!body.querySelector('.dupe-group')){
+            body.innerHTML = '<div class="dupe-empty"><div class="dupe-empty-mark">&#10003;</div><div>No likely duplicates found.</div></div>';
+          }
+          if (typeof toastMsg === 'function') toastMsg('Group dismissed.');
+        } else if (act === 'merge'){
+          // TODO · merge logic. Surface placeholder toast for now.
+          if (typeof toastMsg === 'function') toastMsg('Merge coming soon');
+        }
+      });
+    });
+  }
+  var mb = document.getElementById('dupeModalBd');
+  if (mb) mb.classList.add('open');
+}
+function luCloseDupes(){
+  var mb = document.getElementById('dupeModalBd');
+  if (mb) mb.classList.remove('open');
+}
+// Wire toolbar on DOMContentLoaded and re-render chips when contacts change.
+document.addEventListener('DOMContentLoaded', function(){ luWireToolbar(); });
+// Also wire on demand · in case the script runs before DOMContentLoaded fires for any handler.
+try { luWireToolbar(); } catch(_){}
+
 // ── CONFETTI · tiny inline canvas burst · no dependency · auto-cleanup ~2s ──
 function fireConfetti(){
   var canvas = document.createElement('canvas');
