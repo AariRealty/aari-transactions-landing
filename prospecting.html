@@ -360,7 +360,8 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
 .kanban-col-head{display:flex;align-items:baseline;justify-content:space-between;gap:6px;padding-bottom:8px;border-bottom:1px solid var(--line-tc)}
 .kanban-col-name{font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink)}
 .kanban-col-count{font-family:var(--serif);font-size:18px;font-weight:600;color:var(--ink);line-height:1}
-.kanban-card{background:#fff;border:1px solid var(--line-tc);border-left:3px solid #d4d4d2;border-radius:6px;padding:6px 10px;cursor:grab;font-family:var(--sans);font-size:12px;display:flex;flex-direction:column;gap:0;transition:border-color .12s,box-shadow .12s,transform .08s;min-width:0;overflow:hidden}
+.kanban-card{background:#fff;border:1px solid var(--line-tc);border-left:3px solid #d4d4d2;border-radius:6px;padding:6px 10px;cursor:grab;font-family:var(--sans);font-size:12px;display:flex;flex-direction:column;gap:0;transition:border-color .12s,box-shadow .12s,transform .08s;min-width:0;overflow:hidden;user-select:none;-webkit-user-select:none}
+.kanban-card:active{cursor:grabbing}
 .kanban-card:hover{border-color:#c8c4be;box-shadow:0 2px 8px rgba(0,0,0,.04)}
 .kanban-card.dragging{opacity:.45;transform:scale(.98)}
 .kanban-card-name{font-size:13px;font-weight:600;color:var(--ink);line-height:1.25;max-width:100%;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}
@@ -1934,71 +1935,97 @@ function renderKanban(){
   }).join('');
   wireKanbanDnd();
 }
+// Event-delegated D&D wiring · listeners live on the grid root so they survive every
+// renderKanban() innerHTML rebuild. Wires exactly once (guard via __kanbanDndWired).
+// State (dragId / didDrag / fromBucket) lives on the grid element itself, not in a closure,
+// so all delegated handlers share the same source of truth across re-renders.
 function wireKanbanDnd(){
   var grid = document.getElementById('kanbanGrid');
-  if (!grid) return;
-  var dragId = null;
-  var didDrag = false; // becomes true on dragstart so click handler can no-op after a drag
-  grid.querySelectorAll('.kanban-card').forEach(function(card){
-    card.addEventListener('dragstart', function(e){
-      dragId = card.getAttribute('data-id');
-      didDrag = true;
-      card.classList.add('dragging');
-      try { e.dataTransfer.setData('text/plain', dragId); e.dataTransfer.effectAllowed = 'move'; } catch(_){}
-    });
-    card.addEventListener('dragend', function(){
-      card.classList.remove('dragging');
-      grid.querySelectorAll('.kanban-col').forEach(function(c){ c.classList.remove('drop-target'); });
-      // Reset drag flag on next tick so the trailing click (if any) is suppressed
-      setTimeout(function(){ didDrag = false; }, 0);
-    });
-    // Click-to-open detail · suppressed if a drag just happened
-    card.addEventListener('click', function(){
-      if (didDrag) return;
-      var id = card.getAttribute('data-id');
-      if (!id) return;
-      if (window.AariTracker && typeof window.AariTracker.openEditModal === 'function'){
-        window.AariTracker.openEditModal(id);
-      }
-    });
+  if (!grid || grid.__kanbanDndWired) return;
+  grid.__kanbanDndWired = true;
+
+  // dragstart · fires on the .kanban-card (draggable="true"). Capture dragId + source bucket.
+  grid.addEventListener('dragstart', function(e){
+    var card = e.target && e.target.closest ? e.target.closest('.kanban-card') : null;
+    if (!card || !grid.contains(card)) return;
+    grid.__dragId = card.getAttribute('data-id');
+    grid.__didDrag = true;
+    var srcCol = card.closest('.kanban-col');
+    grid.__fromBucket = srcCol ? srcCol.getAttribute('data-bucket') : null;
+    card.classList.add('dragging');
+    try { e.dataTransfer.setData('text/plain', grid.__dragId); e.dataTransfer.effectAllowed = 'move'; } catch(_){}
   });
-  grid.querySelectorAll('.kanban-col').forEach(function(col){
-    col.addEventListener('dragover', function(e){
-      if (!dragId) return;
-      e.preventDefault();
-      col.classList.add('drop-target');
-      e.dataTransfer.dropEffect = 'move';
+
+  // dragend · cleanup. Reset didDrag on next tick so the trailing click (if any) is suppressed.
+  grid.addEventListener('dragend', function(e){
+    var card = e.target && e.target.closest ? e.target.closest('.kanban-card') : null;
+    if (card) card.classList.remove('dragging');
+    grid.querySelectorAll('.kanban-col').forEach(function(c){ c.classList.remove('drop-target'); });
+    grid.__dragId = null;
+    grid.__fromBucket = null;
+    setTimeout(function(){ grid.__didDrag = false; }, 0);
+  });
+
+  // dragover · MUST preventDefault to allow drop. Walk up to the nearest .kanban-col.
+  grid.addEventListener('dragover', function(e){
+    if (!grid.__dragId) return;
+    var col = e.target && e.target.closest ? e.target.closest('.kanban-col') : null;
+    if (!col || !grid.contains(col)) return;
+    e.preventDefault();
+    // Clear stale drop-target highlights on siblings, set on this one
+    grid.querySelectorAll('.kanban-col.drop-target').forEach(function(c){
+      if (c !== col) c.classList.remove('drop-target');
     });
-    col.addEventListener('dragleave', function(){ col.classList.remove('drop-target'); });
-    col.addEventListener('drop', function(e){
-      e.preventDefault();
-      col.classList.remove('drop-target');
-      var id = dragId; dragId = null;
-      if (!id) return;
-      var bucket = col.getAttribute('data-bucket');
-      var draggingCard = grid.querySelector('.kanban-card[data-id="'+CSS.escape(id)+'"]');
-      var fromBucket = draggingCard ? draggingCard.closest('.kanban-col').getAttribute('data-bucket') : null;
-      // 1 column = 1 stage · target stage is whatever this column owns
-      var BUCKET = KANBAN_BUCKETS.find(function(b){return b.key===bucket;});
-      if (!BUCKET) return;
-      // Same-column drop · nothing to change
-      if (bucket === fromBucket) { renderKanban(); return; }
-      var newStage = BUCKET.stage;
-      // Persist via tracker
-      if (window.AariTracker && typeof window.AariTracker.updateStage === 'function'){
-        window.AariTracker.updateStage(id, newStage);
-      } else {
-        // Fallback to local update
-        for (var i = 0; i < (S.contacts||[]).length; i++){
-          if (String(S.contacts[i].id) === String(id)){ S.contacts[i].stage = newStage; break; }
-        }
-        save(); updateLiveStats();
+    col.classList.add('drop-target');
+    try { e.dataTransfer.dropEffect = 'move'; } catch(_){}
+  });
+
+  // dragleave · clear highlight when leaving a column (use relatedTarget for accuracy)
+  grid.addEventListener('dragleave', function(e){
+    var col = e.target && e.target.closest ? e.target.closest('.kanban-col') : null;
+    if (!col) return;
+    // Only clear when leaving the column entirely, not when crossing into a child
+    if (col.contains(e.relatedTarget)) return;
+    col.classList.remove('drop-target');
+  });
+
+  // drop · persist new stage, re-render, confetti on Signed.
+  grid.addEventListener('drop', function(e){
+    var col = e.target && e.target.closest ? e.target.closest('.kanban-col') : null;
+    if (!col || !grid.contains(col)) return;
+    e.preventDefault();
+    col.classList.remove('drop-target');
+    var id = grid.__dragId; grid.__dragId = null;
+    if (!id) return;
+    var bucket = col.getAttribute('data-bucket');
+    var fromBucket = grid.__fromBucket;
+    var BUCKET = KANBAN_BUCKETS.find(function(b){return b.key===bucket;});
+    if (!BUCKET) return;
+    // Same-column drop · nothing to change, just re-render for visual reset
+    if (bucket === fromBucket) { renderKanban(); return; }
+    var newStage = BUCKET.stage;
+    if (window.AariTracker && typeof window.AariTracker.updateStage === 'function'){
+      window.AariTracker.updateStage(id, newStage);
+    } else {
+      for (var i = 0; i < (S.contacts||[]).length; i++){
+        if (String(S.contacts[i].id) === String(id)){ S.contacts[i].stage = newStage; break; }
       }
-      // Optimistic re-render
-      renderKanban();
-      // Confetti on Signed
-      if (bucket === 'signed' && fromBucket !== 'signed') fireConfetti();
-    });
+      save(); updateLiveStats();
+    }
+    renderKanban();
+    if (bucket === 'signed' && fromBucket !== 'signed') fireConfetti();
+  });
+
+  // Click-to-open · delegated so re-renders never lose it. Suppressed if a drag just happened.
+  grid.addEventListener('click', function(e){
+    if (grid.__didDrag) return;
+    var card = e.target && e.target.closest ? e.target.closest('.kanban-card') : null;
+    if (!card || !grid.contains(card)) return;
+    var id = card.getAttribute('data-id');
+    if (!id) return;
+    if (window.AariTracker && typeof window.AariTracker.openEditModal === 'function'){
+      window.AariTracker.openEditModal(id);
+    }
   });
 }
 
