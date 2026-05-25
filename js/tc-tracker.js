@@ -107,11 +107,13 @@
     '.tct-form-actions button{font-size:11px;padding:7px 14px;border:1px solid #999;background:transparent;color:#555;border-radius:6px;cursor:pointer;font-family:inherit}',
     '.tct-form-actions button.primary{background:#0a0a0a;color:#fff;border-color:#0a0a0a}',
     '.tct-empty{padding:32px 16px;text-align:center;font-size:12px;color:#888;background:#fafaf7;border-radius:8px;border:1px dashed #d0d0d0}',
-    '.tct-row{padding:14px 16px;border:1px solid #efebe5;border-radius:10px;margin-bottom:8px;background:#fff;cursor:pointer;transition:background .12s ease,border-color .12s ease}',
+    '.tct-row{padding:14px 16px;border:1px solid #efebe5;border-radius:10px;margin-bottom:8px;background:#fff;cursor:pointer;transition:background .12s ease,border-color .12s ease;overflow:hidden}',
     '.tct-row:hover{background:#faf8f3;border-color:#e2dccd}',
     '.tct-row-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}',
-    '.tct-name{font-size:13px;font-weight:600;color:#0a0a0a}',
-    '.tct-meta{font-size:11px;color:#9a958b;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:4px}',
+    '.tct-row-top > div:first-child{min-width:0;flex:1}',
+    '.tct-name{font-size:13px;font-weight:600;color:#0a0a0a;max-width:100%;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word}',
+    '.tct-meta{font-size:11px;color:#9a958b;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:4px;max-width:100%}',
+    '.tct-meta > span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
     '.tct-stage-badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:11px;font-size:10px;font-weight:500;letter-spacing:.2px;white-space:nowrap}',
     /* Modal */
     '.tct-modal-overlay{display:none;position:fixed;inset:0;background:rgba(20,18,14,.45);z-index:250;align-items:flex-start;justify-content:center;padding:60px 16px;overflow-y:auto}',
@@ -245,10 +247,28 @@
     this.cockpitOwnerFirstName = (opts && opts.cockpitOwnerFirstName) || null;
   }
 
-  // Parse "Brokerage: X · Next: Y · Email: z@x · Touches: t1=YYYY-MM-DD|... · ...notes..." from the notes column.
-  // Email + touches live in notes as a fallback so we don't need a schema migration on bd_contacts.
+  // ── Cadence per stage (days between touches) ──
+  // Smart follow-up queue · cadence varies by stage so we don't drown in red dots.
+  // Hand Raise → 1d · Discovery → 2d · In Convo → 3d · Replied → 3d · Contacted → 5d
+  // Signed / Not Interested → no touches at all.
+  var STAGE_CADENCE = {
+    'Hand Raise': 1,
+    'Discovery': 2,
+    'In Convo': 3,
+    'Replied': 3,
+    'Contacted': 5,
+    'Signed': 0,
+    'Not Interested': 0
+  };
+  function cadenceDays(stage) {
+    var d = STAGE_CADENCE[normalizeStage(stage)];
+    return (typeof d === 'number') ? d : 3;
+  }
+
+  // Parse "Brokerage: X · Next: Y · Email: z@x · Touches: t1=YYYY-MM-DD|... · Snoozes: t1=YYYY-MM-DD|... · ...notes..." from the notes column.
+  // Email + touches + snoozes live in notes as a fallback so we don't need a schema migration on bd_contacts.
   function parseNotes(notes) {
-    var out = { brok: '', next: '', email: '', touches: { t1: null, t2: null, t3: null }, notes: '' };
+    var out = { brok: '', next: '', email: '', touches: { t1: null, t2: null, t3: null }, snoozes: { t1: null, t2: null, t3: null }, notes: '' };
     if (!notes) return out;
     var parts = String(notes).split(' · ');
     var leftover = [];
@@ -266,12 +286,22 @@
           if (k === 't1' || k === 't2' || k === 't3') out.touches[k] = v || null;
         });
       }
+      else if (p.indexOf('Snoozes: ') === 0) {
+        var sStr = p.slice(9);
+        sStr.split('|').forEach(function (kv) {
+          var eq = kv.indexOf('=');
+          if (eq < 0) return;
+          var k = kv.slice(0, eq).trim();
+          var v = kv.slice(eq + 1).trim();
+          if (k === 't1' || k === 't2' || k === 't3') out.snoozes[k] = v || null;
+        });
+      }
       else leftover.push(p);
     });
     out.notes = leftover.join(' · ');
     return out;
   }
-  function packNotes(brok, next, notes, email, touches) {
+  function packNotes(brok, next, notes, email, touches, snoozes) {
     var parts = [];
     if (brok) parts.push('Brokerage: ' + brok);
     if (next) parts.push('Next: ' + next);
@@ -282,6 +312,13 @@
       if (touches.t2) tParts.push('t2=' + touches.t2);
       if (touches.t3) tParts.push('t3=' + touches.t3);
       if (tParts.length) parts.push('Touches: ' + tParts.join('|'));
+    }
+    if (snoozes && (snoozes.t1 || snoozes.t2 || snoozes.t3)) {
+      var sParts = [];
+      if (snoozes.t1) sParts.push('t1=' + snoozes.t1);
+      if (snoozes.t2) sParts.push('t2=' + snoozes.t2);
+      if (snoozes.t3) sParts.push('t3=' + snoozes.t3);
+      if (sParts.length) parts.push('Snoozes: ' + sParts.join('|'));
     }
     if (notes) parts.push(notes);
     return parts.length ? parts.join(' · ') : null;
@@ -296,15 +333,31 @@
     return d.toISOString().slice(0, 10);
   }
   // Returns { dueDates: [d1,d2,d3], doneFlags: [b,b,b], nextIdx: 0|1|2|-1, overdueFlags: [b,b,b] }
-  function computeTouchState(touches) {
+  // Cadence is stage-aware. Snoozes push a touch's due date forward without marking it done.
+  function computeTouchState(touches, stage, snoozes) {
     var t = touches || { t1: null, t2: null, t3: null };
+    var sn = snoozes || { t1: null, t2: null, t3: null };
     var today = todayIsoDate();
-    // T1 due date: created date (when contact was added) — we approximate as "today" if no completion yet.
-    // Once T1 is done, T2 is due = T1 done + 3 days. Once T2 is done, T3 is due = T2 done + 3 days.
-    // For an unstarted contact, T1 is due today; T2 = today + 3; T3 = today + 6.
-    var d1 = t.t1 ? null : today;  // not-yet-done T1 is due today; once done, no due date
-    var d2 = t.t2 ? null : (t.t1 ? addDaysIso(t.t1, 3) : addDaysIso(today, 3));
-    var d3 = t.t3 ? null : (t.t2 ? addDaysIso(t.t2, 3) : (t.t1 ? addDaysIso(t.t1, 6) : addDaysIso(today, 6)));
+    var cad = cadenceDays(stage);
+    // No-touch stages (Signed / Not Interested) · render nothing as due
+    if (cad === 0) {
+      return {
+        dueDates: [null, null, null],
+        doneFlags: [!!t.t1, !!t.t2, !!t.t3],
+        nextIdx: -1,
+        overdueFlags: [false, false, false],
+        dueTodayFlags: [false, false, false],
+        doneDates: [t.t1, t.t2, t.t3]
+      };
+    }
+    // T1 due: today (or snoozed) if not done · once done, no due
+    // T2 due: T1 done + cadence (or today + cadence if T1 not done yet) · honors snooze
+    // T3 due: T2 done + cadence · honors snooze
+    var d1 = t.t1 ? null : (sn.t1 || today);
+    var d2Base = t.t2 ? null : (t.t1 ? addDaysIso(t.t1, cad) : addDaysIso(today, cad));
+    var d2 = t.t2 ? null : (sn.t2 && sn.t2 > d2Base ? sn.t2 : d2Base);
+    var d3Base = t.t3 ? null : (t.t2 ? addDaysIso(t.t2, cad) : (t.t1 ? addDaysIso(t.t1, cad * 2) : addDaysIso(today, cad * 2)));
+    var d3 = t.t3 ? null : (sn.t3 && sn.t3 > d3Base ? sn.t3 : d3Base);
     var done = [!!t.t1, !!t.t2, !!t.t3];
     var overdue = [
       !done[0] && d1 && d1 < today,
@@ -324,14 +377,32 @@
     if (!contact) return { overdue: false, dueToday: false };
     if (contact.stage === 'Signed' || contact.stage === 'Not Interested') return { overdue: false, dueToday: false };
     var parsed = parseNotes(contact.notes);
-    var st = computeTouchState(parsed.touches);
+    var st = computeTouchState(parsed.touches, contact.stage, parsed.snoozes);
     return {
       overdue: st.overdueFlags.some(function (b) { return b; }),
       dueToday: st.dueTodayFlags.some(function (b) { return b; })
     };
   }
+  // Public · returns whichever touch (1/2/3) is the next-due touch + its due date.
+  // Used by Today's Follow-ups queue to render priority rows.
+  function contactNextDueTouch(contact) {
+    if (!contact) return null;
+    if (contact.stage === 'Signed' || contact.stage === 'Not Interested') return null;
+    var parsed = parseNotes(contact.notes);
+    var st = computeTouchState(parsed.touches, contact.stage, parsed.snoozes);
+    if (st.nextIdx < 0) return null;
+    return {
+      touchNum: st.nextIdx + 1,
+      dueDate: st.dueDates[st.nextIdx],
+      overdue: st.overdueFlags[st.nextIdx],
+      dueToday: st.dueTodayFlags[st.nextIdx]
+    };
+  }
   // Expose helpers on the global namespace so prospecting.html can use them.
   global.TcTrackerTouchUrgency = contactTouchUrgency;
+  global.TcTrackerNextDueTouch = contactNextDueTouch;
+  global.TcTrackerTodayIso = todayIsoDate;
+  global.TcTrackerAddDaysIso = addDaysIso;
   function isValidEmail(e){ return !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
 
   TcTracker.prototype.init = async function () {
@@ -475,7 +546,7 @@
       handle: patch.handle || null,
       source: patch.source || null,
       stage: normalizeStage(patch.stage || 'Contacted'),
-      notes: packNotes(patch.brok, patch.next, patch.notes, patch.email, patch.touches),
+      notes: packNotes(patch.brok, patch.next, patch.notes, patch.email, patch.touches, patch.snoozes),
       last_touch_at: nowIso
     };
     try {
@@ -503,6 +574,137 @@
       this._render();
       this._fireChange();
     } catch (e) { console.error('[TcTracker] deleteContact error', e); }
+  };
+
+  // Public · mark a contact's next-due touch as done (writes today's date).
+  // Used by the Today's Follow-ups queue widget.
+  TcTracker.prototype.markNextTouchDone = async function (id) {
+    var c = null;
+    for (var i = 0; i < this.contacts.length; i++) if (this.contacts[i].id === id) { c = this.contacts[i]; break; }
+    if (!c) return;
+    var parsed = parseNotes(c.notes);
+    var st = computeTouchState(parsed.touches, c.stage, parsed.snoozes);
+    if (st.nextIdx < 0) return;
+    var today = todayIsoDate();
+    var t = { t1: parsed.touches.t1, t2: parsed.touches.t2, t3: parsed.touches.t3 };
+    if (st.nextIdx === 0) t.t1 = today;
+    else if (st.nextIdx === 1) t.t2 = today;
+    else if (st.nextIdx === 2) t.t3 = today;
+    // Clear the snooze on the touch we just completed (it's no longer pending)
+    var sn = { t1: parsed.snoozes.t1, t2: parsed.snoozes.t2, t3: parsed.snoozes.t3 };
+    if (st.nextIdx === 0) sn.t1 = null;
+    else if (st.nextIdx === 1) sn.t2 = null;
+    else if (st.nextIdx === 2) sn.t3 = null;
+    await this.updateContact(id, {
+      name: c.name, handle: c.handle, brok: parsed.brok, email: parsed.email,
+      source: c.source, stage: c.stage, next: parsed.next,
+      notes: parsed.notes, touches: t, snoozes: sn
+    });
+  };
+
+  // Public · snooze a contact's next-due touch by N days (default 1).
+  TcTracker.prototype.snoozeNextTouch = async function (id, days) {
+    var c = null;
+    for (var i = 0; i < this.contacts.length; i++) if (this.contacts[i].id === id) { c = this.contacts[i]; break; }
+    if (!c) return;
+    var parsed = parseNotes(c.notes);
+    var st = computeTouchState(parsed.touches, c.stage, parsed.snoozes);
+    if (st.nextIdx < 0) return;
+    var n = days || 1;
+    // Snooze target date = max(today, currentDue) + n days
+    var today = todayIsoDate();
+    var current = st.dueDates[st.nextIdx] || today;
+    var base = current > today ? current : today;
+    var target = addDaysIso(base, n);
+    var sn = { t1: parsed.snoozes.t1, t2: parsed.snoozes.t2, t3: parsed.snoozes.t3 };
+    if (st.nextIdx === 0) sn.t1 = target;
+    else if (st.nextIdx === 1) sn.t2 = target;
+    else if (st.nextIdx === 2) sn.t3 = target;
+    await this.updateContact(id, {
+      name: c.name, handle: c.handle, brok: parsed.brok, email: parsed.email,
+      source: c.source, stage: c.stage, next: parsed.next,
+      notes: parsed.notes, touches: parsed.touches, snoozes: sn
+    });
+  };
+
+  // Public · auto-archive: any Contacted contact whose Touch 3 is due/overdue (no manual
+  // reply) gets silently moved to Not Interested. Run lazily on each render.
+  TcTracker.prototype.autoArchiveStaleContacted = async function () {
+    if (!this.client || !this.ownerId) return 0;
+    var moved = 0;
+    var ids = [];
+    var today = todayIsoDate();
+    this.contacts.forEach(function (c) {
+      if (c.stage !== 'Contacted') return;
+      var parsed = parseNotes(c.notes);
+      var st = computeTouchState(parsed.touches, c.stage, parsed.snoozes);
+      // Trigger: Touch 3 is the next due touch (T1 + T2 done) AND it's due/overdue
+      // OR all 3 touches completed without a stage change away from Contacted
+      var t3DueOrOverdue = (st.nextIdx === 2) && (st.overdueFlags[2] || st.dueTodayFlags[2]);
+      var allThreeDone = st.doneFlags[0] && st.doneFlags[1] && st.doneFlags[2];
+      if (t3DueOrOverdue || allThreeDone) {
+        ids.push(c.id);
+      }
+    });
+    if (!ids.length) return 0;
+    try {
+      var nowIso = new Date().toISOString();
+      var r = await this.client.from('bd_contacts')
+        .update({ stage: 'Not Interested', last_touch_at: nowIso })
+        .in('id', ids);
+      if (r.error) { console.error('[TcTracker] auto-archive', r.error); return 0; }
+      // Mirror locally
+      for (var i = 0; i < this.contacts.length; i++) {
+        if (ids.indexOf(this.contacts[i].id) >= 0) {
+          this.contacts[i].stage = 'Not Interested';
+          this.contacts[i].last_touch_at = nowIso;
+          moved++;
+        }
+      }
+      if (moved > 0) { this._render(); this._fireChange(); }
+      return moved;
+    } catch (e) {
+      console.error('[TcTracker] autoArchiveStaleContacted error', e);
+      return 0;
+    }
+  };
+
+  // Public · one-time bulk archive: any Contacted contact whose last_touch_at (or
+  // created/dm_sent_at as fallback) is older than 14 days → Not Interested.
+  // Idempotent via the localStorage key passed in.
+  TcTracker.prototype.bulkArchiveStaleContacted = async function (daysOld) {
+    if (!this.client || !this.ownerId) return 0;
+    var n = daysOld || 14;
+    var cutoffIso = addDaysIso(todayIsoDate(), -n);
+    var ids = [];
+    this.contacts.forEach(function (c) {
+      if (c.stage !== 'Contacted') return;
+      var ref = c.last_touch_at || c.dm_sent_at;
+      if (!ref) { ids.push(c.id); return; }
+      var refDate = String(ref).slice(0, 10);
+      if (refDate < cutoffIso) ids.push(c.id);
+    });
+    if (!ids.length) return 0;
+    try {
+      var nowIso = new Date().toISOString();
+      var r = await this.client.from('bd_contacts')
+        .update({ stage: 'Not Interested', last_touch_at: nowIso })
+        .in('id', ids);
+      if (r.error) { console.error('[TcTracker] bulk-archive', r.error); return 0; }
+      var moved = 0;
+      for (var i = 0; i < this.contacts.length; i++) {
+        if (ids.indexOf(this.contacts[i].id) >= 0) {
+          this.contacts[i].stage = 'Not Interested';
+          this.contacts[i].last_touch_at = nowIso;
+          moved++;
+        }
+      }
+      if (moved > 0) { this._render(); this._fireChange(); }
+      return moved;
+    } catch (e) {
+      console.error('[TcTracker] bulkArchiveStaleContacted error', e);
+      return 0;
+    }
   };
 
   TcTracker.prototype.getContacts = function () { return this.contacts.slice(); };
@@ -607,7 +809,7 @@
     setField('source', c.source || 'IG search');
     setField('stage', normalizeStage(c.stage || 'Contacted'));
     setField('next', parsed.next);
-    this._renderTouches(c, parsed.touches);
+    this._renderTouches(c, parsed.touches, parsed.snoozes);
     m.classList.add('open');
     // focus name on open
     setTimeout(function () {
@@ -620,13 +822,13 @@
   TcTracker.prototype.openEditModal = function (id) { return this._openEditModal(id); };
 
   // Render the 3-touch follow-up timeline inside the modal.
-  TcTracker.prototype._renderTouches = function (contact, touches) {
+  TcTracker.prototype._renderTouches = function (contact, touches, snoozes) {
     var m = this.root.querySelector('[data-edit-overlay]') || document.querySelector('[data-edit-overlay]');
     if (!m) return;
     var timelineEl = m.querySelector('[data-touches-timeline]');
     var btnEl = m.querySelector('[data-action="touch-complete"]');
     if (!timelineEl || !btnEl) return;
-    var st = computeTouchState(touches);
+    var st = computeTouchState(touches, contact && contact.stage, snoozes);
     // Build the 3 step dots + connector. Connector fill width = % of completed segments.
     // Two segments between three dots: fillPct = (segments-done / 2) * 100. Each segment counts
     // as done if the LEFT dot is done (T1 done → segment 1; T2 done → segment 2).
@@ -683,7 +885,7 @@
     for (var i = 0; i < this.contacts.length; i++) if (this.contacts[i].id === id) { c = this.contacts[i]; break; }
     if (!c) return;
     var parsed = parseNotes(c.notes);
-    var st = computeTouchState(parsed.touches);
+    var st = computeTouchState(parsed.touches, c.stage, parsed.snoozes);
     if (st.nextIdx < 0) return;
     var today = todayIsoDate();
     var t = { t1: parsed.touches.t1, t2: parsed.touches.t2, t3: parsed.touches.t3 };
@@ -706,7 +908,8 @@
       stage: get('stage') || c.stage,
       next: get('next'),
       notes: parsed.notes,
-      touches: t
+      touches: t,
+      snoozes: parsed.snoozes
     });
     // After updateContact, the contact has new notes. Re-fetch and re-render the timeline.
     var updated = null;
@@ -714,7 +917,7 @@
     if (updated) {
       var newParsed = parseNotes(updated.notes);
       this.editingId = id; // updateContact clears editingId · restore so user stays in modal
-      this._renderTouches(updated, newParsed.touches);
+      this._renderTouches(updated, newParsed.touches, newParsed.snoozes);
       // Reopen modal state (updateContact called _closeEditModal indirectly via _render? actually no — it sets editingId=null then re-renders list)
       var overlay = this.root.querySelector('[data-edit-overlay]') || document.querySelector('[data-edit-overlay]');
       if (overlay) overlay.classList.add('open');
@@ -735,15 +938,16 @@
       var el = m.querySelector('[data-edit-field="' + k + '"]');
       return el ? el.value.trim() : '';
     };
-    // Preserve existing touches when committing the edit form — they're not represented in the form
-    // inputs but must survive the round-trip through packNotes.
+    // Preserve existing touches + snoozes when committing the edit form — not represented in form inputs
+    // but must survive the round-trip through packNotes.
     var existing = null;
     for (var i = 0; i < this.contacts.length; i++) if (this.contacts[i].id === id) { existing = this.contacts[i]; break; }
-    var touches = existing ? parseNotes(existing.notes).touches : { t1: null, t2: null, t3: null };
+    var existingParsed = existing ? parseNotes(existing.notes) : { touches: { t1: null, t2: null, t3: null }, snoozes: { t1: null, t2: null, t3: null } };
     this.updateContact(id, {
       name: get('name'), handle: get('handle'), brok: get('brok'), email: get('email'),
       source: get('source'), stage: get('stage'), next: get('next'),
-      touches: touches
+      touches: existingParsed.touches,
+      snoozes: existingParsed.snoozes
     });
     this._closeEditModal();
   };
@@ -812,6 +1016,15 @@
     this._renderFilters();
     this._updateCountsDom();
     this._renderList();
+    // Lazy auto-archive: silently move stale Contacted (T3 due/overdue) to Not Interested.
+    // Debounced so a single render burst doesn't fire it many times.
+    var self = this;
+    if (!self._autoArchiveTimer) {
+      self._autoArchiveTimer = setTimeout(function () {
+        self._autoArchiveTimer = null;
+        try { self.autoArchiveStaleContacted(); } catch (_) {}
+      }, 400);
+    }
   };
 
   TcTracker.prototype._updateCounts = function () {
