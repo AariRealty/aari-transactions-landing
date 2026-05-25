@@ -344,6 +344,13 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
 .nav.tc-template .nav-btn{font-weight:600;letter-spacing:0.12em}
 /* BD sub-tabs (Outreach / Funnel / Recap) inside the BD panel — pinned at top across sub-views */
 .bd-subnav{display:flex;gap:6px;padding:10px 14px;background:#fafaf7;border:1px solid #efebe5;border-radius:10px;margin-bottom:18px;position:sticky;top:0;z-index:50;backdrop-filter:saturate(120%) blur(4px)}
+/* Funnel sub-sub-nav (The Lineup / The Daily 15) · second-level nav, visually nested */
+.funnel-subnav{display:flex;gap:4px;padding:6px 8px;background:#fff;border:1px dashed #d8d2c6;border-radius:8px;margin-bottom:14px}
+.funnel-subnav .funnel-sub-btn{background:transparent;border:1px solid transparent;border-radius:6px;padding:6px 12px;font-family:var(--sans);font-size:10.5px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;color:var(--g600);cursor:pointer;transition:all .12s}
+.funnel-subnav .funnel-sub-btn:hover{color:var(--ink)}
+.funnel-subnav .funnel-sub-btn.active{background:var(--ink);color:var(--white);border-color:var(--ink)}
+.funnel-sub{display:none}
+.funnel-sub.active{display:block}
 
 /* Kanban board */
 .kanban-wrap{overflow-x:auto;padding-bottom:6px}
@@ -727,18 +734,6 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
   <!-- ============ OUTREACH (default) ============ -->
   <div class="bd-sub active" id="bd-sub-outreach">
 
-  <!-- TODAY'S FOLLOW-UPS QUEUE · stage-aware cadence · max 15 · single source of truth for overdue work -->
-  <div class="tfq-wrap" id="todayFollowups">
-    <div class="tfq-head">
-      <div class="tfq-title">Today's Follow-ups</div>
-      <div class="tfq-progress" id="tfqProgress">0 / 15 follow-ups done today</div>
-    </div>
-    <div class="tfq-list" id="tfqList">
-      <div class="tfq-empty">Loading follow-ups…</div>
-    </div>
-    <div class="tfq-overflow" id="tfqOverflow" style="display:none"></div>
-  </div>
-
   <!-- HOT LEADS CALLOUT · jumps to Funnel sub-tab + Hot bucket. Hidden when 0 hot. -->
   <div id="bdHotCallout" style="display:none;align-items:center;gap:14px;background:#F0E2D9;border:1px solid #E3CFC2;border-radius:10px;padding:12px 16px;margin-bottom:18px;color:#7A4632;font-size:13px">
     <span style="font-size:14px;line-height:1">●</span>
@@ -822,15 +817,39 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
 
   </div><!-- /#bd-sub-outreach -->
 
-  <!-- ============ FUNNEL · Kanban only ============ -->
+  <!-- ============ FUNNEL · Lineup (Kanban) + Daily 15 (Follow-ups) ============ -->
   <div class="bd-sub" id="bd-sub-funnel">
-    <!-- Kanban view (only view) -->
-    <div id="funnelKanban">
-      <div class="kanban-wrap">
-        <div class="kanban-grid" id="kanbanGrid"></div>
-      </div>
-      <div style="font-size:10px;color:#9a958b;margin-top:8px;letter-spacing:0.04em;padding:0 4px">Drag a card to a column to set that stage (Contacted · Replied · In Convo · Hand Raise · Discovery · Signed · Not Interested). Click a card for full details. Board scrolls horizontally on narrow viewports.</div>
+
+    <!-- FUNNEL SUB-SUB-NAV · nested second-level nav (visually distinct from parent) -->
+    <div class="funnel-subnav">
+      <button type="button" class="funnel-sub-btn active" data-funnel-sub="lineup" onclick="goFunnelSub('lineup',this)">The Lineup</button>
+      <button type="button" class="funnel-sub-btn" data-funnel-sub="daily15" onclick="goFunnelSub('daily15',this)">The Daily 15</button>
     </div>
+
+    <!-- THE LINEUP (default) · Kanban board -->
+    <div class="funnel-sub active" id="funnel-sub-lineup">
+      <div id="funnelKanban">
+        <div class="kanban-wrap">
+          <div class="kanban-grid" id="kanbanGrid"></div>
+        </div>
+        <div style="font-size:10px;color:#9a958b;margin-top:8px;letter-spacing:0.04em;padding:0 4px">Drag a card to a column to set that stage (Contacted · Replied · In Convo · Hand Raise · Discovery · Signed · Not Interested). Click a card for full details. Board scrolls horizontally on narrow viewports.</div>
+      </div>
+    </div>
+
+    <!-- THE DAILY 15 · Today's Follow-ups queue -->
+    <div class="funnel-sub" id="funnel-sub-daily15">
+      <div class="tfq-wrap" id="todayFollowups">
+        <div class="tfq-head">
+          <div class="tfq-title">Today's Follow-ups</div>
+          <div class="tfq-progress" id="tfqProgress">0 / 15 follow-ups done today</div>
+        </div>
+        <div class="tfq-list" id="tfqList">
+          <div class="tfq-empty">Loading follow-ups…</div>
+        </div>
+        <div class="tfq-overflow" id="tfqOverflow" style="display:none"></div>
+      </div>
+    </div>
+
     <!-- Tracker mount point · hidden, kept so the tracker component can bind for data access (getContacts, addContact, openEditModal, updateStage) -->
     <div id="trackerMount" style="display:none"></div>
   </div>
@@ -1607,12 +1626,29 @@ function goBdSub(name, btn){
   var p = document.getElementById('bd-sub-'+name); if (p) p.classList.add('active');
   if (btn) btn.classList.add('active');
   else { var b = document.querySelector('.bd-sub-btn[data-sub="'+name+'"]'); if (b) b.classList.add('active'); }
-  // First time we enter Funnel · build the kanban
-  if (name === 'funnel') { try { renderKanban(); } catch(_) {} }
+  // First time we enter Funnel · default to The Lineup and build the kanban
+  if (name === 'funnel') {
+    // Default sub-tab to The Lineup every time Funnel is entered (simpler than persisting state)
+    try { goFunnelSub('lineup'); } catch(_) {}
+    try { renderKanban(); } catch(_) {}
+  }
+}
+// Funnel second-level nav: The Lineup (Kanban) ↔ The Daily 15 (Today's Follow-ups)
+function goFunnelSub(key, btn){
+  if (key !== 'lineup' && key !== 'daily15') key = 'lineup';
+  document.querySelectorAll('.funnel-sub').forEach(function(s){ s.classList.remove('active'); });
+  document.querySelectorAll('.funnel-sub-btn').forEach(function(b){ b.classList.remove('active'); });
+  var p = document.getElementById('funnel-sub-'+key); if (p) p.classList.add('active');
+  if (btn) btn.classList.add('active');
+  else { var b = document.querySelector('.funnel-sub-btn[data-funnel-sub="'+key+'"]'); if (b) b.classList.add('active'); }
+  // Rebuild the relevant view when shown so data is fresh
+  if (key === 'lineup') { try { renderKanban(); } catch(_) {} }
+  if (key === 'daily15') { try { renderTodaysFollowups(); } catch(_) {} }
 }
 function jumpToHot(){
-  // Switch BD to the Funnel sub-tab, then filter to Hand Raise (where leads asked for pricing).
+  // Switch BD to the Funnel sub-tab → Lineup, then filter to Hand Raise (where leads asked for pricing).
   goBdSub('funnel');
+  goFunnelSub('lineup');
   if (window.AariTracker) window.AariTracker._setBucket('raise');
   setTimeout(function(){
     var t = document.getElementById('funnelKanban');
@@ -1766,11 +1802,13 @@ function updateFollowUpsIndicator(contacts){
   renderTodaysFollowups(contacts);
 }
 function jumpToFollowUps(){
-  // Legacy click handler kept for safety · scroll to the new widget if it exists.
-  var t = document.getElementById('todayFollowups');
-  if (t) { t.scrollIntoView({behavior:'smooth', block:'start'}); return; }
+  // The Daily 15 lives under Funnel · The Daily 15. Chain the navigation.
   goBdSub('funnel');
-  try { renderKanban(); } catch(_){}
+  goFunnelSub('daily15');
+  setTimeout(function(){
+    var t = document.getElementById('todayFollowups');
+    if (t) t.scrollIntoView({behavior:'smooth', block:'start'});
+  }, 80);
 }
 
 // ── KANBAN · 7 columns · 1 column = 1 stage · drag-and-drop · confetti on Signed (no WIP caps) ──
