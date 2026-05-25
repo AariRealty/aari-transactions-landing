@@ -184,9 +184,9 @@
       '    <h4>New Contact</h4>',
       '    <p class="tct-form-note">Add everyone you DM — replied or not.</p>',
       '    <div class="tct-grid">',
-      '      <div class="tct-af"><label>Name</label><input type="text" data-field="name" placeholder="Agent name"></div>',
+      '      <div class="tct-af"><label>Name <span style="color:#A32D2D">*</span></label><input type="text" data-field="name" placeholder="Agent name" aria-required="true"></div>',
       '      <div class="tct-af"><label>Instagram / Phone</label><input type="text" data-field="handle" placeholder="@handle"></div>',
-      '      <div class="tct-af"><label>Brokerage</label><input type="text" data-field="brok" placeholder="e.g. KW..."></div>',
+      '      <div class="tct-af"><label>Brokerage <span style="color:#A32D2D">*</span></label><input type="text" data-field="brok" placeholder="e.g. KW..." aria-required="true"></div>',
       '      <div class="tct-af"><label>Email (optional)</label><input type="email" data-field="email" placeholder="agent@brokerage.com"></div>',
       '      <div class="tct-af"><label>Found via</label><select data-field="source"><option>IG search</option><option>Referral</option><option>Post comment</option><option>Story view</option><option>Cold email</option><option>Mailer</option><option>Event</option><option>Other</option></select></div>',
       '      <div class="tct-af"><label>Stage</label><select data-field="stage">' + formStageOpts + '</select></div>',
@@ -206,7 +206,7 @@
       '        <div class="tct-edit-grid">',
       '          <div><label>Name</label><input type="text" data-edit-field="name"></div>',
       '          <div><label>Instagram / Phone</label><input type="text" data-edit-field="handle"></div>',
-      '          <div><label>Brokerage</label><input type="text" data-edit-field="brok"></div>',
+      '          <div><label>Brokerage <span data-edit-brok-hint style="display:none;color:#8a7030;font-size:10px;font-weight:500;margin-left:6px">&#9888; Add brokerage</span></label><input type="text" data-edit-field="brok"></div>',
       '          <div><label>Email</label><input type="email" data-edit-field="email" placeholder="agent@brokerage.com"></div>',
       '          <div><label>Found via</label><select data-edit-field="source"><option>IG search</option><option>Referral</option><option>Post comment</option><option>Story view</option><option>Cold email</option><option>Mailer</option><option>Event</option><option>Other</option></select></div>',
       '          <div><label>Stage</label><select data-edit-field="stage">' + formStageOpts + '</select></div>',
@@ -805,6 +805,9 @@
     setField('name', c.name);
     setField('handle', c.handle);
     setField('brok', parsed.brok);
+    // Show "Add brokerage" hint for legacy contacts missing the field · non-blocking on edit
+    var brokHint = m.querySelector('[data-edit-brok-hint]');
+    if (brokHint) brokHint.style.display = (parsed.brok && parsed.brok.trim()) ? 'none' : 'inline';
     setField('email', parsed.email);
     setField('source', c.source || 'IG search');
     setField('stage', normalizeStage(c.stage || 'Contacted'));
@@ -991,6 +994,12 @@
     if (errEl) { errEl.textContent = ''; errEl.style.display = 'none'; }
     if (!input.name) {
       if (errEl) { errEl.textContent = 'Name is required.'; errEl.style.display = 'block'; }
+      return;
+    }
+    if (!input.brok) {
+      if (errEl) { errEl.textContent = 'Brokerage is required.'; errEl.style.display = 'block'; }
+      var brokInput = f.querySelector('[data-field="brok"]');
+      if (brokInput) brokInput.focus();
       return;
     }
     try {
