@@ -134,22 +134,22 @@
     '.tct-modal-ftr button:hover{background:#fff}',
     '.tct-modal-ftr button.primary{background:#0a0a0a;color:#fff;border-color:#0a0a0a}',
     '.tct-modal-ftr button.primary:hover{background:#1a1a1a}',
-    '.tct-modal-ftr button.danger{color:#A32D2D;border-color:#E8C8C8}',
-    '.tct-modal-ftr button.danger:hover{background:#FCEBEB;color:#A32D2D}',
-    /* Follow-up touches · Option 2 timeline dots */
+    '.tct-modal-ftr button.danger{color:#88857C;border-color:#E8E6DF}',
+    '.tct-modal-ftr button.danger:hover{background:#E8E6DF;color:#0f0f0f}',
+    /* Follow-up touches · Option 2 timeline dots · monochrome black + cream */
     '.tct-touches{margin-top:18px;padding-top:14px;border-top:1px solid #f0ece4}',
-    '.tct-touches-label{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:#9a958b;font-weight:500;margin-bottom:14px}',
+    '.tct-touches-label{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:#88857C;font-weight:500;margin-bottom:14px}',
     '.tct-touches-timeline{display:flex;align-items:flex-start;justify-content:space-between;gap:0;margin:0 6px 14px;position:relative}',
     '.tct-touch-step{display:flex;flex-direction:column;align-items:center;gap:6px;flex:0 0 auto;position:relative;z-index:2;width:90px}',
-    '.tct-touch-circle{width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;background:#fff;border:2px solid #d8d3c6;color:#9a958b;transition:all .15s ease}',
-    '.tct-touch-circle.done{background:#5A6B57;border-color:#5A6B57;color:#fff}',
-    '.tct-touch-circle.due{border-color:#A32D2D;color:#A32D2D;background:#FCEBEB}',
+    '.tct-touch-circle{width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;background:#fff;border:2px solid #E8E6DF;color:#88857C;transition:all .15s ease}',
+    '.tct-touch-circle.done{background:#0f0f0f;border-color:#0f0f0f;color:#fff}',
+    '.tct-touch-circle.due{border-color:#D8D2C6;color:#0f0f0f;background:#D8D2C6}',
     '.tct-touch-label{font-size:10px;color:#6b6760;line-height:1.2;text-align:center}',
-    '.tct-touch-label.done{color:#5A6B57;font-weight:500}',
-    '.tct-touch-label.due{color:#A32D2D;font-weight:600}',
-    '.tct-touch-badge{font-size:9px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#fff;background:#A32D2D;padding:2px 6px;border-radius:8px;margin-top:1px}',
-    '.tct-touch-connector{position:absolute;top:18px;left:0;right:0;height:2px;background:#e0dccf;z-index:1}',
-    '.tct-touch-connector-fill{position:absolute;top:18px;left:0;height:2px;background:#5A6B57;z-index:1;transition:width .25s ease}',
+    '.tct-touch-label.done{color:#0f0f0f;font-weight:500}',
+    '.tct-touch-label.due{color:#0f0f0f;font-weight:600}',
+    '.tct-touch-badge{font-size:9px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#88857C;background:transparent;padding:2px 6px;border-radius:8px;margin-top:1px}',
+    '.tct-touch-connector{position:absolute;top:18px;left:0;right:0;height:2px;background:#E8E6DF;z-index:1}',
+    '.tct-touch-connector-fill{position:absolute;top:18px;left:0;height:2px;background:#0f0f0f;z-index:1;transition:width .25s ease}',
     '.tct-touch-action{display:flex;justify-content:center;margin-top:4px}',
     '.tct-touch-btn{font-size:11px;padding:8px 18px;border-radius:6px;cursor:pointer;font-family:inherit;background:#0a0a0a;color:#fff;border:1px solid #0a0a0a;font-weight:500;letter-spacing:.04em}',
     '.tct-touch-btn:hover{background:#1a1a1a}',
@@ -184,15 +184,15 @@
       '    <h4>New Contact</h4>',
       '    <p class="tct-form-note">Add everyone you DM — replied or not.</p>',
       '    <div class="tct-grid">',
-      '      <div class="tct-af"><label>Name <span style="color:#A32D2D">*</span></label><input type="text" data-field="name" placeholder="Agent name" aria-required="true"></div>',
+      '      <div class="tct-af"><label>Name <span style="color:#0f0f0f;font-weight:700">*</span></label><input type="text" data-field="name" placeholder="Agent name" aria-required="true"></div>',
       '      <div class="tct-af"><label>Instagram / Phone</label><input type="text" data-field="handle" placeholder="@handle"></div>',
-      '      <div class="tct-af"><label>Brokerage <span style="color:#A32D2D">*</span></label><input type="text" data-field="brok" placeholder="e.g. KW..." aria-required="true"></div>',
+      '      <div class="tct-af"><label>Brokerage <span style="color:#0f0f0f;font-weight:700">*</span></label><input type="text" data-field="brok" placeholder="e.g. KW..." aria-required="true"></div>',
       '      <div class="tct-af"><label>Email (optional)</label><input type="email" data-field="email" placeholder="agent@brokerage.com"></div>',
       '      <div class="tct-af"><label>Found via</label><select data-field="source"><option>IG search</option><option>Referral</option><option>Post comment</option><option>Story view</option><option>Cold email</option><option>Mailer</option><option>Event</option><option>Other</option></select></div>',
       '      <div class="tct-af"><label>Stage</label><select data-field="stage">' + formStageOpts + '</select></div>',
       '      <div class="tct-af full"><label>Next Step</label><input type="text" data-field="next" placeholder="e.g. Follow up Friday..."></div>',
       '    </div>',
-      '    <div data-form-error style="display:none;font-size:12px;color:#A32D2D;background:#FCEBEB;border:1px solid #E8C8C8;border-radius:6px;padding:8px 10px;margin-bottom:10px"></div>',
+      '    <div data-form-error style="display:none;font-size:12px;color:#0f0f0f;font-weight:600;background:#D8D2C6;border:1px solid #D8D2C6;border-radius:6px;padding:8px 10px;margin-bottom:10px"></div>',
       '    <div class="tct-form-actions">',
       '      <button class="primary" data-action="add-submit">Add →</button>',
       '      <button data-action="add-cancel">Cancel</button>',
@@ -869,7 +869,7 @@
       var labelCls = 'tct-touch-label';
       var inner = String(n);
       if (done) { circleCls += ' done'; labelCls += ' done'; inner = '<i class="ti ti-check" aria-hidden="true">&#10003;</i>'; }
-      else if (due) { circleCls += ' due'; labelCls += ' due'; inner = '<i class="ti ti-bell" aria-hidden="true">&#9888;</i>'; }
+      else if (due) { circleCls += ' due'; labelCls += ' due'; /* number stays as inner — no bell, no red */ }
       var labelText = '';
       if (done) labelText = 'Done ' + fmtMonthDay(st.doneDates[i]);
       else if (due) labelText = 'Due today';
