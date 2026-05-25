@@ -2081,17 +2081,100 @@ function renderKanbanTouchDots(contact){
   }
   return '<div class="kanban-card-touches" aria-hidden="true">'+html+'</div>';
 }
+// Lineup filter state · search text + brokerage multi-select + touch state radio
+var LINEUP_STATE = {
+  search: '',
+  brokerages: [],      // array of brokerage strings · "" represents "No brokerage"
+  touch: 'all'         // 'all' · 'overdue' · 'today' · 'ontrack' · 'none'
+};
+// Pull brokerage off a contact (direct .brok or packed in notes "Brokerage: X · ...")
+function luGetBrok(c){
+  if (!c) return '';
+  if (c.brok && typeof c.brok === 'string') return c.brok.trim();
+  if (c.notes && typeof c.notes === 'string'){
+    var parts = c.notes.split(' · ');
+    for (var i = 0; i < parts.length; i++){
+      if (parts[i].indexOf('Brokerage: ') === 0) return parts[i].slice(11).trim();
+    }
+  }
+  return '';
+}
+// Pull email off a contact (direct .email or packed in notes "Email: x@y · ...")
+function luGetEmail(c){
+  if (!c) return '';
+  if (c.email && typeof c.email === 'string') return c.email.trim();
+  if (c.notes && typeof c.notes === 'string'){
+    var parts = c.notes.split(' · ');
+    for (var i = 0; i < parts.length; i++){
+      if (parts[i].indexOf('Email: ') === 0) return parts[i].slice(7).trim();
+    }
+  }
+  return '';
+}
+// Classify touch state · uses TcTrackerTouchUrgency (overdue/dueToday) + TcTrackerTouchStates
+// (returns null for Signed/Not Interested · treat those as 'none' since no touches happen there).
+function luTouchClass(c){
+  if (!c) return 'none';
+  if (c.stage === 'Signed' || c.stage === 'Not Interested') return 'none';
+  if (typeof window.TcTrackerTouchUrgency === 'function'){
+    var u = window.TcTrackerTouchUrgency(c);
+    if (u && u.overdue) return 'overdue';
+    if (u && u.dueToday) return 'today';
+  }
+  if (typeof window.TcTrackerTouchStates === 'function'){
+    var st = window.TcTrackerTouchStates(c);
+    if (st){
+      var anyDone = st.indexOf('done') !== -1;
+      return anyDone ? 'ontrack' : 'none';
+    }
+  }
+  return 'none';
+}
+// Apply search + filter to a single contact. Returns true if it should be visible.
+function luContactMatches(c){
+  if (!c) return false;
+  // Search · case-insensitive substring across name / handle / brokerage / email
+  var q = (LINEUP_STATE.search || '').trim().toLowerCase();
+  if (q){
+    var name = String(c.name || '').toLowerCase();
+    var handle = String(c.handle || '').toLowerCase();
+    var brok = luGetBrok(c).toLowerCase();
+    var email = luGetEmail(c).toLowerCase();
+    if (name.indexOf(q) === -1 && handle.indexOf(q) === -1 && brok.indexOf(q) === -1 && email.indexOf(q) === -1) return false;
+  }
+  // Brokerage filter · multi-select. "" key means "No brokerage"
+  if (LINEUP_STATE.brokerages.length){
+    var b = luGetBrok(c);
+    var key = b ? b : '';
+    if (LINEUP_STATE.brokerages.indexOf(key) === -1) return false;
+  }
+  // Touch state filter · single-select
+  if (LINEUP_STATE.touch && LINEUP_STATE.touch !== 'all'){
+    var tc = luTouchClass(c);
+    if (LINEUP_STATE.touch === 'overdue' && tc !== 'overdue') return false;
+    if (LINEUP_STATE.touch === 'today' && tc !== 'today') return false;
+    if (LINEUP_STATE.touch === 'ontrack' && tc !== 'ontrack') return false;
+    if (LINEUP_STATE.touch === 'none' && tc !== 'none') return false;
+  }
+  return true;
+}
+function luHasActiveFilter(){
+  return !!(LINEUP_STATE.search || LINEUP_STATE.brokerages.length || (LINEUP_STATE.touch && LINEUP_STATE.touch !== 'all'));
+}
 function renderKanban(){
   var grid = document.getElementById('kanbanGrid');
   if (!grid) return;
   var contacts = (window.AariTracker ? window.AariTracker.getContacts() : (S.contacts || []));
   // Bucket the contacts · one bucket per stage (7 total). Unknown stage values drop off the board.
+  // Track both totals (all) and filtered (visible) so column counts can show "X of Y" when active.
   var byBucket = { contacted:[], replied:[], convo:[], raise:[], disco:[], signed:[], notint:[] };
+  var totals = { contacted:0, replied:0, convo:0, raise:0, disco:0, signed:0, notint:0 };
   contacts.forEach(function(c){
     if (!c) return;
     var b = STAGE_TO_BUCKET[c.stage];
     if (!b || !byBucket.hasOwnProperty(b)) return;
-    byBucket[b].push(c);
+    totals[b]++;
+    if (luContactMatches(c)) byBucket[b].push(c);
   });
   var EMPTY_MSG = {
     contacted: 'Nothing contacted yet.',
@@ -2102,19 +2185,13 @@ function renderKanban(){
     signed:    'No signed clients yet.',
     notint:    'Empty graveyard.'
   };
+  var filtered = luHasActiveFilter();
   grid.innerHTML = KANBAN_BUCKETS.map(function(B){
     var rows = byBucket[B.key];
+    var tot = totals[B.key];
     var cards = rows.length ? rows.map(function(c){
       var stage = c.stage || 'Contacted';
-      // Extract brokerage · stored either as direct .brok or packed in notes blob "Brokerage: X · ..."
-      var brok = '';
-      if (c.brok && typeof c.brok === 'string') brok = c.brok.trim();
-      else if (c.notes && typeof c.notes === 'string'){
-        var parts = c.notes.split(' · ');
-        for (var bi = 0; bi < parts.length; bi++){
-          if (parts[bi].indexOf('Brokerage: ') === 0){ brok = parts[bi].slice(11).trim(); break; }
-        }
-      }
+      var brok = luGetBrok(c);
       // Minimal card · name + (optional) brokerage sub-line. Handle, email, stage all live in the detail modal.
       // Stage is implicit from column position. Click opens full detail.
       var brokLine = brok ? '<span class="kanban-card-brok">'+escK(brok)+'</span>' : '';
@@ -2125,9 +2202,12 @@ function renderKanban(){
         brokLine +
         touchLine +
         '</div>';
-    }).join('') : '<div class="kanban-empty">'+EMPTY_MSG[B.key]+'</div>';
+    }).join('') : '<div class="kanban-empty">'+(filtered && tot > 0 ? 'No matches in this column.' : EMPTY_MSG[B.key])+'</div>';
+    var countMarkup = filtered
+      ? '<span class="kanban-col-count filtered">'+rows.length+'<span class="kanban-col-count-tot"> of '+tot+'</span></span>'
+      : '<span class="kanban-col-count">'+tot+'</span>';
     return '<div class="kanban-col" data-bucket="'+B.key+'">'+
-      '<div class="kanban-col-head"><span class="kanban-col-name">'+escK(B.label)+'</span><span class="kanban-col-count">'+rows.length+'</span></div>'+
+      '<div class="kanban-col-head"><span class="kanban-col-name">'+escK(B.label)+'</span>'+countMarkup+'</div>'+
       cards +
       '</div>';
   }).join('');
