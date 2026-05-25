@@ -354,7 +354,7 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
 
 /* Kanban board */
 .kanban-wrap{overflow-x:auto;padding-bottom:6px}
-.kanban-grid{display:grid;grid-template-columns:repeat(4,minmax(200px,1fr));gap:12px;min-width:840px}
+.kanban-grid{display:grid;grid-template-columns:repeat(5,minmax(190px,1fr));gap:12px;min-width:1000px}
 .kanban-col{background:#fff;border:1px solid var(--line-tc);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;min-height:240px;transition:border-color .12s}
 .kanban-col.drop-target{border-color:var(--ink)}
 .kanban-col-head{display:flex;align-items:baseline;justify-content:space-between;gap:6px;padding-bottom:8px;border-bottom:1px solid var(--line-tc)}
@@ -374,10 +374,11 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
 .kanban-card-pill.s-raise{background:#EFE3DC;color:#8C5A45}
 .kanban-card-pill.s-disco{background:#E5E9E2;color:#5A6B57;border:1px solid #B5C2AE}
 .kanban-card-pill.s-signed{background:#0a0a0a;color:#fff}
-.kanban-col[data-bucket="cold"] .kanban-card{border-left-color:#A8A39A}
-.kanban-col[data-bucket="talking"] .kanban-card{border-left-color:#B8A789}
-.kanban-col[data-bucket="hot"] .kanban-card{border-left-color:#B58370}
-.kanban-col[data-bucket="won"] .kanban-card{border-left-color:#8A9C85}
+.kanban-col[data-bucket="contacted"] .kanban-card{border-left-color:#A8A39A}
+.kanban-col[data-bucket="convo"] .kanban-card{border-left-color:#B8A789}
+.kanban-col[data-bucket="raise"] .kanban-card{border-left-color:#B58370}
+.kanban-col[data-bucket="disco"] .kanban-card{border-left-color:#5A6B57}
+.kanban-col[data-bucket="signed"] .kanban-card{border-left-color:#8A9C85}
 .kanban-empty{font-size:11px;color:#9a958b;font-style:italic;padding:18px 8px;text-align:center}
 /* Confetti canvas */
 .confetti-canvas{position:fixed;inset:0;pointer-events:none;z-index:9000}
@@ -791,7 +792,7 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
       <div class="kanban-wrap">
         <div class="kanban-grid" id="kanbanGrid"></div>
       </div>
-      <div style="font-size:10px;color:#9a958b;margin-top:8px;letter-spacing:0.04em;padding:0 4px">Drag cards between columns to move stage. Click a card for full details.</div>
+      <div style="font-size:10px;color:#9a958b;margin-top:8px;letter-spacing:0.04em;padding:0 4px">Drag a card to a column to set that stage (Contacted · In Convo · Hand Raise · Discovery Call · Signed). Click a card for full details. Replied and Added to AC roll into Contacted and In Convo. Not Interested is hidden from this board — find them in List view.</div>
     </div>
     <!-- List view (toggle) -->
     <div id="funnelList" style="display:none">
@@ -1513,7 +1514,9 @@ async function _mergeOne(group) {
 
 // ── Tracker handlers · all route through the shared component (js/tc-tracker.js) ──
 // The legacy inline Tracker UI is gone. AariTracker owns DOM + data layer.
-// UI: 4 buckets (cold/talking/hot/won). Data: still 7 granular stages.
+// LIST view: still uses 4 internal filter buckets (cold/talking/hot/won) inside tc-tracker.js.
+// KANBAN view (this file): 5 columns, 1 stage per column. See KANBAN_BUCKETS below.
+// Data: 7 granular stages — Contacted / Replied / In Conversation / Added to AC / Hand Raise / Discovery Booked / Signed (+ Not Interested).
 function addContact(){ /* legacy form gone · use AariTracker.addContact() */ }
 function filterC(stageOrBucket){
   if(!window.AariTracker) return;
@@ -1628,13 +1631,21 @@ function renderKanban(){
   var grid = document.getElementById('kanbanGrid');
   if (!grid) return;
   var contacts = (window.AariTracker ? window.AariTracker.getContacts() : (S.contacts || []));
-  // Bucket the contacts
-  var byBucket = { cold:[], talking:[], hot:[], won:[] };
+  // Bucket the contacts · skip any whose stage doesn't map to a Kanban column
+  var byBucket = { contacted:[], convo:[], raise:[], disco:[], signed:[] };
   contacts.forEach(function(c){
-    if (!c || c.stage === 'Not Interested') return;
-    var b = STAGE_TO_BUCKET[c.stage] || 'cold';
+    if (!c) return;
+    var b = STAGE_TO_BUCKET[c.stage];
+    if (!b || !byBucket.hasOwnProperty(b)) return; // hidden stages (Not Interested, unknown) drop off Kanban
     byBucket[b].push(c);
   });
+  var EMPTY_MSG = {
+    contacted: 'Nothing contacted yet.',
+    convo:     'No active conversations.',
+    raise:     'No hand raises right now.',
+    disco:     'No discovery calls booked.',
+    signed:    'No signed clients yet.'
+  };
   grid.innerHTML = KANBAN_BUCKETS.map(function(B){
     var rows = byBucket[B.key];
     var cards = rows.length ? rows.map(function(c){
@@ -1648,7 +1659,7 @@ function renderKanban(){
         handleRow + emailRow +
         '<span class="kanban-card-pill '+pill.cls+'">'+escK(pill.label)+'</span>'+
         '</div>';
-    }).join('') : '<div class="kanban-empty">'+({cold:'No cold contacts.',talking:'No active conversations.',hot:'Nothing hot right now.',won:'No signed clients yet.'})[B.key]+'</div>';
+    }).join('') : '<div class="kanban-empty">'+EMPTY_MSG[B.key]+'</div>';
     return '<div class="kanban-col" data-bucket="'+B.key+'">'+
       '<div class="kanban-col-head"><span class="kanban-col-name">'+escK(B.label)+'</span><span class="kanban-col-count">'+rows.length+'</span></div>'+
       cards +
@@ -1700,19 +1711,12 @@ function wireKanbanDnd(){
       var bucket = col.getAttribute('data-bucket');
       var draggingCard = grid.querySelector('.kanban-card[data-id="'+CSS.escape(id)+'"]');
       var fromBucket = draggingCard ? draggingCard.closest('.kanban-col').getAttribute('data-bucket') : null;
-      // Resolve target stage
+      // 1 column = 1 stage · target stage is whatever this column owns
       var BUCKET = KANBAN_BUCKETS.find(function(b){return b.key===bucket;});
       if (!BUCKET) return;
-      var contacts = (window.AariTracker ? window.AariTracker.getContacts() : (S.contacts || []));
-      var contact = contacts.find(function(c){return String(c.id) === String(id);});
-      if (!contact) return;
-      var currentStage = contact.stage || 'Contacted';
-      var newStage;
-      if (bucket === fromBucket && BUCKET.validStages.indexOf(currentStage) >= 0){
-        newStage = currentStage; // preserve granular stage on same-bucket drop
-      } else {
-        newStage = BUCKET.defaultStage;
-      }
+      // Same-column drop · nothing to change
+      if (bucket === fromBucket) { renderKanban(); return; }
+      var newStage = BUCKET.stage;
       // Persist via tracker
       if (window.AariTracker && typeof window.AariTracker.updateStage === 'function'){
         window.AariTracker.updateStage(id, newStage);
@@ -1725,8 +1729,8 @@ function wireKanbanDnd(){
       }
       // Optimistic re-render
       renderKanban();
-      // Confetti on Won
-      if (bucket === 'won' && fromBucket !== 'won') fireConfetti();
+      // Confetti on Signed
+      if (bucket === 'signed' && fromBucket !== 'signed') fireConfetti();
     });
   });
 }
