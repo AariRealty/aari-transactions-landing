@@ -4,8 +4,11 @@
  *
  * Data layer: Supabase only. No localStorage. Per-TC isolation via owner_id = auth.uid().
  *
- * UI: 4 buckets (Cold / Talking / Hot / Won) that group the 7 underlying BD stages.
+ * UI: 4 buckets (Cold / Talking / Hot / Won) that group the 6 underlying BD stages.
  * Underlying data model keeps the granular stages — the card badge surfaces the sub-stage.
+ * Stages: Contacted, Replied, In Convo, Hand Raise, Discovery, Signed (+ Not Interested as a side bin).
+ * Legacy stage values from older Supabase rows ("In Conversation", "Added to AC", "Discovery Booked")
+ * are normalized on read by normalizeStage() so the UI only ever sees the canonical names.
  *
  * Usage:
  *   <div id="trackerMount"></div>
@@ -23,15 +26,16 @@
 (function (global) {
   'use strict';
 
-  // ── 7 granular stages (data model · unchanged) ──
+  // ── Unified stage list · display label = data value (May 2026 v3) ──
+  // Stages: Contacted / Replied / In Convo / Hand Raise / Discovery / Signed / Not Interested.
+  // Legacy stage values ('Added to AC', 'Discovery Booked', 'In Conversation') are normalized on read.
   var STAGES = [
-    { key: 'Contacted',        label: 'Contacted',     bucket: 'cold',    cls: 's-contacted', desc: 'DM sent. No reply yet.' },
-    { key: 'Replied',          label: 'Replied',       bucket: 'cold',    cls: 's-replied',   desc: 'One message back. Not yet a real conversation.' },
-    { key: 'In Conversation',  label: 'In Convo',      bucket: 'talking', cls: 's-convo',     desc: 'Real back and forth. Add to ActiveCampaign.' },
-    { key: 'Added to AC',      label: 'In AC',         bucket: 'talking', cls: 's-ac',        desc: 'In email nurture. Keep the DM warm.' },
-    { key: 'Hand Raise',       label: '✋ Hand Raise', bucket: 'talking', cls: 's-raise',     desc: 'Asked for pricing or how to start. Book a discovery.' },
-    { key: 'Discovery Booked', label: 'Discovery',     bucket: 'hot',     cls: 's-disco',     desc: 'Call on the calendar. Your job is to close.' },
-    { key: 'Signed',           label: 'Signed',        bucket: 'won',     cls: 's-signed',    desc: 'Client. Go find the next one.' }
+    { key: 'Contacted',     label: 'Contacted',     bucket: 'cold',    cls: 's-contacted', desc: 'DM sent. No reply yet.' },
+    { key: 'Replied',       label: 'Replied',       bucket: 'cold',    cls: 's-replied',   desc: 'One message back. Not yet a real conversation.' },
+    { key: 'In Convo',      label: 'In Convo',      bucket: 'talking', cls: 's-convo',     desc: 'Real back and forth.' },
+    { key: 'Hand Raise',    label: 'Hand Raise',    bucket: 'talking', cls: 's-raise',     desc: 'Asked for pricing or how to start. Book a discovery.' },
+    { key: 'Discovery',     label: 'Discovery',     bucket: 'hot',     cls: 's-disco',     desc: 'Call on the calendar. Your job is to close.' },
+    { key: 'Signed',        label: 'Signed',        bucket: 'won',     cls: 's-signed',    desc: 'Client. Go find the next one.' }
   ];
 
   // ── 4 visual buckets (UI · what the user sees) ──
@@ -43,7 +47,15 @@
     { key: 'won',     label: 'Won',     bg: '#E8EAE3', fg: '#5A6B57', accent: '#8A9C85' }
   ];
 
-  var IN_AC_STAGES = ['Added to AC', 'Hand Raise', 'Discovery Booked', 'Signed'];
+  // ── Backwards-compat shim · normalize legacy stage strings on read ──
+  // Old Supabase rows may still be tagged with the deprecated values.
+  // We translate them here so the UI never sees them. Writes always use the new values.
+  function normalizeStage(s) {
+    if (s === 'Discovery Booked') return 'Discovery';
+    if (s === 'Added to AC')      return 'In Convo';
+    if (s === 'In Conversation')  return 'In Convo';
+    return s || 'Contacted';
+  }
 
   function stageMeta(key) {
     for (var i = 0; i < STAGES.length; i++) if (STAGES[i].key === key) return STAGES[i];
@@ -117,7 +129,25 @@
     '.tct-modal-ftr button.primary{background:#0a0a0a;color:#fff;border-color:#0a0a0a}',
     '.tct-modal-ftr button.primary:hover{background:#1a1a1a}',
     '.tct-modal-ftr button.danger{color:#A32D2D;border-color:#E8C8C8}',
-    '.tct-modal-ftr button.danger:hover{background:#FCEBEB;color:#A32D2D}'
+    '.tct-modal-ftr button.danger:hover{background:#FCEBEB;color:#A32D2D}',
+    /* Follow-up touches · Option 2 timeline dots */
+    '.tct-touches{margin-top:18px;padding-top:14px;border-top:1px solid #f0ece4}',
+    '.tct-touches-label{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:#9a958b;font-weight:500;margin-bottom:14px}',
+    '.tct-touches-timeline{display:flex;align-items:flex-start;justify-content:space-between;gap:0;margin:0 6px 14px;position:relative}',
+    '.tct-touch-step{display:flex;flex-direction:column;align-items:center;gap:6px;flex:0 0 auto;position:relative;z-index:2;width:90px}',
+    '.tct-touch-circle{width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;background:#fff;border:2px solid #d8d3c6;color:#9a958b;transition:all .15s ease}',
+    '.tct-touch-circle.done{background:#5A6B57;border-color:#5A6B57;color:#fff}',
+    '.tct-touch-circle.due{border-color:#A32D2D;color:#A32D2D;background:#FCEBEB}',
+    '.tct-touch-label{font-size:10px;color:#6b6760;line-height:1.2;text-align:center}',
+    '.tct-touch-label.done{color:#5A6B57;font-weight:500}',
+    '.tct-touch-label.due{color:#A32D2D;font-weight:600}',
+    '.tct-touch-badge{font-size:9px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#fff;background:#A32D2D;padding:2px 6px;border-radius:8px;margin-top:1px}',
+    '.tct-touch-connector{position:absolute;top:18px;left:0;right:0;height:2px;background:#e0dccf;z-index:1}',
+    '.tct-touch-connector-fill{position:absolute;top:18px;left:0;height:2px;background:#5A6B57;z-index:1;transition:width .25s ease}',
+    '.tct-touch-action{display:flex;justify-content:center;margin-top:4px}',
+    '.tct-touch-btn{font-size:11px;padding:8px 18px;border-radius:6px;cursor:pointer;font-family:inherit;background:#0a0a0a;color:#fff;border:1px solid #0a0a0a;font-weight:500;letter-spacing:.04em}',
+    '.tct-touch-btn:hover{background:#1a1a1a}',
+    '.tct-touch-btn:disabled{background:#E8EAE3;color:#5A6B57;border-color:#E8EAE3;cursor:default}'
   ].join('');
 
   function esc(s) {
@@ -127,6 +157,7 @@
   }
 
   function buildTemplate() {
+    // Single source of truth for stage dropdowns · Contacted / Replied / In Convo / Hand Raise / Discovery / Signed / Not Interested.
     var formStageOpts = STAGES.map(function (s) {
       return '<option value="' + esc(s.key) + '">' + esc(s.label) + '</option>';
     }).join('') + '<option value="Not Interested">Not Interested</option>';
@@ -175,6 +206,11 @@
       '          <div><label>Stage</label><select data-edit-field="stage">' + formStageOpts + '</select></div>',
       '          <div class="full"><label>Next Step</label><input type="text" data-edit-field="next"></div>',
       '        </div>',
+      '        <div class="tct-touches" data-touches-section>',
+      '          <div class="tct-touches-label">Follow-up touches</div>',
+      '          <div class="tct-touches-timeline" data-touches-timeline></div>',
+      '          <div class="tct-touch-action"><button class="tct-touch-btn" data-action="touch-complete" type="button">Mark Touch 1 complete</button></div>',
+      '        </div>',
       '      </div>',
       '      <div class="tct-modal-ftr">',
       '        <button class="danger" data-action="edit-delete">Delete</button>',
@@ -205,10 +241,10 @@
     this.cockpitOwnerFirstName = (opts && opts.cockpitOwnerFirstName) || null;
   }
 
-  // Parse "Brokerage: X · Next: Y · Email: z@x · ...notes..." from the notes column.
-  // Email lives in notes as a fallback so we don't need a schema migration on bd_contacts.
+  // Parse "Brokerage: X · Next: Y · Email: z@x · Touches: t1=YYYY-MM-DD|... · ...notes..." from the notes column.
+  // Email + touches live in notes as a fallback so we don't need a schema migration on bd_contacts.
   function parseNotes(notes) {
-    var out = { brok: '', next: '', email: '', notes: '' };
+    var out = { brok: '', next: '', email: '', touches: { t1: null, t2: null, t3: null }, notes: '' };
     if (!notes) return out;
     var parts = String(notes).split(' · ');
     var leftover = [];
@@ -216,19 +252,82 @@
       if (p.indexOf('Brokerage: ') === 0) out.brok = p.slice(11);
       else if (p.indexOf('Next: ') === 0) out.next = p.slice(6);
       else if (p.indexOf('Email: ') === 0) out.email = p.slice(7);
+      else if (p.indexOf('Touches: ') === 0) {
+        var tStr = p.slice(9);
+        tStr.split('|').forEach(function (kv) {
+          var eq = kv.indexOf('=');
+          if (eq < 0) return;
+          var k = kv.slice(0, eq).trim();
+          var v = kv.slice(eq + 1).trim();
+          if (k === 't1' || k === 't2' || k === 't3') out.touches[k] = v || null;
+        });
+      }
       else leftover.push(p);
     });
     out.notes = leftover.join(' · ');
     return out;
   }
-  function packNotes(brok, next, notes, email) {
+  function packNotes(brok, next, notes, email, touches) {
     var parts = [];
     if (brok) parts.push('Brokerage: ' + brok);
     if (next) parts.push('Next: ' + next);
     if (email) parts.push('Email: ' + email);
+    if (touches && (touches.t1 || touches.t2 || touches.t3)) {
+      var tParts = [];
+      if (touches.t1) tParts.push('t1=' + touches.t1);
+      if (touches.t2) tParts.push('t2=' + touches.t2);
+      if (touches.t3) tParts.push('t3=' + touches.t3);
+      if (tParts.length) parts.push('Touches: ' + tParts.join('|'));
+    }
     if (notes) parts.push(notes);
     return parts.length ? parts.join(' · ') : null;
   }
+  // Touch date helpers · cadence is Touch1=today, Touch2=+3d from T1, Touch3=+3d from T2.
+  function todayIsoDate() { var d = new Date(); return d.toISOString().slice(0, 10); }
+  function addDaysIso(iso, days) {
+    if (!iso) return null;
+    var d = new Date(iso + 'T00:00:00');
+    if (isNaN(d.getTime())) return null;
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
+  }
+  // Returns { dueDates: [d1,d2,d3], doneFlags: [b,b,b], nextIdx: 0|1|2|-1, overdueFlags: [b,b,b] }
+  function computeTouchState(touches) {
+    var t = touches || { t1: null, t2: null, t3: null };
+    var today = todayIsoDate();
+    // T1 due date: created date (when contact was added) — we approximate as "today" if no completion yet.
+    // Once T1 is done, T2 is due = T1 done + 3 days. Once T2 is done, T3 is due = T2 done + 3 days.
+    // For an unstarted contact, T1 is due today; T2 = today + 3; T3 = today + 6.
+    var d1 = t.t1 ? null : today;  // not-yet-done T1 is due today; once done, no due date
+    var d2 = t.t2 ? null : (t.t1 ? addDaysIso(t.t1, 3) : addDaysIso(today, 3));
+    var d3 = t.t3 ? null : (t.t2 ? addDaysIso(t.t2, 3) : (t.t1 ? addDaysIso(t.t1, 6) : addDaysIso(today, 6)));
+    var done = [!!t.t1, !!t.t2, !!t.t3];
+    var overdue = [
+      !done[0] && d1 && d1 < today,
+      !done[1] && d2 && d2 < today,
+      !done[2] && d3 && d3 < today
+    ];
+    var dueToday = [
+      !done[0] && d1 === today,
+      !done[1] && d2 === today,
+      !done[2] && d3 === today
+    ];
+    var nextIdx = done[0] ? (done[1] ? (done[2] ? -1 : 2) : 1) : 0;
+    return { dueDates: [d1, d2, d3], doneFlags: done, nextIdx: nextIdx, overdueFlags: overdue, dueTodayFlags: dueToday, doneDates: [t.t1, t.t2, t.t3] };
+  }
+  // Public · used by callers (Kanban dot, banner counter) to check if a contact has an overdue or due-today touch.
+  function contactTouchUrgency(contact) {
+    if (!contact) return { overdue: false, dueToday: false };
+    if (contact.stage === 'Signed' || contact.stage === 'Not Interested') return { overdue: false, dueToday: false };
+    var parsed = parseNotes(contact.notes);
+    var st = computeTouchState(parsed.touches);
+    return {
+      overdue: st.overdueFlags.some(function (b) { return b; }),
+      dueToday: st.dueTodayFlags.some(function (b) { return b; })
+    };
+  }
+  // Expose helpers on the global namespace so prospecting.html can use them.
+  global.TcTrackerTouchUrgency = contactTouchUrgency;
   function isValidEmail(e){ return !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e); }
 
   TcTracker.prototype.init = async function () {
@@ -283,7 +382,7 @@
       this.contacts = (r.data || []).map(function (row) {
         return {
           id: row.id, name: row.name, handle: row.handle, source: row.source,
-          stage: row.stage, notes: row.notes,
+          stage: normalizeStage(row.stage), notes: row.notes,
           dm_sent_at: row.dm_sent_at, last_touch_at: row.last_touch_at
         };
       });
@@ -311,7 +410,7 @@
       name: name,
       handle: input.handle || null,
       source: input.source || 'IG search',
-      stage: input.stage || 'Contacted',
+      stage: normalizeStage(input.stage || 'Contacted'),
       notes: packNotes(input.brok, input.next, input.notes, input.email),
       dm_sent_at: nowIso,
       last_touch_at: nowIso
@@ -332,7 +431,7 @@
       }
       if (r.data && r.data[0]) this.contacts.unshift({
         id: r.data[0].id, name: r.data[0].name, handle: r.data[0].handle,
-        source: r.data[0].source, stage: r.data[0].stage, notes: r.data[0].notes,
+        source: r.data[0].source, stage: normalizeStage(r.data[0].stage), notes: r.data[0].notes,
         dm_sent_at: r.data[0].dm_sent_at, last_touch_at: r.data[0].last_touch_at
       });
       this._render();
@@ -347,6 +446,7 @@
 
   TcTracker.prototype.updateStage = async function (id, stage) {
     if (!this.client) return;
+    stage = normalizeStage(stage);
     var nowIso = new Date().toISOString();
     try {
       var r = await this.client.from('bd_contacts').update({ stage: stage, last_touch_at: nowIso }).eq('id', id);
@@ -370,8 +470,8 @@
       name: patch.name || '(unnamed)',
       handle: patch.handle || null,
       source: patch.source || null,
-      stage: patch.stage || 'Contacted',
-      notes: packNotes(patch.brok, patch.next, patch.notes, patch.email),
+      stage: normalizeStage(patch.stage || 'Contacted'),
+      notes: packNotes(patch.brok, patch.next, patch.notes, patch.email, patch.touches),
       last_touch_at: nowIso
     };
     try {
@@ -437,6 +537,7 @@
       if (action === 'edit-close')   { self._closeEditModal(); return; }
       if (action === 'edit-save')    { self._commitEdit(); return; }
       if (action === 'edit-delete')  { self._deleteFromModal(); return; }
+      if (action === 'touch-complete') { self._completeNextTouch(); return; }
       if (action === 'add-toggle')   { self._toggleForm(); return; }
       if (action === 'add-submit')   { self._submitAdd(); return; }
       if (action === 'add-cancel')   { self._toggleForm(false); return; }
@@ -485,9 +586,10 @@
         var btn = t.closest ? t.closest('[data-action]') : null;
         if (!btn) return;
         var action = btn.getAttribute('data-action');
-        if (action === 'edit-close')  { self._closeEditModal(); return; }
-        if (action === 'edit-save')   { self._commitEdit(); return; }
-        if (action === 'edit-delete') { self._deleteFromModal(); return; }
+        if (action === 'edit-close')     { self._closeEditModal(); return; }
+        if (action === 'edit-save')      { self._commitEdit(); return; }
+        if (action === 'edit-delete')    { self._deleteFromModal(); return; }
+        if (action === 'touch-complete') { self._completeNextTouch(); return; }
       });
     }
     var setField = function (k, v) {
@@ -499,8 +601,9 @@
     setField('brok', parsed.brok);
     setField('email', parsed.email);
     setField('source', c.source || 'IG search');
-    setField('stage', c.stage || 'Contacted');
+    setField('stage', normalizeStage(c.stage || 'Contacted'));
     setField('next', parsed.next);
+    this._renderTouches(c, parsed.touches);
     m.classList.add('open');
     // focus name on open
     setTimeout(function () {
@@ -511,6 +614,108 @@
 
   // Public alias · lets external views (Kanban, etc.) open the edit modal for a contact.
   TcTracker.prototype.openEditModal = function (id) { return this._openEditModal(id); };
+
+  // Render the 3-touch follow-up timeline inside the modal.
+  TcTracker.prototype._renderTouches = function (contact, touches) {
+    var m = this.root.querySelector('[data-edit-overlay]') || document.querySelector('[data-edit-overlay]');
+    if (!m) return;
+    var timelineEl = m.querySelector('[data-touches-timeline]');
+    var btnEl = m.querySelector('[data-action="touch-complete"]');
+    if (!timelineEl || !btnEl) return;
+    var st = computeTouchState(touches);
+    // Build the 3 step dots + connector. Connector fill width = % of completed segments.
+    // Two segments between three dots: fillPct = (segments-done / 2) * 100. Each segment counts
+    // as done if the LEFT dot is done (T1 done → segment 1; T2 done → segment 2).
+    var segDone = (st.doneFlags[0] ? 1 : 0) + (st.doneFlags[1] ? 1 : 0);
+    var fillPct = (segDone / 2) * 100;
+    function fmtMonthDay(iso) {
+      if (!iso) return '';
+      var d = new Date(iso + 'T00:00:00');
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+    var stepsHtml = '';
+    for (var i = 0; i < 3; i++) {
+      var n = i + 1;
+      var done = st.doneFlags[i];
+      var due = st.dueTodayFlags[i];
+      var overdue = st.overdueFlags[i];
+      var circleCls = 'tct-touch-circle';
+      var labelCls = 'tct-touch-label';
+      var inner = String(n);
+      if (done) { circleCls += ' done'; labelCls += ' done'; inner = '<i class="ti ti-check" aria-hidden="true">&#10003;</i>'; }
+      else if (due) { circleCls += ' due'; labelCls += ' due'; inner = '<i class="ti ti-bell" aria-hidden="true">&#9888;</i>'; }
+      var labelText = '';
+      if (done) labelText = 'Done ' + fmtMonthDay(st.doneDates[i]);
+      else if (due) labelText = 'Due today';
+      else if (st.dueDates[i]) labelText = fmtMonthDay(st.dueDates[i]);
+      else labelText = 'Pending';
+      var overdueBadge = (overdue && !done) ? '<span class="tct-touch-badge">Overdue</span>' : '';
+      stepsHtml += '<div class="tct-touch-step">' +
+        '<span class="' + circleCls + '">' + inner + '</span>' +
+        '<span class="' + labelCls + '">' + esc(labelText) + '</span>' +
+        overdueBadge +
+        '</div>';
+    }
+    timelineEl.innerHTML =
+      '<div class="tct-touch-connector"></div>' +
+      '<div class="tct-touch-connector-fill" style="width:' + fillPct + '%"></div>' +
+      stepsHtml;
+    // Button state
+    if (st.nextIdx < 0) {
+      btnEl.disabled = true;
+      btnEl.textContent = 'All 3 touches complete';
+    } else {
+      btnEl.disabled = false;
+      btnEl.textContent = 'Mark Touch ' + (st.nextIdx + 1) + ' complete';
+    }
+  };
+
+  // Mark the next incomplete touch as done (today's date) and persist via updateContact.
+  TcTracker.prototype._completeNextTouch = async function () {
+    var id = this.editingId;
+    if (!id) return;
+    var c = null;
+    for (var i = 0; i < this.contacts.length; i++) if (this.contacts[i].id === id) { c = this.contacts[i]; break; }
+    if (!c) return;
+    var parsed = parseNotes(c.notes);
+    var st = computeTouchState(parsed.touches);
+    if (st.nextIdx < 0) return;
+    var today = todayIsoDate();
+    var t = { t1: parsed.touches.t1, t2: parsed.touches.t2, t3: parsed.touches.t3 };
+    if (st.nextIdx === 0) t.t1 = today;
+    else if (st.nextIdx === 1) t.t2 = today;
+    else if (st.nextIdx === 2) t.t3 = today;
+    // Persist via the full updateContact path so notes blob is repacked correctly.
+    // We pull the current modal values for other fields so we don't clobber unsaved edits.
+    var m = this.root.querySelector('[data-edit-overlay]') || document.querySelector('[data-edit-overlay]');
+    var get = function (k) {
+      var el = m.querySelector('[data-edit-field="' + k + '"]');
+      return el ? el.value.trim() : '';
+    };
+    await this.updateContact(id, {
+      name: get('name') || c.name,
+      handle: get('handle'),
+      brok: get('brok'),
+      email: get('email'),
+      source: get('source') || c.source,
+      stage: get('stage') || c.stage,
+      next: get('next'),
+      notes: parsed.notes,
+      touches: t
+    });
+    // After updateContact, the contact has new notes. Re-fetch and re-render the timeline.
+    var updated = null;
+    for (var j = 0; j < this.contacts.length; j++) if (this.contacts[j].id === id) { updated = this.contacts[j]; break; }
+    if (updated) {
+      var newParsed = parseNotes(updated.notes);
+      this.editingId = id; // updateContact clears editingId · restore so user stays in modal
+      this._renderTouches(updated, newParsed.touches);
+      // Reopen modal state (updateContact called _closeEditModal indirectly via _render? actually no — it sets editingId=null then re-renders list)
+      var overlay = this.root.querySelector('[data-edit-overlay]') || document.querySelector('[data-edit-overlay]');
+      if (overlay) overlay.classList.add('open');
+    }
+  };
 
   TcTracker.prototype._closeEditModal = function () {
     this.editingId = null;
@@ -526,9 +731,15 @@
       var el = m.querySelector('[data-edit-field="' + k + '"]');
       return el ? el.value.trim() : '';
     };
+    // Preserve existing touches when committing the edit form — they're not represented in the form
+    // inputs but must survive the round-trip through packNotes.
+    var existing = null;
+    for (var i = 0; i < this.contacts.length; i++) if (this.contacts[i].id === id) { existing = this.contacts[i]; break; }
+    var touches = existing ? parseNotes(existing.notes).touches : { t1: null, t2: null, t3: null };
     this.updateContact(id, {
       name: get('name'), handle: get('handle'), brok: get('brok'), email: get('email'),
-      source: get('source'), stage: get('stage'), next: get('next')
+      source: get('source'), stage: get('stage'), next: get('next'),
+      touches: touches
     });
     this._closeEditModal();
   };

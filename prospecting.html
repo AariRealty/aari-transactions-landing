@@ -667,7 +667,7 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
       <span class="banner-stat-sub">waiting on you</span>
     </div>
     <div class="banner-stat">
-      <span class="banner-stat-lbl">Discovery Booked</span>
+      <span class="banner-stat-lbl">Discovery</span>
       <span class="banner-stat-val" id="mh-disco">0</span>
       <span class="banner-stat-sub">on the calendar</span>
     </div>
@@ -677,6 +677,11 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
       <span class="banner-stat-sub" id="mh-signed-sub">signed clients</span>
     </div>
   </div>
+  <!-- Follow-ups due indicator · click → Funnel · List view filtered to overdue/due-today touches -->
+  <button id="mh-followups" type="button" onclick="jumpToFollowUps()" style="display:none;align-self:flex-start;background:#FCEBEB;color:#A32D2D;border:1px solid #E8C8C8;border-radius:100px;padding:7px 14px;font-size:11px;font-weight:600;letter-spacing:.04em;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;cursor:pointer;align-items:center;gap:8px">
+    <span style="font-size:13px;line-height:1">&#9888;</span>
+    <span><strong id="mh-followups-count">0</strong> <span id="mh-followups-label">follow-ups due today</span></span>
+  </button>
   <!-- Sync badge kept invisible · still toggled by JS for debugging -->
   <span class="sync-badge idle" id="syncBadge" style="display:none">●  Live</span>
 </div>
@@ -792,7 +797,7 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
       <div class="kanban-wrap">
         <div class="kanban-grid" id="kanbanGrid"></div>
       </div>
-      <div style="font-size:10px;color:#9a958b;margin-top:8px;letter-spacing:0.04em;padding:0 4px">Drag a card to a column to set that stage (Contacted · In Convo · Hand Raise · Discovery Call · Signed). Click a card for full details. Replied and Added to AC roll into Contacted and In Convo. Not Interested is hidden from this board — find them in List view.</div>
+      <div style="font-size:10px;color:#9a958b;margin-top:8px;letter-spacing:0.04em;padding:0 4px">Drag a card to a column to set that stage (Contacted · In Convo · Hand Raise · Discovery · Signed). Click a card for full details. Replied rolls into Contacted. Not Interested is hidden from this board — find them in List view.</div>
     </div>
     <!-- List view (toggle) -->
     <div id="funnelList" style="display:none">
@@ -1129,10 +1134,12 @@ function updateLiveStats(){
   var todayDMs=todayLog.dms||0;
   var totalContacts=cs.filter(function(c){return c.stage!=='Not Interested';}).length;
   var handRaises=cs.filter(function(c){return c.stage==='Hand Raise';}).length;
-  var disco=cs.filter(function(c){return c.stage==='Discovery Booked';}).length;
+  // Discovery counter — match new value plus legacy "Discovery Booked" defensively.
+  var disco=cs.filter(function(c){return c.stage==='Discovery' || c.stage==='Discovery Booked';}).length;
   var signed=cs.filter(function(c){return c.stage==='Signed';}).length;
-  var inAC=cs.filter(function(c){return ['Added to AC','Hand Raise','Discovery Booked','Signed'].indexOf(c.stage)>=0;}).length;
-  var inConvo=cs.filter(function(c){return c.stage==='In Conversation';}).length;
+  // "In ActiveCampaign" pool · anyone past "In Convo" essentially, plus In Convo itself (legacy Added to AC counts here too).
+  var inAC=cs.filter(function(c){return ['In Convo','In Conversation','Added to AC','Hand Raise','Discovery','Discovery Booked','Signed'].indexOf(c.stage)>=0;}).length;
+  var inConvo=cs.filter(function(c){return c.stage==='In Convo' || c.stage==='In Conversation';}).length;
   var contacted=cs.filter(function(c){return c.stage==='Contacted';}).length;
   var totalDisco=logs.reduce(function(s,l){return s+(l.disco||0);},0);
   var totalSigned=logs.reduce(function(s,l){return s+(l.signed||0);},0);
@@ -1493,7 +1500,14 @@ async function _mergeOne(group) {
   dups.forEach(function (d) { if (d.notes && notesParts.indexOf(d.notes) < 0) notesParts.push(d.notes); });
   var mergedNotes = notesParts.join(' || ') || null;
   // Pick stage from most-advanced dup (if more progressed than keeper)
-  var STAGE_RANK = { 'Contacted': 1, 'In Conversation': 2, 'Added to AC': 3, 'Hand Raise': 4, 'Discovery Booked': 5, 'Signed': 6, 'Not Interested': 0 };
+  // Legacy values retained (Discovery Booked, Added to AC, In Conversation) so older rows still rank correctly.
+  var STAGE_RANK = {
+    'Contacted': 1, 'Replied': 2,
+    'In Convo': 3, 'In Conversation': 3, 'Added to AC': 3,
+    'Hand Raise': 4,
+    'Discovery': 5, 'Discovery Booked': 5,
+    'Signed': 6, 'Not Interested': 0
+  };
   var bestStage = keeper.stage;
   group.rows.forEach(function (r) {
     if ((STAGE_RANK[r.stage] || 0) > (STAGE_RANK[bestStage] || 0)) bestStage = r.stage;
@@ -1516,12 +1530,20 @@ async function _mergeOne(group) {
 // The legacy inline Tracker UI is gone. AariTracker owns DOM + data layer.
 // LIST view: still uses 4 internal filter buckets (cold/talking/hot/won) inside tc-tracker.js.
 // KANBAN view (this file): 5 columns, 1 stage per column. See KANBAN_BUCKETS below.
-// Data: 7 granular stages — Contacted / Replied / In Conversation / Added to AC / Hand Raise / Discovery Booked / Signed (+ Not Interested).
+// Data: 6 granular stages — Contacted / Replied / In Convo / Hand Raise / Discovery / Signed (+ Not Interested).
+// Legacy values (In Conversation, Added to AC, Discovery Booked) are normalized on read by tc-tracker.js.
 function addContact(){ /* legacy form gone · use AariTracker.addContact() */ }
 function filterC(stageOrBucket){
   if(!window.AariTracker) return;
   // Accept either a granular stage name or a bucket key — map to bucket.
-  var map={'Contacted':'cold','Replied':'cold','In Conversation':'talking','Added to AC':'talking','Hand Raise':'hot','Discovery Booked':'hot','Signed':'won'};
+  // Legacy stage values kept as a fallback in case any caller still passes them.
+  var map={
+    'Contacted':'cold','Replied':'cold',
+    'In Convo':'talking','In Conversation':'talking','Added to AC':'talking',
+    'Hand Raise':'talking',
+    'Discovery':'hot','Discovery Booked':'hot',
+    'Signed':'won'
+  };
   var bucket = map[stageOrBucket] || stageOrBucket || 'hot';
   window.AariTracker._setBucket(bucket);
 }
@@ -1532,9 +1554,10 @@ function updateStage(i,val){ var c = (S.contacts||[])[i]; if(c && window.AariTra
 function toggleDefs(){ /* definitions block removed — no-op */ }
 function toggleAdd(){ if(window.AariTracker) window.AariTracker._toggleForm(); }
 function updateHotCallout(contacts){
-  // Counts the leads that need response: Hand Raises (asked for pricing) + Discovery Booked (call on calendar).
+  // Counts the leads that need response: Hand Raises (asked for pricing) + Discovery (call on calendar).
   // Both live in different buckets now (Hand Raise → Talking, Discovery → Hot) but together represent "act now."
-  var leads = (contacts || []).filter(function(c){return c.stage==='Hand Raise' || c.stage==='Discovery Booked';});
+  // Legacy "Discovery Booked" included defensively.
+  var leads = (contacts || []).filter(function(c){return c.stage==='Hand Raise' || c.stage==='Discovery' || c.stage==='Discovery Booked';});
   var el = document.getElementById('bdHotCallout');
   if (!el) return;
   if (leads.length === 0) { el.style.display = 'none'; return; }
@@ -1559,6 +1582,37 @@ function jumpToHot(){
   if (window.AariTracker) window.AariTracker._setBucket('talking');
   setTimeout(function(){
     var t = document.getElementById('funnelKanban') || document.getElementById('trackerMount');
+    if (t) t.scrollIntoView({behavior:'smooth', block:'start'});
+  }, 80);
+}
+
+// Follow-ups due today/overdue helpers · uses the touch state shim exposed by tc-tracker.js.
+function countFollowUpsDue(contacts){
+  if (typeof window.TcTrackerTouchUrgency !== 'function') return 0;
+  return (contacts || []).filter(function(c){
+    var u = window.TcTrackerTouchUrgency(c);
+    return u && (u.overdue || u.dueToday);
+  }).length;
+}
+function updateFollowUpsIndicator(contacts){
+  var n = countFollowUpsDue(contacts || (window.AariTracker ? window.AariTracker.getContacts() : []));
+  var btn = document.getElementById('mh-followups');
+  if (!btn) return;
+  if (n > 0) {
+    btn.style.display = 'inline-flex';
+    var c = document.getElementById('mh-followups-count'); if (c) c.textContent = n;
+    var l = document.getElementById('mh-followups-label');
+    if (l) l.textContent = (n === 1 ? 'follow-up due / overdue' : 'follow-ups due / overdue');
+  } else {
+    btn.style.display = 'none';
+  }
+}
+function jumpToFollowUps(){
+  // Switch to Funnel → List view, no search filter (user scans red-dot rows). Scroll into view.
+  goBdSub('funnel');
+  if (typeof setFunnelView === 'function') setFunnelView('list');
+  setTimeout(function(){
+    var t = document.getElementById('trackerMount');
     if (t) t.scrollIntoView({behavior:'smooth', block:'start'});
   }, 80);
 }
@@ -1588,33 +1642,39 @@ function setFunnelView(view){
 
 // ── KANBAN · 5 columns · 1 column = 1 stage · drag-and-drop · confetti on Signed (no WIP caps) ──
 // Each column maps 1:1 to a single stage. Replied → folded into Contacted column for UX cleanliness.
-// Added to AC → folded into In Convo column. Not Interested → hidden from Kanban (still in List + data).
+// Not Interested → hidden from Kanban (still in List + data).
+// NOTE: stage values match the dropdown labels exactly (May 2026 v3 unify pass).
 var KANBAN_BUCKETS = [
-  { key:'contacted', label:'Contacted',      stage:'Contacted'        },
-  { key:'convo',     label:'In Convo',       stage:'In Conversation'  },
-  { key:'raise',     label:'Hand Raise',     stage:'Hand Raise'       },
-  { key:'disco',     label:'Discovery Call', stage:'Discovery Booked' },
-  { key:'signed',    label:'Signed',         stage:'Signed'           }
+  { key:'contacted', label:'Contacted',  stage:'Contacted'  },
+  { key:'convo',     label:'In Convo',   stage:'In Convo'   },
+  { key:'raise',     label:'Hand Raise', stage:'Hand Raise' },
+  { key:'disco',     label:'Discovery',  stage:'Discovery'  },
+  { key:'signed',    label:'Signed',     stage:'Signed'     }
 ];
 // Map every stage value → which column it renders in (or null = hidden from Kanban).
-// Replied → Contacted column. Added to AC → In Convo column. Not Interested → hidden.
+// Legacy stage values (Discovery Booked / Added to AC / In Conversation) are kept here
+// as a defensive read-shim in case the normalize layer in tc-tracker.js is bypassed.
 var STAGE_TO_BUCKET = {
   'Contacted':       'contacted',
   'Replied':         'contacted',
-  'In Conversation': 'convo',
-  'Added to AC':     'convo',
+  'In Convo':        'convo',
+  'In Conversation': 'convo',  // legacy
+  'Added to AC':     'convo',  // legacy
   'Hand Raise':      'raise',
-  'Discovery Booked':'disco',
+  'Discovery':       'disco',
+  'Discovery Booked':'disco',  // legacy
   'Signed':          'signed',
   'Not Interested':  null
 };
 var STAGE_PILL = {
   'Contacted':       { cls:'s-contacted', label:'Contacted' },
   'Replied':         { cls:'s-replied',   label:'Replied' },
-  'In Conversation': { cls:'s-convo',     label:'In Convo' },
-  'Added to AC':     { cls:'s-ac',        label:'In AC' },
+  'In Convo':        { cls:'s-convo',     label:'In Convo' },
+  'In Conversation': { cls:'s-convo',     label:'In Convo' },  // legacy
+  'Added to AC':     { cls:'s-convo',     label:'In Convo' },  // legacy → folded into In Convo
   'Hand Raise':      { cls:'s-raise',     label:'Hand Raise' },
-  'Discovery Booked':{ cls:'s-disco',     label:'Discovery Booked' },
+  'Discovery':       { cls:'s-disco',     label:'Discovery' },
+  'Discovery Booked':{ cls:'s-disco',     label:'Discovery' },  // legacy
   'Signed':          { cls:'s-signed',    label:'Signed' }
 };
 // Parse email out of notes column · supports "Email: x@y" stored in notes field as fallback
@@ -1654,8 +1714,13 @@ function renderKanban(){
       var email = c.email || parseEmailFromNotes(c.notes);
       var handleRow = c.handle ? '<span class="kanban-card-handle">'+escK(c.handle)+'</span>' : '';
       var emailRow = email ? '<span class="kanban-card-email">'+escK(email)+'</span>' : '';
+      // Red dot if a follow-up touch is overdue or due today. Subtle · placed before the name.
+      var urgency = (typeof window.TcTrackerTouchUrgency === 'function') ? window.TcTrackerTouchUrgency(c) : { overdue:false, dueToday:false };
+      var dot = (urgency.overdue || urgency.dueToday)
+        ? '<span title="'+(urgency.overdue?'Touch overdue':'Touch due today')+'" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#A32D2D;margin-right:6px;vertical-align:middle"></span>'
+        : '';
       return '<div class="kanban-card" draggable="true" data-id="'+escK(c.id)+'" data-stage="'+escK(stage)+'">'+
-        '<span class="kanban-card-name">'+escK(c.name||'(unnamed)')+'</span>'+
+        '<span class="kanban-card-name">'+dot+escK(c.name||'(unnamed)')+'</span>'+
         handleRow + emailRow +
         '<span class="kanban-card-pill '+pill.cls+'">'+escK(pill.label)+'</span>'+
         '</div>';
@@ -1885,10 +1950,12 @@ window.__triggerEileenLoad = async function () {
           try { updateLiveStats(); } catch (_) { }
           try { updateDupCountBadge(); } catch (_) { }
           try { updateHotCallout(cs); } catch (_) { }
+          try { updateFollowUpsIndicator(cs); } catch (_) { }
         });
         // Seed the mirror with what the component already loaded (onChange registered after first load)
         S.contacts = window.AariTracker.getContacts();
         try { updateHotCallout(S.contacts); } catch (_) { }
+        try { updateFollowUpsIndicator(S.contacts); } catch (_) { }
       }
     } catch (e) { console.error('[eileen] tracker mount failed', e); }
   }
@@ -1902,7 +1969,7 @@ window.__triggerEileenLoad = async function () {
         var s = SEED_CONTACTS[i];
         await window.AariTracker.addContact({
           name: s.name, handle: s.ig, source: s.how,
-          stage: s.stage === 'Replied' ? 'In Conversation' : (s.stage || 'Contacted'),
+          stage: s.stage === 'Replied' ? 'In Convo' : (s.stage || 'Contacted'),
           brok: s.brok || ''
         });
       }
