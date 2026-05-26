@@ -410,6 +410,18 @@
       return (r.stage || '').toLowerCase() === 'discovery';
     }).length;
 
+    // 6. Stale Contacted (no touch in 14+ days) · replaces the old silent auto-archive.
+    // The bell surfaces these so the broker can open the review modal and decide
+    // per-row whether to archive or keep.
+    var staleCutoff = Date.now() - 14 * 86400000;
+    var staleContacted = rows.filter(function (r) {
+      if ((r.stage || '').toLowerCase() !== 'contacted') return false;
+      var ref = r.last_touch_at || r.dm_sent_at;
+      if (!ref) return true;
+      var t = new Date(ref).getTime();
+      return isFinite(t) ? (t < staleCutoff) : true;
+    });
+
     var notifs = [];
 
     if (handRaisesStale.length) {
@@ -474,6 +486,18 @@
       });
     }
 
+    if (staleContacted.length) {
+      notifs.push({
+        id: 'stale-contacted-' + today,
+        icon: iconClock(),
+        title: staleContacted.length + ' stale Contacted to review',
+        subtitle: 'No touch in 14+ days · review and decide',
+        time: '',
+        href: '/prospecting.html#stale-review',
+        action: 'open-stale-review'
+      });
+    }
+
     return notifs;
   }
 
@@ -508,6 +532,9 @@
   function iconBolt() {
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L4 14h7l-1 7 9-11h-7z"/></svg>';
   }
+  function iconClock() {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+  }
 
   function renderNotifPanel() {
     var panel = document.getElementById('aari-hdr-notif');
@@ -536,8 +563,9 @@
     } else {
       bodyHtml = notifications.map(function (n) {
         var unread = !readSet[n.id];
+        var actionAttr = n.action ? ' data-notif-action="' + esc(n.action) + '"' : '';
         return '<a class="aari-hdr-notif-item ' + (unread ? 'unread' : '') + '" ' +
-          'href="' + esc(n.href) + '" data-notif-id="' + esc(n.id) + '">' +
+          'href="' + esc(n.href) + '" data-notif-id="' + esc(n.id) + '"' + actionAttr + '>' +
           '<span class="icn">' + n.icon + '</span>' +
           '<span class="body">' +
           '<div class="title">' + esc(n.title) + '</div>' +
@@ -550,17 +578,27 @@
 
     panel.innerHTML = headHtml + '<div class="aari-hdr-notif-body">' + bodyHtml + '</div>';
 
-    // Wire item clicks → mark read
+    // Wire item clicks → mark read · special actions (e.g. open stale-review modal)
+    // intercept the click instead of navigating.
     var items = panel.querySelectorAll('.aari-hdr-notif-item');
     items.forEach(function (it) {
-      it.addEventListener('click', function () {
+      it.addEventListener('click', function (e) {
         var id = it.getAttribute('data-notif-id');
-        if (!id) return;
-        var rs = getReadSet();
-        rs[id] = true;
-        setReadSet(rs);
-        // Visual update happens on navigation, but also flip class for snap feedback
-        it.classList.remove('unread');
+        var action = it.getAttribute('data-notif-action');
+        if (id) {
+          var rs = getReadSet();
+          rs[id] = true;
+          setReadSet(rs);
+          it.classList.remove('unread');
+        }
+        if (action === 'open-stale-review' && window.AariStaleReview && typeof window.AariStaleReview.open === 'function') {
+          e.preventDefault();
+          // Close the notif panel before opening the modal
+          panel.classList.remove('open');
+          var bellBtn = document.getElementById('aari-hdr-bell');
+          if (bellBtn) bellBtn.setAttribute('aria-expanded', 'false');
+          window.AariStaleReview.open();
+        }
       });
     });
 

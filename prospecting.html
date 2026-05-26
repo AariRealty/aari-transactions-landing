@@ -1143,6 +1143,33 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
   </div>
 </div>
 
+<!-- Stale Contacted review modal · surfaced via the notification bell.
+     Lists Contacted contacts with no touch in 14+ days. User decides per-row
+     (Archive / Keep) or bulk-archives. Replaces the silent auto-archive that
+     was removed in May 2026. -->
+<div id="staleReviewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto" onclick="if(event.target===this)closeStaleReviewModal()">
+  <div style="background:var(--white);border-radius:var(--r);max-width:680px;width:100%;display:flex;flex-direction:column;max-height:calc(100vh - 80px);overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:18px 22px;border-bottom:1px solid var(--g200);background:var(--ink);color:var(--cream)">
+      <div>
+        <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:20px;font-weight:600;color:var(--cream)">Review stale Contacted</div>
+        <div style="font-size:11px;color:rgba(250,246,236,.7);margin-top:2px" id="staleReviewSubtitle">0 contacts with no touch in 14+ days</div>
+      </div>
+      <button onclick="closeStaleReviewModal()" aria-label="Close" style="background:transparent;border:none;font-size:22px;color:var(--cream);cursor:pointer;line-height:1">&times;</button>
+    </div>
+    <div style="padding:12px 22px;border-bottom:1px solid var(--g200);background:var(--cream);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div style="font-size:11px;color:var(--g600);font-style:italic">Archive moves to Not Interested. Keep updates last touch to today.</div>
+      <button id="staleArchiveAllBtn" onclick="staleArchiveAll()" style="font-size:11px;padding:8px 14px;background:var(--ink);color:var(--cream);border:1px solid var(--ink);border-radius:var(--rs);cursor:pointer;font-weight:600;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif">Archive all</button>
+    </div>
+    <div id="staleReviewBody" style="padding:14px 22px;overflow-y:auto;flex:1;background:#fff">
+      <p style="font-size:12px;color:var(--g600);text-align:center;padding:30px 0;font-style:italic">No stale contacts.</p>
+    </div>
+    <div style="padding:12px 22px;border-top:1px solid var(--g200);display:flex;justify-content:flex-end;align-items:center;background:var(--cream);gap:10px">
+      <span id="staleReviewFooterMsg" style="font-size:11px;color:var(--green);min-height:14px;font-weight:500;flex:1"></span>
+      <button onclick="closeStaleReviewModal()" style="font-size:11px;padding:8px 14px;background:var(--white);border:1px solid var(--ink);border-radius:var(--rs);color:var(--ink);cursor:pointer;font-weight:500;font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- Campaign Upload modal · lists contacts pending upload to the email campaign -->
 <div id="campaignOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:300;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto" onclick="if(event.target===this)closeCampaignModal()">
   <div style="background:var(--white);border-radius:var(--r);max-width:680px;width:100%;display:flex;flex-direction:column;max-height:calc(100vh - 80px);overflow:hidden">
@@ -1574,6 +1601,172 @@ async function campaignMarkAllUploaded(){
   refreshCampaignPill();
   closeCampaignModal();
 }
+
+// ── STALE CONTACTED REVIEW MODAL ──
+// User-driven replacement for the silent 14-day auto-archive. Triggered from
+// the notification bell when there are Contacted rows with no touch in 14+ days.
+// Per-row Archive / Keep, plus an "Archive all" bulk action. No silent writes.
+function _staleEsc(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function _staleDaysSince(iso){
+  if (!iso) return null;
+  var t = new Date(iso).getTime();
+  if (!isFinite(t)) return null;
+  var d = Math.floor((Date.now() - t) / 86400000);
+  return d < 0 ? 0 : d;
+}
+function _staleBrokerage(c){
+  try {
+    if (typeof window.TcTrackerParseNotes === 'function') return window.TcTrackerParseNotes(c.notes).brok || '';
+  } catch(_) {}
+  return '';
+}
+function getStaleContacted(daysOld){
+  var n = daysOld || 14;
+  if (window.AariTracker && typeof window.AariTracker.getStaleContacted === 'function'){
+    return window.AariTracker.getStaleContacted(n);
+  }
+  // Fallback if AariTracker hasn't mounted yet
+  var rows = (window.AariTracker && typeof window.AariTracker.getContacts === 'function')
+    ? window.AariTracker.getContacts() : [];
+  var cutoff = Date.now() - n * 86400000;
+  return rows.filter(function(c){
+    if (c.stage !== 'Contacted') return false;
+    var ref = c.last_touch_at || c.dm_sent_at;
+    if (!ref) return true;
+    var t = new Date(ref).getTime();
+    return isFinite(t) ? (t < cutoff) : true;
+  });
+}
+function openStaleReviewModal(){
+  var ov = document.getElementById('staleReviewModal');
+  if (!ov) return;
+  ov.style.display = 'flex';
+  renderStaleReviewModal();
+}
+function closeStaleReviewModal(){
+  var ov = document.getElementById('staleReviewModal');
+  if (!ov) return;
+  ov.style.display = 'none';
+  var msg = document.getElementById('staleReviewFooterMsg');
+  if (msg) msg.textContent = '';
+}
+function renderStaleReviewModal(){
+  var body = document.getElementById('staleReviewBody');
+  var sub  = document.getElementById('staleReviewSubtitle');
+  var bulkBtn = document.getElementById('staleArchiveAllBtn');
+  if (!body) return;
+  var stale = getStaleContacted(14);
+  // Sort oldest first
+  stale = stale.slice().sort(function(a, b){
+    var aRaw = a.last_touch_at || a.dm_sent_at || null;
+    var bRaw = b.last_touch_at || b.dm_sent_at || null;
+    var at = aRaw ? new Date(aRaw).getTime() : Infinity;
+    var bt = bRaw ? new Date(bRaw).getTime() : Infinity;
+    return at - bt;
+  });
+  if (sub) sub.textContent = stale.length + (stale.length === 1 ? ' contact' : ' contacts') + ' with no touch in 14+ days';
+  if (bulkBtn) bulkBtn.disabled = !stale.length;
+  if (!stale.length){
+    body.innerHTML = '<p style="font-size:12px;color:#6b6760;text-align:center;padding:30px 0;font-style:italic">No stale contacts. Nothing to review.</p>';
+    return;
+  }
+  body.innerHTML = stale.map(function(c){
+    var brok = _staleBrokerage(c);
+    var ref = c.last_touch_at || c.dm_sent_at;
+    var days = _staleDaysSince(ref);
+    var ageLabel = (days == null) ? 'No touch on record' : ('Last touched: ' + days + (days === 1 ? ' day ago' : ' days ago'));
+    return '<div data-stale-row="'+ _staleEsc(c.id) +'" style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #efebe5;font-family:\'Inter\',-apple-system,sans-serif;font-size:12.5px;color:#0f0f0f;line-height:1.4;transition:opacity .35s ease">'+
+      '<div style="flex:1;min-width:0">'+
+        '<div style="font-weight:600;color:#0f0f0f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+ _staleEsc(c.name || '(unnamed)') + (brok ? ' <span style="font-weight:400;color:#6b6760"> · '+ _staleEsc(brok) +'</span>' : '') +'</div>'+
+        '<div style="font-size:11px;color:#6b6760;margin-top:2px">'+ _staleEsc(ageLabel) +'</div>'+
+      '</div>'+
+      '<div style="flex:0 0 auto;display:flex;gap:6px">'+
+        '<button type="button" onclick="staleArchiveOne(\''+ _staleEsc(c.id) +'\')" style="font-size:11px;padding:6px 12px;background:#0f0f0f;color:#faf6ec;border:1px solid #0f0f0f;border-radius:6px;cursor:pointer;font-weight:600;font-family:inherit">Archive</button>'+
+        '<button type="button" onclick="staleKeepOne(\''+ _staleEsc(c.id) +'\')" style="font-size:11px;padding:6px 12px;background:#fff;color:#0f0f0f;border:1px solid #0f0f0f;border-radius:6px;cursor:pointer;font-weight:500;font-family:inherit">Keep</button>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+function _staleFadeRow(id){
+  var row = document.querySelector('[data-stale-row="'+ id +'"]');
+  if (!row) return;
+  row.style.opacity = '0';
+  setTimeout(function(){ if (row && row.parentNode) row.parentNode.removeChild(row); refreshStaleReviewHeader(); }, 360);
+}
+function refreshStaleReviewHeader(){
+  var body = document.getElementById('staleReviewBody');
+  var sub  = document.getElementById('staleReviewSubtitle');
+  var bulkBtn = document.getElementById('staleArchiveAllBtn');
+  if (!body || !sub) return;
+  var remaining = body.querySelectorAll('[data-stale-row]').length;
+  sub.textContent = remaining + (remaining === 1 ? ' contact' : ' contacts') + ' with no touch in 14+ days';
+  if (bulkBtn) bulkBtn.disabled = !remaining;
+  if (!remaining){
+    body.innerHTML = '<p style="font-size:12px;color:#6b6760;text-align:center;padding:30px 0;font-style:italic">All reviewed. Nothing left.</p>';
+  }
+}
+async function staleArchiveOne(id){
+  if (!window.AariTracker || typeof window.AariTracker.updateStage !== 'function'){
+    alert('Tracker not ready — refresh and try again.'); return;
+  }
+  try {
+    await window.AariTracker.updateStage(id, 'Not Interested');
+    _staleFadeRow(id);
+    var msg = document.getElementById('staleReviewFooterMsg');
+    if (msg){ msg.textContent = 'Archived.'; setTimeout(function(){ if (msg) msg.textContent=''; }, 1800); }
+  } catch (e) {
+    console.error('[stale] archive failed', e);
+    alert('Archive failed: ' + ((e && e.message) || e));
+  }
+}
+async function staleKeepOne(id){
+  // "Keep" updates last_touch_at to now so the row falls out of the 14-day window.
+  // We round-trip through updateContact so notes blob + touches/snoozes survive.
+  if (!window.AariTracker) { alert('Tracker not ready — refresh and try again.'); return; }
+  try {
+    var rows = window.AariTracker.getContacts();
+    var c = null;
+    for (var i = 0; i < rows.length; i++) if (rows[i].id === id) { c = rows[i]; break; }
+    if (!c) { _staleFadeRow(id); return; }
+    var parsed = (typeof window.TcTrackerParseNotes === 'function') ? window.TcTrackerParseNotes(c.notes) : { brok:'', next:'', email:'', phone:'', notes:'', touches:{t1:null,t2:null,t3:null}, snoozes:{t1:null,t2:null,t3:null}, in_campaign:false };
+    await window.AariTracker.updateContact(id, {
+      name: c.name, handle: c.handle, brok: parsed.brok, email: parsed.email, phone: parsed.phone,
+      source: c.source, stage: c.stage, next: parsed.next,
+      notes: parsed.notes, touches: parsed.touches, snoozes: parsed.snoozes,
+      in_campaign: parsed.in_campaign
+    });
+    _staleFadeRow(id);
+    var msg = document.getElementById('staleReviewFooterMsg');
+    if (msg){ msg.textContent = 'Kept · last touch reset to today.'; setTimeout(function(){ if (msg) msg.textContent=''; }, 2000); }
+  } catch (e) {
+    console.error('[stale] keep failed', e);
+    alert('Save failed: ' + ((e && e.message) || e));
+  }
+}
+async function staleArchiveAll(){
+  var body = document.getElementById('staleReviewBody');
+  if (!body) return;
+  var rows = body.querySelectorAll('[data-stale-row]');
+  if (!rows.length) return;
+  if (!confirm('Archive all ' + rows.length + ' stale contacts? They will move to Not Interested.')) return;
+  if (!window.AariTracker || typeof window.AariTracker.updateStage !== 'function'){
+    alert('Tracker not ready — refresh and try again.'); return;
+  }
+  var msg = document.getElementById('staleReviewFooterMsg');
+  if (msg) msg.textContent = 'Archiving ' + rows.length + '...';
+  var ids = Array.prototype.map.call(rows, function(r){ return r.getAttribute('data-stale-row'); });
+  for (var i = 0; i < ids.length; i++){
+    try { await window.AariTracker.updateStage(ids[i], 'Not Interested'); }
+    catch (e) { console.error('[stale] archive-all failed for', ids[i], e); }
+  }
+  for (var j = 0; j < ids.length; j++) _staleFadeRow(ids[j]);
+  if (msg){ msg.textContent = 'Archived ' + ids.length + '.'; setTimeout(function(){ if (msg) msg.textContent=''; }, 2200); }
+}
+// Expose so the header notification bell can open the modal cross-script.
+window.AariStaleReview = {
+  open: openStaleReviewModal,
+  count: function(){ try { return getStaleContacted(14).length; } catch(_) { return 0; } }
+};
 
 // ── NAVIGATION ──
 function go(id,btn){
@@ -3332,32 +3525,9 @@ window.__triggerEileenLoad = async function () {
 
   await dbLoad();
 
-  // ── One-time bulk archive + ongoing daily cleanup ──
-  // localStorage keys (reset to re-run): aari_bulk_archive_v1_ran · aari_archive_last_cleanup_date
-  try {
-    if (window.AariTracker && typeof window.AariTracker.bulkArchiveStaleContacted === 'function') {
-      var BULK_KEY = 'aari_bulk_archive_v1_ran';
-      var LAST_KEY = 'aari_archive_last_cleanup_date';
-      var todayIso = (typeof window.TcTrackerTodayIso === 'function') ? window.TcTrackerTodayIso() : new Date().toISOString().slice(0,10);
-      var bulkRan = false;
-      try { bulkRan = localStorage.getItem(BULK_KEY) === '1'; } catch (_) {}
-      if (!bulkRan) {
-        var movedBulk = await window.AariTracker.bulkArchiveStaleContacted(14);
-        try { localStorage.setItem(BULK_KEY, '1'); } catch (_) {}
-        try { localStorage.setItem(LAST_KEY, todayIso); } catch (_) {}
-        console.log('Bulk archive: moved ' + movedBulk + ' contacts from Contacted to Not Interested.');
-      } else {
-        // Ongoing daily cleanup: same 14-day pass if today > last cleanup date
-        var lastDate = '';
-        try { lastDate = localStorage.getItem(LAST_KEY) || ''; } catch (_) {}
-        if (todayIso > lastDate) {
-          var movedDaily = await window.AariTracker.bulkArchiveStaleContacted(14);
-          try { localStorage.setItem(LAST_KEY, todayIso); } catch (_) {}
-          if (movedDaily > 0) console.log('Daily cleanup: moved ' + movedDaily + ' contacts from Contacted to Not Interested.');
-        }
-      }
-    }
-  } catch (e) { console.error('[archive] cleanup error', e); }
+  // Silent bulk archive removed (May 2026). Stale Contacted rows are now surfaced
+  // via the notification bell + #staleReviewModal so the broker decides what to
+  // archive — no contacts move without user confirmation.
 
   // Seed only on a fresh account · don't clobber existing contacts/logs.
   if ((!S.contacts || S.contacts.length === 0) && (!S.dailyLogs || S.dailyLogs.length === 0)) {

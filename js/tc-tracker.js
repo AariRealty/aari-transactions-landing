@@ -701,94 +701,29 @@
     });
   };
 
-  // Public · auto-archive: any Contacted contact whose Touch 3 is due/overdue (no manual
-  // reply) gets silently moved to Not Interested. Run lazily on each render.
-  TcTracker.prototype.autoArchiveStaleContacted = async function () {
-    if (!this.client || !this.ownerId) return 0;
-    var moved = 0;
-    var ids = [];
-    var today = todayIsoDate();
-    this.contacts.forEach(function (c) {
-      if (c.stage !== 'Contacted') return;
-      var parsed = parseNotes(c.notes);
-      var st = computeTouchState(parsed.touches, c.stage, parsed.snoozes);
-      // Trigger: Touch 3 is the next due touch (T1 + T2 done) AND it's due/overdue
-      // OR all 3 touches completed without a stage change away from Contacted
-      var t3DueOrOverdue = (st.nextIdx === 2) && (st.overdueFlags[2] || st.dueTodayFlags[2]);
-      var allThreeDone = st.doneFlags[0] && st.doneFlags[1] && st.doneFlags[2];
-      if (t3DueOrOverdue || allThreeDone) {
-        ids.push(c.id);
-      }
-    });
-    if (!ids.length) return 0;
-    try {
-      var nowIso = new Date().toISOString();
-      var r = await this.client.from('bd_contacts')
-        .update({ stage: legacyStageForWrite('Not Interested'), last_touch_at: nowIso })
-        .in('id', ids);
-      if (r.error) {
-        console.error('[TcTracker] auto-archive', r.error);
-        var msg = r.error.message || r.error.code || JSON.stringify(r.error);
-        alert('Save failed: ' + msg);
-        return 0;
-      }
-      // Mirror locally
-      for (var i = 0; i < this.contacts.length; i++) {
-        if (ids.indexOf(this.contacts[i].id) >= 0) {
-          this.contacts[i].stage = 'Not Interested';
-          this.contacts[i].last_touch_at = nowIso;
-          moved++;
-        }
-      }
-      if (moved > 0) { this._render(); this._fireChange(); }
-      return moved;
-    } catch (e) {
-      console.error('[TcTracker] autoArchiveStaleContacted error', e);
-      return 0;
-    }
-  };
-
-  // Public · one-time bulk archive: any Contacted contact whose last_touch_at (or
-  // created/dm_sent_at as fallback) is older than 14 days → Not Interested.
-  // Idempotent via the localStorage key passed in.
-  TcTracker.prototype.bulkArchiveStaleContacted = async function (daysOld) {
-    if (!this.client || !this.ownerId) return 0;
+  // ── Silent auto-archive REMOVED (May 2026) ──
+  // Previously: contacts at stage Contacted whose Touch 3 was due/overdue were
+  // silently moved to Not Interested on every render. Also a 14-day stale cleanup
+  // bulk-archived rows on page load. Both moved data without user consent.
+  // Replaced with:
+  //   1. A confirm() prompt on 3rd-touch completion (see _completeNextTouch).
+  //   2. A user-driven stale-review modal surfaced via the notification bell
+  //      (see prospecting.html #staleReviewModal + aari-header.js stale-contacted
+  //      notification category).
+  // Public · returns ids of contacts at stage Contacted with no touch in N+ days.
+  // Used by the notification bell to surface a review prompt to the broker.
+  TcTracker.prototype.getStaleContacted = function (daysOld) {
     var n = daysOld || 14;
     var cutoffIso = addDaysIso(todayIsoDate(), -n);
-    var ids = [];
+    var out = [];
     this.contacts.forEach(function (c) {
       if (c.stage !== 'Contacted') return;
       var ref = c.last_touch_at || c.dm_sent_at;
-      if (!ref) { ids.push(c.id); return; }
+      if (!ref) { out.push(c); return; }
       var refDate = String(ref).slice(0, 10);
-      if (refDate < cutoffIso) ids.push(c.id);
+      if (refDate < cutoffIso) out.push(c);
     });
-    if (!ids.length) return 0;
-    try {
-      var nowIso = new Date().toISOString();
-      var r = await this.client.from('bd_contacts')
-        .update({ stage: legacyStageForWrite('Not Interested'), last_touch_at: nowIso })
-        .in('id', ids);
-      if (r.error) {
-        console.error('[TcTracker] bulk-archive', r.error);
-        var msg = r.error.message || r.error.code || JSON.stringify(r.error);
-        alert('Save failed: ' + msg);
-        return 0;
-      }
-      var moved = 0;
-      for (var i = 0; i < this.contacts.length; i++) {
-        if (ids.indexOf(this.contacts[i].id) >= 0) {
-          this.contacts[i].stage = 'Not Interested';
-          this.contacts[i].last_touch_at = nowIso;
-          moved++;
-        }
-      }
-      if (moved > 0) { this._render(); this._fireChange(); }
-      return moved;
-    } catch (e) {
-      console.error('[TcTracker] bulkArchiveStaleContacted error', e);
-      return 0;
-    }
+    return out;
   };
 
   TcTracker.prototype.getContacts = function () { return this.contacts.slice(); };
@@ -976,6 +911,9 @@
   };
 
   // Mark the next incomplete touch as done (today's date) and persist via updateContact.
+  // If completing Touch 3 on a contact still at Contacted/Replied (no engagement),
+  // prompt the user to move them to Not Interested. Hand Raise / Discovery / Signed /
+  // Not Interested skip the prompt — they're already engaged or already archived.
   TcTracker.prototype._completeNextTouch = async function () {
     var id = this.editingId;
     if (!id) return;
@@ -1000,6 +938,21 @@
     // Preserve in_campaign value from current modal checkbox (if user toggled it but hasn't saved)
     var icEl = m.querySelector('[data-edit-field="in_campaign"]');
     var icVal = icEl ? !!icEl.checked : !!parsed.in_campaign;
+    // Determine stage to save · if this is the 3rd touch on a non-engaged contact,
+    // ask the user whether to archive. Default stays put if Cancel.
+    var stageToSave = get('stage') || c.stage;
+    var promptArchive = false;
+    if (st.nextIdx === 2) {
+      var engaged = (c.stage === 'Hand Raise' || c.stage === 'Discovery' || c.stage === 'Signed' || c.stage === 'Not Interested');
+      if (!engaged && (c.stage === 'Contacted' || c.stage === 'Replied')) {
+        promptArchive = true;
+      }
+    }
+    if (promptArchive) {
+      var nm = c.name || 'this contact';
+      var yes = window.confirm('All 3 touches completed for ' + nm + '.\n\nNo engagement yet. Move to Not Interested?');
+      if (yes) stageToSave = 'Not Interested';
+    }
     await this.updateContact(id, {
       name: get('name') || c.name,
       handle: get('handle'),
@@ -1007,13 +960,18 @@
       email: get('email'),
       phone: get('phone'),
       source: get('source') || c.source,
-      stage: get('stage') || c.stage,
+      stage: stageToSave,
       next: get('next'),
       notes: parsed.notes,
       touches: t,
       snoozes: parsed.snoozes,
       in_campaign: icVal
     });
+    // If the user chose to archive, close the modal — they're done with this contact.
+    if (promptArchive && stageToSave === 'Not Interested') {
+      this._closeEditModal();
+      return;
+    }
     // After updateContact, the contact has new notes. Re-fetch and re-render the timeline.
     var updated = null;
     for (var j = 0; j < this.contacts.length; j++) if (this.contacts[j].id === id) { updated = this.contacts[j]; break; }
@@ -1148,15 +1106,8 @@
     this._renderFilters();
     this._updateCountsDom();
     this._renderList();
-    // Lazy auto-archive: silently move stale Contacted (T3 due/overdue) to Not Interested.
-    // Debounced so a single render burst doesn't fire it many times.
-    var self = this;
-    if (!self._autoArchiveTimer) {
-      self._autoArchiveTimer = setTimeout(function () {
-        self._autoArchiveTimer = null;
-        try { self.autoArchiveStaleContacted(); } catch (_) {}
-      }, 400);
-    }
+    // Silent auto-archive removed (May 2026) · stale Contacted are now surfaced via
+    // the notification bell + #staleReviewModal so the user decides what to archive.
   };
 
   TcTracker.prototype._updateCounts = function () {
