@@ -187,6 +187,7 @@
       '      <div class="tct-af"><label>Name <span style="color:#0f0f0f;font-weight:700">*</span></label><input type="text" data-field="name" placeholder="Agent name" aria-required="true"></div>',
       '      <div class="tct-af"><label>Instagram <span style="color:#0f0f0f;font-weight:700">*</span></label><input type="text" data-field="handle" placeholder="@handle" aria-required="true"></div>',
       '      <div class="tct-af"><label>Brokerage <span style="color:#0f0f0f;font-weight:700">*</span></label><input type="text" data-field="brok" placeholder="e.g. KW..." aria-required="true"></div>',
+      '      <div class="tct-af"><label>Phone</label><input type="text" data-field="phone" placeholder="optional"></div>',
       '      <div class="tct-af"><label>Email <span style="color:#0f0f0f;font-weight:700">*</span></label><input type="email" data-field="email" placeholder="agent@brokerage.com" aria-required="true"></div>',
       '      <div class="tct-af"><label>Found via</label><select data-field="source"><option>IG search</option><option>Referral</option><option>Post comment</option><option>Story view</option><option>Cold email</option><option>Mailer</option><option>Event</option><option>Other</option></select></div>',
       '      <div class="tct-af"><label>Stage</label><select data-field="stage">' + formStageOpts + '</select></div>',
@@ -205,13 +206,14 @@
       '      <div class="tct-modal-body">',
       '        <div class="tct-edit-grid">',
       '          <div><label>Name</label><input type="text" data-edit-field="name"></div>',
-      '          <div><label>Instagram / Phone <span data-edit-ig-hint style="display:none;color:#88857C;font-size:10px;font-weight:500;margin-left:6px">&#9888; Add IG</span></label><input type="text" data-edit-field="handle"></div>',
-      '          <div><label>Brokerage <span data-edit-brok-hint style="display:none;color:#8a7030;font-size:10px;font-weight:500;margin-left:6px">&#9888; Add brokerage</span></label><input type="text" data-edit-field="brok"></div>',
-      '          <div><label>Email <span data-edit-email-hint style="display:none;color:#88857C;font-size:10px;font-weight:500;margin-left:6px">&#9888; Add email</span></label><input type="email" data-edit-field="email" placeholder="agent@brokerage.com"></div>',
+      '          <div><label>Instagram <span data-edit-ig-hint style="display:none;color:#88857C;font-size:10px;font-weight:500;margin-left:6px">&#9888; Add IG</span></label><input type="text" data-edit-field="handle" placeholder="@handle"></div>',
+      '          <div><label>Brokerage <span data-edit-brok-hint style="display:none;color:#88857C;font-size:10px;font-weight:500;margin-left:6px">&#9888; Add brokerage</span></label><input type="text" data-edit-field="brok"></div>',
+      '          <div><label>Phone <span data-edit-phone-hint style="display:none;color:#88857C;font-size:10px;font-weight:500;margin-left:6px">&#9888; Add phone</span></label><input type="text" data-edit-field="phone" placeholder="optional"></div>',
+      '          <div class="full"><label>Email <span data-edit-email-hint style="display:none;color:#88857C;font-size:10px;font-weight:500;margin-left:6px">&#9888; Add email</span></label><input type="email" data-edit-field="email" placeholder="agent@brokerage.com"></div>',
       '          <div><label>Found via</label><select data-edit-field="source"><option>IG search</option><option>Referral</option><option>Post comment</option><option>Story view</option><option>Cold email</option><option>Mailer</option><option>Event</option><option>Other</option></select></div>',
       '          <div><label>Stage</label><select data-edit-field="stage">' + formStageOpts + '</select></div>',
       '          <div class="full"><label>Next Step</label><input type="text" data-edit-field="next"></div>',
-      '          <div class="full" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fafaf7;border:1px solid #efebe5;border-radius:6px;margin-top:4px"><input type="checkbox" data-edit-field="in_campaign" id="tct-edit-incampaign" style="accent-color:#0f0f0f;cursor:pointer;width:14px;height:14px;margin:0"><label for="tct-edit-incampaign" style="font-family:var(--sans,Inter);font-size:12px;font-weight:500;color:#0f0f0f;cursor:pointer;margin:0">&#9993; In email campaign</label></div>',
+      '          <div class="full" style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fafaf7;border:1px solid #efebe5;border-radius:6px;margin-top:4px"><input type="checkbox" data-edit-field="in_campaign" id="tct-edit-incampaign" style="accent-color:#0f0f0f;cursor:pointer;width:14px;height:14px;margin:0"><label for="tct-edit-incampaign" style="font-family:var(--sans,Inter);font-size:12px;font-weight:500;color:#0f0f0f;cursor:pointer;margin:0;display:inline-flex;align-items:center;gap:6px"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#88857C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex:0 0 auto"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>In email campaign</label></div>',
       '        </div>',
       '        <div class="tct-touches" data-touches-section>',
       '          <div class="tct-touches-label">Follow-up touches</div>',
@@ -269,7 +271,7 @@
   // Parse "Brokerage: X · Next: Y · Email: z@x · Touches: t1=YYYY-MM-DD|... · Snoozes: t1=YYYY-MM-DD|... · ...notes..." from the notes column.
   // Email + touches + snoozes live in notes as a fallback so we don't need a schema migration on bd_contacts.
   function parseNotes(notes) {
-    var out = { brok: '', next: '', email: '', in_campaign: false, touches: { t1: null, t2: null, t3: null }, snoozes: { t1: null, t2: null, t3: null }, notes: '' };
+    var out = { brok: '', next: '', email: '', phone: '', in_campaign: false, touches: { t1: null, t2: null, t3: null }, snoozes: { t1: null, t2: null, t3: null }, notes: '' };
     if (!notes) return out;
     var parts = String(notes).split(' · ');
     var leftover = [];
@@ -277,6 +279,7 @@
       if (p.indexOf('Brokerage: ') === 0) out.brok = p.slice(11);
       else if (p.indexOf('Next: ') === 0) out.next = p.slice(6);
       else if (p.indexOf('Email: ') === 0) out.email = p.slice(7);
+      else if (p.indexOf('Phone: ') === 0) out.phone = p.slice(7);
       else if (p.indexOf('Campaign: ') === 0) out.in_campaign = (p.slice(10).trim().toLowerCase() === 'yes');
       else if (p.indexOf('Touches: ') === 0) {
         var tStr = p.slice(9);
@@ -303,11 +306,12 @@
     out.notes = leftover.join(' · ');
     return out;
   }
-  function packNotes(brok, next, notes, email, touches, snoozes, in_campaign) {
+  function packNotes(brok, next, notes, email, touches, snoozes, in_campaign, phone) {
     var parts = [];
     if (brok) parts.push('Brokerage: ' + brok);
     if (next) parts.push('Next: ' + next);
     if (email) parts.push('Email: ' + email);
+    if (phone) parts.push('Phone: ' + phone);
     if (in_campaign === true) parts.push('Campaign: yes');
     if (touches && (touches.t1 || touches.t2 || touches.t3)) {
       var tParts = [];
@@ -506,7 +510,7 @@
       handle: input.handle || null,
       source: input.source || 'IG search',
       stage: normalizeStage(input.stage || 'Contacted'),
-      notes: packNotes(input.brok, input.next, input.notes, input.email, null, null, input.in_campaign === true),
+      notes: packNotes(input.brok, input.next, input.notes, input.email, null, null, input.in_campaign === true, input.phone),
       dm_sent_at: nowIso,
       last_touch_at: nowIso
     };
@@ -566,7 +570,7 @@
       handle: patch.handle || null,
       source: patch.source || null,
       stage: normalizeStage(patch.stage || 'Contacted'),
-      notes: packNotes(patch.brok, patch.next, patch.notes, patch.email, patch.touches, patch.snoozes, patch.in_campaign === true),
+      notes: packNotes(patch.brok, patch.next, patch.notes, patch.email, patch.touches, patch.snoozes, patch.in_campaign === true, patch.phone),
       last_touch_at: nowIso
     };
     try {
@@ -616,7 +620,7 @@
     else if (st.nextIdx === 1) sn.t2 = null;
     else if (st.nextIdx === 2) sn.t3 = null;
     await this.updateContact(id, {
-      name: c.name, handle: c.handle, brok: parsed.brok, email: parsed.email,
+      name: c.name, handle: c.handle, brok: parsed.brok, email: parsed.email, phone: parsed.phone,
       source: c.source, stage: c.stage, next: parsed.next,
       notes: parsed.notes, touches: t, snoozes: sn, in_campaign: parsed.in_campaign
     });
@@ -641,7 +645,7 @@
     else if (st.nextIdx === 1) sn.t2 = target;
     else if (st.nextIdx === 2) sn.t3 = target;
     await this.updateContact(id, {
-      name: c.name, handle: c.handle, brok: parsed.brok, email: parsed.email,
+      name: c.name, handle: c.handle, brok: parsed.brok, email: parsed.email, phone: parsed.phone,
       source: c.source, stage: c.stage, next: parsed.next,
       notes: parsed.notes, touches: parsed.touches, snoozes: sn, in_campaign: parsed.in_campaign
     });
@@ -655,7 +659,7 @@
     if (!c) return;
     var parsed = parseNotes(c.notes);
     await this.updateContact(id, {
-      name: c.name, handle: c.handle, brok: parsed.brok, email: parsed.email,
+      name: c.name, handle: c.handle, brok: parsed.brok, email: parsed.email, phone: parsed.phone,
       source: c.source, stage: c.stage, next: parsed.next,
       notes: parsed.notes, touches: parsed.touches, snoozes: parsed.snoozes,
       in_campaign: !!flag
@@ -844,11 +848,14 @@
     var brokHint = m.querySelector('[data-edit-brok-hint]');
     if (brokHint) brokHint.style.display = (parsed.brok && parsed.brok.trim()) ? 'none' : 'inline';
     setField('email', parsed.email);
-    // Inline monochrome hints for missing email + IG · edit stays non-blocking
+    setField('phone', parsed.phone);
+    // Inline monochrome hints for missing email + IG + phone · edit stays non-blocking
     var emailHint = m.querySelector('[data-edit-email-hint]');
     if (emailHint) emailHint.style.display = (parsed.email && parsed.email.trim()) ? 'none' : 'inline';
     var igHint = m.querySelector('[data-edit-ig-hint]');
     if (igHint) igHint.style.display = (c.handle && String(c.handle).trim()) ? 'none' : 'inline';
+    var phoneHint = m.querySelector('[data-edit-phone-hint]');
+    if (phoneHint) phoneHint.style.display = (parsed.phone && parsed.phone.trim()) ? 'none' : 'inline';
     setField('source', c.source || 'IG search');
     setField('stage', normalizeStage(c.stage || 'Contacted'));
     setField('next', parsed.next);
@@ -953,6 +960,7 @@
       handle: get('handle'),
       brok: get('brok'),
       email: get('email'),
+      phone: get('phone'),
       source: get('source') || c.source,
       stage: get('stage') || c.stage,
       next: get('next'),
@@ -998,6 +1006,7 @@
     var icVal = icEl ? !!icEl.checked : !!existingParsed.in_campaign;
     this.updateContact(id, {
       name: get('name'), handle: get('handle'), brok: get('brok'), email: get('email'),
+      phone: get('phone'),
       source: get('source'), stage: get('stage'), next: get('next'),
       touches: existingParsed.touches,
       snoozes: existingParsed.snoozes,
@@ -1038,7 +1047,7 @@
     };
     var input = {
       name: get('name'), handle: get('handle'), brok: get('brok'), email: get('email'),
-      source: get('source'), stage: get('stage'), next: get('next')
+      phone: get('phone'), source: get('source'), stage: get('stage'), next: get('next')
     };
     // Surface validation errors inline near the form instead of failing silently.
     var errEl = f.querySelector('[data-form-error]');
@@ -1073,7 +1082,7 @@
     }
     try {
       await this.addContact(input);
-      ['name', 'handle', 'brok', 'email', 'next'].forEach(function (k) {
+      ['name', 'handle', 'brok', 'email', 'phone', 'next'].forEach(function (k) {
         var el = f.querySelector('[data-field="' + k + '"]');
         if (el) el.value = '';
       });
