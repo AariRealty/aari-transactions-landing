@@ -1782,32 +1782,31 @@ function renderRecapHero(period){
   if (!grid) return;
   period = period || _recapPeriod || 'week';
   var win = _recapWindow(period);
-  var logs = S.dailyLogs || [];
   var contacts = S.contacts || [];
-  // DMs · sum from dailyLogs whose parsed date falls inside the window
-  var dms = logs.reduce(function(sum, l){
-    if (!l || !l.date) return sum;
-    var d = new Date(l.date + ', 2026');
-    if (isNaN(d)) return sum;
-    return (d >= win.start && d < win.end) ? sum + (+l.dms || 0) : sum;
-  }, 0);
-  // Hand Raises · contacts at stage Hand Raise with last_touch_at in window
+  // Single source of truth · every funnel cell counts contacts whose date (created_at
+  // preferred, last_touch_at fallback) falls in the period window. Mirrors the Kanban's
+  // _luContactDate + _lineupWindow logic so Recap totals reconcile with Kanban columns.
+  function _inWindow(c){
+    if (!c) return false;
+    var raw = c.created_at || c.last_touch_at;
+    if (!raw) return false;
+    var d = new Date(raw);
+    return !isNaN(d) && d >= win.start && d < win.end;
+  }
+  // DMs · every contact added in the window IS a DM sent (Eileen's workflow)
+  var dms = contacts.filter(_inWindow).length;
+  // Hand Raises · contacts at stage Hand Raise in window
   var raises = contacts.filter(function(c){
-    if (!c || c.stage !== 'Hand Raise' || !c.last_touch_at) return false;
-    var d = new Date(c.last_touch_at);
-    return !isNaN(d) && d >= win.start && d < win.end;
+    return c && c.stage === 'Hand Raise' && _inWindow(c);
   }).length;
-  // Discovery Calls · contacts at stage Discovery (or legacy Discovery Booked) with last_touch_at in window
+  // Discovery Calls · contacts at stage Discovery in window (legacy 'Discovery Booked'
+  // values are already normalized to 'Discovery' upstream via normalizeStage)
   var disco = contacts.filter(function(c){
-    if (!c || (c.stage !== 'Discovery' && c.stage !== 'Discovery Booked') || !c.last_touch_at) return false;
-    var d = new Date(c.last_touch_at);
-    return !isNaN(d) && d >= win.start && d < win.end;
+    return c && c.stage === 'Discovery' && _inWindow(c);
   }).length;
-  // Signed · contacts at stage Signed with last_touch_at in window
+  // Signed · contacts at stage Signed in window
   var signed = contacts.filter(function(c){
-    if (!c || c.stage !== 'Signed' || !c.last_touch_at) return false;
-    var d = new Date(c.last_touch_at);
-    return !isNaN(d) && d >= win.start && d < win.end;
+    return c && c.stage === 'Signed' && _inWindow(c);
   }).length;
   // Targets by period
   var dmTarget, discoTarget;
