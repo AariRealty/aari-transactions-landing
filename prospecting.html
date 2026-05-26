@@ -990,6 +990,16 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
     <div class="recap-grid" id="recapStatsGrid"></div>
   </div>
 
+  <!-- ============ RECENT ACTIVITY · Last 7 days, grouped by day (May 2026 v3) ============ -->
+  <!-- Always visible. Black + cream palette only. Derived from S.contacts in renderRecentActivity(). -->
+  <div id="recentActivitySection" style="background:#fff;border:0.5px solid var(--cream);border-radius:8px;padding:18px;margin-top:18px;margin-bottom:18px">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px">
+      <div style="font-family:'Montserrat',sans-serif;font-size:11px;font-weight:600;letter-spacing:1.4px;text-transform:uppercase;color:#88857C">Recent Activity</div>
+      <div style="font-family:'Montserrat',sans-serif;font-size:10px;color:#b0aca3;letter-spacing:.06em">Last 7 days &middot; grouped by day</div>
+    </div>
+    <div id="recentActivityBody"></div>
+  </div>
+
   <!-- ============ WHAT EACH SERVICE PAYS · Static price menu · collapsible (May 2026 v3) ============ -->
   <div id="servicePriceMenuSection" class="bd-tools-divider spm-collapsed" style="margin-top:18px;margin-bottom:18px">
     <div class="spm-hdr">
@@ -1413,6 +1423,8 @@ function updateLiveStats(){
   try { if (typeof renderKanban === 'function') renderKanban(); } catch(_) {}
   // Keep Recap hero in sync with the latest data (May 2026 v3) · scope is read inside renderRecapHero from LINEUP_STATE.
   try { if (typeof renderRecapHero === 'function') renderRecapHero(); } catch(_) {}
+  // Keep Recap > Recent Activity in sync with any contact change (add/move/touch).
+  try { if (typeof renderRecentActivity === 'function') renderRecentActivity(); } catch(_) {}
   // Refresh the email-campaign masthead pill (hidden when count = 0)
   try { refreshCampaignPill(); } catch(_) {}
 }
@@ -2056,6 +2068,146 @@ function renderRecapHero(period){
   grid.innerHTML = html;
 }
 
+// ── RECENT ACTIVITY · Last 7 days, grouped by day (May 2026 v3) ──────────────
+// Reads from S.contacts. Builds activity events from created_at, last_touch_at,
+// and any "Touches: t1=YYYY-MM-DD|t2=...|t3=..." segment in the notes blob.
+// Sorts newest-first within each day. Renders into #recentActivityBody.
+function renderRecentActivity(){
+  var body = document.getElementById('recentActivityBody');
+  if (!body) return;
+  var cs = (window.AariTracker && typeof window.AariTracker.getContacts === 'function')
+    ? window.AariTracker.getContacts()
+    : (S.contacts || []);
+
+  // 7-day window · midnight today back 6 full days = 7 day buckets total.
+  var now = new Date();
+  var startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var windowStart = new Date(startOfToday.getTime() - 6*24*60*60*1000);
+
+  function ymd(d){
+    return d.getFullYear() + '-'
+         + String(d.getMonth()+1).padStart(2,'0') + '-'
+         + String(d.getDate()).padStart(2,'0');
+  }
+  function parseAny(raw){
+    if (!raw) return null;
+    var d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  // Collect events
+  var events = [];
+  cs.forEach(function(c){
+    if (!c) return;
+    var stage = c.stage || 'Contacted';
+
+    // Added · from created_at
+    var created = parseAny(c.created_at);
+    if (created && created >= windowStart) {
+      events.push({ date: created, contact: c, stage: stage, type: 'Added' });
+    }
+
+    // Last touch · stage change / activity from last_touch_at. Skip if equal to created_at
+    // (covers the case where created_at and last_touch_at are the same insert timestamp).
+    var touched = parseAny(c.last_touch_at);
+    if (touched && touched >= windowStart) {
+      var sameAsCreate = created && Math.abs(touched.getTime() - created.getTime()) < 2000;
+      if (!sameAsCreate) {
+        events.push({ date: touched, contact: c, stage: stage, type: 'Stage changed to ' + stage });
+      }
+    }
+
+    // Touches · parse "Touches: t1=YYYY-MM-DD|t2=YYYY-MM-DD|t3=YYYY-MM-DD" from notes.
+    // These are date-only (no time). Treat them as noon local to keep ordering stable.
+    if (c.notes) {
+      var parts = String(c.notes).split(' · ');
+      parts.forEach(function(p){
+        if (p.indexOf('Touches: ') !== 0) return;
+        var tStr = p.slice(9);
+        tStr.split('|').forEach(function(kv){
+          var eq = kv.indexOf('='); if (eq < 0) return;
+          var k = kv.slice(0, eq).trim(); // t1 / t2 / t3
+          var v = kv.slice(eq + 1).trim();
+          if (!v) return;
+          var dt = new Date(v + 'T12:00:00');
+          if (isNaN(dt.getTime())) return;
+          if (dt < windowStart) return;
+          var n = (k === 't1') ? 1 : (k === 't2') ? 2 : (k === 't3') ? 3 : null;
+          if (!n) return;
+          events.push({ date: dt, contact: c, stage: stage, type: 'Touch ' + n + ' completed' });
+        });
+      });
+    }
+  });
+
+  // Empty state
+  if (events.length === 0){
+    body.innerHTML = '<div style="font-family:\'Inter\',sans-serif;font-size:12px;color:#b0aca3;padding:14px 4px">No activity in the last 7 days.</div>';
+    return;
+  }
+
+  // Group by ymd
+  var groups = {};
+  events.forEach(function(e){
+    var k = ymd(e.date);
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(e);
+  });
+
+  // Build day headers in reverse-chrono (today → 6 days ago)
+  var WEEKDAY = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var MONTH   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function labelFor(daysBack, d){
+    if (daysBack === 0) return 'Today';
+    if (daysBack === 1) return 'Yesterday';
+    return daysBack + ' days ago';
+  }
+  function subFor(d){
+    return WEEKDAY[d.getDay()] + ' ' + MONTH[d.getMonth()] + ' ' + d.getDate();
+  }
+  function fmtTime(d){
+    var h = d.getHours(), m = d.getMinutes();
+    var am = h < 12 ? 'AM' : 'PM';
+    var hh = h % 12; if (hh === 0) hh = 12;
+    return hh + ':' + String(m).padStart(2,'0') + ' ' + am;
+  }
+
+  var html = '';
+  for (var i = 0; i < 7; i++){
+    var dayDate = new Date(startOfToday.getTime() - i*24*60*60*1000);
+    var key = ymd(dayDate);
+    var list = groups[key];
+    if (!list || !list.length) continue;
+    // Sort newest first within the day
+    list.sort(function(a,b){ return b.date - a.date; });
+
+    html += '<div style="margin-top:' + (i === 0 ? '0' : '14px') + '">'
+         +    '<div style="display:flex;align-items:baseline;gap:8px;padding:6px 2px 8px;border-bottom:0.5px solid var(--cream)">'
+         +      '<span style="font-family:\'Montserrat\',sans-serif;font-size:11px;font-weight:600;letter-spacing:.10em;text-transform:uppercase;color:#0f0f0f">' + labelFor(i, dayDate) + '</span>'
+         +      '<span style="font-family:\'Inter\',sans-serif;font-size:11px;color:#b0aca3">&middot; ' + subFor(dayDate) + '</span>'
+         +    '</div>';
+
+    list.forEach(function(e){
+      var pill = (STAGE_PILL[e.stage]) ? STAGE_PILL[e.stage] : { cls:'s-contacted', label: e.stage };
+      // Touches stored as date-only get noon timestamps · suppress the time on the right for those.
+      var isDateOnly = e.type.indexOf('Touch ') === 0;
+      var timeTxt = isDateOnly ? '' : fmtTime(e.date);
+      var nameSafe = (e.contact && e.contact.name) ? String(e.contact.name) : 'Unknown';
+
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:0.5px solid var(--cream)">'
+           +    '<span style="font-family:\'Inter\',sans-serif;font-size:13px;font-weight:500;color:#0f0f0f;flex:0 0 auto;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + nameSafe + '</span>'
+           +    '<span class="stage-pill ' + pill.cls + '" style="font-size:10px;padding:2px 8px;border-radius:10px;font-weight:600;letter-spacing:.04em;flex:0 0 auto">' + pill.label + '</span>'
+           +    '<span style="font-family:\'Inter\',sans-serif;font-size:11px;color:#88857C;flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + e.type + '</span>'
+           +    '<span style="font-family:\'Inter\',sans-serif;font-size:10px;color:#b0aca3;flex:0 0 auto">' + timeTxt + '</span>'
+           +  '</div>';
+    });
+
+    html += '</div>';
+  }
+
+  body.innerHTML = html || '<div style="font-family:\'Inter\',sans-serif;font-size:12px;color:#b0aca3;padding:14px 4px">No activity in the last 7 days.</div>';
+}
+
 // ── SERVICE PRICE MENU TOGGLE (May 2026 v3) ──
 function toggleServiceMenu(){
   var sec = document.getElementById('servicePriceMenuSection');
@@ -2296,7 +2448,7 @@ function goBdSub(name, btn){
   // Rebuild the relevant view when shown so data is fresh
   if (name === 'lineup')  { try { luRenderScopeBar(); } catch(_) {} try { renderKanban(); } catch(_) {} }
   if (name === 'daily15') { try { renderTodaysFollowups(); } catch(_) {} }
-  if (name === 'recap')   { try { renderRecapHero(); } catch(_) {} }
+  if (name === 'recap')   { try { renderRecapHero(); } catch(_) {} try { renderRecentActivity(); } catch(_) {} }
 }
 function jumpToHot(){
   // Switch BD to The Lineup, then filter to Hand Raise (where leads asked for pricing).
