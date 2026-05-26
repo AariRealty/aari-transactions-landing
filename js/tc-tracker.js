@@ -61,6 +61,17 @@
     return s || 'Contacted';
   }
 
+  // ── Write-path shim · translate canonical stage values back to legacy strings ──
+  // The Supabase CHECK constraint on bd_contacts.stage still lists the OLD values
+  // ('In Conversation', 'Discovery Booked'). Until the constraint is migrated, we
+  // translate the canonical names back to legacy at the moment we write.
+  // The READ path (normalizeStage) reverses this so the UI never sees legacy values.
+  function legacyStageForWrite(stage){
+    if (stage === 'In Convo') return 'In Conversation';
+    if (stage === 'Discovery') return 'Discovery Booked';
+    return stage;
+  }
+
   function stageMeta(key) {
     for (var i = 0; i < STAGES.length; i++) if (STAGES[i].key === key) return STAGES[i];
     return { key: key, label: key, bucket: 'cold', cls: 's-contacted' };
@@ -509,7 +520,7 @@
       name: name,
       handle: input.handle || null,
       source: input.source || 'IG search',
-      stage: normalizeStage(input.stage || 'Contacted'),
+      stage: legacyStageForWrite(normalizeStage(input.stage || 'Contacted')),
       notes: packNotes(input.brok, input.next, input.notes, input.email, null, null, input.in_campaign === true, input.phone),
       dm_sent_at: nowIso,
       last_touch_at: nowIso
@@ -548,14 +559,23 @@
     stage = normalizeStage(stage);
     var nowIso = new Date().toISOString();
     try {
-      var r = await this.client.from('bd_contacts').update({ stage: stage, last_touch_at: nowIso }).eq('id', id);
-      if (r.error) { console.error('[TcTracker] updateStage', r.error); return; }
+      var r = await this.client.from('bd_contacts').update({ stage: legacyStageForWrite(stage), last_touch_at: nowIso }).eq('id', id);
+      if (r.error) {
+        console.error('[TcTracker] updateStage', r.error);
+        var msg = r.error.message || r.error.code || JSON.stringify(r.error);
+        alert('Save failed: ' + msg);
+        return;
+      }
       for (var i = 0; i < this.contacts.length; i++) if (this.contacts[i].id === id) {
         this.contacts[i].stage = stage; this.contacts[i].last_touch_at = nowIso; break;
       }
       this._render();
       this._fireChange();
-    } catch (e) { console.error('[TcTracker] updateStage error', e); }
+    } catch (e) {
+      console.error('[TcTracker] updateStage error', e);
+      var emsg = (e && e.message) ? e.message : String(e);
+      alert('Save failed: ' + emsg);
+    }
   };
 
   TcTracker.prototype.updateContact = async function (id, patch) {
@@ -565,27 +585,37 @@
       return;
     }
     var nowIso = new Date().toISOString();
+    var canonicalStage = normalizeStage(patch.stage || 'Contacted');
     var update = {
       name: patch.name || '(unnamed)',
       handle: patch.handle || null,
       source: patch.source || null,
-      stage: normalizeStage(patch.stage || 'Contacted'),
+      stage: legacyStageForWrite(canonicalStage),
       notes: packNotes(patch.brok, patch.next, patch.notes, patch.email, patch.touches, patch.snoozes, patch.in_campaign === true, patch.phone),
       last_touch_at: nowIso
     };
     try {
       var r = await this.client.from('bd_contacts').update(update).eq('id', id);
-      if (r.error) { console.error('[TcTracker] updateContact', r.error); alert('Save failed'); return; }
+      if (r.error) {
+        console.error('[TcTracker] updateContact', r.error);
+        var msg = r.error.message || r.error.code || JSON.stringify(r.error);
+        alert('Save failed: ' + msg);
+        return;
+      }
       for (var i = 0; i < this.contacts.length; i++) if (this.contacts[i].id === id) {
         var c = this.contacts[i];
         c.name = update.name; c.handle = update.handle; c.source = update.source;
-        c.stage = update.stage; c.notes = update.notes; c.last_touch_at = nowIso;
+        c.stage = canonicalStage; c.notes = update.notes; c.last_touch_at = nowIso;
         break;
       }
       this.editingId = null;
       this._render();
       this._fireChange();
-    } catch (e) { console.error('[TcTracker] updateContact error', e); }
+    } catch (e) {
+      console.error('[TcTracker] updateContact error', e);
+      var emsg = (e && e.message) ? e.message : String(e);
+      alert('Save failed: ' + emsg);
+    }
   };
 
   TcTracker.prototype.deleteContact = async function (id) {
@@ -593,7 +623,12 @@
     if (!confirm('Delete this contact? This cannot be undone.')) return;
     try {
       var r = await this.client.from('bd_contacts').delete().eq('id', id);
-      if (r.error) { console.error('[TcTracker] delete', r.error); alert('Delete failed'); return; }
+      if (r.error) {
+        console.error('[TcTracker] delete', r.error);
+        var msg = r.error.message || r.error.code || JSON.stringify(r.error);
+        alert('Delete failed: ' + msg);
+        return;
+      }
       this.contacts = this.contacts.filter(function (c) { return c.id !== id; });
       this._render();
       this._fireChange();
@@ -689,9 +724,14 @@
     try {
       var nowIso = new Date().toISOString();
       var r = await this.client.from('bd_contacts')
-        .update({ stage: 'Not Interested', last_touch_at: nowIso })
+        .update({ stage: legacyStageForWrite('Not Interested'), last_touch_at: nowIso })
         .in('id', ids);
-      if (r.error) { console.error('[TcTracker] auto-archive', r.error); return 0; }
+      if (r.error) {
+        console.error('[TcTracker] auto-archive', r.error);
+        var msg = r.error.message || r.error.code || JSON.stringify(r.error);
+        alert('Save failed: ' + msg);
+        return 0;
+      }
       // Mirror locally
       for (var i = 0; i < this.contacts.length; i++) {
         if (ids.indexOf(this.contacts[i].id) >= 0) {
@@ -727,9 +767,14 @@
     try {
       var nowIso = new Date().toISOString();
       var r = await this.client.from('bd_contacts')
-        .update({ stage: 'Not Interested', last_touch_at: nowIso })
+        .update({ stage: legacyStageForWrite('Not Interested'), last_touch_at: nowIso })
         .in('id', ids);
-      if (r.error) { console.error('[TcTracker] bulk-archive', r.error); return 0; }
+      if (r.error) {
+        console.error('[TcTracker] bulk-archive', r.error);
+        var msg = r.error.message || r.error.code || JSON.stringify(r.error);
+        alert('Save failed: ' + msg);
+        return 0;
+      }
       var moved = 0;
       for (var i = 0; i < this.contacts.length; i++) {
         if (ids.indexOf(this.contacts[i].id) >= 0) {
