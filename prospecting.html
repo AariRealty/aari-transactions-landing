@@ -1783,15 +1783,14 @@ function renderRecapHero(period){
   period = period || _recapPeriod || 'week';
   var win = _recapWindow(period);
   var contacts = S.contacts || [];
-  // Single source of truth · every funnel cell counts contacts whose date (created_at
-  // preferred, last_touch_at fallback) falls in the period window. Mirrors the Kanban's
-  // _luContactDate + _lineupWindow logic so Recap totals reconcile with Kanban columns.
+  // Single source of truth · every funnel cell counts contacts whose activity date
+  // (last_touch_at preferred, created_at fallback) falls in the period window. Delegates
+  // to _luContactDate so the Kanban's "This Month" totals and the Recap > Month funnel
+  // are guaranteed to use IDENTICAL filtering logic.
   function _inWindow(c){
-    if (!c) return false;
-    var raw = c.created_at || c.last_touch_at;
-    if (!raw) return false;
-    var d = new Date(raw);
-    return !isNaN(d) && d >= win.start && d < win.end;
+    var d = (typeof _luContactDate === 'function') ? _luContactDate(c) : null;
+    if (!d) return false;
+    return d >= win.start && d < win.end;
   }
   // DMs · every contact added in the window IS a DM sent (Eileen's workflow)
   var dms = contacts.filter(_inWindow).length;
@@ -2352,11 +2351,14 @@ function _lineupWindow(scope){
   var e2 = new Date(s2); e2.setDate(e2.getDate()+7);
   return {start:s2, end:e2};
 }
-// Best-effort date for time-scope filtering. Prefers contact.created_at, falls back to last_touch_at.
-// Returns null if neither parses.
+// Best-effort date for time-scope filtering. Prefers contact.last_touch_at so that any
+// contact Eileen actually touched in the period counts as her activity for that period,
+// regardless of when the record was originally created (many contacts were imported with
+// old created_at timestamps). Falls back to created_at, then a generic .date field.
+// Returns null if none parse. SINGLE SOURCE OF TRUTH · also used by Recap funnel via _inWindow.
 function _luContactDate(c){
   if (!c) return null;
-  var raw = c.created_at || c.last_touch_at;
+  var raw = c.last_touch_at || c.created_at || c.date || null;
   if (!raw) return null;
   var d = new Date(raw);
   return isNaN(d) ? null : d;
