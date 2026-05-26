@@ -947,9 +947,10 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
         <div class="lu-scope-range" id="luScopeRange"></div>
       </div>
       <div class="lu-scope-tabs" role="tablist" aria-label="Lineup time scope">
-        <button type="button" class="lu-scope-tab" data-scope="week" onclick="luSetTimeScope('week')">This Week</button>
-        <button type="button" class="lu-scope-tab active" data-scope="month" onclick="luSetTimeScope('month')">This Month</button>
-        <button type="button" class="lu-scope-tab" data-scope="all" onclick="luSetTimeScope('all')">All Time</button>
+        <button type="button" class="lu-scope-tab" data-scope="day" onclick="luSetGlobalScope('day')">Today</button>
+        <button type="button" class="lu-scope-tab" data-scope="week" onclick="luSetGlobalScope('week')">This Week</button>
+        <button type="button" class="lu-scope-tab active" data-scope="month" onclick="luSetGlobalScope('month')">This Month</button>
+        <button type="button" class="lu-scope-tab" data-scope="all" onclick="luSetGlobalScope('all')">All Time</button>
       </div>
     </div>
     <!-- Lineup toolbar · search · filter · find duplicates -->
@@ -981,9 +982,10 @@ body{background:#fff;color:var(--black);font-family:'Inter',-apple-system,BlinkM
   <!-- Biz Calc UI removed from Recap May 2026 v3. calcBiz() function kept in JS for the hidden PIN flow. -->
   <div id="recapHero">
     <div class="recap-tabs">
-      <button class="recap-tab" data-period="day" onclick="setRecapPeriod('day',this)">Day</button>
-      <button class="recap-tab active" data-period="week" onclick="setRecapPeriod('week',this)">Week</button>
-      <button class="recap-tab" data-period="month" onclick="setRecapPeriod('month',this)">Month</button>
+      <button class="recap-tab" data-period="day" onclick="luSetGlobalScope('day')">Day</button>
+      <button class="recap-tab" data-period="week" onclick="luSetGlobalScope('week')">Week</button>
+      <button class="recap-tab active" data-period="month" onclick="luSetGlobalScope('month')">Month</button>
+      <button class="recap-tab" data-period="all" onclick="luSetGlobalScope('all')">All Time</button>
     </div>
     <div class="recap-grid" id="recapStatsGrid"></div>
   </div>
@@ -1382,8 +1384,8 @@ function updateLiveStats(){
   setEl('mh-signed', monthSigned);
   // Re-render kanban whenever contacts change (cheap; bail if not built/visible)
   try { if (typeof renderKanban === 'function') renderKanban(); } catch(_) {}
-  // Keep Recap hero in sync with the latest data (May 2026 v3)
-  try { if (typeof renderRecapHero === 'function') renderRecapHero(_recapPeriod || 'week'); } catch(_) {}
+  // Keep Recap hero in sync with the latest data (May 2026 v3) · scope is read inside renderRecapHero from LINEUP_STATE.
+  try { if (typeof renderRecapHero === 'function') renderRecapHero(); } catch(_) {}
   // Refresh the email-campaign masthead pill (hidden when count = 0)
   try { refreshCampaignPill(); } catch(_) {}
 }
@@ -1748,46 +1750,52 @@ function renderWeekSummary(){
   var nt=document.getElementById('wsNote'); if(nt) nt.textContent=allHit?'All targets hit. Strong week.':noneHit?'Nothing logged yet. Fill in your daily log each evening.':'Green = done · Red = still needed this week.';
 }
 
-// ── RECAP HERO · Day / Week / Month stats (May 2026 v3) ──
-var _recapPeriod = 'week';
+// ── RECAP HERO · Day / Week / Month / All Time stats ──
+// Unified scope · _recapPeriod is a legacy getter that reads from LINEUP_STATE.timeScope.
+// Both Recap and Lineup share LINEUP_STATE.timeScope as the single source of truth so
+// toggling one view re-renders the other in lockstep.
+Object.defineProperty(window, '_recapPeriod', {
+  get: function(){ return (typeof LINEUP_STATE !== 'undefined' && LINEUP_STATE) ? (LINEUP_STATE.timeScope || 'month') : 'month'; },
+  configurable: true
+});
 function setRecapPeriod(period, btn){
-  if (period !== 'day' && period !== 'week' && period !== 'month') period = 'week';
-  _recapPeriod = period;
-  document.querySelectorAll('.recap-tab').forEach(function(b){b.classList.remove('active');});
-  if (btn) btn.classList.add('active');
-  else { var t = document.querySelector('.recap-tab[data-period="'+period+'"]'); if (t) t.classList.add('active'); }
-  renderRecapHero(period);
+  if (period !== 'day' && period !== 'week' && period !== 'month' && period !== 'all') period = 'month';
+  // Route through the unified scope setter · keeps Lineup + Recap in sync.
+  if (typeof luSetGlobalScope === 'function') luSetGlobalScope(period);
+  else {
+    // Fallback (LINEUP_STATE not yet defined · should not occur in normal flow)
+    document.querySelectorAll('.recap-tab').forEach(function(b){b.classList.remove('active');});
+    if (btn) btn.classList.add('active');
+    else { var t = document.querySelector('.recap-tab[data-period="'+period+'"]'); if (t) t.classList.add('active'); }
+    renderRecapHero(period);
+  }
 }
 function _recapWindow(period){
   // Returns [startDate, endDate) inclusive-exclusive boundary for the requested window.
-  var now = new Date();
-  if (period === 'day'){
-    var s = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    var e = new Date(s); e.setDate(e.getDate()+1);
-    return {start:s, end:e};
-  }
-  if (period === 'month'){
-    var s2 = new Date(now.getFullYear(), now.getMonth(), 1);
-    var e2 = new Date(now.getFullYear(), now.getMonth()+1, 1);
-    return {start:s2, end:e2};
-  }
-  // week · Mon 00:00 → Mon+7 00:00 (matches weekKey() Monday-start convention)
-  var d = new Date(now), n = d.getDay(), diff = d.getDate() - n + (n===0?-6:1);
-  var s3 = new Date(d.getFullYear(), d.getMonth(), diff);
-  var e3 = new Date(s3); e3.setDate(e3.getDate()+7);
-  return {start:s3, end:e3};
+  // Returns null when period is 'all' (no window filter applied).
+  // Delegates to _lineupWindow() so Recap + Lineup share a single source of truth.
+  return _lineupWindow(period);
 }
 function renderRecapHero(period){
   var grid = document.getElementById('recapStatsGrid');
   if (!grid) return;
-  period = period || _recapPeriod || 'week';
+  // HARD LOCK · ignore the caller-supplied period and always read from LINEUP_STATE.timeScope.
+  // This is the only way to guarantee Lineup column totals === Recap funnel counts at all times.
+  // Any caller passing a different value (e.g. legacy renderRecapHero('week') on init) used to
+  // cause drift between the two views · this guarantees they stay locked.
+  period = (typeof LINEUP_STATE !== 'undefined' && LINEUP_STATE && LINEUP_STATE.timeScope) ? LINEUP_STATE.timeScope : (period || 'month');
   var win = _recapWindow(period);
-  var contacts = S.contacts || [];
+  // Unified contacts source · matches renderKanban() so Recap funnel + Lineup totals
+  // count the exact same dataset. Falls back to S.contacts when AariTracker isn't ready.
+  var contacts = (window.AariTracker && typeof window.AariTracker.getContacts === 'function') ? window.AariTracker.getContacts() : (S.contacts || []);
   // Single source of truth · every funnel cell counts contacts whose activity date
   // (last_touch_at preferred, created_at fallback) falls in the period window. Delegates
   // to _luContactDate so the Kanban's "This Month" totals and the Recap > Month funnel
   // are guaranteed to use IDENTICAL filtering logic.
   function _inWindow(c){
+    // 'all' scope · win is null · include every contact with a date (or no date) so the
+    // funnel reflects the total dataset that the Lineup shows under "All Time".
+    if (!win) return !!c;
     var d = (typeof _luContactDate === 'function') ? _luContactDate(c) : null;
     if (!d) return false;
     return d >= win.start && d < win.end;
@@ -1807,18 +1815,21 @@ function renderRecapHero(period){
   var signed = contacts.filter(function(c){
     return c && c.stage === 'Signed' && _inWindow(c);
   }).length;
-  // Targets by period
+  // Targets by period · 'all' has no daily/weekly/monthly target so we hide the "/N" suffix.
   var dmTarget, discoTarget;
   if (period === 'day')   { dmTarget = 15;  discoTarget = 1;  }
   else if (period === 'month') { dmTarget = 300; discoTarget = 20; }
+  else if (period === 'all')   { dmTarget = null; discoTarget = null; }
   else                    { dmTarget = 75;  discoTarget = 5;  }
   // Funnel-flow layout · DMs › Hand Raises › Disco Calls › Signed
   var convPct = dms > 0 ? Math.round((raises / dms) * 100) + '% conv.' : '—';
   var earned  = signed > 0 ? '$' + (signed * 499).toLocaleString() + ' earned' : '—';
+  var dmCtx    = dmTarget != null    ? '/ ' + dmTarget    : 'total';
+  var discoCtx = discoTarget != null ? '/ ' + discoTarget : 'total';
   var cells = [
-    {lbl:'DMs',          val:dms,    ctx:'/ ' + dmTarget},
+    {lbl:'DMs',          val:dms,    ctx:dmCtx},
     {lbl:'Hand Raises',  val:raises, ctx:convPct},
-    {lbl:'Disco Calls',  val:disco,  ctx:'/ ' + discoTarget},
+    {lbl:'Disco Calls',  val:disco,  ctx:discoCtx},
     {lbl:'Signed',       val:signed, ctx:earned}
   ];
   // Reset container to a funnel flex row (overrides .recap-grid CSS defaults)
@@ -2092,7 +2103,7 @@ function goBdSub(name, btn){
   // Rebuild the relevant view when shown so data is fresh
   if (name === 'lineup')  { try { luRenderScopeBar(); } catch(_) {} try { renderKanban(); } catch(_) {} }
   if (name === 'daily15') { try { renderTodaysFollowups(); } catch(_) {} }
-  if (name === 'recap')   { try { renderRecapHero(_recapPeriod || 'week'); } catch(_) {} }
+  if (name === 'recap')   { try { renderRecapHero(); } catch(_) {} }
 }
 function jumpToHot(){
   // Switch BD to The Lineup, then filter to Hand Raise (where leads asked for pricing).
@@ -2335,17 +2346,23 @@ var LINEUP_STATE = {
   campaign: 'all',     // 'all' · 'in' (in_campaign === true) · 'pending' (email present, not in campaign, stage ≠ Not Interested)
   timeScope: 'month'   // 'week' (Mon–Sun) · 'month' (1st → last day · default) · 'all' (no time filter)
 };
-// Date window for the Lineup time scope. Mirrors _recapWindow() · returns inclusive-exclusive [start, end).
-// Returns null when scope is 'all' (no window applied).
+// Date window for the unified time scope (used by BOTH Lineup + Recap).
+// Returns inclusive-exclusive [start, end). Returns null when scope is 'all' (no filter).
+// Single source of truth for both views · _recapWindow() delegates here.
 function _lineupWindow(scope){
   if (scope === 'all') return null;
   var now = new Date();
+  if (scope === 'day'){
+    var sd = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var ed = new Date(sd); ed.setDate(ed.getDate()+1);
+    return {start:sd, end:ed};
+  }
   if (scope === 'month'){
     var s = new Date(now.getFullYear(), now.getMonth(), 1);
     var e = new Date(now.getFullYear(), now.getMonth()+1, 1);
     return {start:s, end:e};
   }
-  // week · Mon 00:00 → Mon+7 00:00 (matches _recapWindow Monday-start convention)
+  // week · Mon 00:00 → Mon+7 00:00 (matches weekKey() Monday-start convention)
   var d = new Date(now), n = d.getDay(), diff = d.getDate() - n + (n===0?-6:1);
   var s2 = new Date(d.getFullYear(), d.getMonth(), diff);
   var e2 = new Date(s2); e2.setDate(e2.getDate()+7);
@@ -2364,6 +2381,7 @@ function _luContactDate(c){
   return isNaN(d) ? null : d;
 }
 // Format date range string for the scope label. Returns '' for 'all'.
+// Day:   "Mon, May 25"
 // Month: "May 1 — May 25" (today caps the end)
 // Week:  "Mon, May 19 — Sun, May 25"
 function luScopeDateRangeString(scope){
@@ -2374,6 +2392,9 @@ function luScopeDateRangeString(scope){
   if (!win) return '';
   // Inclusive end = end - 1 day
   var endIncl = new Date(win.end); endIncl.setDate(endIncl.getDate() - 1);
+  if (scope === 'day'){
+    return DOW[win.start.getDay()]+', '+MONTHS[win.start.getMonth()]+' '+win.start.getDate();
+  }
   if (scope === 'month'){
     // Cap end at today (no point showing future dates as "what's happened")
     var today = new Date();
@@ -2869,7 +2890,7 @@ function luRenderChips(){
 // Safe to call before the DOM is mounted (no-ops if elements missing).
 function luRenderScopeBar(){
   var scope = LINEUP_STATE.timeScope || 'month';
-  var LBL = { week:'THIS WEEK', month:'THIS MONTH', all:'ALL TIME' };
+  var LBL = { day:'TODAY', week:'THIS WEEK', month:'THIS MONTH', all:'ALL TIME' };
   var lblEl = document.getElementById('luScopeLabel');
   var rangeEl = document.getElementById('luScopeRange');
   if (lblEl) lblEl.textContent = LBL[scope] || 'THIS MONTH';
@@ -2885,13 +2906,32 @@ function luRenderScopeBar(){
     else t.classList.remove('active');
   });
 }
-// Switch the time scope. Called by the pill buttons + by the scope chip × handler.
-function luSetTimeScope(scope){
-  if (scope !== 'week' && scope !== 'month' && scope !== 'all') scope = 'month';
+// Unified scope setter · single source of truth for BOTH Lineup + Recap toggles.
+// Validates scope, updates LINEUP_STATE, syncs both pill UIs, and re-renders both views.
+function luSetGlobalScope(scope){
+  if (scope !== 'day' && scope !== 'week' && scope !== 'month' && scope !== 'all') scope = 'month';
   LINEUP_STATE.timeScope = scope;
-  luRenderScopeBar();
-  renderKanban();
-  luRenderChips();
+  // Sync Recap pill row (.recap-tab[data-period])
+  var recapTabs = document.querySelectorAll('.recap-tab');
+  recapTabs.forEach(function(t){
+    if (t.getAttribute('data-period') === scope) t.classList.add('active');
+    else t.classList.remove('active');
+  });
+  // Sync Lineup pill row (.lu-scope-tab[data-scope]) — luRenderScopeBar handles this too,
+  // but call here defensively in case the scope bar element is missing.
+  var luTabs = document.querySelectorAll('.lu-scope-tab');
+  luTabs.forEach(function(t){
+    if (t.getAttribute('data-scope') === scope) t.classList.add('active');
+    else t.classList.remove('active');
+  });
+  try { luRenderScopeBar(); } catch(_) {}
+  try { renderKanban(); } catch(_) {}
+  try { if (typeof renderRecapHero === 'function') renderRecapHero(scope); } catch(_) {}
+  try { luRenderChips(); } catch(_) {}
+}
+// Back-compat shim · delegates to luSetGlobalScope. Still called by the scope chip × handler.
+function luSetTimeScope(scope){
+  luSetGlobalScope(scope);
 }
 function luClearAllFilters(){
   LINEUP_STATE.brokerages = [];
@@ -3302,7 +3342,8 @@ window.__triggerEileenLoad = async function () {
   renderToday();
   renderWeekSummary();
   updateLiveStats();
-  try { renderRecapHero('week'); } catch (_) { }
+  // Initial render uses LINEUP_STATE.timeScope (default 'month') so Recap + Lineup match on first paint.
+  try { if (typeof luSetGlobalScope === 'function') luSetGlobalScope(LINEUP_STATE.timeScope || 'month'); else renderRecapHero(); } catch (_) { }
   try { renderTodaysFollowups(); } catch (_) { }
 };
 </script>
