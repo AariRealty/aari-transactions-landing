@@ -2516,6 +2516,11 @@ function _luScopeMatches(c){
 }
 function renderKanban(){
   var grid = document.getElementById('kanbanGrid');
+  if (grid && (grid.__dragInProgress || (grid.__dragJustEndedUntil && Date.now() < grid.__dragJustEndedUntil))) {
+    grid.__pendingRender = true;
+    console.info('[kanban] render skipped — drag in progress');
+    return;
+  }
   if (!grid) return;
   var contacts = (window.AariTracker ? window.AariTracker.getContacts() : (S.contacts || []));
   // Bucket the contacts · one bucket per stage (7 total). Unknown stage values drop off the board.
@@ -2579,6 +2584,7 @@ function renderKanban(){
 function wireKanbanDnd(){
   var grid = document.getElementById('kanbanGrid');
   if (!grid) return;
+  if (grid.__dragInProgress) return; // Don't swap handlers during a drag.
 
   // Build the handler set once per call (closure over `grid`). Stored on the element so we
   // can detach the exact same function refs on the next call before re-attaching.
@@ -2587,10 +2593,13 @@ function wireKanbanDnd(){
       var card = e.target && e.target.closest ? e.target.closest('.kanban-card') : null;
       if (!card || !grid.contains(card)) return;
       grid.__dragId = card.getAttribute('data-id');
+      grid.__dragInProgress = true;
+      grid.__dragStartedAt = Date.now();
       grid.__didDrag = true;
       var srcCol = card.closest('.kanban-col');
       grid.__fromBucket = srcCol ? srcCol.getAttribute('data-bucket') : null;
       card.classList.add('dragging');
+      console.info('[kanban] dragstart', grid.__dragId);
       try { e.dataTransfer.setData('text/plain', grid.__dragId || ''); e.dataTransfer.effectAllowed = 'move'; } catch(_){}
     },
     dragend: function(e){
@@ -2599,7 +2608,16 @@ function wireKanbanDnd(){
       grid.querySelectorAll('.kanban-col').forEach(function(c){ c.classList.remove('drop-target'); });
       grid.__dragId = null;
       grid.__fromBucket = null;
+      grid.__dragInProgress = false;
+      grid.__dragJustEndedUntil = Date.now() + 200;
       setTimeout(function(){ grid.__didDrag = false; }, 0);
+      // After cooldown, flush any render that was deferred during the drag.
+      setTimeout(function(){
+        if (grid.__pendingRender){
+          grid.__pendingRender = false;
+          renderKanban();
+        }
+      }, 250);
     },
     // dragover · MUST preventDefault on every column hover so drop can fire. Don't gate on
     // __dragId here — some browsers fire dragover before our dragstart handler completes,
@@ -2629,9 +2647,12 @@ function wireKanbanDnd(){
       var id = grid.__dragId;
       if (!id){ try { id = e.dataTransfer.getData('text/plain') || null; } catch(_){ id = null; } }
       grid.__dragId = null;
+      grid.__dragInProgress = false;
+      grid.__dragJustEndedUntil = Date.now() + 200;
       if (!id) return;
       var bucket = col.getAttribute('data-bucket');
       var fromBucket = grid.__fromBucket;
+      console.info('[kanban] drop bucket=' + bucket);
       var BUCKET = KANBAN_BUCKETS.find(function(b){return b.key===bucket;});
       if (!BUCKET) return;
       if (bucket === fromBucket) { renderKanban(); return; }
