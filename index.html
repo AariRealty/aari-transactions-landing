@@ -11760,7 +11760,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       } catch(_){}
       const formData = new URLSearchParams();
       formData.append('form-name', 'aari-sa-signature');
-      formData.append('agreement_version', 'v4.6');
+      formData.append('agreement_version', 'v4.7');
       formData.append('document_name', 'Aari Transactions Service Agreement');
       formData.append('typed_name', (state.profile.firstName + ' ' + state.profile.lastName).trim());
       formData.append('agent_email', state.profile.email || '');
@@ -11790,7 +11790,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       agentFormData.append('agent_email',       state.profile.email || '');
       agentFormData.append('first_name',        state.profile.firstName || '');
       agentFormData.append('signed_at_display', signedAtDisplay);
-      agentFormData.append('agreement_version', 'v4.6');
+      agentFormData.append('agreement_version', 'v4.7');
       agentFormData.append('body',
         'Hi ' + (state.profile.firstName || 'there') + ', your signed service agreement is on file. ' +
         'Signed on ' + signedAtDisplay + '. ' +
@@ -11798,6 +11798,36 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       );
       fetch('/', { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded' }, body: agentFormData.toString() })
         .catch(err => console.warn('[pathB2] agent-copy netlify post failed', err));
+
+      // === PDF + email via Supabase Edge Function (aari-sa-pdf-email) ===
+      // Fire-and-forget: generates the signed-agreement PDF with the agent's
+      // drawn signature embedded and emails it as an attachment to the agent +
+      // agreements@aaritransactions.com via Resend. Runs alongside the Netlify
+      // form posts above — failure here does not block the signing flow.
+      try {
+        const sigPad = document.getElementById('sig-pad');
+        const sigDataUrl = sigPad ? sigPad.toDataURL('image/png') : '';
+        fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/aari-sa-pdf-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            agent_name: (state.profile.firstName + ' ' + state.profile.lastName).trim(),
+            agent_email: state.profile.email || '',
+            agent_phone: state.profile.phone || '',
+            agent_license: state.profile.licenseNumber || '',
+            agent_license_state: state.profile.licenseState || 'FL',
+            agent_brokerage: state.profile.brokerageName || '',
+            signed_at_iso: nowIso,
+            signed_at_display: signedAtDisplay,
+            signature_data_url: sigDataUrl,
+            agreement_version: '4.7',
+            user_agent: (navigator && navigator.userAgent) || '',
+            locale: (navigator && navigator.language) || ''
+          })
+        }).catch(err => console.warn('[pathB2] sa-pdf-email failed', err));
+      } catch(err) {
+        console.warn('[pathB2] sa-pdf-email setup failed', err);
+      }
     }
 
     /* ------- Review-preference toggle (Yes/No) ------- */
