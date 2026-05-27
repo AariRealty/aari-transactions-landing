@@ -123,7 +123,7 @@ Aari Transactions · Starter Membership · Monthly
 
 **Recommended Description:**
 ```
-2 service credits per month. $30 off every TC file. Activity bonus: +2 bonus credits when we run 1 TC for you. Credits cover Offer Prep · Basic, Listing Docs, MLS Setup, File Organization. Credits don't roll over. Billed monthly. Cancel anytime.
+2 service credits per month. $30 off every TC file. Activity bonus: +2 extra credits when Aari runs 1 TC file that month. Credits apply to Offer Prep Basic, Listing Docs Only, MLS Setup Only, File Organization, Standalone Review. Unused credits do not roll over. Billed monthly. Cancel anytime.
 ```
 
 ---
@@ -139,7 +139,7 @@ Aari Transactions · Starter Membership · Annual
 
 **Recommended Description:**
 ```
-All Starter benefits, billed annually. Save $159 versus monthly. 2 service credits per month. $30 off every TC file. Activity bonus included. Equivalent to $65.75 per month. Cancel anytime.
+All Starter benefits, billed annually. Save $159 versus monthly. Equivalent to $65.75 per month. 2 service credits per month. $30 off every TC file. Activity bonus: +2 extra credits when Aari runs 1 TC file that month. Credits apply to Offer Prep Basic, Listing Docs Only, MLS Setup Only, File Organization, Standalone Review. Unused credits do not roll over. Non-refundable. Cancel anytime stops auto-renewal; benefits continue through the paid 12-month term.
 ```
 
 ---
@@ -155,7 +155,7 @@ Aari Transactions · Producer Membership · Monthly
 
 **Recommended Description:**
 ```
-4 service credits per month. $50 off every TC file. Activity bonus: +4 bonus credits when we run 2 TCs for you. Top TC priority. Credits cover Offer Prep · Basic, Listing Docs, MLS Setup, File Organization. Credits don't roll over. Billed monthly. Cancel anytime.
+4 service credits per month. $50 off every TC file. Activity bonus: +4 extra credits when Aari runs 2 TC files that month. Priority TC assignment. Credits apply to Offer Prep Basic, Listing Docs Only, MLS Setup Only, File Organization, Standalone Review. Unused credits do not roll over. Billed monthly. Cancel anytime.
 ```
 
 ---
@@ -171,7 +171,7 @@ Aari Transactions · Producer Membership · Annual
 
 **Recommended Description:**
 ```
-All Producer benefits, billed annually. Save $259 versus monthly. 4 service credits per month. $50 off every TC file. Top TC priority. Activity bonus included. Equivalent to $107.42 per month. Cancel anytime.
+All Producer benefits, billed annually. Save $259 versus monthly. Equivalent to $107.42 per month. 4 service credits per month. $50 off every TC file. Activity bonus: +4 extra credits when Aari runs 2 TC files that month. Priority TC assignment. Credits apply to Offer Prep Basic, Listing Docs Only, MLS Setup Only, File Organization, Standalone Review. Unused credits do not roll over. Non-refundable. Cancel anytime stops auto-renewal; benefits continue through the paid 12-month term.
 ```
 
 ---
