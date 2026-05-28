@@ -480,6 +480,7 @@
 <div id="aari-header" data-aari-view="portal" data-aari-show-submit="yes" style="display:none"></div>
 <script src="/js/aari-header.js" defer></script>
 
+<div class="dash-modal-backdrop" id="dash-modal-backdrop" aria-hidden="true"></div>
 <main style="display:none" id="portal-main">
 
   <!-- Morning Briefing moved to its own page · /briefing.html · accessible from
@@ -532,15 +533,22 @@
         <div id="active-files-body"><p class="empty"><span class="skel"></span></p></div>
       </div>
 
-      <!-- Activity feed -->
-      <div class="card" id="recent-activity">
-        <div class="card-head"><h2>Recent <em>activity.</em></h2></div>
+      <!-- Activity feed · hidden on dashboard · opens as modal from avatar menu -->
+      <div class="card dash-modal-card" id="recent-activity" style="display:none">
+        <div class="card-head">
+          <h2>Recent <em>activity.</em></h2>
+          <button type="button" class="dash-modal-close" aria-label="Close" data-close="recent-activity">&times;</button>
+        </div>
         <div id="activity-body"><p class="empty"><span class="skel"></span></p></div>
       </div>
 
-      <!-- Billing & Documents -->
-      <div class="card" id="billing-documents">
-        <div class="card-head"><h2>Billing &amp; Documents</h2><div class="meta" id="ytd-spent">&nbsp;</div></div>
+      <!-- Billing & Documents · hidden on dashboard · opens as modal from avatar menu -->
+      <div class="card dash-modal-card" id="billing-documents" style="display:none">
+        <div class="card-head">
+          <h2>Billing &amp; Documents</h2>
+          <div class="meta" id="ytd-spent">&nbsp;</div>
+          <button type="button" class="dash-modal-close" aria-label="Close" data-close="billing-documents">&times;</button>
+        </div>
         <div class="tabs">
           <button class="tab active" data-tab="billing">Billing</button>
           <button class="tab" data-tab="documents">Documents</button>
@@ -876,6 +884,27 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
   </div>
 </div>
 <style>
+  /* ---------- Dashboard cards as modals (Recent activity, Billing & Documents) ---------- */
+  body.dash-modal-open{overflow:hidden!important}
+  body.dash-modal-open .dash-modal-backdrop{display:block}
+  .dash-modal-backdrop{display:none;position:fixed;inset:0;background:rgba(15,15,15,0.55);backdrop-filter:blur(2px);z-index:9990}
+  .dash-modal-card.dash-modal-active{
+    display:block!important;
+    position:fixed!important;
+    top:50%!important;left:50%!important;
+    transform:translate(-50%,-50%)!important;
+    width:min(720px,92vw)!important;
+    max-height:86vh!important;
+    overflow-y:auto!important;
+    z-index:9991!important;
+    background:#fff!important;
+    box-shadow:0 30px 80px rgba(0,0,0,0.25)!important;
+    border-radius:14px!important;
+  }
+  .dash-modal-close{position:absolute;top:14px;right:14px;background:transparent;border:none;font-size:26px;line-height:1;color:#5f5e5a;cursor:pointer;padding:4px 10px;border-radius:6px;font-family:inherit}
+  .dash-modal-close:hover{background:#f3efe4;color:#0f0f0f}
+  .dash-modal-card .card-head{position:relative}
+
   body.sa-gate-active{overflow:hidden!important}
   body.sa-gate-active #aari-header,
   body.sa-gate-active #portal-main,
@@ -956,10 +985,84 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     document.getElementById('portal-main').style.display = 'block';
     renderHeader(profile);
     await reloadDashboard();
+    wireDashboardModals();
     // May 2026 · Phase 4 · Supabase realtime subscription so dashboard
     // updates the moment a TC accepts, a status changes, or any field on
     // the file row flips server-side. Filtered to the agent's own files.
     subscribeToFileChanges(session.user.id);
+  }
+
+  // ============ DASHBOARD MODALS (Recent activity, Billing & Documents) ============
+  // The two cards live in the DOM (so the dashboard renderers can populate them)
+  // but are hidden by default with style="display:none". This function wires:
+  //   1. Avatar dropdown links (#recent-activity, #billing-documents) to open
+  //      the card as a centered modal instead of scrolling to it.
+  //   2. The close button on each card.
+  //   3. Backdrop click + Escape key to close.
+  // The Settings link continues to behave normally (no modal mapping yet).
+  function wireDashboardModals(){
+    const backdrop = document.getElementById('dash-modal-backdrop');
+    if(!backdrop) return;
+
+    function openModal(id){
+      const card = document.getElementById(id);
+      if(!card) return;
+      // Close any other open card first.
+      document.querySelectorAll('.dash-modal-card.dash-modal-active').forEach(el => {
+        if(el !== card){
+          el.classList.remove('dash-modal-active');
+          el.style.display = 'none';
+        }
+      });
+      card.classList.add('dash-modal-active');
+      document.body.classList.add('dash-modal-open');
+    }
+    function closeModal(id){
+      const card = id ? document.getElementById(id) : document.querySelector('.dash-modal-card.dash-modal-active');
+      if(card){
+        card.classList.remove('dash-modal-active');
+        card.style.display = 'none';
+      }
+      document.body.classList.remove('dash-modal-open');
+    }
+
+    // 1. Intercept anchor links from the avatar dropdown.
+    document.addEventListener('click', function(e){
+      const a = e.target.closest && e.target.closest('a[href]');
+      if(!a) return;
+      const href = a.getAttribute('href') || '';
+      // Match /portal.html#recent-activity, #recent-activity, /portal.html#billing-documents, etc.
+      const m = href.match(/#(recent-activity|billing-documents)$/);
+      if(!m) return;
+      e.preventDefault();
+      openModal(m[1]);
+    });
+
+    // 2. Close button on each card.
+    document.querySelectorAll('.dash-modal-close').forEach(btn => {
+      btn.addEventListener('click', function(e){
+        e.preventDefault();
+        const id = btn.getAttribute('data-close');
+        closeModal(id);
+      });
+    });
+
+    // 3. Backdrop click to close.
+    backdrop.addEventListener('click', function(){ closeModal(); });
+
+    // 4. Escape key to close.
+    document.addEventListener('keydown', function(e){
+      if(e.key === 'Escape' || e.key === 'Esc'){
+        if(document.body.classList.contains('dash-modal-open')) closeModal();
+      }
+    });
+
+    // 5. If the page loads with a hash matching a modal id, open it (so
+    //    deep-linking from the dropdown works after a fresh load).
+    const h = (location.hash || '').replace('#','');
+    if(h === 'recent-activity' || h === 'billing-documents'){
+      setTimeout(() => openModal(h), 80);
+    }
   }
 
   // ============ RELOAD · the dashboard refresh that runs without a page reload ============
