@@ -1000,7 +1000,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     renderDrafts(drafts);
     renderActivity(audit, files);
     renderBilling(payments);
-    renderDocuments(sigs, files, _client);
+    renderDocuments(sigs, files, _client, _profile);
     renderMembership(mem);
     renderCompletion(_profile);
     renderMembershipUpsell(payments, mem);
@@ -2959,15 +2959,33 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
   }
 
   // ============ DOCUMENTS ============
-  function renderDocuments(sigs, files, client) {
+  function renderDocuments(sigs, files, client, profile) {
     const fileMap = Object.fromEntries(files.map(f => [f.id, f]));
-    const succeeded = sigs.filter(s => s.pdf_generation_status === 'succeeded' && s.signed_agreement_pdf_url);
-    const pending = sigs.filter(s => s.pdf_generation_status !== 'succeeded');
-    if (!sigs.length) {
+
+    // Synthesize an account-level row from the agents table if the agent
+    // signed the portal SA gate (or registration Step 5) and we don't yet
+    // have a corresponding agreement_signatures row backed by storage.
+    const accountSig = (profile && profile.agreement_signed_at) ? {
+      __synthetic: true,
+      signed_at: profile.agreement_signed_at,
+      agreement_version: profile.agreement_version || 'v4.7',
+      typed_full_name: profile.agreement_typed_name || ((profile.first_name || '') + ' ' + (profile.last_name || '')).trim(),
+    } : null;
+
+    const hasStoredSigs = (sigs || []).length > 0;
+    if (!accountSig && !hasStoredSigs) {
       document.getElementById('documents-panel').innerHTML = '<div class="empty">No signed agreements yet.</div>';
       return;
     }
-    const rows = sigs.map(s => {
+
+    const accountRow = accountSig ? `<tr>
+      <td>${esc(fmtDate(accountSig.signed_at))}</td>
+      <td>Account Service Agreement<small style="display:block;color:var(--muted);font-size:11px">v${esc(accountSig.agreement_version)}</small></td>
+      <td><span class="badge pay-paid">Ready</span></td>
+      <td style="text-align:right"><button class="btn-mini" data-account-sa="1">Download</button></td>
+    </tr>` : '';
+
+    const sigRows = (sigs || []).map(s => {
       const file = s.file_id ? fileMap[s.file_id] : null;
       const ref = file ? file.property_address : 'Membership';
       const ready = s.pdf_generation_status === 'succeeded' && s.signed_agreement_pdf_url;
@@ -2984,13 +3002,97 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         <td style="text-align:right">${dl}</td>
       </tr>`;
     }).join('');
-    document.getElementById('documents-panel').innerHTML = `<table class="files-table"><thead><tr><th>Signed</th><th>Reference</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+
+    document.getElementById('documents-panel').innerHTML = `<table class="files-table"><thead><tr><th>Signed</th><th>Reference</th><th>Status</th><th></th></tr></thead><tbody>${accountRow}${sigRows}</tbody></table>`;
+
+    // Storage-backed downloads (legacy + future agreement_signatures rows)
     document.querySelectorAll('[data-download]').forEach(b => b.addEventListener('click', async (e) => {
       const path = e.target.getAttribute('data-download');
       const { data, error } = await client.storage.from('signed-agreements').createSignedUrl(path, 900);
       if (error || !data) { alert('Could not generate download link: ' + (error && error.message)); return; }
       window.open(data.signedUrl, '_blank');
     }));
+
+    // Account-level SA download (client-side print-ready render).
+    document.querySelectorAll('[data-account-sa]').forEach(b => b.addEventListener('click', () => {
+      openAccountSaPrintable(accountSig, profile);
+    }));
+  }
+
+  // Render the account-level SA in a new window for browser Save-as-PDF.
+  // No server-side PDF generation needed; uses the SA text already rendered
+  // inside the portal SA gate scroll box.
+  function openAccountSaPrintable(accountSig, profile) {
+    if (!accountSig) return;
+    const saTextEl = document.getElementById('sa-gate-scroll-box');
+    const saHtml = saTextEl ? saTextEl.innerHTML : '<em>Service Agreement text unavailable. Contact hello@aaritransactions.com.</em>';
+    const typedName = accountSig.typed_full_name || '';
+    const version = accountSig.agreement_version || 'v4.7';
+    const signedAtDisplay = (function(iso){
+      try {
+        const d = new Date(iso);
+        return d.toLocaleString('en-US', { year:'numeric', month:'long', day:'numeric', hour:'numeric', minute:'2-digit', timeZoneName:'short' });
+      } catch(_) { return iso; }
+    })(accountSig.signed_at);
+    const agentEmail = profile.email || '';
+    const agentPhone = profile.phone || '';
+    const agentLicense = profile.license_number || '';
+    const agentLicenseState = profile.license_state || 'FL';
+    const agentBrokerage = profile.brokerage_name || '';
+
+    const e = (s) => String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
+    const docHtml =
+      '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+      '<title>Aari Transactions Service Agreement ' + e(version) + ' &mdash; ' + e(typedName) + '</title>' +
+      '<style>' +
+        '@page { size: letter; margin: 0.6in; }' +
+        'body{font-family:Georgia,"Times New Roman",serif;color:#0f0f0f;line-height:1.55;font-size:11pt;max-width:7.4in;margin:0 auto;padding:24px}' +
+        'h1{font-family:Inter,Arial,sans-serif;font-size:18pt;margin:0 0 6px;letter-spacing:-0.2px}' +
+        'h2{font-family:Inter,Arial,sans-serif;font-size:11pt;margin:0 0 18px;color:#5f5e5a;font-weight:500}' +
+        '.box{border:1px solid #d4cfc2;border-radius:6px;padding:14px 16px;margin:16px 0;background:#faf7ef}' +
+        '.box .label{font-family:Inter,Arial,sans-serif;font-size:9pt;letter-spacing:0.5px;text-transform:uppercase;color:#5f5e5a;margin-bottom:6px}' +
+        '.sa-text{white-space:pre-wrap;font-family:Georgia,serif;font-size:10pt;line-height:1.55}' +
+        '.sig{margin-top:22px;border-top:2px solid #0f0f0f;padding-top:10px}' +
+        '.sig .name{font-family:"Brush Script MT","Snell Roundhand",cursive;font-size:22pt;color:#0f0f0f;margin:2px 0 6px}' +
+        '.sig .meta{font-family:Inter,Arial,sans-serif;font-size:9pt;color:#5f5e5a;line-height:1.6}' +
+        '.print-btn{font-family:Inter,Arial,sans-serif;background:#0f0f0f;color:#fff;border:none;padding:11px 18px;border-radius:6px;font-size:12pt;cursor:pointer;margin:0 0 20px}' +
+        '@media print{.print-btn{display:none}}' +
+      '</style></head><body>' +
+      '<button class="print-btn" onclick="window.print()">Save as PDF / Print</button>' +
+      '<h1>Aari Transactions Service Agreement</h1>' +
+      '<h2>Version ' + e(version) + ' &middot; Effective May 26, 2026</h2>' +
+      '<div class="box">' +
+        '<div class="label">Agent on file</div>' +
+        '<strong>' + e(typedName) + '</strong><br>' +
+        'Email: ' + e(agentEmail) + '<br>' +
+        (agentPhone ? 'Phone: ' + e(agentPhone) + '<br>' : '') +
+        (agentLicense ? 'License: ' + e(agentLicense) + ' (' + e(agentLicenseState) + ')<br>' : '') +
+        (agentBrokerage ? 'Brokerage: ' + e(agentBrokerage) : '') +
+      '</div>' +
+      '<div class="sa-text">' + saHtml + '</div>' +
+      '<div class="sig">' +
+        '<div class="name">' + e(typedName) + '</div>' +
+        '<div class="meta">' +
+          'Typed Name (Electronic Signature): <strong>' + e(typedName) + '</strong><br>' +
+          'Signed at: <strong>' + e(signedAtDisplay) + '</strong><br>' +
+          'Signing Law: Fla. Stat. &sect; 668.50 (Uniform Electronic Transaction Act)<br>' +
+          'Agreement Version: <strong>' + e(version) + '</strong>' +
+        '</div>' +
+      '</div>' +
+      '<script>setTimeout(function(){window.print();},400);<\/script>' +
+      '</body></html>';
+
+    const w = window.open('', '_blank');
+    if (!w) {
+      alert('Pop-up blocked. Please allow pop-ups for this site, then click Download again.');
+      return;
+    }
+    w.document.open();
+    w.document.write(docHtml);
+    w.document.close();
   }
 
   // ============ MEMBERSHIP · Phase 9 · 3-state render ============
@@ -3665,10 +3767,135 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         })
       }).catch(err => { console.warn('[portal-gate] sa-pdf-email failed', err); });
 
-      // ----- 5. Close modal and unblock portal -----
-      overlay.style.display = 'none';
-      document.body.classList.remove('sa-gate-active');
+      // ----- 5. Show success state with Download button (no auto-close) -----
+      // Replace the modal body with a success view that gives the agent immediate
+      // access to download a print-ready copy of their signed agreement.
+      showSignedSuccess({
+        typedName: typedName,
+        signedAtDisplay: signedAtDisplay,
+        agentStatus: agentStatus,
+        version: SA_VERSION
+      });
     });
+
+    // -------- Success state renderer ---------------------------------------
+    function showSignedSuccess(ctx){
+      const modal = overlay.querySelector('.sa-gate-modal');
+      if(!modal) return;
+      // Replace inner HTML with success state. Keep modal locked until
+      // the agent clicks "Continue to Portal" so they see the Download CTA.
+      modal.innerHTML =
+        '<div class="sa-gate-head">' +
+          '<div class="sa-gate-eb" style="color:#1f6f3b">Signed</div>' +
+          '<h2 class="sa-gate-title">Your Service Agreement is on file.</h2>' +
+          '<p class="sa-gate-sub">Version ' + esc(ctx.version) + ' &middot; Signed ' + esc(ctx.signedAtDisplay) + '</p>' +
+        '</div>' +
+        '<div class="sa-gate-body" style="text-align:left;padding-top:6px">' +
+          '<div style="background:#f7f4ec;border:1px solid #e6e2d8;border-radius:8px;padding:14px 16px;margin-bottom:18px">' +
+            '<div style="font-size:12px;color:#5f5e5a;letter-spacing:.4px;text-transform:uppercase;margin-bottom:6px">On file</div>' +
+            '<div style="font-size:14px;color:#0f0f0f;line-height:1.5">' +
+              '<strong>Signer:</strong> ' + esc(ctx.typedName) + '<br>' +
+              '<strong>Email:</strong> ' + esc((ctx.agentStatus && ctx.agentStatus.email) || '') + '<br>' +
+              '<strong>Agreement:</strong> Aari Transactions Service Agreement v' + esc(ctx.version) + '<br>' +
+              '<strong>Signed at:</strong> ' + esc(ctx.signedAtDisplay) + '<br>' +
+              '<strong>Signing law:</strong> Fla. Stat. &sect; 668.50 (UETA)' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;flex-direction:column;gap:10px">' +
+            '<button type="button" id="sa-gate-download" class="sa-gate-submit-btn" style="background:#0f0f0f">Download your signed agreement (PDF)</button>' +
+            '<button type="button" id="sa-gate-continue" class="sa-gate-submit-btn" style="background:#fff;color:#0f0f0f;border:1px solid #0f0f0f">Continue to portal</button>' +
+          '</div>' +
+          '<p class="sa-gate-foot" style="margin-top:14px">Tip: when the print dialog opens, choose <strong>Save as PDF</strong> as the destination to save a copy to your device. You can re-download anytime from the Documents tab in your portal.</p>' +
+        '</div>';
+
+      const dlBtn = document.getElementById('sa-gate-download');
+      const contBtn = document.getElementById('sa-gate-continue');
+      if(dlBtn){
+        dlBtn.addEventListener('click', function(){
+          openPrintableAgreement(ctx);
+        });
+      }
+      if(contBtn){
+        contBtn.addEventListener('click', function(){
+          // Reload so the Documents tab picks up the new agreement_signed_at
+          // and the portal renders with the agent's freshly-signed state.
+          overlay.style.display = 'none';
+          document.body.classList.remove('sa-gate-active');
+          window.location.reload();
+        });
+      }
+    }
+
+    // -------- Print-ready agreement window ---------------------------------
+    function openPrintableAgreement(ctx){
+      // Build a clean HTML document with the full SA text + agent info, then
+      // open it in a new window and trigger window.print(). The agent saves
+      // it as a PDF via the browser's print dialog ("Save as PDF" destination).
+      const saTextEl = document.getElementById('sa-gate-scroll-box');
+      const saHtml = saTextEl ? saTextEl.innerHTML : '';
+      const agentEmail = (ctx.agentStatus && ctx.agentStatus.email) || '';
+      const agentPhone = (ctx.agentStatus && ctx.agentStatus.phone) || '';
+      const agentLicense = (ctx.agentStatus && ctx.agentStatus.license_number) || '';
+      const agentLicenseState = (ctx.agentStatus && ctx.agentStatus.license_state) || 'FL';
+      const agentBrokerage = (ctx.agentStatus && ctx.agentStatus.brokerage_name) || '';
+
+      const docHtml =
+        '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+        '<title>Aari Transactions Service Agreement v' + esc(ctx.version) + ' &mdash; ' + esc(ctx.typedName) + '</title>' +
+        '<style>' +
+          '@page { size: letter; margin: 0.6in; }' +
+          'body{font-family:Georgia,"Times New Roman",serif;color:#0f0f0f;line-height:1.55;font-size:11pt;max-width:7.4in;margin:0 auto;padding:24px}' +
+          'h1{font-family:Inter,Arial,sans-serif;font-size:18pt;margin:0 0 6px;letter-spacing:-0.2px}' +
+          'h2{font-family:Inter,Arial,sans-serif;font-size:11pt;margin:0 0 18px;color:#5f5e5a;font-weight:500}' +
+          '.box{border:1px solid #d4cfc2;border-radius:6px;padding:14px 16px;margin:16px 0;background:#faf7ef}' +
+          '.box .label{font-family:Inter,Arial,sans-serif;font-size:9pt;letter-spacing:0.5px;text-transform:uppercase;color:#5f5e5a;margin-bottom:6px}' +
+          '.sa-text{white-space:pre-wrap;font-family:Georgia,serif;font-size:10pt;line-height:1.55}' +
+          '.sa-text div{font-family:inherit}' +
+          '.sig{margin-top:22px;border-top:2px solid #0f0f0f;padding-top:10px}' +
+          '.sig .name{font-family:"Brush Script MT","Snell Roundhand",cursive;font-size:22pt;color:#0f0f0f;margin:2px 0 6px}' +
+          '.sig .meta{font-family:Inter,Arial,sans-serif;font-size:9pt;color:#5f5e5a;line-height:1.6}' +
+          '.print-btn{font-family:Inter,Arial,sans-serif;background:#0f0f0f;color:#fff;border:none;padding:11px 18px;border-radius:6px;font-size:12pt;cursor:pointer;margin:0 0 20px}' +
+          '@media print{.print-btn{display:none}}' +
+        '</style></head><body>' +
+        '<button class="print-btn" onclick="window.print()">Save as PDF / Print</button>' +
+        '<h1>Aari Transactions Service Agreement</h1>' +
+        '<h2>Version ' + esc(ctx.version) + ' &middot; Effective May 26, 2026</h2>' +
+        '<div class="box">' +
+          '<div class="label">Agent on file</div>' +
+          '<strong>' + esc(ctx.typedName) + '</strong><br>' +
+          'Email: ' + esc(agentEmail) + '<br>' +
+          (agentPhone ? 'Phone: ' + esc(agentPhone) + '<br>' : '') +
+          (agentLicense ? 'License: ' + esc(agentLicense) + ' (' + esc(agentLicenseState) + ')<br>' : '') +
+          (agentBrokerage ? 'Brokerage: ' + esc(agentBrokerage) : '') +
+        '</div>' +
+        '<div class="sa-text">' + saHtml + '</div>' +
+        '<div class="sig">' +
+          '<div class="name">' + esc(ctx.typedName) + '</div>' +
+          '<div class="meta">' +
+            'Typed Name (Electronic Signature): <strong>' + esc(ctx.typedName) + '</strong><br>' +
+            'Signed at: <strong>' + esc(ctx.signedAtDisplay) + '</strong><br>' +
+            'Signing Law: Fla. Stat. &sect; 668.50 (Uniform Electronic Transaction Act)<br>' +
+            'Agreement Version: <strong>v' + esc(ctx.version) + '</strong>' +
+          '</div>' +
+        '</div>' +
+        '<script>setTimeout(function(){window.print();},400);<\/script>' +
+        '</body></html>';
+
+      const w = window.open('', '_blank');
+      if(!w){
+        alert('Pop-up blocked. Please allow pop-ups for this site, then click Download again.');
+        return;
+      }
+      w.document.open();
+      w.document.write(docHtml);
+      w.document.close();
+    }
+
+    function esc(s){
+      return String(s == null ? '' : s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
 
     // ----- Prevent escape: Escape key, backdrop click, back-button -----
     document.addEventListener('keydown', function(e){
