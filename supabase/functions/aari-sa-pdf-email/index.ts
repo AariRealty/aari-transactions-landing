@@ -27,6 +27,7 @@
 // ============================================================================
 
 import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1";
+import { supabaseAdmin } from "../_shared/supabase.ts";
 
 // ---------------------------------------------------------------------------
 // CORS — permissive for v1. Tighten to https://aaritransactions.com later.
@@ -628,6 +629,14 @@ Deno.serve(async (req) => {
     return jsonResponse({ ok: false, error: "method_not_allowed" }, 405);
   }
 
+  // Capture IP from request headers for ESIGN/UETA attribution.
+  const headerIp =
+    req.headers.get("cf-connecting-ip") ||
+    (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() ||
+    req.headers.get("x-real-ip") ||
+    null;
+  const ipAddress = headerIp && /^[0-9a-fA-F:.]+$/.test(headerIp) ? headerIp : null;
+
   let payload: SaPayload;
   try {
     payload = (await req.json()) as SaPayload;
@@ -643,6 +652,7 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // 1. Build PDF
     const pdfBytes = await buildPdf(payload);
     const slug = slugForFilename(payload.agent_name || "", payload.agent_email || "");
     const filename =
@@ -652,13 +662,87 @@ Deno.serve(async (req) => {
       slug +
       "-signed.pdf";
 
+    // 2. Look up agent_id by email (needed for storage path + agreement_signatures FK)
+    let agentId: string | null = null;
+    try {
+      const { data: agentRow } = await supabaseAdmin
+        .from("agents")
+        .select("id")
+        .ilike("email", payload.agent_email || "")
+        .maybeSingle();
+      agentId = agentRow?.id ?? null;
+    } catch (lookupErr) {
+      console.warn("[aari-sa-pdf-email] agent lookup failed:", lookupErr);
+    }
+
+    // 3. Upload PDF to Supabase Storage (bucket: signed-agreements)
+    // Path: {agent_id or anon}/sa_{version}_{timestamp}.pdf
+    const safeVersion = (payload.agreement_version || "4.7").replace(/[^a-z0-9.]/gi, "");
+    const tsSlug = new Date().toISOString().replace(/[:.]/g, "-");
+    const storagePath = (agentId || "anonymous") + "/sa_v" + safeVersion + "_" + tsSlug + ".pdf";
+
+    let signedAgreementPdfUrl: string | null = null;
+    try {
+      const { error: upErr } = await supabaseAdmin.storage
+        .from("signed-agreements")
+        .upload(storagePath, pdfBytes, {
+          contentType: "application/pdf",
+          upsert: false,
+        });
+      if (upErr) {
+        console.warn("[aari-sa-pdf-email] storage upload failed:", upErr);
+      } else {
+        signedAgreementPdfUrl = storagePath;
+      }
+    } catch (storageErr) {
+      console.warn("[aari-sa-pdf-email] storage upload threw:", storageErr);
+    }
+
+    // 4. Insert into agreement_signatures so the Documents tab can show it.
+    if (agentId) {
+      try {
+        const { error: insErr } = await supabaseAdmin
+          .from("agreement_signatures")
+          .insert({
+            agent_id: agentId,
+            file_id: null, // SA gate is account-level, not file-level
+            agreement_type: "service_agreement",
+            agreement_version: payload.agreement_version || "v4.7",
+            typed_full_name: payload.agent_name || "",
+            drawn_signature_data: payload.signature_data_url || null,
+            signature_image_url: null,
+            ip_address: ipAddress,
+            user_agent: payload.user_agent || null,
+            signed_at: payload.signed_at_iso || new Date().toISOString(),
+            signed_agreement_pdf_url: signedAgreementPdfUrl,
+            pdf_generation_status: signedAgreementPdfUrl ? "succeeded" : "failed",
+          });
+        if (insErr) {
+          console.warn("[aari-sa-pdf-email] agreement_signatures insert failed:", insErr);
+        }
+      } catch (dbErr) {
+        console.warn("[aari-sa-pdf-email] agreement_signatures insert threw:", dbErr);
+      }
+    } else {
+      console.warn("[aari-sa-pdf-email] no agent_id found for email; skipping DB insert");
+    }
+
+    // 5. Send email with PDF attachment (existing behavior)
     const sendResult = await sendEmail(pdfBytes, filename, payload);
     if (!sendResult.ok) {
       console.error("[aari-sa-pdf-email] send failed:", sendResult.error);
-      return jsonResponse(
-        { ok: false, error: sendResult.error || "email_send_failed" },
-        500,
-      );
+      // Don't fail the whole request just because email failed —
+      // the agreement_signatures row + storage upload may have succeeded,
+      // and the Documents tab will still show the signed agreement.
+      return jsonResponse({
+        ok: true,
+        bytes: pdfBytes.length,
+        filename,
+        recipient: payload.agent_email,
+        storage_path: signedAgreementPdfUrl,
+        agent_id: agentId,
+        email_warning: sendResult.error || "email_send_failed",
+      });
     }
 
     return jsonResponse({
@@ -666,6 +750,8 @@ Deno.serve(async (req) => {
       bytes: pdfBytes.length,
       filename,
       recipient: payload.agent_email,
+      storage_path: signedAgreementPdfUrl,
+      agent_id: agentId,
     });
   } catch (err) {
     console.error("[aari-sa-pdf-email] handler error:", err);
