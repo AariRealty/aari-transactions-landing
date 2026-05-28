@@ -573,10 +573,14 @@ async function sendEmail(
     "<p style=\"font-size:11px;color:#5f5e5a\">Aari Transactions LLC - Transaction Coordination - Fort Myers, FL</p>" +
     "</div>";
 
+  // TODO: Restore BCC to agreements@aaritransactions.com once aaritransactions.com
+  // is verified as a sending domain in Resend. Until then, Resend's sandbox sender
+  // (onboarding@resend.dev) blocks delivery to any address other than the Resend
+  // account holder's signup email — which causes the entire send to 403 if BCC is set.
+  // Restore by adding: bcc: ["agreements@aaritransactions.com"],
   const body = {
     from: "Aari Transactions <onboarding@resend.dev>",
     to: [p.agent_email],
-    bcc: ["agreements@aaritransactions.com"],
     subject,
     html,
     attachments: [
