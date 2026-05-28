@@ -27,7 +27,17 @@
 // ============================================================================
 
 import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1";
-import { supabaseAdmin } from "../_shared/supabase.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+
+// ---------------------------------------------------------------------------
+// Supabase admin client · inlined (not imported from _shared) so the function
+// remains a single-file source for in-dashboard deploys.
+// ---------------------------------------------------------------------------
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const supabaseAdmin = (SUPABASE_URL && SERVICE_ROLE_KEY)
+  ? createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } })
+  : null;
 
 // ---------------------------------------------------------------------------
 // CORS — permissive for v1. Tighten to https://aaritransactions.com later.
@@ -664,15 +674,17 @@ Deno.serve(async (req) => {
 
     // 2. Look up agent_id by email (needed for storage path + agreement_signatures FK)
     let agentId: string | null = null;
-    try {
-      const { data: agentRow } = await supabaseAdmin
-        .from("agents")
-        .select("id")
-        .ilike("email", payload.agent_email || "")
-        .maybeSingle();
-      agentId = agentRow?.id ?? null;
-    } catch (lookupErr) {
-      console.warn("[aari-sa-pdf-email] agent lookup failed:", lookupErr);
+    if (supabaseAdmin) {
+      try {
+        const { data: agentRow } = await supabaseAdmin
+          .from("agents")
+          .select("id")
+          .ilike("email", payload.agent_email || "")
+          .maybeSingle();
+        agentId = agentRow?.id ?? null;
+      } catch (lookupErr) {
+        console.warn("[aari-sa-pdf-email] agent lookup failed:", lookupErr);
+      }
     }
 
     // 3. Upload PDF to Supabase Storage (bucket: signed-agreements)
@@ -682,24 +694,26 @@ Deno.serve(async (req) => {
     const storagePath = (agentId || "anonymous") + "/sa_v" + safeVersion + "_" + tsSlug + ".pdf";
 
     let signedAgreementPdfUrl: string | null = null;
-    try {
-      const { error: upErr } = await supabaseAdmin.storage
-        .from("signed-agreements")
-        .upload(storagePath, pdfBytes, {
-          contentType: "application/pdf",
-          upsert: false,
-        });
-      if (upErr) {
-        console.warn("[aari-sa-pdf-email] storage upload failed:", upErr);
-      } else {
-        signedAgreementPdfUrl = storagePath;
+    if (supabaseAdmin) {
+      try {
+        const { error: upErr } = await supabaseAdmin.storage
+          .from("signed-agreements")
+          .upload(storagePath, pdfBytes, {
+            contentType: "application/pdf",
+            upsert: false,
+          });
+        if (upErr) {
+          console.warn("[aari-sa-pdf-email] storage upload failed:", upErr);
+        } else {
+          signedAgreementPdfUrl = storagePath;
+        }
+      } catch (storageErr) {
+        console.warn("[aari-sa-pdf-email] storage upload threw:", storageErr);
       }
-    } catch (storageErr) {
-      console.warn("[aari-sa-pdf-email] storage upload threw:", storageErr);
     }
 
     // 4. Insert into agreement_signatures so the Documents tab can show it.
-    if (agentId) {
+    if (supabaseAdmin && agentId) {
       try {
         const { error: insErr } = await supabaseAdmin
           .from("agreement_signatures")
@@ -723,7 +737,7 @@ Deno.serve(async (req) => {
       } catch (dbErr) {
         console.warn("[aari-sa-pdf-email] agreement_signatures insert threw:", dbErr);
       }
-    } else {
+    } else if (!agentId) {
       console.warn("[aari-sa-pdf-email] no agent_id found for email; skipping DB insert");
     }
 
