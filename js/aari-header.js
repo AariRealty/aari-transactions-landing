@@ -181,6 +181,8 @@
       '  <div class="who-name">' + esc(fullName) + '</div>',
       '  <div class="who-role">' + esc(roleWord) + '</div>',
       '</div>',
+      '<a href="/portal.html#recent-activity" role="menuitem">Recent activity</a>',
+      '<a href="/portal.html#billing-documents" role="menuitem">Billing &amp; Documents</a>',
       '<a href="/portal.html#profile" role="menuitem">Settings</a>',
       '<a href="#" id="aari-signout" role="menuitem">Sign out</a>'
     ].join('\n');
