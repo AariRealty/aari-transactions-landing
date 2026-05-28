@@ -167,6 +167,13 @@
             broker_name: profile.brokerName,
             broker_email: profile.brokerEmail,
             broker_phone: profile.brokerPhone || null,
+            // SA signature tracking · populated when Step 5 (Service Agreement)
+            // is signed before signUp fires. handle_new_agent reads these
+            // and writes them into the agents row at trigger time so the
+            // portal SA gate doesn't trip the agent on first login.
+            agreement_signed_at: profile.agreementSignedAt || null,
+            agreement_version: profile.agreementVersion || null,
+            agreement_typed_name: profile.agreementTypedName || null,
           },
         },
       },
@@ -246,6 +253,41 @@
     return data || null;
   }
 
+  // ===== Service Agreement (SA) status helpers =====
+  // updateAgreement(typedName, version)
+  //   Writes the SA timestamp / version / typed-name to the signed-in agent's row.
+  //   Called from register.html Step 5 (after signUp) and from the portal.html
+  //   SA gate modal (for existing agents who never signed v4.7).
+  // getAgreementStatus()
+  //   Reads the current agent's SA status. Returns null if not signed in.
+  //   Portal calls this on every page load — if agreement_signed_at is null OR
+  //   agreement_version !== 'v4.7', the SA gate modal blocks the portal.
+  async function updateAgreement(typedName, version) {
+    const client = await ensureClient();
+    const { data: { user } } = await client.auth.getUser();
+    if (!user) throw new Error('Not signed in');
+    const nowIso = new Date().toISOString();
+    const v = version || 'v4.7';
+    const { error } = await client.from('agents').update({
+      agreement_signed_at: nowIso,
+      agreement_version: v,
+      agreement_typed_name: typedName,
+    }).eq('id', user.id);
+    if (error) throw error;
+    return { signedAt: nowIso, version: v, typedName: typedName };
+  }
+
+  async function getAgreementStatus() {
+    const client = await ensureClient();
+    const { data: { user } } = await client.auth.getUser();
+    if (!user) return null;
+    const { data, error } = await client.from('agents')
+      .select('agreement_signed_at, agreement_version, agreement_typed_name, email, first_name, last_name, phone, license_number, license_state, brokerage_name')
+      .eq('id', user.id).single();
+    if (error) return null;
+    return data;
+  }
+
   // ===== Public API =====
   global.AariAuth = {
     ensureClient,
@@ -255,6 +297,8 @@
     requestPasswordReset,
     getCurrentSession,
     getAgentProfile,
+    updateAgreement,
+    getAgreementStatus,
     checkLoginRateLimit,
     recordLoginAttempt,
   };
