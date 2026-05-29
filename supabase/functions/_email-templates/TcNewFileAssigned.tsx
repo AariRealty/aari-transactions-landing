@@ -120,7 +120,7 @@ export const TcNewFileAssigned: React.FC<Props> = ({
       paddingTop: 18,
     }}>
       You&rsquo;re receiving this because you were assigned to this file.<br />
-      Aari Transactions LLC &middot; operated under Aari Realty &middot; FL Broker BK3530153
+      Aari Transactions LLC
     </p>
   </div>
 );

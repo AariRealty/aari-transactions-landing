@@ -285,8 +285,10 @@ Four SVG curve shapes between sections — `div-scallop`, `div-arch`, `div-slash
 
 ## 9 · Compliance attribution baseline
 
-Every page must include the brokerage attribution conspicuously:
-> *Aari Transactions LLC · operated under Aari Realty · FL Broker BK3530153*
+Every page must include the company attribution conspicuously:
+> *Aari Transactions LLC*
+
+Where Marlenyi's broker license is referenced for compliance, authority, or attribution (privacy, reviews, refer, about, blog bylines, JSON-LD author), the original license phrasing stays — these serve real DBPR/RESPA/E-E-A-T purposes and removal creates risk. The misleading "operated under Aari Realty" framing was retired May 2026 because Aari Transactions is not a brokerage.
 
 Already present in:
 1. Pricing-section footnote (above the fold of conversion)
