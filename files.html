@@ -337,12 +337,49 @@
 (function(){
   'use strict';
 
-  // ============== STAGE CONFIG ==============
-  const STAGES = ['new','under_contract','inspection','remedy','appraisal','ctc','closed'];
+  // ============== STAGE CONFIG (file-type aware) ==============
+  const STAGES_BY_TYPE = {
+    sale:      ['new','under_contract','inspection','remedy','appraisal','ctc','closed'],
+    listing:   ['new','active','pending','closed','cancelled'],
+    lease:     ['new','active','signed','occupied','expired'],
+    buyer_rep: ['signed','active','representing','expired'],
+  };
   const STAGE_LABELS = {
+    // Sale
     'new':'New', 'under_contract':'Under contract', 'inspection':'Inspection',
     'remedy':'Remedy', 'appraisal':'Appraisal', 'ctc':'Clear to close', 'closed':'Closed',
+    // Listing
+    'active':'Active', 'pending':'Pending', 'cancelled':'Cancelled',
+    // Lease
+    'signed':'Signed', 'occupied':'Occupied', 'expired':'Expired',
+    // Buyer rep
+    'representing':'Representing',
   };
+  const STAGE_SUBS = {
+    // Sale
+    'new':'awaiting TC', 'under_contract':'signed, set up', 'inspection':'scheduled / done',
+    'remedy':'repairs / credits', 'appraisal':'ordered / in', 'ctc':'CD sent / walk',
+    'closed':'funded, paid',
+    // Listing
+    'active':'live on MLS', 'pending':'offer accepted', 'cancelled':'withdrawn',
+    // Lease
+    'signed':'lease executed', 'occupied':'tenant in', 'expired':'lease term ended',
+    // Buyer rep
+    'representing':'actively repping',
+  };
+  const FILE_TYPES = [
+    { id:'sale',      label:'Sales' },
+    { id:'listing',   label:'Listings' },
+    { id:'lease',     label:'Leases' },
+    { id:'buyer_rep', label:'Buyer reps' },
+  ];
+
+  // Dynamic accessor · used everywhere instead of the old STAGES constant.
+  function getStages(){
+    return STAGES_BY_TYPE[_fileTypeFilter] || STAGES_BY_TYPE.sale;
+  }
+  // Back-compat: legacy code references STAGES. Map to dynamic accessor.
+  let STAGES = STAGES_BY_TYPE.sale; // will be reassigned when filter changes
 
   // ============== EMAIL PLAYBOOK (per stage) ==============
   const PLAYBOOK = {
@@ -387,6 +424,8 @@
   let _tcsById = {};         // for filtering
   let _sendsByFile = {};     // { file_id: { template_id: send_row } }
   let _tcFilter = 'all';     // broker filter
+  let _fileTypeFilter = 'sale'; // sale | listing | lease | buyer_rep
+  try { _fileTypeFilter = localStorage.getItem('aari_files_type') || 'sale'; } catch(_){}
 
   // ============== INIT ==============
   async function init(){
