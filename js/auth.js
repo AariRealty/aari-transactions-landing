@@ -253,6 +253,54 @@
     return data || null;
   }
 
+  // ===== ensureAgentProfile =====
+  // Auto-recovery for the "Account exists, but no agent profile found" error.
+  // If the database trigger handle_new_agent failed (RLS / constraint / race),
+  // the auth user exists but the agents row is missing. This function inserts
+  // a minimal row using the auth user's email + any metadata available, so the
+  // user is never blocked from their portal.
+  //
+  // Defaults match the SQL trigger so behavior is consistent whether the row
+  // is created server-side (trigger) or client-side (this fallback).
+  async function ensureAgentProfile() {
+    const client = await ensureClient();
+    const { data: { user } } = await client.auth.getUser();
+    if (!user) return null;
+    // 1. Check if a row already exists.
+    const existing = await getAgentProfile();
+    if (existing) return existing;
+    // 2. Pull any signup metadata we have.
+    const meta = (user.user_metadata || {});
+    const ap = (meta.agent_profile || {});
+    const firstName = ap.first_name || meta.first_name || (user.email || '').split('@')[0] || 'Agent';
+    const lastName  = ap.last_name  || meta.last_name  || '-';
+    // 3. Insert with sensible defaults so all NOT NULL constraints are satisfied.
+    const row = {
+      id: user.id,
+      email: user.email,
+      first_name: firstName,
+      last_name: lastName,
+      phone: ap.phone || null,
+      role: 'agent',
+      license_number: ap.license_number || 'PENDING',
+      license_state: ap.license_state || 'FL',
+      license_expires_at: ap.license_expires_at || '2099-12-31',
+      brokerage_name: ap.brokerage_name || 'Pending',
+      brokerage_address: ap.brokerage_address || null,
+      broker_name: ap.broker_name || 'Pending',
+      broker_email: ap.broker_email || user.email,
+      broker_phone: ap.broker_phone || null,
+    };
+    const { error: insErr } = await client.from('agents').insert(row);
+    if (insErr) {
+      // Log but don't throw — the caller will re-fetch and handle null.
+      console.warn('[ensureAgentProfile] insert failed:', insErr);
+      return null;
+    }
+    // 4. Re-fetch fresh row.
+    return await getAgentProfile();
+  }
+
   // ===== Service Agreement (SA) status helpers =====
   // updateAgreement(typedName, version)
   //   Writes the SA timestamp / version / typed-name to the signed-in agent's row.
@@ -297,6 +345,7 @@
     requestPasswordReset,
     getCurrentSession,
     getAgentProfile,
+    ensureAgentProfile,
     updateAgreement,
     getAgreementStatus,
     checkLoginRateLimit,
