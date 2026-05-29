@@ -1120,6 +1120,59 @@ Aari Transactions`,
     },
   };
 
+  // ============== Deadline values for email interpolation ==============
+  // Computes deadline dates from the file's contract_type + effective + closing,
+  // applies any per-file overrides from file.deadline_overrides, and returns
+  // a map of EMAIL VARIABLE NAMES → formatted date strings.
+  // Returns empty object {} if computation isn't possible (missing contract,
+  // missing dates, contract type without a defined deadline schedule).
+  function getDeadlinesForEmail(file){
+    if(!file) return {};
+    const ct = file.contract_type;
+    if(!ct) return {};
+    const schedule = CONTRACT_DEADLINES[ct];
+    if(!schedule) return {};
+    if(!file.effective_date || !file.closing_date) return {};
+    try {
+      const E = new Date(String(file.effective_date).length===10 ? (file.effective_date+'T00:00:00') : file.effective_date);
+      const C = new Date(String(file.closing_date).length===10 ? (file.closing_date+'T00:00:00') : file.closing_date);
+      const cfg = Object.assign({}, CONTRACT_DEFAULTS[ct] || {}, file.deadline_overrides || {});
+      const overrides = (_deadlinesByFile[file.id] || {});
+      const fmt = (d) => {
+        if(!d || !(d instanceof Date) || isNaN(d.getTime())) return null;
+        return d.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' });
+      };
+      const byKey = {};
+      schedule.forEach(it => {
+        let date;
+        const rec = overrides[it.key];
+        if(rec && rec.due_date){
+          date = new Date(String(rec.due_date).length===10 ? (rec.due_date+'T00:00:00') : rec.due_date);
+        } else {
+          date = it.compute(E, C, cfg);
+          if(it.bizDay) date = nextBiz(date);
+        }
+        byKey[it.key] = date;
+      });
+      // Map deadline keys → email variable names. Handles both FRBAR and NABOR shapes.
+      const titleKey = byKey['title_evidence'] || byKey['buyer_title_rev'] || byKey['title_policy'];
+      return {
+        em_deadline: fmt(byKey['init_deposit']) || null,
+        loan_app_deadline: fmt(byKey['loan_app']) || null,
+        loan_approval_deadline: fmt(byKey['loan_approval'] || byKey['finance_cont']) || null,
+        inspection_deadline: fmt(byKey['inspection_end']) || null,
+        inspection_objection_deadline: fmt(byKey['inspection_end']) || null,
+        title_deadline: fmt(titleKey) || null,
+        seller_response_deadline: fmt(byKey['seller_response']) || null,
+        walkthrough_date: fmt(byKey['walk_through']) || null,
+        hoa_review_deadline: fmt(byKey['hoa_review']) || null,
+      };
+    } catch(err){
+      console.warn('[files] getDeadlinesForEmail failed', err);
+      return {};
+    }
+  }
+
   // Variable interpolation. Pulls from file row + joined agent profile.
   // Missing values become bracketed placeholders so the TC sees what to fill.
   function fillEmailVars(template, file, agent){
@@ -1175,6 +1228,9 @@ Aari Transactions`,
       loan_approval_deadline: '[loan approval deadline]',
       inspection_deadline: '[inspection deadline]',
       title_deadline: '[title deadline]',
+      seller_response_deadline: '[seller response deadline]',
+      walkthrough_date: '[walkthrough date]',
+      hoa_review_deadline: '[HOA review deadline]',
       inspection_date: '[inspection date]', inspection_time: '[inspection time]',
       inspector_name: '[inspector name]', inspector_company: '[inspector company]', inspector_phone: '[inspector phone]',
       inspection_objection_deadline: '[objection deadline]',
@@ -1190,6 +1246,11 @@ Aari Transactions`,
       bba_property_types: '[property types]', bba_geo_area: '[geo area]', bba_price_min: '[min]', bba_price_max: '[max]', bba_term_end: '[term end]',
       new_listings_count: '[#]', price_drops_count: '[#]', dom_trend: '[trend]', flagged_count: '[#]',
     };
+    // Overlay deadline values computed from the contract. Only keys with
+    // non-null values overwrite the bracketed placeholders, so emails on
+    // files that haven't picked a contract still show [em deadline] etc.
+    const dl = getDeadlinesForEmail(file);
+    Object.keys(dl).forEach(k => { if(dl[k]) vars[k] = dl[k]; });
     let out = template;
     for(const k in vars){
       out = out.split('{{' + k + '}}').join(vars[k]);
@@ -3428,13 +3489,27 @@ Aari Transactions`,
   }
 
   // ============== STAGE DERIVATION ==============
+  // Derive the correct stage for a file based on its file_type. Each file_type
+  // has its own stage list (STAGES_BY_TYPE) so listings/leases/buyer-reps
+  // don't bucket into the sale lanes.
   function deriveStage(f){
-    if(f && f.transaction_stage && STAGES.indexOf(f.transaction_stage)>=0) return f.transaction_stage;
     if(!f) return 'new';
-    if(f.status === 'closed' || f.status === 'archived') return 'closed';
-    if(f.status === 'intake_received' && !f.tc_accepted_at) return 'new';
-    if(f.status === 'awaiting_tc_acceptance') return 'new';
-    if(f.closing_date){
+    const ft = f.file_type || 'sale';
+    const validStages = STAGES_BY_TYPE[ft] || STAGES_BY_TYPE.sale;
+    // Honor explicit stage IF it's valid for this file_type
+    if(f.transaction_stage && validStages.indexOf(f.transaction_stage) >= 0) {
+      return f.transaction_stage;
+    }
+    // Closed / archived → terminal stage for this file_type
+    if(f.status === 'closed' || f.status === 'archived'){
+      if(ft === 'lease') return 'expired';
+      if(ft === 'buyer_rep') return 'expired';
+      return 'closed';
+    }
+    if(f.status === 'intake_received' && !f.tc_accepted_at) return validStages[0];
+    if(f.status === 'awaiting_tc_acceptance') return validStages[0];
+    // Sale-side date-based derivation (only valid for sale lane structure)
+    if(ft === 'sale' && f.closing_date){
       const today = new Date(); today.setHours(0,0,0,0);
       const close = new Date(String(f.closing_date).length===10 ? (f.closing_date+'T00:00:00') : f.closing_date);
       const days = Math.round((close - today)/86400000);
@@ -3442,8 +3517,10 @@ Aari Transactions`,
       if(days <= 5) return 'ctc';
       if(days <= 14) return 'appraisal';
       if(days <= 21) return 'inspection';
+      return 'under_contract';
     }
-    return 'under_contract';
+    // For non-sale file_types with no explicit stage, default to first lane
+    return validStages[0];
   }
 
   function daysToClose(f){
@@ -3545,8 +3622,7 @@ Aari Transactions`,
       }
       laneEl.innerHTML = buckets[stage].map(cardHtml).join('');
     });
-    wireDragDrop();
-    wireCardClicks();
+    wireKanbanDelegation();
   }
 
   function isCashFile(f){
@@ -3584,58 +3660,83 @@ Aari Transactions`,
     '</div>';
   }
 
-  // ============== DRAG-DROP ==============
+  // ============== KANBAN INTERACTION (delegated) ==============
+  // All kanban interactions are delegated from #kanban once at init.
+  // Avoids the per-render listener accumulation bug (a single drop firing
+  // multiple Supabase UPDATE writes after several renders).
   let _draggedId = null;
-  function wireDragDrop(){
-    document.querySelectorAll('.card').forEach(card => {
-      card.addEventListener('dragstart', (e) => {
-        _draggedId = card.getAttribute('data-file-id');
-        try { e.dataTransfer.setData('text/plain', _draggedId); e.dataTransfer.effectAllowed = 'move'; } catch(_){}
-        card.style.opacity = '0.45';
-      });
-      card.addEventListener('dragend', () => {
-        card.style.opacity = '';
-        document.querySelectorAll('.lane.drag-over').forEach(l => l.classList.remove('drag-over'));
-      });
+  let _dragJustEnded = false; // suppresses click immediately after a drag
+  function wireKanbanDelegation(){
+    const k = document.getElementById('kanban');
+    if(!k || k._delegated) return;
+    k._delegated = true;
+
+    k.addEventListener('dragstart', (e) => {
+      const card = e.target.closest && e.target.closest('.card');
+      if(!card) return;
+      _draggedId = card.getAttribute('data-file-id');
+      _dragJustEnded = false;
+      try { e.dataTransfer.setData('text/plain', _draggedId); e.dataTransfer.effectAllowed = 'move'; } catch(_){}
+      card.style.opacity = '0.45';
     });
-    document.querySelectorAll('.lane').forEach(lane => {
-      lane.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        try { e.dataTransfer.dropEffect = 'move'; } catch(_){}
-        lane.classList.add('drag-over');
-      });
-      lane.addEventListener('dragleave', () => lane.classList.remove('drag-over'));
-      lane.addEventListener('drop', async (e) => {
-        e.preventDefault();
-        lane.classList.remove('drag-over');
-        const newStage = lane.getAttribute('data-stage');
-        const fid = _draggedId; _draggedId = null;
-        if(!fid || !newStage) return;
-        const file = _files.find(f => f.id === fid);
-        if(!file) return;
-        file.transaction_stage = newStage;
+
+    k.addEventListener('dragend', (e) => {
+      const card = e.target.closest && e.target.closest('.card');
+      if(card) card.style.opacity = '';
+      document.querySelectorAll('.lane.drag-over').forEach(l => l.classList.remove('drag-over'));
+      _dragJustEnded = true;
+      setTimeout(() => { _dragJustEnded = false; }, 50);
+    });
+
+    k.addEventListener('dragover', (e) => {
+      const lane = e.target.closest && e.target.closest('.lane');
+      if(!lane) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = 'move'; } catch(_){}
+      lane.classList.add('drag-over');
+    });
+
+    k.addEventListener('dragleave', (e) => {
+      const lane = e.target.closest && e.target.closest('.lane');
+      if(lane) lane.classList.remove('drag-over');
+    });
+
+    k.addEventListener('drop', async (e) => {
+      const lane = e.target.closest && e.target.closest('.lane');
+      if(!lane) return;
+      e.preventDefault();
+      lane.classList.remove('drag-over');
+      const newStage = lane.getAttribute('data-stage');
+      const fid = _draggedId; _draggedId = null;
+      if(!fid || !newStage) return;
+      const file = _files.find(f => f.id === fid);
+      if(!file) return;
+      if(file.transaction_stage === newStage) return; // no-op guard
+      const prevStage = file.transaction_stage;
+      file.transaction_stage = newStage;
+      renderKanban();
+      try {
+        await _client.from('files').update({ transaction_stage: newStage }).eq('id', fid);
+      } catch(err){
+        console.warn('[files] stage save failed', err);
+        file.transaction_stage = prevStage;
         renderKanban();
-        try {
-          await _client.from('files').update({ transaction_stage: newStage }).eq('id', fid);
-        } catch(err){ console.warn('[files] stage save failed', err); }
-      });
+      }
+    });
+
+    k.addEventListener('click', (e) => {
+      const card = e.target.closest && e.target.closest('.card');
+      if(!card) return;
+      if(_dragJustEnded) return;
+      const fid = card.getAttribute('data-file-id');
+      const file = _files.find(f => f.id === fid);
+      if(file) openPlaybook(file);
     });
   }
 
-  // ============== CARD CLICKS · open playbook ==============
-  function wireCardClicks(){
-    document.querySelectorAll('.card').forEach(card => {
-      let dragMoved = false;
-      card.addEventListener('mousedown', () => { dragMoved = false; });
-      card.addEventListener('dragstart', () => { dragMoved = true; });
-      card.addEventListener('click', () => {
-        if(dragMoved){ dragMoved = false; return; }
-        const fid = card.getAttribute('data-file-id');
-        const file = _files.find(f => f.id === fid);
-        if(file) openPlaybook(file);
-      });
-    });
-  }
+  // Back-compat stubs · in case anything still calls these.
+  function wireDragDrop(){ wireKanbanDelegation(); }
+  function wireCardClicks(){ wireKanbanDelegation(); }
 
   // ============== PLAYBOOK ==============
   function openPlaybook(file){
