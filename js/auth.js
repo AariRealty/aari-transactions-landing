@@ -280,16 +280,16 @@
       email: user.email,
       first_name: firstName,
       last_name: lastName,
-      phone: ap.phone || null,
+      phone: ap.phone || '',
       role: 'agent',
       license_number: ap.license_number || 'PENDING',
       license_state: ap.license_state || 'FL',
       license_expires_at: ap.license_expires_at || '2099-12-31',
       brokerage_name: ap.brokerage_name || 'Pending',
-      brokerage_address: ap.brokerage_address || null,
+      brokerage_address: ap.brokerage_address || '',
       broker_name: ap.broker_name || 'Pending',
       broker_email: ap.broker_email || user.email,
-      broker_phone: ap.broker_phone || null,
+      broker_phone: ap.broker_phone || '',
     };
     const { error: insErr } = await client.from('agents').insert(row);
     if (insErr) {
