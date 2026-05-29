@@ -115,9 +115,9 @@
     if (!root) return;
     root.innerHTML = [
       '<div class="aari-hdr">',
-      '  <a href="/" class="aari-hdr-back" aria-label="Back to website">',
+      '  <a href="/briefing.html" class="aari-hdr-back" aria-label="Where to?">',
       '    <span class="arrow" aria-hidden="true">&larr;</span>',
-      '    <span>Back to website</span>',
+      '    <span>Where to?</span>',
       '  </a>',
       '  <div class="aari-hdr-viewas" id="aari-hdr-viewas"></div>',
       '  <div class="aari-hdr-right">',
