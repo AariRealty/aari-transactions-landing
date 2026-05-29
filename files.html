@@ -1,0 +1,650 @@
+<!doctype html>
+<!--
+  ============================================================================
+  /files.html · Aari Transactions · single-purpose Transaction Management page
+  ============================================================================
+  Replaces /tc-cockpit.html for TC/broker file work. One page, one purpose:
+  see every active file, drag through stages, click into the playbook to
+  send the right email at the right time.
+
+  Phase 1 (this build):
+    - Auth gate · TC + broker only
+    - 4 KPI cards · Needs you / Active / Closing this week / YTD closed
+    - Transaction Pipeline kanban · 7 stages · drag-drop persists to
+      public.files.transaction_stage
+    - Click card → Email Playbook modal (stage-aware send + tracking)
+    - Role-aware fetch · TC sees own files (assigned_tc_id = me),
+      broker sees all
+    - + New file button · opens the intake flow at /agent-submit.html
+
+  Future phases (NOT in this build):
+    - Documents tracker per file
+    - Per-file deadline calendar
+    - Notifications routing
+    - Broker oversight filters
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Files &middot; Aari Transactions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@500&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Inter',-apple-system,system-ui,sans-serif;background:#fafafa;color:#0f0f0f;-webkit-font-smoothing:antialiased}
+  a{color:inherit}
+
+  /* Auth gate */
+  .gate{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .gate-card{max-width:420px;background:#fff;border:0.5px solid rgba(15,15,15,0.12);border-radius:14px;padding:32px 28px;text-align:center}
+  .gate-card h2{font-family:'Playfair Display',Georgia,serif;font-size:22px;font-weight:500;margin:0 0 10px}
+  .gate-card p{font-size:13px;color:#666;line-height:1.55;margin:0 0 16px}
+  .gate-card .btn{display:inline-block;background:#0f0f0f;color:#fff;text-decoration:none;padding:9px 18px;border-radius:7px;font-size:12.5px;font-weight:500}
+
+  /* Main */
+  main.page{max-width:1180px;margin:0 auto;padding:24px 22px 48px}
+
+  .page-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+  .page-title{font-family:'Playfair Display',Georgia,serif;font-size:24px;font-weight:500;letter-spacing:-0.3px;margin:0}
+  .page-head-right{display:flex;gap:8px;align-items:center}
+  .btn-search{background:transparent;border:0.5px solid rgba(15,15,15,0.3);color:#0f0f0f;padding:7px 13px;border-radius:7px;font-size:12px;cursor:pointer;font-family:inherit}
+  .btn-search:hover{background:#f3f3f3}
+  .btn-newfile{background:#0f0f0f;color:#fff;border:none;padding:7px 14px;border-radius:7px;font-size:12px;font-weight:500;cursor:pointer;font-family:inherit}
+  .btn-newfile:hover{background:#2a2a2a}
+
+  /* Broker TC filter */
+  .tc-filter{display:flex;align-items:center;gap:6px;margin-bottom:14px;font-size:11.5px}
+  .tc-filter label{color:#666}
+  .tc-filter select{padding:5px 8px;border-radius:6px;border:0.5px solid rgba(15,15,15,0.3);background:#fff;font-size:12px;font-family:inherit;cursor:pointer}
+
+  /* KPIs */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+  .kpi{background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:10px;padding:14px 16px}
+  .kpi-lbl{font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:#888;font-weight:500;margin:0 0 4px}
+  .kpi-val{font-family:'Playfair Display',Georgia,serif;font-size:22px;font-weight:500;margin:0;line-height:1.1}
+  .kpi-val.danger{color:#c44b3b}
+
+  /* Kanban */
+  .kanban-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+  .kanban-title{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#666;font-weight:500;margin:0}
+  .kanban-hint{font-size:10.5px;color:#888;margin:0}
+  .kanban{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}
+  .lane{background:#fff;border:0.5px solid rgba(15,15,15,0.08);border-radius:8px;padding:10px;min-height:160px}
+  .lane.drag-over{background:#f3f3f3;outline:1.5px dashed #0f0f0f;outline-offset:-2px}
+  .lane-head{border-left:3px solid #0f0f0f;padding:2px 0 6px 8px;margin-bottom:10px}
+  .lane[data-stage="new"] .lane-head{border-left-color:#888}
+  .lane[data-stage="under_contract"] .lane-head{border-left-color:#0f0f0f}
+  .lane[data-stage="inspection"] .lane-head{border-left-color:#444}
+  .lane[data-stage="remedy"] .lane-head{border-left-color:#666}
+  .lane[data-stage="appraisal"] .lane-head{border-left-color:#333}
+  .lane[data-stage="ctc"] .lane-head{border-left-color:#0f0f0f}
+  .lane[data-stage="closed"] .lane-head{border-left-color:#b4b2a9}
+  .lane-name{font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:#0f0f0f;font-weight:600;margin:0}
+  .lane-sub{font-size:9.5px;color:#888;margin:1px 0 0;line-height:1.3}
+  .lane-count{font-size:10px;color:#0f0f0f;margin:4px 0 0;font-weight:500}
+  .lane-count.danger{color:#c44b3b}
+  .lane-body{display:flex;flex-direction:column;gap:6px}
+  .card{background:#fff;border:0.5px solid rgba(15,15,15,0.12);border-radius:7px;padding:9px 10px;cursor:grab;transition:transform .12s,box-shadow .12s;user-select:none}
+  .card:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,0.05)}
+  .card.urgent{border-left:3px solid #c44b3b}
+  .card-addr{font-size:11.5px;font-weight:500;color:#0f0f0f;margin:0 0 3px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card-meta{font-size:10px;color:#666;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card-foot{margin-top:4px;font-size:9.5px;color:#888}
+  .card-foot.urgent{color:#c44b3b;font-weight:500}
+  .lane[data-stage="closed"] .card{background:#fafafa;opacity:0.72}
+  .lane-empty{padding:14px 6px;text-align:center;color:#bbb;font-size:10.5px;font-style:italic}
+
+  @media(max-width:1100px){.kanban{grid-template-columns:repeat(4,1fr)} .kpis{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:680px){.kanban{grid-template-columns:repeat(2,1fr)} .kpis{grid-template-columns:1fr 1fr}}
+  @media(max-width:480px){.kanban{grid-template-columns:1fr}}
+
+  /* Playbook modal · matches the one in tc-cockpit.html so users see the
+     exact same pattern across pages. Reused from May 2026 build. */
+  body.tpb-open{overflow:hidden!important}
+  .tpb-backdrop{position:fixed;inset:0;background:rgba(15,15,15,0.55);backdrop-filter:blur(2px);z-index:9990;display:none}
+  body.tpb-open .tpb-backdrop{display:block}
+  .tpb-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(640px,92vw);max-height:86vh;overflow-y:auto;background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,0.25);z-index:9991;display:none;font-family:'Inter',system-ui,sans-serif}
+  body.tpb-open .tpb-modal{display:block}
+  .tpb-head{padding:18px 22px;border-bottom:0.5px solid rgba(15,15,15,0.10);position:relative}
+  .tpb-close{position:absolute;top:14px;right:14px;background:transparent;border:none;font-size:24px;color:#5f5e5a;cursor:pointer;padding:4px 10px;border-radius:6px;line-height:1;font-family:inherit}
+  .tpb-close:hover{background:#f3f3f3;color:#0f0f0f}
+  .tpb-eb{font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#888;font-weight:500;margin:0 0 4px}
+  .tpb-addr{font-family:'Playfair Display',Georgia,serif;font-size:20px;font-weight:500;margin:0 0 4px;color:#0f0f0f;letter-spacing:-0.2px;padding-right:28px}
+  .tpb-meta{font-size:12px;color:#666;margin:0}
+  .tpb-body{padding:18px 22px;background:#fafafa}
+  .tpb-section-eb{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#0f0f0f;font-weight:600;margin:0 0 12px}
+  .tpb-email{background:#fff;border:0.5px solid rgba(15,15,15,0.12);border-radius:8px;padding:14px 16px;margin-bottom:8px}
+  .tpb-email-row{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+  .tpb-email-info{flex:1;min-width:0}
+  .tpb-email-name{font-size:13px;font-weight:500;margin:0 0 3px;color:#0f0f0f}
+  .tpb-email-sub{font-size:11px;color:#888;margin:0}
+  .tpb-send{background:#0f0f0f;color:#fff;border:none;padding:7px 14px;border-radius:6px;font-size:11.5px;font-weight:500;cursor:pointer;font-family:inherit;flex-shrink:0}
+  .tpb-send:hover{background:#2a2a2a}
+  .tpb-send:disabled{background:#888;cursor:not-allowed}
+  .tpb-sent{display:flex;align-items:center;gap:8px;flex-shrink:0}
+  .tpb-sent-ts{font-size:10.5px;color:#1f6f3b;white-space:nowrap}
+  .tpb-resend{background:transparent;border:0.5px solid #ccc;color:#888;padding:6px 12px;border-radius:6px;font-size:11px;cursor:pointer;font-family:inherit}
+  .tpb-resend:hover{border-color:#0f0f0f;color:#0f0f0f}
+  .tpb-email.sent{opacity:0.7}
+  .tpb-next-section{padding:14px 22px;background:#fff;border-top:0.5px solid rgba(15,15,15,0.08)}
+  .tpb-next-eb{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#888;font-weight:500;margin:0 0 8px}
+  .tpb-next-list{font-size:12px;color:#666;line-height:1.7;margin:0;padding-left:18px}
+  .tpb-empty{padding:28px 6px;text-align:center;color:#888;font-size:12px}
+</style>
+</head>
+<body>
+
+<!-- AUTH GATE -->
+<div class="gate" id="auth-gate" style="display:none">
+  <div class="gate-card">
+    <h2 id="gate-title">Loading…</h2>
+    <p id="gate-msg">Checking access.</p>
+    <a id="gate-cta" href="/login.html" class="btn" style="display:none">Sign in</a>
+  </div>
+</div>
+
+<!-- Shared chrome -->
+<div id="aari-header" data-aari-view="files" data-aari-show-submit="no"></div>
+<script src="/js/aari-header.js" defer></script>
+<script src="/js/aari-banner.js" defer></script>
+
+<main class="page" id="page-main" style="display:none">
+
+  <div class="page-head">
+    <h1 class="page-title">Files</h1>
+    <div class="page-head-right">
+      <button type="button" class="btn-search" id="btn-search">Search</button>
+      <button type="button" class="btn-newfile" id="btn-newfile">+ New file</button>
+    </div>
+  </div>
+
+  <!-- Broker only · filter by TC -->
+  <div class="tc-filter" id="tc-filter" style="display:none">
+    <label for="tc-filter-select">Viewing:</label>
+    <select id="tc-filter-select">
+      <option value="all">All TCs</option>
+    </select>
+  </div>
+
+  <!-- KPIs -->
+  <div class="kpis">
+    <div class="kpi"><p class="kpi-lbl">Needs you</p><p class="kpi-val" id="kpi-needs">0</p></div>
+    <div class="kpi"><p class="kpi-lbl">Active</p><p class="kpi-val" id="kpi-active">0</p></div>
+    <div class="kpi"><p class="kpi-lbl">Closing this week</p><p class="kpi-val" id="kpi-closing">0</p></div>
+    <div class="kpi"><p class="kpi-lbl">YTD closed</p><p class="kpi-val" id="kpi-ytd">0</p></div>
+  </div>
+
+  <!-- Kanban -->
+  <div class="kanban-head">
+    <p class="kanban-title">Transaction Pipeline</p>
+    <p class="kanban-hint">Drag cards between stages. Click any card for the email playbook.</p>
+  </div>
+  <div class="kanban" id="kanban">
+    <div class="lane" data-stage="new">
+      <div class="lane-head"><p class="lane-name">NEW</p><p class="lane-sub">awaiting TC</p><p class="lane-count" id="count-new">0</p></div>
+      <div class="lane-body" id="lane-new"></div>
+    </div>
+    <div class="lane" data-stage="under_contract">
+      <div class="lane-head"><p class="lane-name">UNDER CONTRACT</p><p class="lane-sub">signed, set up</p><p class="lane-count" id="count-under_contract">0</p></div>
+      <div class="lane-body" id="lane-under_contract"></div>
+    </div>
+    <div class="lane" data-stage="inspection">
+      <div class="lane-head"><p class="lane-name">INSPECTION</p><p class="lane-sub">scheduled / done</p><p class="lane-count" id="count-inspection">0</p></div>
+      <div class="lane-body" id="lane-inspection"></div>
+    </div>
+    <div class="lane" data-stage="remedy">
+      <div class="lane-head"><p class="lane-name">REMEDY</p><p class="lane-sub">repairs / credits</p><p class="lane-count" id="count-remedy">0</p></div>
+      <div class="lane-body" id="lane-remedy"></div>
+    </div>
+    <div class="lane" data-stage="appraisal">
+      <div class="lane-head"><p class="lane-name">APPRAISAL</p><p class="lane-sub">ordered / in</p><p class="lane-count" id="count-appraisal">0</p></div>
+      <div class="lane-body" id="lane-appraisal"></div>
+    </div>
+    <div class="lane" data-stage="ctc">
+      <div class="lane-head"><p class="lane-name">CLEAR TO CLOSE</p><p class="lane-sub">CD sent / walk</p><p class="lane-count" id="count-ctc">0</p></div>
+      <div class="lane-body" id="lane-ctc"></div>
+    </div>
+    <div class="lane" data-stage="closed">
+      <div class="lane-head"><p class="lane-name">CLOSED</p><p class="lane-sub">funded, paid</p><p class="lane-count" id="count-closed">0</p></div>
+      <div class="lane-body" id="lane-closed"></div>
+    </div>
+  </div>
+
+</main>
+
+<!-- Email Playbook modal -->
+<div class="tpb-backdrop" id="tpb-backdrop"></div>
+<div class="tpb-modal" id="tpb-modal" role="dialog" aria-modal="true" aria-labelledby="tpb-addr">
+  <div class="tpb-head">
+    <button type="button" class="tpb-close" id="tpb-close" aria-label="Close">&times;</button>
+    <p class="tpb-eb" id="tpb-stage">&nbsp;</p>
+    <p class="tpb-addr" id="tpb-addr">&nbsp;</p>
+    <p class="tpb-meta" id="tpb-meta">&nbsp;</p>
+  </div>
+  <div class="tpb-body">
+    <p class="tpb-section-eb">What to send next</p>
+    <div id="tpb-emails"></div>
+  </div>
+  <div class="tpb-next-section">
+    <p class="tpb-next-eb" id="tpb-next-eb">Coming up next stage</p>
+    <ul class="tpb-next-list" id="tpb-next-list"></ul>
+  </div>
+</div>
+
+<!-- Scripts -->
+<script src="/js/supabase-config.js"></script>
+<script src="/js/auth.js"></script>
+<script>
+(function(){
+  'use strict';
+
+  // ============== STAGE CONFIG ==============
+  const STAGES = ['new','under_contract','inspection','remedy','appraisal','ctc','closed'];
+  const STAGE_LABELS = {
+    'new':'New', 'under_contract':'Under contract', 'inspection':'Inspection',
+    'remedy':'Remedy', 'appraisal':'Appraisal', 'ctc':'Clear to close', 'closed':'Closed',
+  };
+
+  // ============== EMAIL PLAYBOOK (per stage) ==============
+  const PLAYBOOK = {
+    'new': [
+      { id:'intake_confirm',         label:'Intake confirmation',          to:'agent', fn:'send-intake-confirmation' },
+      { id:'tc_assignment_notice',   label:'TC assignment notice',         to:'agent', fn:'send-tc-assignment' },
+    ],
+    'under_contract': [
+      { id:'tc_new_file_welcome',    label:'TC welcome · file accepted',   to:'agent', fn:'send-tc-new-file' },
+      { id:'tc_acceptance_to_agent', label:'TC acceptance notice',         to:'agent', fn:'send-tc-acceptance-to-agent' },
+      { id:'kickoff_status_ping',    label:'Kickoff status ping',          to:'agent', fn:'send-tc-status-ping' },
+    ],
+    'inspection': [
+      { id:'inspection_scheduled',   label:'Inspection scheduled notice',  to:'agent', fn:'send-tc-status-ping' },
+      { id:'inspection_report_up',   label:'Inspection report uploaded',   to:'agent', fn:'send-file-notification' },
+      { id:'repair_request_ack',     label:'Repair request acknowledged',  to:'agent', fn:'send-tc-message' },
+    ],
+    'remedy': [
+      { id:'remedy_period_status',   label:'Remedy period status update',  to:'agent', fn:'send-tc-status-ping' },
+      { id:'repair_addendum_filed',  label:'Repair addendum filed',        to:'agent', fn:'send-file-notification' },
+    ],
+    'appraisal': [
+      { id:'appraisal_ordered',      label:'Appraisal ordered notice',     to:'agent', fn:'send-tc-status-ping' },
+      { id:'appraisal_status',       label:'Appraisal status update',      to:'agent', fn:'send-tc-status-ping' },
+      { id:'appraisal_cleared',      label:'Appraisal cleared notice',     to:'agent', fn:'send-tc-status-ping' },
+    ],
+    'ctc': [
+      { id:'pre_close_checklist',    label:'Pre-close checklist',          to:'agent', fn:'send-checklist' },
+      { id:'cd_received_notice',     label:'CD received notice',           to:'agent', fn:'send-tc-status-ping' },
+      { id:'final_walk_scheduled',   label:'Final walk scheduled',         to:'agent', fn:'send-tc-status-ping' },
+    ],
+    'closed': [
+      { id:'closing_confirmation',   label:'Closing confirmation',         to:'agent', fn:'send-tc-status-ping' },
+      { id:'post_close_thank_you',   label:'Post-close thank you',         to:'agent', fn:'send-tc-message' },
+    ],
+  };
+
+  // ============== STATE ==============
+  let _client = null;
+  let _profile = null;       // current user's agents row
+  let _files = [];           // raw files visible to this user
+  let _tcsById = {};         // for filtering
+  let _sendsByFile = {};     // { file_id: { template_id: send_row } }
+  let _tcFilter = 'all';     // broker filter
+
+  // ============== INIT ==============
+  async function init(){
+    if(!window.AariAuth){ return showGate('Sign in required.', 'Please sign in.', '/login.html'); }
+    _client = await window.AariAuth.ensureClient();
+    const session = await window.AariAuth.getCurrentSession();
+    if(!session){ return showGate('Sign in required.', 'Sign in with your Aari account.', '/login.html'); }
+    _profile = await window.AariAuth.getAgentProfile();
+    if(!_profile){ return showGate('Profile missing.', 'Contact hello@aaritransactions.com.', null); }
+    const role = (_profile.role || 'agent').toLowerCase();
+    if(role !== 'tc' && role !== 'broker'){
+      return showGate('Staff access only.', 'This page is for TCs and brokers. Agents use /portal.html.', '/portal.html');
+    }
+    document.getElementById('auth-gate').style.display = 'none';
+    document.getElementById('page-main').style.display = 'block';
+    if(role === 'broker'){ document.getElementById('tc-filter').style.display = 'flex'; }
+    wireUi();
+    await loadAndRender();
+  }
+
+  function showGate(title, msg, ctaHref){
+    const gate = document.getElementById('auth-gate');
+    document.getElementById('gate-title').textContent = title;
+    document.getElementById('gate-msg').textContent = msg;
+    const cta = document.getElementById('gate-cta');
+    if(ctaHref){ cta.href = ctaHref; cta.style.display='inline-block'; cta.textContent = (ctaHref==='/portal.html'?'Go to agent portal':'Sign in'); }
+    else { cta.style.display='none'; }
+    gate.style.display='flex';
+  }
+
+  // ============== LOAD ==============
+  async function loadAndRender(){
+    if(!_client || !_profile) return;
+    const role = (_profile.role || '').toLowerCase();
+    let q = _client.from('files').select('*').order('created_at',{ascending:false});
+    if(role === 'tc'){
+      q = q.eq('assigned_tc_id', _profile.id);
+    } else if(role === 'broker' && _tcFilter !== 'all'){
+      q = q.eq('assigned_tc_id', _tcFilter);
+    }
+    const { data: files } = await q;
+    _files = files || [];
+    // Pull TCs for broker filter dropdown (cached after first call)
+    if(role === 'broker' && Object.keys(_tcsById).length === 0){
+      const { data: tcs } = await _client.from('agents').select('id, first_name, last_name').eq('role','tc');
+      (tcs || []).forEach(t => { _tcsById[t.id] = t; });
+      renderTcFilter();
+    }
+    // Pull email sends for the visible files
+    if(_files.length){
+      const ids = _files.map(f => f.id);
+      const { data: sends } = await _client.from('file_email_sends')
+        .select('file_id, template_id, sent_at, recipient_email, status')
+        .in('file_id', ids).eq('status','succeeded')
+        .order('sent_at',{ascending:false});
+      _sendsByFile = {};
+      (sends || []).forEach(s => {
+        _sendsByFile[s.file_id] = _sendsByFile[s.file_id] || {};
+        if(!_sendsByFile[s.file_id][s.template_id]){ _sendsByFile[s.file_id][s.template_id] = s; }
+      });
+    } else { _sendsByFile = {}; }
+    renderKpis();
+    renderKanban();
+  }
+
+  function renderTcFilter(){
+    const sel = document.getElementById('tc-filter-select');
+    if(!sel) return;
+    const tcs = Object.values(_tcsById);
+    sel.innerHTML = '<option value="all">All TCs</option>' + tcs.map(t => {
+      const name = ((t.first_name||'')+' '+(t.last_name||'')).trim() || 'Unnamed TC';
+      return '<option value="'+esc(t.id)+'">'+esc(name)+'</option>';
+    }).join('');
+  }
+
+  // ============== STAGE DERIVATION ==============
+  function deriveStage(f){
+    if(f && f.transaction_stage && STAGES.indexOf(f.transaction_stage)>=0) return f.transaction_stage;
+    if(!f) return 'new';
+    if(f.status === 'closed' || f.status === 'archived') return 'closed';
+    if(f.status === 'intake_received' && !f.tc_accepted_at) return 'new';
+    if(f.status === 'awaiting_tc_acceptance') return 'new';
+    if(f.closing_date){
+      const today = new Date(); today.setHours(0,0,0,0);
+      const close = new Date(String(f.closing_date).length===10 ? (f.closing_date+'T00:00:00') : f.closing_date);
+      const days = Math.round((close - today)/86400000);
+      if(days < 0) return 'ctc';
+      if(days <= 5) return 'ctc';
+      if(days <= 14) return 'appraisal';
+      if(days <= 21) return 'inspection';
+    }
+    return 'under_contract';
+  }
+
+  function daysToClose(f){
+    if(!f || !f.closing_date) return null;
+    const today = new Date(); today.setHours(0,0,0,0);
+    const close = new Date(String(f.closing_date).length===10 ? (f.closing_date+'T00:00:00') : f.closing_date);
+    return Math.round((close - today)/86400000);
+  }
+
+  // ============== RENDER ==============
+  function renderKpis(){
+    let needs = 0, active = 0, closingWk = 0, ytd = 0;
+    _files.forEach(f => {
+      const stage = deriveStage(f);
+      const d = daysToClose(f);
+      if(stage === 'closed') ytd++;
+      else {
+        active++;
+        if(d != null && d >= 0 && d <= 7) closingWk++;
+        if(d != null && d < 0) needs++;
+        else if(d != null && d <= 2) needs++;
+      }
+    });
+    const needsEl = document.getElementById('kpi-needs');
+    needsEl.textContent = needs;
+    needsEl.classList.toggle('danger', needs > 0);
+    document.getElementById('kpi-active').textContent = active;
+    document.getElementById('kpi-closing').textContent = closingWk;
+    document.getElementById('kpi-ytd').textContent = ytd;
+  }
+
+  function renderKanban(){
+    const buckets = {}; STAGES.forEach(s => { buckets[s] = []; });
+    _files.forEach(f => {
+      const s = deriveStage(f);
+      (buckets[s] || buckets.new).push(f);
+    });
+    STAGES.forEach(stage => {
+      const laneEl = document.getElementById('lane-'+stage);
+      const countEl = document.getElementById('count-'+stage);
+      if(countEl){
+        countEl.textContent = buckets[stage].length;
+        const urgent = (stage === 'ctc' || stage === 'inspection') && buckets[stage].some(f => {
+          const d = daysToClose(f);
+          return d != null && d <= 2;
+        });
+        countEl.classList.toggle('danger', urgent);
+      }
+      if(!laneEl) return;
+      if(buckets[stage].length === 0){
+        laneEl.innerHTML = '<div class="lane-empty">Empty</div>';
+        return;
+      }
+      laneEl.innerHTML = buckets[stage].map(cardHtml).join('');
+    });
+    wireDragDrop();
+    wireCardClicks();
+  }
+
+  function cardHtml(f){
+    const addr = f.property_address || 'Untitled file';
+    const side = f.client_type === 'buyer' ? 'Buy' : (f.client_type === 'seller' ? 'Sell' : '');
+    const meta = [side, f.client_name || ''].filter(Boolean).join(' · ');
+    const d = daysToClose(f);
+    let foot = '', footCls = '';
+    if(d != null && d < 0){ foot = 'Overdue'; footCls = ' urgent'; }
+    else if(d === 0){ foot = 'Closing today'; footCls = ' urgent'; }
+    else if(d != null && d <= 2){ foot = d + ' day' + (d===1?'':'s') + ' · needs you'; footCls = ' urgent'; }
+    else if(d != null && d <= 14){ foot = 'Closes in ' + d + ' days'; }
+    else if(deriveStage(f) === 'closed' && f.closing_date){ foot = 'Closed ' + fmtDate(f.closing_date); }
+    const urgentCls = footCls ? ' urgent' : '';
+    return '<div class="card'+urgentCls+'" draggable="true" data-file-id="'+esc(f.id)+'">' +
+      '<p class="card-addr">'+esc(addr)+'</p>' +
+      (meta ? '<p class="card-meta">'+esc(meta)+'</p>' : '') +
+      (foot ? '<p class="card-foot'+footCls+'">'+esc(foot)+'</p>' : '') +
+    '</div>';
+  }
+
+  // ============== DRAG-DROP ==============
+  let _draggedId = null;
+  function wireDragDrop(){
+    document.querySelectorAll('.card').forEach(card => {
+      card.addEventListener('dragstart', (e) => {
+        _draggedId = card.getAttribute('data-file-id');
+        try { e.dataTransfer.setData('text/plain', _draggedId); e.dataTransfer.effectAllowed = 'move'; } catch(_){}
+        card.style.opacity = '0.45';
+      });
+      card.addEventListener('dragend', () => {
+        card.style.opacity = '';
+        document.querySelectorAll('.lane.drag-over').forEach(l => l.classList.remove('drag-over'));
+      });
+    });
+    document.querySelectorAll('.lane').forEach(lane => {
+      lane.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        try { e.dataTransfer.dropEffect = 'move'; } catch(_){}
+        lane.classList.add('drag-over');
+      });
+      lane.addEventListener('dragleave', () => lane.classList.remove('drag-over'));
+      lane.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        lane.classList.remove('drag-over');
+        const newStage = lane.getAttribute('data-stage');
+        const fid = _draggedId; _draggedId = null;
+        if(!fid || !newStage) return;
+        const file = _files.find(f => f.id === fid);
+        if(!file) return;
+        file.transaction_stage = newStage;
+        renderKanban();
+        try {
+          await _client.from('files').update({ transaction_stage: newStage }).eq('id', fid);
+        } catch(err){ console.warn('[files] stage save failed', err); }
+      });
+    });
+  }
+
+  // ============== CARD CLICKS · open playbook ==============
+  function wireCardClicks(){
+    document.querySelectorAll('.card').forEach(card => {
+      let dragMoved = false;
+      card.addEventListener('mousedown', () => { dragMoved = false; });
+      card.addEventListener('dragstart', () => { dragMoved = true; });
+      card.addEventListener('click', () => {
+        if(dragMoved){ dragMoved = false; return; }
+        const fid = card.getAttribute('data-file-id');
+        const file = _files.find(f => f.id === fid);
+        if(file) openPlaybook(file);
+      });
+    });
+  }
+
+  // ============== PLAYBOOK ==============
+  function openPlaybook(file){
+    document.body.classList.add('tpb-open');
+    renderPlaybook(file);
+  }
+  function closePlaybook(){ document.body.classList.remove('tpb-open'); }
+
+  function renderPlaybook(file){
+    const stage = deriveStage(file);
+    document.getElementById('tpb-stage').textContent = STAGE_LABELS[stage] || stage;
+    document.getElementById('tpb-addr').textContent = file.property_address || 'Untitled file';
+    const parts = [];
+    if(file.client_name) parts.push(file.client_name);
+    if(file.client_type === 'buyer') parts.push('Buy-side');
+    else if(file.client_type === 'seller') parts.push('Sell-side');
+    if(file.purchase_price_cents) parts.push('$' + Math.round(file.purchase_price_cents/100000) + 'K');
+    document.getElementById('tpb-meta').textContent = parts.join(' · ');
+
+    const sends = _sendsByFile[file.id] || {};
+    const list = PLAYBOOK[stage] || [];
+    const emailsEl = document.getElementById('tpb-emails');
+    if(!list.length){
+      emailsEl.innerHTML = '<div class="tpb-empty">No emails recommended at this stage.</div>';
+    } else {
+      emailsEl.innerHTML = list.map(e => {
+        const sent = sends[e.id];
+        const tsStr = sent ? new Date(sent.sent_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
+        return '<div class="tpb-email'+(sent?' sent':'')+'">' +
+          '<div class="tpb-email-row">' +
+            '<div class="tpb-email-info">' +
+              '<p class="tpb-email-name">'+esc(e.label)+'</p>' +
+              '<p class="tpb-email-sub">To: '+esc(e.to)+' &middot; Template: '+esc(e.fn)+'</p>' +
+            '</div>' +
+            (sent
+              ? '<div class="tpb-sent"><span class="tpb-sent-ts">&check; Sent '+esc(tsStr)+'</span><button type="button" class="tpb-resend" data-resend="'+esc(e.id)+'">Resend</button></div>'
+              : '<button type="button" class="tpb-send" data-send="'+esc(e.id)+'">Send</button>') +
+          '</div>' +
+        '</div>';
+      }).join('');
+      emailsEl.querySelectorAll('[data-send]').forEach(btn => btn.addEventListener('click', () => sendEmail(file, stage, list.find(e => e.id === btn.getAttribute('data-send')), btn, false)));
+      emailsEl.querySelectorAll('[data-resend]').forEach(btn => btn.addEventListener('click', () => {
+        if(!confirm('Resend this email? Recipient will get it again.')) return;
+        sendEmail(file, stage, list.find(e => e.id === btn.getAttribute('data-resend')), btn, true);
+      }));
+    }
+
+    // Next stage preview
+    const nextStage = STAGES[STAGES.indexOf(stage)+1];
+    document.getElementById('tpb-next-eb').textContent = nextStage ? ('Coming up · ' + (STAGE_LABELS[nextStage] || nextStage)) : 'Pipeline complete';
+    const nextList = nextStage ? (PLAYBOOK[nextStage] || []) : [];
+    document.getElementById('tpb-next-list').innerHTML = nextList.length
+      ? nextList.map(e => '<li>'+esc(e.label)+'</li>').join('')
+      : '<li style="list-style:none;color:#aaa;padding-left:0">Nothing queued.</li>';
+  }
+
+  async function sendEmail(file, stage, email, btn, isResend){
+    if(!file || !email) return;
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    let ok = false, err = '';
+    try {
+      const session = (await _client.auth.getSession()).data.session;
+      const url = 'https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/' + email.fn;
+      const r = await fetch(url, {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'Authorization': 'Bearer ' + ((session && session.access_token) || '') },
+        body: JSON.stringify({ file_id: file.id, template_id: email.id, stage: stage, resend: !!isResend }),
+      });
+      ok = r.ok;
+      if(!r.ok){ try { err = (await r.text()).slice(0,200); } catch(_){} }
+    } catch(e){ err = (e && e.message) || 'send_failed'; }
+    try {
+      const { data:{ user } } = await _client.auth.getUser();
+      await _client.from('file_email_sends').insert({
+        file_id: file.id, template_id: email.id, stage: stage,
+        sent_by: user ? user.id : null,
+        recipient_email: file.client_email || null,
+        recipient_role: email.to,
+        status: ok ? 'succeeded' : 'failed',
+        error_message: ok ? null : err.slice(0,200),
+      });
+    } catch(_){}
+    // Refresh sends cache for this file
+    _sendsByFile[file.id] = _sendsByFile[file.id] || {};
+    if(ok){
+      _sendsByFile[file.id][email.id] = { sent_at: new Date().toISOString(), template_id: email.id };
+    }
+    renderPlaybook(file);
+    if(!ok){ btn.disabled = false; btn.textContent = orig; alert('Send failed: ' + (err || 'unknown')); }
+  }
+
+  // ============== UI WIRING ==============
+  function wireUi(){
+    document.getElementById('tpb-close').addEventListener('click', closePlaybook);
+    document.getElementById('tpb-backdrop').addEventListener('click', closePlaybook);
+    document.addEventListener('keydown', (e) => {
+      if((e.key==='Escape'||e.key==='Esc') && document.body.classList.contains('tpb-open')) closePlaybook();
+    });
+    document.getElementById('btn-newfile').addEventListener('click', () => {
+      window.location.href = '/agent-submit.html';
+    });
+    document.getElementById('btn-search').addEventListener('click', () => {
+      const q = prompt('Search files by address or client name:');
+      if(!q) return;
+      const norm = q.toLowerCase();
+      const matches = _files.filter(f =>
+        (f.property_address||'').toLowerCase().includes(norm) ||
+        (f.client_name||'').toLowerCase().includes(norm)
+      );
+      if(!matches.length){ alert('No files match "' + q + '".'); return; }
+      if(matches.length === 1){ openPlaybook(matches[0]); return; }
+      const choice = prompt('Multiple matches:\n' + matches.slice(0,10).map((m,i) => (i+1)+'. '+(m.property_address||'(no address)')).join('\n') + '\n\nType the number to open:');
+      const idx = parseInt(choice,10) - 1;
+      if(matches[idx]) openPlaybook(matches[idx]);
+    });
+    const sel = document.getElementById('tc-filter-select');
+    if(sel){ sel.addEventListener('change', (e) => { _tcFilter = e.target.value; loadAndRender(); }); }
+  }
+
+  // ============== UTIL ==============
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+  function fmtDate(d){ try { const dt = new Date(String(d).length===10?(d+'T12:00:00'):d); return dt.toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(_){ return ''; } }
+
+  // Boot when auth.js is ready
+  function boot(){
+    if(window.AariAuth && window.AariAuth.ensureClient){ init(); }
+    else { setTimeout(boot, 80); }
+  }
+  boot();
+})();
+</script>
+
+</body>
+</html>
