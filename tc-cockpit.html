@@ -1412,7 +1412,147 @@
     window.AariAuth.getCurrentSession().then(s => { if(s) loadAndRenderAvailability(); });
   }
 
+  // ============== TRANSACTION PIPELINE KANBAN ==============
+  // Stages map to columns. If a file has file.transaction_stage we use it;
+  // otherwise we derive from status / dates with safe defaults.
+  const TXN_STAGES = ['new','under_contract','inspection','remedy','appraisal','ctc','closed'];
+
+  function txnDeriveStage(f){
+    if(f && f.transaction_stage && TXN_STAGES.indexOf(f.transaction_stage) >= 0) return f.transaction_stage;
+    if(!f) return 'new';
+    if(f.status === 'closed' || f.status === 'archived') return 'closed';
+    if(f.status === 'intake_received' && !f.tc_accepted_at) return 'new';
+    if(f.status === 'awaiting_tc_acceptance') return 'new';
+    // Days-to-close heuristic for fallback
+    if(f.closing_date){
+      const today = new Date(); today.setHours(0,0,0,0);
+      const close = new Date(String(f.closing_date).length === 10 ? (f.closing_date + 'T00:00:00') : f.closing_date);
+      const days = Math.round((close - today) / 86400000);
+      if(days < 0) return 'ctc';
+      if(days <= 5) return 'ctc';
+      if(days <= 14) return 'appraisal';
+      if(days <= 21) return 'inspection';
+    }
+    return 'under_contract';
+  }
+
+  function txnUrgentLabel(f){
+    if(!f || !f.closing_date) return null;
+    const today = new Date(); today.setHours(0,0,0,0);
+    const close = new Date(String(f.closing_date).length === 10 ? (f.closing_date + 'T00:00:00') : f.closing_date);
+    const days = Math.round((close - today) / 86400000);
+    if(days < 0) return { text: 'Overdue', urgent: true };
+    if(days === 0) return { text: 'Closing today', urgent: true };
+    if(days <= 2) return { text: days + ' day' + (days===1?'':'s') + ' to close', urgent: true };
+    if(days <= 7) return { text: days + ' days to close', urgent: false };
+    return null;
+  }
+
+  function txnCardHtml(f){
+    const addr = (f.property_address || f.address || 'Untitled file');
+    const agentName = (f.agent_name || f.agent_first_name || '');
+    const side = f.client_type === 'buyer' ? 'Buy' : (f.client_type === 'seller' ? 'Sell' : '');
+    const meta = [agentName, side].filter(Boolean).join(' · ');
+    const urgent = txnUrgentLabel(f);
+    const urgentCls = (urgent && urgent.urgent) ? ' urgent' : '';
+    const footCls = (urgent && urgent.urgent) ? ' urgent' : '';
+    const foot = urgent ? '<p class="txn-card-foot' + footCls + '">' + urgent.text + '</p>' : '';
+    return '<div class="txn-card' + urgentCls + '" draggable="true" data-file-id="' + (f.id || '') + '">' +
+      '<p class="txn-card-addr">' + escapeHtmlSafe(addr) + '</p>' +
+      (meta ? '<p class="txn-card-meta">' + escapeHtmlSafe(meta) + '</p>' : '') +
+      foot +
+    '</div>';
+  }
+
+  function escapeHtmlSafe(s){
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function renderTxnKanban(files){
+    const buckets = {};
+    TXN_STAGES.forEach(s => { buckets[s] = []; });
+    (files || []).forEach(f => {
+      const s = txnDeriveStage(f);
+      (buckets[s] || buckets.new).push(f);
+    });
+    TXN_STAGES.forEach(stage => {
+      const laneEl = document.getElementById('txn-lane-' + stage);
+      const countEl = document.getElementById('txn-count-' + stage);
+      if(countEl) countEl.textContent = buckets[stage].length;
+      if(!laneEl) return;
+      if(buckets[stage].length === 0){
+        laneEl.innerHTML = '<div class="txn-lane-empty">Empty</div>';
+        return;
+      }
+      laneEl.innerHTML = buckets[stage].map(txnCardHtml).join('');
+    });
+    wireTxnDragDrop(files);
+  }
+
+  // ----- Drag-drop -----
+  let _txnDraggedId = null;
+
+  function wireTxnDragDrop(files){
+    const cards = document.querySelectorAll('.txn-card');
+    cards.forEach(card => {
+      card.addEventListener('dragstart', (e) => {
+        _txnDraggedId = card.getAttribute('data-file-id');
+        try { e.dataTransfer.setData('text/plain', _txnDraggedId); } catch(_){}
+        try { e.dataTransfer.effectAllowed = 'move'; } catch(_){}
+        card.style.opacity = '0.45';
+      });
+      card.addEventListener('dragend', () => {
+        card.style.opacity = '';
+        document.querySelectorAll('.txn-lane.txn-drag-over').forEach(l => l.classList.remove('txn-drag-over'));
+      });
+      // Click → open file detail (defer to existing file-card click handler if present)
+      card.addEventListener('click', () => {
+        const fid = card.getAttribute('data-file-id');
+        const existing = document.querySelector('.file-card[data-file-id="' + fid + '"] [data-toggle-file]');
+        if(existing) existing.click();
+      });
+    });
+    const lanes = document.querySelectorAll('.txn-lane');
+    lanes.forEach(lane => {
+      lane.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        try { e.dataTransfer.dropEffect = 'move'; } catch(_){}
+        lane.classList.add('txn-drag-over');
+      });
+      lane.addEventListener('dragleave', () => {
+        lane.classList.remove('txn-drag-over');
+      });
+      lane.addEventListener('drop', (e) => {
+        e.preventDefault();
+        lane.classList.remove('txn-drag-over');
+        const newStage = lane.getAttribute('data-stage');
+        const fid = _txnDraggedId;
+        _txnDraggedId = null;
+        if(!fid || !newStage) return;
+        const file = (files || []).find(f => f.id === fid);
+        if(!file) return;
+        file.transaction_stage = newStage;
+        renderTxnKanban(files);
+        // Best-effort persistence: try to write to Supabase if available.
+        // Silently swallow failures so local UI stays responsive.
+        try {
+          if(window.AariAuth && typeof window.AariAuth.ensureClient === 'function'){
+            window.AariAuth.ensureClient().then(client => {
+              if(client && client.from){
+                client.from('files').update({ transaction_stage: newStage }).eq('id', fid).then(() => {}, () => {});
+              }
+            }).catch(() => {});
+          }
+        } catch(_){}
+      });
+    });
+  }
+
   function renderFileList(files){
+    // Render the kanban first so the TC sees the pipeline view at the top.
+    renderTxnKanban(files);
     const host = document.getElementById('mf-list');
     if(!host) return;
     if(!files || files.length === 0){
