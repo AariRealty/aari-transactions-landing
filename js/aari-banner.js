@@ -23,7 +23,7 @@
     { id:'start',    label:'Morning Briefing', href:'/briefing.html',      icon:iconSun(),   match:['/briefing'],                       roles:['agent'] },
     { id:'team',     label:'Run the team',   href:'/broker-cockpit.html', icon:iconUsers(), match:['/broker-cockpit','/tc-cockpit'],   roles:['broker'] },
     { id:'prospecting', label:'Fill the pipeline', href:'/prospecting.html', icon:iconBook(), match:['/prospecting','/bd'], roles:['tc','broker'] },
-    { id:'files',    label:'Move the files', href:'/tc-cockpit.html',     icon:iconFolder(),match:['/tc-cockpit','/pipeline'],         roles:['tc','broker'] },
+    { id:'files',    label:'Move the files', href:'/files.html',          icon:iconFolder(),match:['/files','/tc-cockpit','/pipeline'], roles:['tc','broker'] },
     { id:'portal',   label:'Agent portal',   href:'/portal.html',         icon:iconUpload(),match:['/portal'],                          roles:['agent'] },
   ];
 

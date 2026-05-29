@@ -279,11 +279,11 @@
   // Default landing page per role · used when the user clicks a view-as pill,
   // so they always land on the page that matters most for that role.
   //   broker → broker cockpit (team operations)
-  //   tc     → tc cockpit (TC's core file work · pipeline.html is broker-only)
+  //   tc     → files.html (the new transaction management page · /tc-cockpit.html retired)
   //   agent  → portal (their kanban / file workspace)
   var ROLE_DEFAULT_LANDING = {
     broker: '/broker-cockpit.html',
-    tc: '/tc-cockpit.html',
+    tc: '/files.html',
     agent: '/portal.html',
   };
 
