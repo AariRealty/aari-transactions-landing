@@ -47,6 +47,23 @@
     file_org:            { timing: 'upfront',    billed_via: 'stripe_upfront' },
   };
 
+  // ============== service_type → file_type ==============
+  // Drives /files.html kanban routing + verification config selection.
+  // No new intake field needed — the service the agent picks already tells
+  // us the workflow. Add-ons (op_basic, op_complete, file_org) default to
+  // sale since that's the most common context; the TC can re-route on
+  // /files.html if it's actually attached to a listing or lease.
+  const SERVICE_TYPE_TO_FILE_TYPE = {
+    tc_one_side:   'sale',
+    tc_both_sides: 'sale',
+    lc:            'listing',
+    listing_docs:  'listing',
+    mls_setup:     'listing',
+    op_basic:      'sale',
+    op_complete:   'sale',
+    file_org:      'sale',
+  };
+
   // Stripe Payment Link URLs by service id. Mirrors the SERVICES catalog
   // inside the intake IIFE in index.html (which we no longer let run for
   // upfront submissions, since we own the redirect ourselves).
@@ -282,6 +299,7 @@
       id: fileId,
       agent_id: agentId,
       service_type: serviceId,
+      file_type: SERVICE_TYPE_TO_FILE_TYPE[serviceId] || 'sale',
       service_price_cents,
       client_type: fd.get('client_type'),
       client_name: fd.get('client_name') || fd.get('seller_name') || fd.get('buyer_name'),
