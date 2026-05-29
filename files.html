@@ -133,6 +133,28 @@
   .tpb-next-eb{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#888;font-weight:500;margin:0 0 8px}
   .tpb-next-list{font-size:12px;color:#666;line-height:1.7;margin:0;padding-left:18px}
   .tpb-empty{padding:28px 6px;text-align:center;color:#888;font-size:12px}
+
+  /* Documents section · per-file checklist */
+  .tpb-docs-section{padding:14px 22px 16px;background:#fff;border-top:0.5px solid rgba(15,15,15,0.08)}
+  .tpb-docs-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+  .tpb-docs-eb{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#0f0f0f;font-weight:600;margin:0}
+  .tpb-docs-meta{font-size:10.5px;color:#888;margin:0}
+  .tpb-doc-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border-bottom:0.5px solid rgba(15,15,15,0.06)}
+  .tpb-doc-row:last-child{border-bottom:none}
+  .tpb-doc-left{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+  .tpb-doc-mark{font-size:13px;width:16px;flex-shrink:0;text-align:center}
+  .tpb-doc-mark.done{color:#1f6f3b}
+  .tpb-doc-mark.pending{color:#bbb}
+  .tpb-doc-name{font-size:12.5px;color:#0f0f0f;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tpb-doc-name.pending{color:#666}
+  .tpb-doc-sub{font-size:10.5px;color:#888;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tpb-doc-right{display:flex;gap:6px;align-items:center;flex-shrink:0}
+  .tpb-doc-btn{background:transparent;border:0.5px solid rgba(15,15,15,0.25);color:#0f0f0f;padding:5px 10px;border-radius:5px;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit}
+  .tpb-doc-btn:hover{background:#f3f3f3}
+  .tpb-doc-btn.primary{background:#0f0f0f;color:#fff;border-color:#0f0f0f}
+  .tpb-doc-btn.primary:hover{background:#2a2a2a}
+  .tpb-doc-btn:disabled{opacity:0.5;cursor:not-allowed}
+  .tpb-doc-input{display:none}
 </style>
 </head>
 <body>
@@ -227,6 +249,14 @@
   <div class="tpb-body">
     <p class="tpb-section-eb">What to send next</p>
     <div id="tpb-emails"></div>
+  </div>
+  <div class="tpb-docs-section">
+    <div class="tpb-docs-head">
+      <p class="tpb-docs-eb">Documents</p>
+      <p class="tpb-docs-meta" id="tpb-docs-meta">&nbsp;</p>
+    </div>
+    <div id="tpb-docs"></div>
+    <input type="file" id="tpb-docs-upload" class="tpb-doc-input" />
   </div>
   <div class="tpb-next-section">
     <p class="tpb-next-eb" id="tpb-next-eb">Coming up next stage</p>
@@ -364,6 +394,156 @@
       const name = ((t.first_name||'')+' '+(t.last_name||'')).trim() || 'Unnamed TC';
       return '<option value="'+esc(t.id)+'">'+esc(name)+'</option>';
     }).join('');
+  }
+
+  // ============== DOCUMENTS CHECKLIST (per stage · required + optional) ==============
+  // Each entry: id (matches file_documents.document_type), label, optional
+  //   alwaysFrom: stages from which this doc should appear (default = all)
+  //   required: true = appears in pending checklist, false = upload-only chip
+  const DOC_TYPES = {
+    'executed_contract':       { label:'Executed contract',           appearsFrom:'under_contract', required:true },
+    'agency_disclosure':       { label:'Agency disclosure',           appearsFrom:'under_contract', required:true },
+    'lead_paint_disclosure':   { label:'Lead-based paint disclosure', appearsFrom:'under_contract', required:false },
+    'cda':                     { label:'Commission Disbursement Auth',appearsFrom:'under_contract', required:true },
+    'inspection_report':       { label:'Inspection report',           appearsFrom:'inspection',     required:true },
+    'inspection_addendum':     { label:'Inspection addendum',         appearsFrom:'inspection',     required:false },
+    'repair_addendum':         { label:'Repair addendum',             appearsFrom:'remedy',         required:true },
+    'repair_invoice':          { label:'Repair invoice / receipts',   appearsFrom:'remedy',         required:false },
+    'appraisal_report':        { label:'Appraisal report',            appearsFrom:'appraisal',      required:true },
+    'closing_disclosure':      { label:'Closing Disclosure (CD)',     appearsFrom:'ctc',            required:true },
+    'final_walk_certification':{ label:'Final walk certification',    appearsFrom:'ctc',            required:false },
+    'hud_settlement':          { label:'HUD / Settlement statement',  appearsFrom:'closed',         required:true },
+    'recorded_deed':           { label:'Recorded deed',               appearsFrom:'closed',         required:false },
+  };
+  // Stage progression — used to decide which docs are "in scope" at current stage
+  const STAGE_INDEX = { new:0, under_contract:1, inspection:2, remedy:3, appraisal:4, ctc:5, closed:6 };
+
+  function docsForStage(stage){
+    const stageIdx = STAGE_INDEX[stage] || 0;
+    const out = [];
+    Object.keys(DOC_TYPES).forEach(id => {
+      const meta = DOC_TYPES[id];
+      const appearsIdx = STAGE_INDEX[meta.appearsFrom] || 0;
+      if(stageIdx >= appearsIdx) out.push({ id, ...meta });
+    });
+    return out;
+  }
+
+  let _docsByFile = {}; // { file_id: [ {id, document_type, filename, storage_path, uploaded_at} ] }
+  let _docsUploadCtx = null; // { file, document_type, btn }
+
+  async function loadDocsForFile(fileId){
+    if(_docsByFile[fileId]) return _docsByFile[fileId];
+    _docsByFile[fileId] = [];
+    try {
+      const { data } = await _client.from('file_documents')
+        .select('id, document_type, filename, storage_path, uploaded_at, content_type, size_bytes')
+        .eq('file_id', fileId)
+        .order('uploaded_at', { ascending: false });
+      _docsByFile[fileId] = data || [];
+    } catch(err){ console.warn('[files] doc load failed', err); }
+    return _docsByFile[fileId];
+  }
+
+  function renderDocsForFile(file){
+    const stage = deriveStage(file);
+    const checklist = docsForStage(stage);
+    const docs = _docsByFile[file.id] || [];
+    const metaEl = document.getElementById('tpb-docs-meta');
+    const hostEl = document.getElementById('tpb-docs');
+    if(!hostEl) return;
+    const haveByType = {};
+    docs.forEach(d => {
+      if(d.document_type && !haveByType[d.document_type]){ haveByType[d.document_type] = d; }
+    });
+    const requiredCount = checklist.filter(c => c.required).length;
+    const collectedRequired = checklist.filter(c => c.required && haveByType[c.id]).length;
+    if(metaEl) metaEl.textContent = collectedRequired + ' of ' + requiredCount + ' required collected';
+
+    if(!checklist.length){
+      hostEl.innerHTML = '<div class="tpb-empty">No documents required at this stage yet.</div>';
+      return;
+    }
+    hostEl.innerHTML = checklist.map(item => {
+      const doc = haveByType[item.id];
+      const isDone = !!doc;
+      const markCls = isDone ? 'done' : (item.required ? 'pending' : 'pending');
+      const mark = isDone ? '&check;' : '&#9675;';
+      const nameCls = isDone ? '' : 'pending';
+      const subText = isDone
+        ? esc(doc.filename || '') + (doc.uploaded_at ? ' · ' + fmtDate(doc.uploaded_at) : '')
+        : (item.required ? 'Required at this stage' : 'Optional');
+      const rightBtns = isDone
+        ? '<button type="button" class="tpb-doc-btn" data-view="'+esc(doc.id)+'">View</button>'
+        : '<button type="button" class="tpb-doc-btn primary" data-upload="'+esc(item.id)+'">Upload</button>';
+      return '<div class="tpb-doc-row">' +
+        '<div class="tpb-doc-left">' +
+          '<span class="tpb-doc-mark ' + markCls + '">' + mark + '</span>' +
+          '<div style="min-width:0;flex:1">' +
+            '<p class="tpb-doc-name '+nameCls+'">' + esc(item.label) + '</p>' +
+            '<p class="tpb-doc-sub">' + subText + '</p>' +
+          '</div>' +
+        '</div>' +
+        '<div class="tpb-doc-right">' + rightBtns + '</div>' +
+      '</div>';
+    }).join('');
+
+    hostEl.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', async () => {
+      const docId = b.getAttribute('data-view');
+      const doc = (docs.find(d => d.id === docId));
+      if(!doc) return;
+      try {
+        const { data, error } = await _client.storage.from('file-documents').createSignedUrl(doc.storage_path, 900);
+        if(error || !data){ alert('Could not generate view link: ' + (error && error.message)); return; }
+        window.open(data.signedUrl, '_blank');
+      } catch(err){ alert('View failed: ' + (err && err.message || 'unknown')); }
+    }));
+
+    hostEl.querySelectorAll('[data-upload]').forEach(b => b.addEventListener('click', () => {
+      const docType = b.getAttribute('data-upload');
+      _docsUploadCtx = { file, document_type: docType, btn: b };
+      document.getElementById('tpb-docs-upload').click();
+    }));
+  }
+
+  async function handleDocUpload(fileInput){
+    if(!_docsUploadCtx || !fileInput.files || !fileInput.files[0]) return;
+    const ctx = _docsUploadCtx;
+    const f = fileInput.files[0];
+    const btn = ctx.btn;
+    const origText = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Uploading…';
+    try {
+      const { data: { user } } = await _client.auth.getUser();
+      const ts = Date.now();
+      const cleanName = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = user.id + '/' + ctx.file.id + '/' + ts + '-' + cleanName;
+      const up = await _client.storage.from('file-documents').upload(path, f, {
+        contentType: f.type || 'application/octet-stream',
+        upsert: false,
+      });
+      if(up.error){ throw up.error; }
+      const ins = await _client.from('file_documents').insert({
+        file_id: ctx.file.id,
+        uploaded_by: user.id,
+        filename: f.name,
+        storage_path: path,
+        content_type: f.type || null,
+        size_bytes: f.size,
+        document_type: ctx.document_type,
+      });
+      if(ins.error){ throw ins.error; }
+      // Refresh docs cache, re-render
+      delete _docsByFile[ctx.file.id];
+      await loadDocsForFile(ctx.file.id);
+      renderDocsForFile(ctx.file);
+    } catch(err){
+      console.warn('[files] upload failed', err);
+      alert('Upload failed: ' + (err && err.message || 'unknown'));
+      btn.disabled = false; btn.textContent = origText;
+    }
+    fileInput.value = '';
+    _docsUploadCtx = null;
   }
 
   // ============== STAGE DERIVATION ==============
@@ -521,7 +701,7 @@
   }
   function closePlaybook(){ document.body.classList.remove('tpb-open'); }
 
-  function renderPlaybook(file){
+  async function renderPlaybook(file){
     const stage = deriveStage(file);
     document.getElementById('tpb-stage').textContent = STAGE_LABELS[stage] || stage;
     document.getElementById('tpb-addr').textContent = file.property_address || 'Untitled file';
@@ -559,6 +739,10 @@
         sendEmail(file, stage, list.find(e => e.id === btn.getAttribute('data-resend')), btn, true);
       }));
     }
+
+    // Documents section
+    await loadDocsForFile(file.id);
+    renderDocsForFile(file);
 
     // Next stage preview
     const nextStage = STAGES[STAGES.indexOf(stage)+1];
@@ -609,6 +793,7 @@
   function wireUi(){
     document.getElementById('tpb-close').addEventListener('click', closePlaybook);
     document.getElementById('tpb-backdrop').addEventListener('click', closePlaybook);
+    document.getElementById('tpb-docs-upload').addEventListener('change', (e) => handleDocUpload(e.target));
     document.addEventListener('keydown', (e) => {
       if((e.key==='Escape'||e.key==='Esc') && document.body.classList.contains('tpb-open')) closePlaybook();
     });
