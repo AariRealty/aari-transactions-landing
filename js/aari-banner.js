@@ -24,7 +24,7 @@
     { id:'team',     label:'Run the team',   href:'/broker-cockpit.html', icon:iconUsers(), match:['/broker-cockpit','/tc-cockpit'],   roles:['broker'] },
     { id:'prospecting', label:'Fill the pipeline', href:'/prospecting.html', icon:iconBook(), match:['/prospecting','/bd'], roles:['tc','broker'] },
     { id:'files',    label:'Move the files', href:'/pipeline.html',       icon:iconFolder(),match:['/pipeline'],                       roles:['tc','broker'] },
-    { id:'submit',   label:'Submit a file',  href:'/#apply',              icon:iconUpload(),match:[], intake:true,                     roles:['agent'] },
+    { id:'portal',   label:'Agent portal',   href:'/portal.html',         icon:iconUpload(),match:['/portal'],                          roles:['agent'] },
   ];
 
   // ----- Inline SVG icons (no external font dependency) -----
