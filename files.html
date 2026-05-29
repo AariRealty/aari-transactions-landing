@@ -1489,6 +1489,424 @@
   VERIFY_ITEMS_BY_CONTRACT['bbe_1'] = VERIFY_ITEMS_BBE_1;
   VERIFY_ITEMS_BY_CONTRACT['bbe_2'] = VERIFY_ITEMS_BBE_2;
 
+  // ============================================================================
+  // STAGE MILESTONES · per file_type · per stage
+  // ============================================================================
+  // These are WORKFLOW items, not contract paragraphs. They drive the
+  // "Required this stage" panel and answer the TC question: "what do I owe
+  // on this file RIGHT NOW?"
+  //
+  // Architecture:
+  //   - Contract verification items (above) are ALL stage:under_contract by
+  //     default — they're paragraph-of-contract checks.
+  //   - Stage milestones (below) are the operational steps in each stage of
+  //     the workflow that aren't tied to a contract paragraph.
+  //
+  // Render combines both: stage milestones for the current stage + contract
+  // verification items (only when stage === 'under_contract').
+  // ============================================================================
+  const STAGE_MILESTONES = {
+    sale: {
+      new: [
+        { key:'intake_party_names', label:'Buyer + Seller legal names captured',
+          subText:'Full legal name for every principal · drives contract + closing docs.',
+          options:{ captured:'All captured', missing:'Missing · request' },
+          actionLabel:'Request names',
+          actionMessage:'Please confirm the full legal name(s) of every Buyer and Seller as they will appear on the contract and closing documents.' },
+        { key:'intake_party_contacts', label:'Email + phone for all parties',
+          subText:'Required for all statutory + transaction notices.',
+          options:{ captured:'All captured', missing:'Missing · request' } },
+        { key:'intake_property_address', label:'Property address + parcel/folio confirmed',
+          subText:'Verify against tax records before drafting offers.',
+          options:{ confirmed:'Confirmed · matches tax roll', missing:'Missing · clarify' } },
+        { key:'intake_side', label:'Side identified · Buyer / Seller / Both',
+          subText:'Drives compliance scope + email playbook.',
+          options:{ buyer:'Buyer side', seller:'Seller side', both:'Both sides (DSA / Transaction)' } },
+        { key:'intake_financing_type', label:'Cash vs. Financing tag set',
+          subText:'CRITICAL · cash auto-N/As all loan items, gray-outs Appraisal stage.',
+          options:{ cash:'Cash · POF required', loan:'Financing · pre-approval required' } },
+        { key:'intake_lender_contact', label:'Lender contact captured',
+          subText:'Loan officer name + email + phone.',
+          options:{ captured:'Captured', na:'N/A · cash', missing:'Missing · request' },
+          actionLabel:'Request lender contact',
+          actionMessage:'Please send the loan officer\'s name, email, and direct phone so we can open communication early.',
+          showIfKey:'intake_financing_type', showIfValueNot:'cash' },
+        { key:'intake_title_contact', label:'Title contact captured',
+          subText:'Title company name + closer + email.',
+          options:{ captured:'Captured', missing:'Missing · request' } },
+        { key:'intake_pof_preapproval', label:'POF / pre-approval received',
+          subText:'Cash → POF · Loan → pre-approval letter.',
+          options:{ received:'Received · on file', pending:'Pending · chase agent', missing:'Missing · request' },
+          actionLabel:'Request POF / pre-approval',
+          actionMessage:'Please send the Buyer\'s proof of funds (cash) or pre-approval letter (financing) so we have it on file before contract execution.' },
+      ],
+      under_contract: [
+        { key:'uc_contract_uploaded', label:'Fully executed contract on file',
+          subText:'All party signatures + dates + initials present.',
+          options:{ complete:'Complete · all signed', missing:'Missing pages · request' } },
+        { key:'uc_em_receipted', label:'Earnest Money receipted',
+          subText:'Within Para 2/4 deposit days. Critical default trigger.',
+          options:{ receipted:'Receipted · receipt on file', pending:'Pending', missing:'Missing · escalate' },
+          actionLabel:'Request EM receipt',
+          actionMessage:'Per the contract, the Earnest Money deposit must be receipted by the escrow holder within the stated deposit days. Please send the receipt.' },
+        { key:'uc_intro_emails_sent', label:'Intro emails sent to title + lender',
+          subText:'Open communication channels day 1.',
+          options:{ sent:'Both sent', partial:'One sent · finish', pending:'Not yet sent' } },
+        { key:'uc_estoppel_ordered', label:'HOA / Condo estoppel ordered',
+          subText:'Order day 1 — third-party turnaround is the bottleneck.',
+          options:{ ordered:'Ordered · receipt on file', na:'N/A · no HOA/Condo', missing:'Missing · order now' } },
+        { key:'uc_closing_calendar', label:'Closing date on shared calendar',
+          subText:'Calendar block + reminders set.',
+          options:{ set:'Set · all parties notified', missing:'Missing · schedule' } },
+      ],
+      inspection: [
+        { key:'insp_scheduled', label:'Inspection scheduled',
+          subText:'Within Para 12 inspection period.',
+          options:{ scheduled:'Scheduled · date on file', completed:'Completed', missing:'Missing · schedule' },
+          actionLabel:'Request inspection schedule',
+          actionMessage:'Per Para 12, the inspection period is running. Please confirm the scheduled inspection date and inspector contact.' },
+        { key:'insp_inspector_contact', label:'Inspector contact captured',
+          subText:'Name + company + email + phone.',
+          options:{ captured:'Captured', missing:'Missing · request' } },
+        { key:'insp_wdo', label:'WDO / Termite inspection',
+          subText:'Required for Standard contract + many lenders.',
+          options:{ scheduled:'Scheduled', completed:'Completed · report on file', na:'N/A · As-Is + no lender req', missing:'Missing · schedule' } },
+        { key:'insp_4point', label:'4-Point inspection (insurance)',
+          subText:'Insurance prep · homes 25+ years.',
+          options:{ scheduled:'Scheduled', completed:'Completed', na:'N/A · home <25 yrs', missing:'Missing · schedule' } },
+        { key:'insp_wind_mit', label:'Wind mitigation inspection',
+          subText:'Insurance discount opportunity for buyer.',
+          options:{ scheduled:'Scheduled', completed:'Completed', na:'N/A · skipped', missing:'Missing · schedule' } },
+        { key:'insp_report_received', label:'Inspection report received',
+          subText:'Delivered to buyer + agent.',
+          options:{ received:'Received · forwarded', pending:'Pending', missing:'Missing · chase' } },
+        { key:'insp_objection_deadline', label:'Inspection objection deadline on calendar',
+          subText:'AUTO-POP at Day 1 of inspection. Default trigger if missed.',
+          options:{ tracked:'Tracked · calendar reminder set', missing:'Missing · add now' } },
+        { key:'insp_buyer_decision', label:'Buyer decision logged · accept / object / cancel',
+          subText:'Drives REMEDY vs. APPRAISAL transition.',
+          options:{ accept:'Accept As-Is · move to Appraisal', object:'Object · move to Remedy', cancel:'Cancel · EM return process', pending:'Pending · awaiting buyer' } },
+      ],
+      remedy: [
+        { key:'rem_request_drafted', label:'Repair request / addendum drafted',
+          subText:'Itemized list with specifics.',
+          options:{ drafted:'Drafted · ready to send', sent:'Sent to seller-side', missing:'Missing · draft now' } },
+        { key:'rem_seller_response', label:'Seller response received',
+          subText:'Accept / counter / reject within reply period.',
+          options:{ accept:'Accepted', counter:'Counter received', reject:'Rejected', pending:'Pending · chase' } },
+        { key:'rem_agreement_executed', label:'Repair agreement executed',
+          subText:'Signed by all parties · added to contract file.',
+          options:{ executed:'Executed · on file', withdrawn:'Buyer withdrew', cancelled:'Cancelled', pending:'Pending signatures' } },
+        { key:'rem_general_repair_limit', label:'General Repair Limit tracked (Standard only)',
+          subText:'Standard Para 12(a) · 1.5% of price unless modified.',
+          options:{ tracked:'Tracked · under cap', overage:'Overage · buyer responsibility', na:'N/A · As-Is' } },
+        { key:'rem_wdo_treatment_cap', label:'WDO Treatment Cap (Standard only)',
+          subText:'Standard Para 12(d) · separate cap from general repair.',
+          options:{ tracked:'Tracked', overage:'Overage · buyer', na:'N/A · As-Is or no WDO' } },
+        { key:'rem_reinspection', label:'Re-inspection scheduled (if repairs)',
+          subText:'Confirm completion before closing.',
+          options:{ scheduled:'Scheduled', completed:'Completed · passed', na:'N/A · no repairs', missing:'Missing · schedule' } },
+        { key:'rem_permits_receipts', label:'Permits + receipts collected',
+          subText:'For audit + buyer record.',
+          options:{ collected:'Collected · on file', partial:'Partial · chase remainder', na:'N/A · no repairs' } },
+      ],
+      appraisal: [
+        { key:'app_loan_submitted', label:'Loan application submitted',
+          subText:'Per Para 8 within loan application days.',
+          options:{ submitted:'Submitted · confirmed with lender', pending:'Pending', missing:'Missing · escalate' } },
+        { key:'app_appraisal_ordered', label:'Appraisal ordered by lender',
+          subText:'Confirm lender ordered before deadline.',
+          options:{ ordered:'Ordered · order # on file', pending:'Pending', missing:'Missing · escalate' } },
+        { key:'app_report_received', label:'Appraisal report received',
+          subText:'Lender provides to buyer.',
+          options:{ received:'Received · value confirmed', pending:'Pending', short:'SHORT · gap addendum needed' } },
+        { key:'app_gap_addendum', label:'Appraisal gap / value addendum status',
+          subText:'Para 8(b) · only if short or buyer wants to waive.',
+          options:{ na:'N/A · appraised at value', addendum:'Addendum executed', cancelled:'Cancelled · buyer exit' } },
+        { key:'app_loan_approval', label:'Loan approval / commitment letter received',
+          subText:'By Loan Approval deadline · Para 8 default trigger.',
+          options:{ received:'Received · clean approval', conditional:'Conditional · conditions pending', missing:'Missing · escalate' } },
+        { key:'app_condo_questionnaire', label:'Condo questionnaire (condo + financing only)',
+          subText:'Lender requirement · ordered through association.',
+          options:{ ordered:'Ordered', received:'Received · lender approved', na:'N/A · not condo', missing:'Missing · order' } },
+        { key:'app_insurance_binder', label:'Homeowner\'s insurance binder',
+          subText:'Required before CTC for lender.',
+          options:{ bound:'Bound · binder on file', pending:'Pending', missing:'Missing · escalate' } },
+      ],
+      ctc: [
+        { key:'ctc_cd_received', label:'Closing Disclosure (CD) received',
+          subText:'TRID 3-day rule · CD must be received 3 business days before closing.',
+          options:{ received:'Received · 3-day clock started', na:'N/A · cash · no CD', missing:'Missing · escalate' } },
+        { key:'ctc_cd_3day_rule', label:'CD 3-business-day rule satisfied',
+          subText:'TRID requirement · auto-calc from CD received date.',
+          options:{ satisfied:'Satisfied · clock cleared', na:'N/A · cash', violation:'VIOLATION · delay closing' } },
+        { key:'ctc_walkthrough_scheduled', label:'Final walk-through scheduled',
+          subText:'24–48 hours before closing.',
+          options:{ scheduled:'Scheduled · date confirmed', completed:'Completed', missing:'Missing · schedule' } },
+        { key:'ctc_utilities_transfer', label:'Utilities transfer coordinated',
+          subText:'Day-of-closing or next-day transfer.',
+          options:{ coordinated:'Coordinated · buyer notified', pending:'Pending', missing:'Missing · coordinate' } },
+        { key:'ctc_wire_instructions_verified', label:'Wire instructions verified by phone',
+          subText:'WIRE FRAUD PROTOCOL · call title directly · never email-only.',
+          options:{ verified:'Verified by phone · documented', email_only:'Email only · CALL TITLE NOW', missing:'Missing · verify' },
+          actionLabel:'Wire fraud reminder',
+          actionMessage:'Wire fraud prevention: please call your title closer directly at the number on file (NOT a number from email) to verbally verify wire instructions BEFORE sending funds. Confirm in writing once verified.' },
+        { key:'ctc_final_figures', label:'Final figures reviewed vs. contract',
+          subText:'Settlement statement matches contract + addenda.',
+          options:{ reviewed:'Reviewed · clean', discrepancy:'Discrepancy · fix with title', missing:'Missing · review' } },
+        { key:'ctc_commission_verified', label:'Commission verified on settlement',
+          subText:'Match against listing/buyer-rep agreement.',
+          options:{ verified:'Verified', discrepancy:'Discrepancy · escalate', missing:'Missing · review' } },
+        { key:'ctc_closing_attendance', label:'Closing attendance · in-person / mail-away / RON',
+          subText:'Logistics confirmed with all parties.',
+          options:{ in_person:'In-person · scheduled', mail_away:'Mail-away · package sent', ron:'RON · scheduled', pending:'Pending decision' } },
+      ],
+      closed: [
+        { key:'cl_alta_on_file', label:'Final ALTA / settlement statement on file',
+          subText:'Signed by all parties.',
+          options:{ on_file:'On file · saved to docs', missing:'Missing · request from title' } },
+        { key:'cl_deed_recorded', label:'Recorded deed received',
+          subText:'County recording confirmation.',
+          options:{ received:'Received · recording # on file', pending:'Pending recording', missing:'Missing · chase title' } },
+        { key:'cl_commission_reconciled', label:'Commission disbursement reconciled',
+          subText:'Aari fee + brokerage + agent split confirmed.',
+          options:{ reconciled:'Reconciled · paid', pending:'Pending', discrepancy:'Discrepancy · resolve' } },
+        { key:'cl_closing_package_delivered', label:'Closing package delivered to client',
+          subText:'Full doc package to buyer/seller.',
+          options:{ delivered:'Delivered', pending:'Pending', missing:'Missing · send' } },
+        { key:'cl_agent_survey', label:'Post-close agent survey sent',
+          subText:'Internal QA for service improvement.',
+          options:{ sent:'Sent', completed:'Completed · feedback logged', skipped:'Skipped' } },
+        { key:'cl_client_referral_request', label:'Client referral request scheduled (Day 14)',
+          subText:'RESPA-clean wording · auto-scheduled 14 days post-close.',
+          options:{ scheduled:'Scheduled · Day 14', sent:'Sent', skipped:'Skipped per client preference' } },
+        { key:'cl_file_archived', label:'File archived to compliance package',
+          subText:'Audit-ready ZIP generated.',
+          options:{ archived:'Archived · audit package on file', pending:'Pending' } },
+      ],
+    },
+    listing: {
+      new: [
+        { key:'list_seller_names', label:'Seller legal names + contacts captured',
+          subText:'For listing + closing docs.',
+          options:{ captured:'Captured', missing:'Missing · request' } },
+        { key:'list_property_data', label:'Property address + parcel + tax info',
+          subText:'Verify against county records.',
+          options:{ confirmed:'Confirmed', missing:'Missing · verify' } },
+        { key:'list_agreement_signed', label:'Listing agreement signed (ERS-21TN / VLLA-6)',
+          subText:'Term, price, compensation all captured.',
+          options:{ signed:'Signed · on file', missing:'Missing · re-execute' } },
+        { key:'list_compensation_specific', label:'Compensation captured as specific % or $',
+          subText:'Post-NAR settlement · vague language unenforceable.',
+          options:{ specific:'Specific · per form', vague:'Vague · re-paper', missing:'Missing · capture' } },
+        { key:'list_seller_disclosure', label:'Sellers\' Property Disclosure delivered',
+          subText:'Pre-MLS · must be on file.',
+          options:{ delivered:'Delivered · signed', missing:'Missing · request' } },
+        { key:'list_hoa_info', label:'HOA / Condo info gathered',
+          subText:'Estoppel contacts + fees + rules captured.',
+          options:{ gathered:'Gathered', na:'N/A · no HOA', pending:'Pending' } },
+        { key:'list_lockbox_sign', label:'Lockbox + sign decision logged',
+          subText:'Coordinate install before going live.',
+          options:{ both:'Both installed', lockbox_only:'Lockbox only', sign_only:'Sign only', neither:'Neither' } },
+        { key:'list_photos_walkthrough', label:'Photos + walkthrough scheduled',
+          subText:'Pro photos before MLS live.',
+          options:{ scheduled:'Scheduled', completed:'Completed', missing:'Missing · schedule' } },
+      ],
+      active: [
+        { key:'list_mls_live', label:'MLS listing live · listing # captured',
+          subText:'On market · CDOM clock running.',
+          options:{ live:'Live · MLS # on file', pending:'Pending publication', missing:'Missing' } },
+        { key:'list_spd_in_mls', label:'Sellers\' Property Disclosure in MLS docs',
+          subText:'Required attachment.',
+          options:{ uploaded:'Uploaded', missing:'Missing · upload now' } },
+        { key:'list_showings_tracking', label:'Showings tracking active',
+          subText:'Via ShowingTime / Aligned / equivalent.',
+          options:{ active:'Active · logging', pending:'Pending setup', missing:'Missing · setup' } },
+        { key:'list_feedback_log', label:'Showing feedback log started',
+          subText:'Weekly aggregation to seller.',
+          options:{ started:'Started · auto-feedback on', manual:'Manual log on file', missing:'Missing · start' } },
+        { key:'list_price_reduction', label:'Price reduction addendum (if any)',
+          subText:'Signed by all sellers.',
+          options:{ none:'No reduction', executed:'Executed · on file · MLS updated', pending:'Pending signatures' } },
+      ],
+      pending: [
+        { key:'list_executed_contract', label:'Executed contract on file',
+          subText:'Buyer-side contract received + verified.',
+          options:{ on_file:'On file · all signed', missing:'Missing · request' } },
+        { key:'list_em_confirmed', label:'Earnest Money confirmed received by escrow',
+          subText:'Receipt from escrow holder.',
+          options:{ confirmed:'Confirmed', pending:'Pending', missing:'Missing · escalate' } },
+        { key:'list_buyer_tc_contact', label:'Buyer-side TC contact captured',
+          subText:'Open coordination channel.',
+          options:{ captured:'Captured', missing:'Missing · request' } },
+        { key:'list_coop_deadlines', label:'All sale-side deadlines now applied',
+          subText:'Inspection, financing, appraisal, title.',
+          options:{ applied:'Applied · deadlines on calendar', pending:'Pending contract review' } },
+      ],
+      closed: [
+        { key:'list_alta_filed', label:'Final ALTA / settlement on file',
+          subText:'Listing-side copy.',
+          options:{ on_file:'On file', missing:'Missing · request' } },
+        { key:'list_commission_paid', label:'Listing commission disbursed',
+          subText:'Brokerage + agent split confirmed.',
+          options:{ paid:'Paid', pending:'Pending', discrepancy:'Discrepancy · escalate' } },
+        { key:'list_mls_sold', label:'MLS status → Sold + final price entered',
+          subText:'Update within MLS rules window.',
+          options:{ updated:'Updated', pending:'Pending', missing:'Missing · update' } },
+        { key:'list_seller_review', label:'Post-close seller review + survey',
+          subText:'Day 7 schedule.',
+          options:{ scheduled:'Scheduled · Day 7', sent:'Sent', skipped:'Skipped' } },
+      ],
+      cancelled: [
+        { key:'list_cancel_addendum', label:'Cancellation addendum signed',
+          subText:'All sellers signed + dated.',
+          options:{ signed:'Signed · on file', missing:'Missing · execute' } },
+        { key:'list_mls_withdrawn', label:'MLS status updated · Withdrawn / Expired',
+          subText:'Per MLS rules.',
+          options:{ updated:'Updated', pending:'Pending' } },
+        { key:'list_cancel_reason', label:'Cancellation reason logged',
+          subText:'For internal QA + future re-engagement.',
+          options:{ logged:'Logged' } },
+      ],
+    },
+    lease: {
+      new: [
+        { key:'le_party_names', label:'Landlord + Tenant legal names captured',
+          subText:'For lease + statutory notices.',
+          options:{ captured:'Captured', missing:'Missing · request' } },
+        { key:'le_form_confirmed', label:'Lease form confirmed (CL-11 vs RLHD-3x)',
+          subText:'Pre-lease intent vs. executed lease.',
+          options:{ cl_11:'CL-11 (pre-lease)', rlhd_3x:'RLHD-3x (lease)' } },
+        { key:'le_term_rent_deposit', label:'Term + rent + deposit captured',
+          subText:'Drives calendar + escrow setup.',
+          options:{ captured:'All captured', missing:'Missing · request' } },
+        { key:'le_app_status', label:'Application + background check status',
+          subText:'Approved / pending / denied.',
+          options:{ submitted:'Submitted', approved:'Approved', denied:'Denied', missing:'Missing · request' } },
+        { key:'le_hoa_approval', label:'HOA approval status (Para 11 · CL-11)',
+          subText:'CRITICAL · condo lease must have HOA approval BEFORE term starts.',
+          options:{ approved:'Approved · on file', pending:'Pending', na:'N/A · no HOA', missing:'Missing · request' } },
+      ],
+      active: [
+        { key:'le_app_submitted', label:'Application submitted to LL / mgmt',
+          subText:'Date + receipt on file.',
+          options:{ submitted:'Submitted', pending:'Pending' } },
+        { key:'le_background_ordered', label:'Background check ordered',
+          subText:'Standard pre-lease step.',
+          options:{ ordered:'Ordered · receipt on file', pending:'Pending' } },
+        { key:'le_hoa_app_submitted', label:'HOA application + fee submitted',
+          subText:'Track turnaround · drives lease execution timing.',
+          options:{ submitted:'Submitted', na:'N/A · no HOA', pending:'Pending' } },
+        { key:'le_hoa_approval_received', label:'HOA approval received',
+          subText:'In writing before lease executes.',
+          options:{ received:'Received', na:'N/A · no HOA', pending:'Pending', denied:'Denied · escalate' } },
+      ],
+      signed: [
+        { key:'le_signatures_dated', label:'All signatures captured + dated',
+          subText:'LL + Tenant + any guarantor.',
+          options:{ complete:'Complete', missing:'Missing · re-execute' } },
+        { key:'le_security_deposit', label:'Security deposit receipted + escrow noted',
+          subText:'Per FL Statute 83.49 · separate FL bank.',
+          options:{ receipted:'Receipted · escrow on file', pending:'Pending', missing:'Missing · escalate' } },
+        { key:'le_inventory_attached', label:'Inventory of furniture/appliances attached',
+          subText:'If furnished · protects both parties at lease end.',
+          options:{ attached:'Attached', unfurnished:'N/A · unfurnished', missing:'Missing · request' } },
+        { key:'le_chapter83_attached', label:'FL Landlord-Tenant Act (Ch. 83) attached',
+          subText:'Required attachment per form.',
+          options:{ attached:'Attached', missing:'Missing · attach' } },
+        { key:'le_lbp_addendum', label:'LBP addendum (pre-1978 housing)',
+          subText:'Federal requirement.',
+          options:{ signed:'Signed + pamphlet delivered', na:'N/A · post-1978', missing:'Missing · request' } },
+        { key:'le_movein_inspection_scheduled', label:'Move-in inspection scheduled',
+          subText:'Pre-occupancy condition documentation.',
+          options:{ scheduled:'Scheduled', completed:'Completed', missing:'Missing · schedule' } },
+      ],
+      occupied: [
+        { key:'le_movein_completed', label:'Move-in inspection completed + report filed',
+          subText:'Photo + written condition report.',
+          options:{ completed:'Completed · report on file', missing:'Missing · request' } },
+        { key:'le_keys_delivered', label:'Keys delivered to Tenant',
+          subText:'Document delivery method + date.',
+          options:{ delivered:'Delivered · documented', pending:'Pending' } },
+        { key:'le_utilities_transferred', label:'Utilities transferred to Tenant',
+          subText:'Tenant\'s name on all responsible accounts.',
+          options:{ transferred:'Transferred', pending:'Pending', na:'N/A · LL pays' } },
+        { key:'le_assoc_rules_acked', label:'Association rules acknowledged by Tenant',
+          subText:'If HOA / Condo.',
+          options:{ acked:'Acknowledged · signed', na:'N/A · no assoc', missing:'Missing · request' } },
+        { key:'le_first_month_deposit', label:'First month rent + deposit verified received',
+          subText:'Funds cleared.',
+          options:{ verified:'Verified', pending:'Pending clearance', missing:'Missing · escalate' } },
+      ],
+      expired: [
+        { key:'le_moveout_inspection', label:'Move-out inspection completed',
+          subText:'Compare to move-in condition.',
+          options:{ completed:'Completed', missing:'Missing · schedule' } },
+        { key:'le_deposit_reconciled', label:'Security deposit reconciled · Ch. 83',
+          subText:'15/30/60 day statutory return windows.',
+          options:{ returned:'Returned full', partial:'Partial · claim notice sent', forfeited:'Forfeited per Ch. 83', pending:'Pending' } },
+        { key:'le_claim_notice', label:'Deposit claim notice delivered (if claim)',
+          subText:'Per FL Statute 83.49 · within statutory window.',
+          options:{ delivered:'Delivered · certified mail', na:'N/A · full return', missing:'Missing · DEFAULT' } },
+        { key:'le_property_restored', label:'Property restored to Landlord',
+          subText:'Keys returned + access secured.',
+          options:{ restored:'Restored', pending:'Pending' } },
+      ],
+    },
+    buyer_rep: {
+      signed: [
+        { key:'br_buyer_contacts', label:'Buyer name(s) + contacts captured',
+          subText:'For showings + offer prep.',
+          options:{ captured:'Captured', missing:'Missing · request' } },
+        { key:'br_scope_locked', label:'Scope locked · type + area + price',
+          subText:'Out-of-scope purchases void compensation.',
+          options:{ locked:'Locked · per BBA', missing:'Missing · clarify' } },
+        { key:'br_compensation_source', label:'Compensation source · seller / buyer / both',
+          subText:'Drives offer strategy + buyer expectations.',
+          options:{ seller:'Seller-paid', buyer:'Buyer-paid', both:'Both · with shortfall logic' } },
+        { key:'br_pof_preapproval', label:'POF / pre-approval received',
+          subText:'Match against price-range scope.',
+          options:{ received:'Received', pending:'Pending', missing:'Missing · request' } },
+        { key:'br_log_started', label:'Shown-properties log started',
+          subText:'CRITICAL · enforces Para 7 Protection Period.',
+          options:{ started:'Started · CRM active', missing:'Missing · start now' } },
+      ],
+      active: [
+        { key:'br_log_updated', label:'Shown-properties log updated per tour',
+          subText:'Date + property + method of introduction.',
+          options:{ current:'Current · all tours logged', behind:'Behind · catch up', missing:'Missing · escalate' } },
+        { key:'br_auto_mls_log', label:'Auto-MLS / property shares logged',
+          subText:'Defends procuring-cause claims.',
+          options:{ logged:'Logged · timestamped', missing:'Missing · capture' } },
+        { key:'br_offer_readiness', label:'Offer-writing readiness verified',
+          subText:'POF/pre-approval current · buyer pre-briefed.',
+          options:{ ready:'Ready', pending:'Pending refresh', missing:'Missing · prep' } },
+      ],
+      representing: [
+        { key:'br_companion_sale_file', label:'Companion sale file created + linked',
+          subText:'Sale workflow tracks the active contract · BBA file tracks compensation.',
+          options:{ linked:'Linked · sale file open', pending:'Pending creation' } },
+        { key:'br_compensation_tracking', label:'Compensation tracking on sale file',
+          subText:'Seller-side offer captured · or buyer-pay confirmed.',
+          options:{ tracked:'Tracked', shortfall:'Shortfall · buyer covers per BBA', pending:'Pending' } },
+      ],
+      expired: [
+        { key:'br_term_expired', label:'BBA term + protection period both expired',
+          subText:'Calendar both end dates · the protection period extends past term.',
+          options:{ both_expired:'Both expired', term_only:'Term expired · protection running', missing:'Missing · verify' } },
+        { key:'br_final_log_archived', label:'Final shown-properties log archived',
+          subText:'Stored for post-term claim defense.',
+          options:{ archived:'Archived', missing:'Missing · archive' } },
+        { key:'br_post_term_claims', label:'Post-term purchase claims reviewed',
+          subText:'Any buyer purchase of a shown property during protection period.',
+          options:{ none:'None · clean expiration', claim_pending:'Claim pending · escalate to broker', resolved:'Resolved' } },
+        { key:'br_renewal_decision', label:'Renewal decision logged',
+          subText:'Re-sign / let go.',
+          options:{ renewed:'Renewed · new BBA on file', released:'Released · no renewal' } },
+      ],
+    },
+  };
+
   let _verifByFile = {}; // { file_id: { verification_key: row } }
 
   async function loadVerificationsForFile(fileId){
@@ -1516,17 +1934,50 @@
     return true;
   }
 
+  // ============================================================================
+  // Stage helpers · drive what's required RIGHT NOW per file
+  // ============================================================================
+  function stageItemsForFile(file){
+    const ft = file.file_type || 'sale';
+    const stage = file.transaction_stage || (STAGES_BY_TYPE[ft] || ['new'])[0];
+    const milestones = ((STAGE_MILESTONES[ft] || {})[stage] || []).slice();
+    const ct = file.contract_type || _dlState.contract;
+    const contractItems = (ct && VERIFY_ITEMS_BY_CONTRACT[ct]) ? VERIFY_ITEMS_BY_CONTRACT[ct] : [];
+    // Contract verification items only apply at 'under_contract' (sale) or
+    // 'signed' (lease/buyer_rep) or 'pending' (listing). Otherwise hide.
+    const CONTRACT_STAGES = { sale:'under_contract', listing:'pending', lease:'signed', buyer_rep:'signed' };
+    const showContract = stage === CONTRACT_STAGES[ft];
+    return {
+      stage,
+      file_type: ft,
+      items: showContract ? milestones.concat(contractItems) : milestones,
+      hasContractCheck: showContract,
+      contractItemCount: showContract ? contractItems.length : 0,
+    };
+  }
+
+  function stageLabel(ft, stage){
+    const labels = {
+      sale:      { new:'New', under_contract:'Under Contract', inspection:'Inspection', remedy:'Remedy', appraisal:'Appraisal', ctc:'Clear to Close', closed:'Closed' },
+      listing:   { new:'New', active:'Active on MLS', pending:'Pending', closed:'Closed', cancelled:'Cancelled' },
+      lease:     { new:'New', active:'Application Active', signed:'Lease Signed', occupied:'Occupied', expired:'Expired' },
+      buyer_rep: { signed:'BBA Signed', active:'Active Search', representing:'Under Contract', expired:'Expired' },
+    };
+    return (labels[ft] || {})[stage] || stage;
+  }
+
   function renderVerificationsForFile(file){
     const ct = file.contract_type || _dlState.contract;
     const hostEl = document.getElementById('tpb-vf-body');
     const metaEl = document.getElementById('tpb-vf-meta');
     if(!hostEl) return;
-    if(!ct || !VERIFY_ITEMS_BY_CONTRACT[ct]){
-      hostEl.innerHTML = '<div class="tpb-dl-empty">Pick a contract type to load the verification checklist.</div>';
-      if(metaEl) metaEl.textContent = '';
+    const stageCtx = stageItemsForFile(file);
+    if(stageCtx.items.length === 0 && !stageCtx.hasContractCheck){
+      hostEl.innerHTML = '<div class="tpb-dl-empty">Pick a contract type to load the verification checklist for this stage.</div>';
+      if(metaEl) metaEl.textContent = stageLabel(stageCtx.file_type, stageCtx.stage);
       return;
     }
-    const items = VERIFY_ITEMS_BY_CONTRACT[ct].filter(it => shouldShowItem(it, file.id));
+    const items = stageCtx.items.filter(it => shouldShowItem(it, file.id));
     const verifs = _verifByFile[file.id] || {};
     let confirmedCount = 0, needsActionCount = 0, naCount = 0;
     items.forEach(it => {
@@ -1540,8 +1991,9 @@
     const reviewable = items.length - naCount;
     if(metaEl){
       const parts = [];
+      parts.push('<strong>Stage:</strong> ' + esc(stageLabel(stageCtx.file_type, stageCtx.stage)));
       if(needsActionCount > 0) parts.push('<strong>'+needsActionCount+' need you</strong>');
-      parts.push(confirmedCount + ' of ' + reviewable + ' verified');
+      parts.push(confirmedCount + ' of ' + reviewable + ' done');
       metaEl.innerHTML = parts.join(' · ');
     }
 
