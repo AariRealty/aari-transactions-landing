@@ -276,6 +276,17 @@
     });
   }
 
+  // Default landing page per role · used when the user clicks a view-as pill,
+  // so they always land on the page that matters most for that role.
+  //   broker → broker cockpit (team operations)
+  //   tc     → pipeline (move the files · the TC's core daily work)
+  //   agent  → portal (their kanban / file workspace)
+  var ROLE_DEFAULT_LANDING = {
+    broker: '/broker-cockpit.html',
+    tc: '/pipeline.html',
+    agent: '/portal.html',
+  };
+
   function wireViewAs() {
     var pills = document.querySelectorAll('.aari-hdr-viewas-pill');
     pills.forEach(function (pill) {
@@ -288,7 +299,14 @@
             sessionStorage.removeItem('aari-view-as');
           }
         } catch (_) {}
-        location.reload();
+        // Navigate to the role's default landing page so the pill click feels
+        // like switching workspaces, not just re-tagging the current page.
+        var dest = ROLE_DEFAULT_LANDING[v] || null;
+        if (dest && location.pathname !== dest) {
+          location.href = dest;
+        } else {
+          location.reload();
+        }
       });
     });
   }
