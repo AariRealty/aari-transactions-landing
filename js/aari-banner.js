@@ -20,7 +20,7 @@
   // ----- Card destinations (role-filtered · May 2026) -----
   // Each role sees ONLY their own card(s). Brokers use View-as pills to switch into TC or Agent views.
   const CARDS = [
-    { id:'start',    label:'Start my day',   href:'/briefing.html',       icon:iconSun(),   match:['/briefing'],                       roles:['agent'] },
+    { id:'start',    label:'Morning Briefing', href:'/briefing.html',      icon:iconSun(),   match:['/briefing'],                       roles:['agent'] },
     { id:'team',     label:'Run the team',   href:'/broker-cockpit.html', icon:iconUsers(), match:['/broker-cockpit','/tc-cockpit'],   roles:['broker'] },
     { id:'prospecting', label:'Fill the pipeline', href:'/prospecting.html', icon:iconBook(), match:['/prospecting','/bd'], roles:['tc','broker'] },
     { id:'files',    label:'Move the files', href:'/pipeline.html',       icon:iconFolder(),match:['/pipeline'],                       roles:['tc','broker'] },
