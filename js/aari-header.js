@@ -183,6 +183,10 @@
       '</div>',
       '<a href="/portal.html#recent-activity" role="menuitem">Recent activity</a>',
       '<a href="/portal.html#billing-documents" role="menuitem">Billing &amp; Documents</a>',
+      '<a href="/portal.html#completion-card" role="menuitem" style="display:flex;justify-content:space-between;align-items:center">' +
+        '<span>Complete profile</span>' +
+        '<span id="aari-profile-pct-badge" style="display:none;font-size:11px;padding:2px 8px;border-radius:999px;font-weight:500;letter-spacing:0.3px;background:#fde0db;color:#c44b3b">&nbsp;</span>' +
+      '</a>',
       '<a href="/portal.html#profile" role="menuitem">Settings</a>',
       '<a href="#" id="aari-signout" role="menuitem">Sign out</a>'
     ].join('\n');
