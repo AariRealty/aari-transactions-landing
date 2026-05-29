@@ -316,6 +316,14 @@
         <optgroup label="Commercial">
           <option value="cc_6">Commercial (CC-6)</option>
         </optgroup>
+        <optgroup label="Listings">
+          <option value="ers_21tn">Residential Listing (ERS-21TN)</option>
+          <option value="vlla_6">Vacant Land Listing (VLLA-6)</option>
+        </optgroup>
+        <optgroup label="Leases">
+          <option value="cl_11">Contract to Lease (CL-11)</option>
+          <option value="rlhd_3x">Residential Lease (RLHD-3x)</option>
+        </optgroup>
       </select>
       <label for="tpb-eff" style="margin-left:4px">Effective</label>
       <input type="date" id="tpb-eff" />
@@ -487,6 +495,8 @@
         if(!_sendsByFile[s.file_id][s.template_id]){ _sendsByFile[s.file_id][s.template_id] = s; }
       });
     } else { _sendsByFile = {}; }
+    renderFileTypeFilter();
+    renderKanbanShell();
     renderKpis();
     renderKanban();
   }
@@ -1111,6 +1121,103 @@
       showIfKey:'cash_or_loan_cc', showIfValueNot:'cash' },
   ];
 
+  // ============== ERS-21TN (FR Exclusive Right of Sale Listing Agreement) ==============
+  // LISTING-SIDE contract — TC's job is intake verification, marketing setup,
+  // compliance documentation. No buyer-side deadlines.
+  //
+  // Para 1: Listing date + Termination Date
+  // Para 2(c): Currently occupied by tenant?
+  // Para 3: List price + acceptable financing terms + seller financing
+  // Para 6: Broker authority + lockbox + public marketing vs opt-out
+  // Para 8: Compensation + Protection Period after Termination
+  // Para 11: Brokerage Relationship (Single Agent vs Transaction Broker)
+  const VERIFY_ITEMS_ERS_21TN = [
+    { key:'listing_term', paragraph:'Para 1',
+      label:'Listing Period · Start + Termination',
+      subText:'Captured listing period drives Protection Period (Para 8(d)(3)).',
+      options:{ captured:'Both dates captured', missing:'Missing · ask' },
+      actionLabel:'Ask agent',
+      actionMessage:'Per ERS-21TN Paragraph 1, please confirm the listing start date and Termination Date. These dates drive the listing term and the Protection Period.' },
+    { key:'list_price', paragraph:'Para 3(a)',
+      label:'List price captured',
+      subText:'Confirms acceptable price + drives marketing.',
+      options:{ captured:'Captured', missing:'Missing · ask' } },
+    { key:'financing_terms_accepted', paragraph:'Para 3(b)',
+      label:'Acceptable financing terms',
+      subText:'Cash / Conventional / VA / FHA / Other / Seller financing / Assumption.',
+      options:{ cash_only:'Cash only', conventional:'Cash + Conventional', all:'All including FHA/VA', seller_finance:'Includes Seller financing', assumption:'Assumption permitted' } },
+    { key:'currently_occupied_tenant', paragraph:'Para 2(c)',
+      label:'Property currently occupied by tenant',
+      subText:'If yes · lease term + tenant access rules.',
+      options:{ no:'No · vacant or owner-occupied', yes:'Yes · tenant occupied', unknown:'Unknown · ask' },
+      actionLabel:'Request lease info',
+      actionMessage:'Per ERS-21TN Paragraph 2(c), the property is indicated as tenant-occupied. Please send the lease term expiration date, tenant contact, and showing instructions.' },
+    { key:'public_marketing_authorization', paragraph:'Para 6(a)/(b)',
+      label:'Public marketing authorization',
+      subText:'(a) Public MLS marketing OR (b) Opt-out (no MLS, no signs, in-office only).',
+      options:{ public:'(a) Public · MLS + signs + IDX', opt_out:'(b) Opt-out · seller initialed', not_set:'Not set · confirm' },
+      actionLabel:'Ask agent',
+      actionMessage:'Per ERS-21TN Paragraph 6(a)/(b), please confirm whether Seller has authorized public marketing (MLS, signs, IDX) or has selected the opt-out option (in-office only, no signs). If opt-out, confirm Seller initialed.' },
+    { key:'lockbox_authorization', paragraph:'Para 6(e)',
+      label:'Lockbox authorization',
+      subText:'Seller authorizes lockbox use · releases Broker liability.',
+      options:{ yes:'Authorized', no:'Declined · no lockbox', tbd:'TBD' } },
+    { key:'compensation_terms', paragraph:'Para 8(a)',
+      label:'Broker compensation captured',
+      subText:'% or flat $ · drives CDA + payout workflow.',
+      options:{ captured:'Captured · % or $', missing:'Missing · request' },
+      actionLabel:'Request comp details',
+      actionMessage:'Per ERS-21TN Paragraph 8(a), please send the compensation amount (% of purchase price or flat $) so we can set up the Commission Disbursement Authorization at Closing.' },
+    { key:'protection_period', paragraph:'Para 8(d)(3)',
+      label:'Protection Period · day count',
+      subText:'Post-Termination window where Seller still owes commission on protected prospects.',
+      options:{ captured:'Captured', missing:'Missing · ask', na:'N/A · left blank' } },
+    { key:'brokerage_relationship', paragraph:'Para 11',
+      label:'Brokerage Relationship',
+      subText:'Single Agent · Transaction Broker · Consent to transition.',
+      options:{ single_agent:'Single Agent', transaction_broker:'Transaction Broker', single_with_consent:'Single Agent + consent to transition' } },
+    { key:'sellers_property_disclosure', paragraph:'Standard',
+      label:"Seller's Property Disclosure (SPDS)",
+      subText:'Filled by Seller · attached to listing · required for compliance.',
+      options:{ received:'Received · attached', pending:'Pending · request', na:'N/A · estate or REO' },
+      actionLabel:'Request SPDS',
+      actionMessage:"Please send the completed Seller's Property Disclosure (SPDS) so we can attach it to the listing file. This is required documentation for compliance." },
+    { key:'hoa_condo_disclosure_listing', paragraph:'Standard',
+      label:'HOA/Condo disclosure attached',
+      subText:'Required if HOA/Condo property · Seller must complete.',
+      options:{ received:'Received', pending:'Pending · request', na:'N/A · no HOA' },
+      actionLabel:'Request HOA disclosure',
+      actionMessage:'If the property is part of an HOA or condominium, the HOA/Condo Disclosure must be completed by Seller and attached. Please confirm and send.' },
+    { key:'lead_based_paint_listing', paragraph:'Standard',
+      label:'Lead-Based Paint disclosure (pre-1978)',
+      subText:'Required if construction commenced before 1978.',
+      options:{ na:'N/A · post-1978', received:'Received · signed', pending:'Pending · request' },
+      actionLabel:'Request LBP',
+      actionMessage:'If the residence was constructed before 1978, the Lead-Based Paint Disclosure must be signed by Seller and attached to the listing. Please confirm and send the executed disclosure.' },
+    { key:'photos_consent', paragraph:'Para 6(a)(iv)',
+      label:'Photos + name + internet display consent',
+      subText:'Seller agrees to use of name + photos + IDX/VOW display.',
+      options:{ yes:'Yes · consented', limited:'Limited · see notes', no:'No · restricted' } },
+    { key:'mortgage_info_authorization', paragraph:'Para 6(c)',
+      label:'Mortgage info authorization',
+      subText:'Seller authorizes Broker to obtain present mortgage info from lender.',
+      options:{ yes:'Yes · captured', no:'No · Seller declined' } },
+    { key:'withhold_offers', paragraph:'Para 6(f)/(g)',
+      label:'Withhold offers settings',
+      subText:'Verbal offers · all offers once contract accepted · Seller direction.',
+      options:{ standard:'Standard · withhold verbal + all after accept', custom:'Custom · see notes' } },
+  ];
+
+  // VLLA-6 (Vacant Land Listing) shares the ERS-21TN skeleton plus 1 land item
+  const VERIFY_ITEMS_VLLA_6 = VERIFY_ITEMS_ERS_21TN.concat([
+    { key:'land_zoning_use', paragraph:'Standard',
+      label:'Zoning + permitted use for marketing',
+      subText:'Confirm what uses can be marketed (residential / multi-family / commercial / mixed).',
+      options:{ captured:'Captured · marketing copy aligned', pending:'Pending · need zoning verification' },
+      actionLabel:'Request zoning',
+      actionMessage:'Please send the current zoning designation and permitted uses for the property so we can align the marketing copy and target buyer pool correctly.' },
+  ]);
+
   const VERIFY_ITEMS_BY_CONTRACT = {
     'frbar_asis':     VERIFY_ITEMS_FARBAR_ASIS,
     'frbar_standard': VERIFY_ITEMS_FARBAR_STANDARD,
@@ -1118,9 +1225,146 @@
     'nabor':          VERIFY_ITEMS_NABOR_STANDARD,
     'nab089':         VERIFY_ITEMS_NAB089,
     'vac_15':         VERIFY_ITEMS_VAC_15,
-    'nab088':         VERIFY_ITEMS_VAC_15, // NABOR Vacant Land · same skeleton, will refine Para refs next session
+    'nab088':         VERIFY_ITEMS_VAC_15,
     'cc_6':           VERIFY_ITEMS_CC_6,
+    'ers_21tn':       VERIFY_ITEMS_ERS_21TN,
+    'vlla_6':         VERIFY_ITEMS_VLLA_6,
+    'cl_11':          [], // populated below
+    'rlhd_3x':        [], // populated below
+    'bbe_1':          [], // populated below · BBA Exclusive
+    'bbe_2':          [], // populated below · BBA Non-Exclusive (delta off bbe_1)
   };
+
+  // ============== CL-11 (Contract to Lease) ==============
+  // PRE-LEASE intent contract. Tenant + Landlord agree to execute a Lease by
+  // a deadline. TC tracks: deposit holding, application status, HOA approval.
+  // Per Para 11 · CRITICAL for condos · approval BEFORE Lease term starts.
+  const VERIFY_ITEMS_CL_11 = [
+    { key:'lease_execution_deadline', paragraph:'Para 1',
+      label:'Lease execution deadline',
+      subText:'Date by which parties must execute the actual Lease.',
+      options:{ captured:'Captured · calendared', missing:'Missing · ask' },
+      actionLabel:'Ask agent',
+      actionMessage:'Per CL-11 Paragraph 1, please confirm the date by which Landlord and Tenant must execute the formal Lease so we can calendar it.' },
+    { key:'lease_preparer', paragraph:'Para 1',
+      label:'Lease preparer · Landlord or Tenant',
+      subText:'Default Landlord if left blank.',
+      options:{ landlord:'Landlord prepares', tenant:'Tenant prepares' } },
+    { key:'deposit_status_cl11', paragraph:'Para 2',
+      label:'Deposit · paid or pending',
+      subText:'Paid at execution OR within 3 days.',
+      options:{ paid:'Paid · receipted', pending:'Pending · within 3 days', missing:'Missing · request' },
+      actionLabel:'Request deposit confirmation',
+      actionMessage:'Per CL-11 Paragraph 2, please confirm the Deposit has been delivered to the deposit holder and send receipt documentation.' },
+    { key:'property_furnished', paragraph:'Para 3',
+      label:'Property furnished status',
+      subText:'Furnished (inventory required) OR Unfurnished.',
+      options:{ unfurnished:'Unfurnished', furnished:'Furnished · inventory attached', furnished_no_inv:'Furnished · inventory missing' },
+      actionLabel:'Request inventory',
+      actionMessage:'Per CL-11 Paragraph 3, if the property is furnished, please send the inventory list of furniture and appliances included.' },
+    { key:'pets_policy', paragraph:'Para 7',
+      label:'Pets · prohibited or permitted',
+      subText:'If permitted · type/size restrictions captured.',
+      options:{ prohibited:'Prohibited', permitted:'Permitted · per terms', conditional:'Permitted with conditions' } },
+    { key:'smoking_policy', paragraph:'Para 8',
+      label:'Smoking · prohibited or permitted',
+      subText:'Drives insurance + cleaning deposit rules.',
+      options:{ prohibited:'Prohibited', permitted:'Permitted' } },
+    { key:'utilities_allocation', paragraph:'Para 9',
+      label:'Utilities allocation',
+      subText:'Tenant pays default · exceptions noted (Landlord-paid items).',
+      options:{ tenant_all:'Tenant pays all', mixed:'Mixed · per terms · captured', missing:'Missing · ask' } },
+    { key:'maintenance_allocation', paragraph:'Para 10',
+      label:'Maintenance allocation',
+      subText:'Landlord default · Tenant-handled items noted.',
+      options:{ landlord_all:'Landlord all · standard', mixed:'Mixed · per terms · captured', missing:'Missing · ask' } },
+    { key:'hoa_condo_approval', paragraph:'Para 11',
+      label:'HOA / Condo Association approval',
+      subText:'CRITICAL for condos · must be obtained BEFORE Lease Term.',
+      options:{ na:'N/A · no association', approved:'Approved · documented', pending:'Pending · application submitted', not_started:'Not started · application due' },
+      actionLabel:'Request approval status',
+      actionMessage:'Per CL-11 Paragraph 11, if the property is in a condo/co-op/HOA, the Lease is contingent on Association approval. Please send the application submission confirmation, application fee receipt, and target approval date.' },
+    { key:'application_fee_paid', paragraph:'Para 11',
+      label:'Association application fee paid',
+      subText:'Non-refundable · party allocation captured.',
+      options:{ na:'N/A · no association', paid:'Paid · receipt on file', pending:'Pending payment' },
+      actionLabel:'Request fee receipt',
+      actionMessage:'Per CL-11 Paragraph 11, please send the receipt for the non-refundable Association application fee.' },
+    { key:'background_credit_check', paragraph:'Para 13',
+      label:'Background + credit + reference check',
+      subText:'Standard tenant screening · results delivered to Landlord.',
+      options:{ complete:'Complete · approved', pending:'Pending · in process', failed:'Failed · Landlord notified' } },
+  ];
+
+  // ============== RLHD-3X (Residential Lease · Single-Family / Duplex) ==============
+  // The actual executed Lease (post-CL-11). TC verifies: dates, rent, deposits,
+  // parties, statutory disclosure, association rules. NOT TO EXCEED 1 YEAR per
+  // form rules · longer terms need different lease form.
+  const VERIFY_ITEMS_RLHD_3X = [
+    { key:'lease_term_dates', paragraph:'Para · Term',
+      label:'Lease Term · start + end',
+      subText:'Not to exceed one year per RLHD form rules.',
+      options:{ captured:'Both dates captured', missing:'Missing · ask' } },
+    { key:'rent_amount_and_schedule', paragraph:'Para 3',
+      label:'Rent amount + payment schedule',
+      subText:'Per installment OR full term · drives calendar.',
+      options:{ captured:'Captured · monthly rent + tax', missing:'Missing · ask', custom:'Custom schedule · see notes' } },
+    { key:'rent_payee_method', paragraph:'Para 3',
+      label:'Rent payee + accepted payment methods',
+      subText:'Payable to Landlord (or designated agent) · cash/check/money order/etc.',
+      options:{ captured:'Captured · all methods', limited:'Limited methods · see notes', missing:'Missing · ask' } },
+    { key:'security_deposit_amount', paragraph:'Para · Security',
+      label:'Security deposit · amount + holding',
+      subText:'Held in Florida bank · interest-bearing or escrow per Chapter 83.',
+      options:{ captured:'Captured · escrow on file', missing:'Missing · request' },
+      actionLabel:'Request deposit info',
+      actionMessage:'Per RLHD-3X, please confirm the security deposit amount, where it is being held (escrow / Florida bank / interest-bearing), and the date deposited.' },
+    { key:'parties_contact_captured', paragraph:'Para 1',
+      label:'Parties contact info captured',
+      subText:'Landlord + Tenant email + phone for statutory notices.',
+      options:{ captured:'All captured', missing:'Missing · request' },
+      actionLabel:'Request contact info',
+      actionMessage:'Per RLHD-3X Paragraph 1, please send Landlord and Tenant email addresses and phone numbers so we can properly serve any required statutory notices.' },
+    { key:'property_inventory', paragraph:'Para 2',
+      label:'Furniture + appliance inventory',
+      subText:'List of leased items · governs return condition + damage claims.',
+      options:{ attached:'Attached + signed', unfurnished:'N/A · unfurnished', missing:'Missing · request' },
+      actionLabel:'Request inventory',
+      actionMessage:'Per RLHD-3X Paragraph 2, please send the executed inventory of furniture and appliances included with the lease.' },
+    { key:'pets_policy_lease', paragraph:'Para · Pets',
+      label:'Pet policy + pet deposit',
+      subText:'Restrictions + deposit + cleaning fees.',
+      options:{ prohibited:'Prohibited', permitted:'Permitted · deposit captured', conditional:'Permitted · with conditions' } },
+    { key:'utilities_responsibility_lease', paragraph:'Para · Utilities',
+      label:'Utilities responsibility',
+      subText:'Captured per CL-11 carryover OR re-set.',
+      options:{ captured:'Captured', missing:'Missing · ask' } },
+    { key:'association_rules_attached', paragraph:'Standard',
+      label:'Association rules + restrictions attached',
+      subText:'If HOA/Condo · tenant must acknowledge receipt.',
+      options:{ na:'N/A · no association', attached:'Attached + Tenant signed', missing:'Missing · request' },
+      actionLabel:'Request rules',
+      actionMessage:'If the property is in an HOA or condo, please send the Association rules and restrictions for Tenant acknowledgment and attach to the Lease file.' },
+    { key:'landlord_tenant_act_attached', paragraph:'Statutory',
+      label:'Florida Landlord and Tenant Act (Chapter 83) attached',
+      subText:'A copy MUST be attached to the Lease per form.',
+      options:{ attached:'Attached · per form', missing:'Missing · attach' } },
+    { key:'move_in_inspection', paragraph:'Standard',
+      label:'Move-in inspection scheduled',
+      subText:'Pre-occupancy condition documentation.',
+      options:{ scheduled:'Scheduled · date captured', completed:'Completed · report on file', skipped:'Skipped (not advised)' },
+      actionLabel:'Schedule inspection',
+      actionMessage:'Please coordinate the move-in inspection with the Tenant. Documented condition at move-in protects both parties at lease end.' },
+    { key:'lead_paint_lease', paragraph:'Federal',
+      label:'Lead-Based Paint disclosure (pre-1978)',
+      subText:'Required addendum + EPA pamphlet for pre-1978 housing.',
+      options:{ na:'N/A · post-1978', signed:'Signed + EPA pamphlet delivered', missing:'Missing · request' },
+      actionLabel:'Request LBP',
+      actionMessage:'If the dwelling was constructed before 1978, the federal Lead-Based Paint disclosure addendum and EPA pamphlet are mandatory. Please send the executed disclosure.' },
+  ];
+
+  VERIFY_ITEMS_BY_CONTRACT['cl_11'] = VERIFY_ITEMS_CL_11;
+  VERIFY_ITEMS_BY_CONTRACT['rlhd_3x'] = VERIFY_ITEMS_RLHD_3X;
 
   let _verifByFile = {}; // { file_id: { verification_key: row } }
 
@@ -1310,6 +1554,10 @@
     'vac_15':         'FR/BAR Vacant Land (VAC-15)',
     'nab088':         'NABOR Vacant Land (NAB088)',
     'cc_6':           'Commercial (CC-6)',
+    'ers_21tn':       'Residential Listing (ERS-21TN)',
+    'vlla_6':         'Vacant Land Listing (VLLA-6)',
+    'cl_11':          'Contract to Lease (CL-11)',
+    'rlhd_3x':        'Residential Lease (RLHD-3x)',
   };
 
   // Default day counts per contract type (per the comparison HTML).
@@ -1872,13 +2120,59 @@
     document.getElementById('kpi-ytd').textContent = ytd;
   }
 
+  function renderFileTypeFilter(){
+    const el = document.getElementById('ft-filter');
+    if(!el) return;
+    const counts = {};
+    FILE_TYPES.forEach(t => { counts[t.id] = 0; });
+    _files.forEach(f => { const t = (f.file_type || 'sale'); counts[t] = (counts[t]||0)+1; });
+    el.innerHTML = FILE_TYPES.map(t => {
+      const cls = t.id === _fileTypeFilter ? 'ft-pill active' : 'ft-pill';
+      return '<button type="button" class="'+cls+'" data-ft="'+t.id+'">'+esc(t.label)+'<span class="count">'+counts[t.id]+'</span></button>';
+    }).join('');
+    el.querySelectorAll('[data-ft]').forEach(btn => btn.addEventListener('click', () => {
+      _fileTypeFilter = btn.getAttribute('data-ft');
+      try { localStorage.setItem('aari_files_type', _fileTypeFilter); } catch(_){}
+      STAGES = STAGES_BY_TYPE[_fileTypeFilter] || STAGES_BY_TYPE.sale;
+      renderFileTypeFilter();
+      renderKanbanShell();
+      renderKpis();
+      renderKanban();
+    }));
+  }
+
+  function renderKanbanShell(){
+    const stages = getStages();
+    STAGES = stages;
+    const titleEl = document.getElementById('kanban-title');
+    if(titleEl){
+      const labels = { sale:'Transaction Pipeline', listing:'Listings Pipeline', lease:'Lease Pipeline', buyer_rep:'Buyer-Rep Pipeline' };
+      titleEl.textContent = labels[_fileTypeFilter] || 'Pipeline';
+    }
+    const k = document.getElementById('kanban');
+    if(!k) return;
+    k.style.gridTemplateColumns = 'repeat(' + stages.length + ',1fr)';
+    k.innerHTML = stages.map(s => {
+      const name = (STAGE_LABELS[s] || s).toUpperCase();
+      const sub = STAGE_SUBS[s] || '';
+      return '<div class="lane" data-stage="'+s+'">' +
+        '<div class="lane-head"><p class="lane-name">'+esc(name)+'</p><p class="lane-sub">'+esc(sub)+'</p><p class="lane-count" id="count-'+s+'">0</p></div>' +
+        '<div class="lane-body" id="lane-'+s+'"></div>' +
+      '</div>';
+    }).join('');
+  }
+
   function renderKanban(){
-    const buckets = {}; STAGES.forEach(s => { buckets[s] = []; });
-    _files.forEach(f => {
+    const stages = getStages();
+    const buckets = {}; stages.forEach(s => { buckets[s] = []; });
+    _files.filter(f => (f.file_type || 'sale') === _fileTypeFilter).forEach(f => {
       const s = deriveStage(f);
-      (buckets[s] || buckets.new).push(f);
+      // If the derived stage isn't valid for this file_type (e.g., a sale file
+      // with stage 'inspection' viewed as 'listing'), bucket into the first lane.
+      if(buckets[s]) buckets[s].push(f);
+      else buckets[stages[0]].push(f);
     });
-    STAGES.forEach(stage => {
+    stages.forEach(stage => {
       const laneEl = document.getElementById('lane-'+stage);
       const countEl = document.getElementById('count-'+stage);
       if(countEl){
