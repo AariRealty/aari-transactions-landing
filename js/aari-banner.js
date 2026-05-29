@@ -17,6 +17,19 @@
 (function aariBanner(){
   'use strict';
 
+  // ============================================================================
+  // DISABLED May 2026 · single banner rule.
+  // The 'Where to?' cards used to inject at the top of every inner page,
+  // duplicating navigation that the aari-header.js already provides
+  // (the '← Where to?' link goes back to /briefing.html where the cards live).
+  //
+  // briefing.html renders its own cards from its internal NAV array, so
+  // disabling this banner does NOT affect the Where to? hub itself.
+  //
+  // To re-enable: remove the early return below.
+  // ============================================================================
+  return;
+
   // ----- Card destinations (role-filtered · May 2026) -----
   // Each role sees ONLY their own card(s). Brokers use View-as pills to switch into TC or Agent views.
   const CARDS = [
