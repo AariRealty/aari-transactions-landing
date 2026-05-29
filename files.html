@@ -321,11 +321,17 @@
       <label for="tpb-contract">Contract</label>
       <select id="tpb-contract">
         <option value="">— pick a contract —</option>
-        <option value="frbar_asis">FR/BAR As-Is (7x)</option>
-        <option value="frbar_standard">FR/BAR Standard (7x)</option>
-        <option value="frbar_crsp">CRSP-17 (FR Residential)</option>
-        <option value="nabor">NABOR Standard</option>
-        <option value="nab089">NABOR As-Is (NAB089)</option>
+        <optgroup label="Residential">
+          <option value="frbar_asis">FR/BAR As-Is (7x)</option>
+          <option value="frbar_standard">FR/BAR Standard (7x)</option>
+          <option value="frbar_crsp">CRSP-17 (FR Residential)</option>
+          <option value="nabor">NABOR Standard</option>
+          <option value="nab089">NABOR As-Is (NAB089)</option>
+        </optgroup>
+        <optgroup label="Vacant Land">
+          <option value="vac_15">FR/BAR Vacant Land (VAC-15)</option>
+          <option value="nab088">NABOR Vacant Land (NAB088)</option>
+        </optgroup>
       </select>
       <label for="tpb-eff" style="margin-left:4px">Effective</label>
       <input type="date" id="tpb-eff" />
@@ -843,12 +849,254 @@
 
   const VERIFY_ITEMS_NABOR_STANDARD = VERIFY_ITEMS_NAB089.concat(VERIFY_ITEMS_NABOR_STANDARD_DELTA);
 
+  // ============== VAC-15 (FR/BAR Vacant Land) ==============
+  // Vacant land is a completely different beast than residential improved.
+  // No buildings to inspect · BUT critical items: zoning, utilities, environmental,
+  // mineral rights, easements/access, CCCL, 1031.
+  //
+  // Para 6 Financing (Cash · New Financing · Seller Financing options).
+  // Para 7 Title (10-day Buyer review · 30-day Seller Cure Period).
+  // Para 9 Due Diligence Period · OR (2) 'No Due Diligence' Buyer waiver.
+  // Para 9(c) Flood · 9(d) CCCL · 9(g) 1031 Exchange.
+  const VERIFY_ITEMS_VAC_15 = [
+    { key:'financing_type_vac', paragraph:'Para 6',
+      label:'Financing type',
+      subText:'(a) Cash, no contingency · (b)(1) New third-party financing · (b)(2) Seller financing.',
+      options:{ cash:'(a) Cash · no contingency', new_loan:'(b)(1) New financing', seller_loan:'(b)(2) Seller financing', tbd:'TBD' },
+      naAuto:{ cash: ['financing_period_vac','loan_terms_vac'] } },
+    { key:'due_diligence_selection', paragraph:'Para 9(a)',
+      label:'Due Diligence Period selected?',
+      subText:'(1) Buyer has DD Period to investigate · (2) Buyer satisfied · no further investigation.',
+      options:{ has_period:'(1) DD Period · in force', no_period:'(2) No DD · Buyer waived', tbd:'TBD' },
+      naAuto:{ no_period: ['due_diligence_days_vac','utilities_check','zoning_check','environmental_check','subdivision_restrictions'] } },
+    { key:'due_diligence_days_vac', paragraph:'Para 9(a)(1)',
+      label:'Due Diligence Period · day count',
+      subText:'Buyer investigates everything · terminate if unsatisfied.',
+      options:{ default:'Default · captured', custom:'Custom · see notes', missing:'Missing · ask' },
+      actionLabel:'Ask agent',
+      actionMessage:'Per VAC-15 Paragraph 9(a)(1), please confirm the Due Diligence Period day count so we can calendar the Buyer\'s investigation window correctly.',
+      showIfKey:'due_diligence_selection', showIfValueNot:'no_period' },
+    { key:'utilities_check', paragraph:'Para 9(a)(1)',
+      label:'Utilities · public OR well/septic feasibility',
+      subText:'Confirm public sewer/water OR Property approved for well/private septic.',
+      options:{ public:'Public utilities available', well_septic:'Well + septic approved', pending:'Pending verification · ask' },
+      actionLabel:'Request utility report',
+      actionMessage:'Per VAC-15 Paragraph 9(a)(1), please send confirmation of utility availability — either (a) public sewer + water connection details, OR (b) approval documentation for well and/or private septic installation. Critical for Due Diligence.' },
+    { key:'zoning_check', paragraph:'Para 9(a)(1)',
+      label:'Zoning verification',
+      subText:'Buyer\'s intended use vs current zoning + restrictions.',
+      options:{ confirmed:'Confirmed · use matches', restricted:'Restricted · variance needed', pending:'Pending · request' },
+      actionLabel:'Request zoning verification',
+      actionMessage:'Per VAC-15 Paragraph 9(a)(1), please confirm the property\'s current zoning matches the Buyer\'s intended use. Send any zoning verification or letter from the county zoning office.' },
+    { key:'subdivision_restrictions', paragraph:'Para 9(a)(1)',
+      label:'Subdivision / deed restrictions',
+      subText:'Restrictions, concurrency, growth management — Buyer must accept.',
+      options:{ confirmed:'Confirmed · Buyer accepts', issues:'Issues · see notes', pending:'Pending · request' },
+      actionLabel:'Request restrictions doc',
+      actionMessage:'Per VAC-15 Paragraph 9(a)(1), please send any subdivision/deed restrictions, concurrency documentation, and growth management designations affecting the property so the Buyer can review during Due Diligence.' },
+    { key:'environmental_check', paragraph:'Para 9(a)(1)',
+      label:'Environmental · wetlands, species, soil',
+      subText:'Florida wetlands · protected species · soil conditions · contamination.',
+      options:{ clean:'Clean · no concerns', issues:'Issues · see notes', survey_needed:'Environmental survey ordered', pending:'Pending' },
+      actionLabel:'Request env survey',
+      actionMessage:'Per VAC-15 Paragraph 9(a)(1), please send any environmental assessment, wetlands delineation, or protected species survey of the property so the Buyer can complete Due Diligence.' },
+    { key:'survey_vac', paragraph:'Standard',
+      label:'Survey · vacant land critical',
+      subText:'Boundary survey REQUIRED · often Buyer\'s expense · drives everything.',
+      options:{ existing:'Existing survey received', new_ordered:'New survey ordered', tbd:'TBD' },
+      actionLabel:'Request survey',
+      actionMessage:'For vacant land, a current boundary survey is critical to confirm acreage, encroachments, easements, and legal access. Please send any existing survey from Seller and confirm whether Buyer is ordering a new one.' },
+    { key:'flood_zone_vac', paragraph:'Para 9(c)',
+      label:'Flood zone determination',
+      subText:'Survey-confirmed flood zone · drives insurance + buildability.',
+      options:{ x:'X · minimal risk', ae:'AE · 100-yr flood', vhe:'VE/VH · high risk', pending:'Pending survey' } },
+    { key:'cccl_coastal_vac', paragraph:'Para 9(d)',
+      label:'CCCL · Coastal Construction Control Line',
+      subText:'If seaward of CCCL · Seller affidavit/survey required (or Buyer waives).',
+      options:{ na:'N/A · not coastal', required:'Required · doc pending', received:'Received · documented', waived:'Buyer waived' },
+      actionLabel:'Request CCCL doc',
+      actionMessage:'Per VAC-15 Paragraph 9(d), if any part of the property lies seaward of the Coastal Construction Control Line, Seller must provide an affidavit or survey. Please confirm coastal status and send the required document.' },
+    { key:'mineral_rights', paragraph:'Standard',
+      label:'Mineral / oil / gas rights',
+      subText:'Vacant land frequently has separated mineral rights · confirm Seller conveys.',
+      options:{ conveyed:'Conveyed with property', reserved:'Reserved by Seller · documented', unknown:'Unknown · ask' },
+      actionLabel:'Ask agent',
+      actionMessage:'Please confirm whether the mineral, oil, and gas rights are conveyed with the property or reserved by Seller (or a prior owner). This is a common vacant land issue and Buyer should be aware before close.' },
+    { key:'easements_access', paragraph:'Standard',
+      label:'Easements + legal access',
+      subText:'Recorded easements · legal access to public road · right of way.',
+      options:{ confirmed:'Confirmed · clean', issues:'Issues · see notes', survey_pending:'Awaiting survey' },
+      actionLabel:'Request easement docs',
+      actionMessage:'Please confirm legal access to a public road and disclose any recorded easements or rights of way affecting the property. These are critical vacant land items the Buyer must accept during Due Diligence.' },
+    { key:'title_evidence_type_vac', paragraph:'Para 7(a)',
+      label:'Title evidence type',
+      subText:'(1) Title commitment OR (2) Abstract of title.',
+      options:{ commitment:'(1) Title commitment', abstract:'(2) Abstract' } },
+    { key:'cure_period_vac', paragraph:'Para 7(b)',
+      label:'Title Cure Period',
+      subText:'30 days default after Buyer\'s defect notice · Seller cures or Buyer elects.',
+      options:{ default:'Default · 30 days', custom:'Custom · see notes', na:'N/A · no defects' } },
+    { key:'existing_owners_policy_vac', paragraph:'Para 7(a)(1)',
+      label:"Existing Owner's Policy (Seller)",
+      subText:'If Seller has policy · 15-day delivery to Buyer · reissue rate.',
+      options:{ has:'Yes · copy received', none:'No existing policy', unknown:'Unknown · ask' },
+      actionLabel:'Ask agent',
+      actionMessage:"Per VAC-15 Paragraph 7(a)(1), if Seller has an existing Owner's Title Policy and Buyer is paying for the new policy, Seller must deliver a copy within 15 days of Effective Date. Please confirm and send if available." },
+    { key:'firpta_foreign_vac', paragraph:'Para 9(f)',
+      label:'FIRPTA · Seller foreign person?',
+      subText:'If yes · 15% withholding + affidavit required.',
+      options:{ no:'No · affidavit received', yes:'Yes · 15% withholding', unknown:'Unknown · ask' },
+      actionLabel:'Request affidavit',
+      actionMessage:"Per VAC-15 Paragraph 9(f), please confirm Seller's FIRPTA status. Send Seller's non-foreign affidavit, or notify us if Seller is a foreign person." },
+    { key:'exchange_1031_vac', paragraph:'Para 9(g)',
+      label:'1031 Exchange contemplated?',
+      subText:'Either party · cooperation required · no liability or cost to other party.',
+      options:{ no:'No · standard close', buyer:'Buyer 1031', seller:'Seller 1031', both:'Both 1031' } },
+    { key:'closing_agent_vac', paragraph:'Para 18',
+      label:'Escrow Agent + Closing Agent confirmed',
+      subText:'Capture name, address, phone, email.',
+      options:{ captured:'Captured · in contacts', missing:'Missing · ask' },
+      actionLabel:'Request agent info',
+      actionMessage:'Please send the Escrow Agent / Closing Agent\'s name, address, phone, and email per Paragraph 18 so we can coordinate.' },
+    // Loan-only (auto-NA when Cash)
+    { key:'financing_period_vac', paragraph:'Para 6(b)',
+      label:'Financing Period · day count',
+      subText:'Default · Closing Date or 30 days after Effective, whichever first.',
+      options:{ default:'Default · captured', custom:'Custom · see notes', missing:'Missing · ask' },
+      actionLabel:'Ask agent',
+      actionMessage:'Per VAC-15 Paragraph 6(b), please confirm the Financing Period day count so we can calendar the Buyer\'s commitment deadline.',
+      showIfKey:'financing_type_vac', showIfValueNot:'cash' },
+    { key:'loan_terms_vac', paragraph:'Para 6(b)(1)/(2)',
+      label:'Loan terms · captured',
+      subText:'Amount or %, fixed/adjustable rate cap, lender contact.',
+      options:{ provided:'Provided · captured', missing:'Missing · request', tbd:'TBD' },
+      actionLabel:'Request loan info',
+      actionMessage:'Per VAC-15 Paragraph 6(b), please send loan amount or percentage, rate cap (fixed or adjustable), and lender name + contact so we can track financing progress.',
+      showIfKey:'financing_type_vac', showIfValueNot:'cash' },
+  ];
+
+  // ============== CC-6 (Commercial Contract) ==============
+  // Florida Realtors commercial sale + purchase. Fundamentally different from
+  // residential — leases, tenant estoppels, business operation continuity,
+  // Phase I environmental, rent roll. Longer financing approval (45 days
+  // default vs 30 residential).
+  //
+  // Para 5 Third Party Financing (45-day default).
+  // Para 6 Title (15-day Buyer review + Curative Period).
+  // Para 7 Survey + Inspections + Walk-through.
+  // Para 8 Operation of Property during Contract Period · UNIQUE to commercial.
+  // Para 9(f) FIRPTA.
+  const VERIFY_ITEMS_CC_6 = [
+    { key:'cash_or_loan_cc', paragraph:'Para 5',
+      label:'Cash or Loan?',
+      subText:'Commercial Loan Approval default is 45 days (vs 30 residential).',
+      options:{ cash:'Cash · no financing', loan:'Loan · third-party financing', tbd:'TBD' },
+      naAuto:{ cash: ['loan_terms_cc','loan_approval_period_cc'] } },
+    { key:'existing_leases_cc', paragraph:'Para 8',
+      label:'Existing leases · rent roll',
+      subText:'CRITICAL · Seller must continue operations · no material changes without Buyer consent.',
+      options:{ provided:'Provided · rent roll captured', tenanted:'Tenanted · request leases', none:'No tenants · owner-occupied', mixed:'Mixed · see notes' },
+      actionLabel:'Request rent roll',
+      actionMessage:'Per CC-6 Paragraph 8, please send the complete rent roll, copies of all existing leases, and any service contracts so we can verify the income stream and obligations the Buyer will assume.' },
+    { key:'tenant_estoppels_cc', paragraph:'Para 8',
+      label:'Tenant estoppel certificates',
+      subText:'Each tenant confirms lease terms · no defaults · prepaid rent · deposits held.',
+      options:{ all_received:'All received', partial:'Partial · awaiting some', requested:'Requested · in process', na:'N/A · no tenants' },
+      actionLabel:'Request estoppels',
+      actionMessage:'For each existing tenant, please send signed Estoppel Certificates confirming lease terms, no defaults, prepaid rent (if any), and security deposits. These are critical for the Buyer to assume the income stream.' },
+    { key:'snda_agreements_cc', paragraph:'Para 8',
+      label:'SNDA agreements (if financed)',
+      subText:'Subordination, Non-Disturbance, Attornment · between tenants and Buyer\'s lender.',
+      options:{ all_executed:'All executed', in_progress:'In progress', na:'N/A · cash or no tenants' },
+      actionLabel:'Request SNDAs',
+      actionMessage:'If the Buyer is financing this transaction with existing tenants in place, the lender will typically require SNDA agreements from each tenant. Please coordinate with each tenant for execution.',
+      showIfKey:'cash_or_loan_cc', showIfValueNot:'cash' },
+    { key:'service_contracts_cc', paragraph:'Para 8',
+      label:'Service contracts · assigned or terminated',
+      subText:'Maintenance, security, property management, landscaping contracts.',
+      options:{ assigned:'Assigned to Buyer', terminated:'Terminated at Closing', mixed:'Mixed · see notes' },
+      actionLabel:'Request contracts',
+      actionMessage:'Please send copies of all service contracts (maintenance, security, property management, landscaping, etc.) so the Buyer can elect to assume or terminate at Closing.' },
+    { key:'income_expense_cc', paragraph:'Due Diligence',
+      label:'Income + expense statements (3-yr)',
+      subText:'Trailing 3-year financials · drives Buyer\'s valuation + lender underwriting.',
+      options:{ received:'3-year received', partial:'Partial · request balance', not_provided:'Not yet provided' },
+      actionLabel:'Request financials',
+      actionMessage:'Please send 3 years of trailing income and expense statements for the property. This is critical for the Buyer\'s valuation and for any lender underwriting the transaction.' },
+    { key:'phase_one_env', paragraph:'Para 7 (Inspections)',
+      label:'Phase I Environmental Site Assessment',
+      subText:'Industry-standard for commercial · 30-45 days typical.',
+      options:{ clean:'Phase I · clean', findings:'Findings · Phase II ordered', in_progress:'In progress · ordered', skipped:'Buyer skipped (rare)' },
+      actionLabel:'Request Phase I',
+      actionMessage:'Per Paragraph 7, please coordinate Phase I Environmental Site Assessment with the Buyer\'s environmental consultant. If recognized environmental conditions (RECs) are identified, a Phase II may be required.' },
+    { key:'zoning_use_cc', paragraph:'Para 7',
+      label:'Zoning + permitted use verification',
+      subText:'Current zoning matches Buyer\'s intended use · CO + permits current.',
+      options:{ confirmed:'Confirmed · use matches', variance_needed:'Variance needed', pending:'Pending verification' },
+      actionLabel:'Request zoning verification',
+      actionMessage:'Please send zoning verification from the county and the current Certificate of Occupancy. Confirm that the Buyer\'s intended use is permitted under current zoning.' },
+    { key:'co_permits_cc', paragraph:'Para 7',
+      label:'Certificate of Occupancy + open permits',
+      subText:'Active CO on file · no open or expired permits.',
+      options:{ clean:'Clean · current CO · no open permits', open:'Open permits · Seller close-out', missing:'CO missing · request' },
+      actionLabel:'Request CO',
+      actionMessage:'Please send a current Certificate of Occupancy and a permit history report confirming no open or expired building permits affect the property.' },
+    { key:'survey_cc', paragraph:'Para 7(c)',
+      label:'ALTA Survey · commercial standard',
+      subText:'Existing Seller survey delivered · or new ALTA ordered by Buyer.',
+      options:{ existing:'Seller delivered prior survey', new_ordered:'New ALTA ordered', tbd:'TBD' },
+      actionLabel:'Request survey',
+      actionMessage:'Per Paragraph 7(c), please send any existing surveys, plans, specifications, and engineering documents in Seller\'s possession. Confirm whether the Buyer is ordering a new ALTA survey at Closing.' },
+    { key:'title_evidence_type_cc', paragraph:'Para 6(a)',
+      label:'Title evidence type',
+      subText:'(1) Title insurance commitment · (2) Abstract of title.',
+      options:{ commitment:'(1) Title commitment', abstract:'(2) Abstract' } },
+    { key:'curative_period_cc', paragraph:'Para 6(b)',
+      label:'Curative Period · captured',
+      subText:'Buyer has 15 days to deliver title defect notice · Seller has Curative Period to cure.',
+      options:{ captured:'Captured · in deadlines', missing:'Missing · ask' } },
+    { key:'firpta_foreign_cc', paragraph:'Para 9(f)',
+      label:'FIRPTA · Seller foreign person?',
+      subText:'15% withholding workflow if Seller is foreign.',
+      options:{ no:'No · affidavit received', yes:'Yes · 15% withholding', unknown:'Unknown · ask' },
+      actionLabel:'Request affidavit',
+      actionMessage:"Per CC-6 Paragraph 9(f), please confirm Seller's FIRPTA status. Send Seller's non-foreign affidavit with taxpayer ID, or notify us if Seller is a foreign person." },
+    { key:'escrow_agent_cc', paragraph:'Para 2(a)/10',
+      label:'Escrow Agent + closing agent',
+      subText:'Name, address, phone · confirm received initial deposit.',
+      options:{ captured:'Captured + deposit received', missing:'Missing · ask' },
+      actionLabel:'Request agent info',
+      actionMessage:'Please send the Escrow Agent\'s name, address, and phone per Paragraph 2(a), and confirm receipt of the initial deposit.' },
+    { key:'operation_property_cc', paragraph:'Para 8',
+      label:'Operation continuity · Para 8 compliance',
+      subText:'Seller continues to operate · no material changes (renting vacant space, etc.) without Buyer consent.',
+      options:{ confirmed:'Confirmed · no changes', changes:'Material changes · Buyer review needed', monitoring:'Monitoring through close' } },
+    // Loan-only items
+    { key:'loan_approval_period_cc', paragraph:'Para 5',
+      label:'Loan Approval Date · captured',
+      subText:'Default 45 days after Effective (vs 30 residential).',
+      options:{ default:'Default · 45 days', custom:'Custom · see notes', missing:'Missing · ask' },
+      actionLabel:'Ask agent',
+      actionMessage:'Per CC-6 Paragraph 5, please confirm the Loan Approval Date day count (default 45 days commercial vs 30 residential).',
+      showIfKey:'cash_or_loan_cc', showIfValueNot:'cash' },
+    { key:'loan_terms_cc', paragraph:'Para 5',
+      label:'Loan terms · full capture',
+      subText:'Amount or %, fixed/variable rate caps, points/fees, term, amortization.',
+      options:{ provided:'Provided · all fields captured', missing:'Missing · request', tbd:'TBD' },
+      actionLabel:'Request loan info',
+      actionMessage:'Per CC-6 Paragraph 5, please send the loan amount or %, fixed/variable rate caps, points/loan fees, term in years, and amortization period, plus the lender name and contact.',
+      showIfKey:'cash_or_loan_cc', showIfValueNot:'cash' },
+  ];
+
   const VERIFY_ITEMS_BY_CONTRACT = {
     'frbar_asis':     VERIFY_ITEMS_FARBAR_ASIS,
     'frbar_standard': VERIFY_ITEMS_FARBAR_STANDARD,
     'frbar_crsp':     VERIFY_ITEMS_CRSP_17,
     'nabor':          VERIFY_ITEMS_NABOR_STANDARD,
     'nab089':         VERIFY_ITEMS_NAB089,
+    'vac_15':         VERIFY_ITEMS_VAC_15,
+    'nab088':         VERIFY_ITEMS_VAC_15, // NABOR Vacant Land · same skeleton, will refine Para refs next session
+    'cc_6':           VERIFY_ITEMS_CC_6,
   };
 
   let _verifByFile = {}; // { file_id: { verification_key: row } }
@@ -1036,6 +1284,9 @@
     'frbar_crsp':     'CRSP-17 (FR Residential)',
     'nabor':          'NABOR Standard',
     'nab089':         'NABOR As-Is (NAB089)',
+    'vac_15':         'FR/BAR Vacant Land (VAC-15)',
+    'nab088':         'NABOR Vacant Land (NAB088)',
+    'cc_6':           'Commercial (CC-6)',
   };
 
   // Default day counts per contract type (per the comparison HTML).
