@@ -204,10 +204,9 @@
     }
     wrap.innerHTML = [
       '<button type="button" class="aari-hdr-bell" id="aari-hdr-bell" aria-haspopup="true" aria-expanded="false" aria-label="Open notifications" title="Notifications">',
-      '  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">',
-      '    <path d="M10 5a2 2 0 1 1 4 0"/>',
-      '    <path d="M17 16h-10l1.6-2a2 2 0 0 0 .4-1.2V10a4 4 0 0 1 8 0v2.8c0 .43.14.85.4 1.2L19 16h-2z" transform="translate(-1 0)"/>',
-      '    <path d="M9 18a3 3 0 0 0 6 0"/>',
+      '  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">',
+      '    <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>',
+      '    <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
       '  </svg>',
       '  <span class="aari-hdr-bell-dot" id="aari-hdr-bell-dot" aria-hidden="true"></span>',
       '</button>',
