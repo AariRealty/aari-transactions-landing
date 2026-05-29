@@ -25,6 +25,7 @@
     { id:'prospecting', label:'Fill the pipeline', href:'/prospecting.html', icon:iconBook(), match:['/prospecting','/bd'], roles:['tc','broker'] },
     { id:'files',    label:'Move the files', href:'/files.html',          icon:iconFolder(),match:['/files.html','/tc-cockpit','/pipeline'], roles:['tc','broker'] },
     { id:'quality',  label:'Prove the quality', href:'/files-sla.html',    icon:iconChart(), match:['/files-sla'],                       roles:['broker'] },
+    { id:'compliance', label:'Defend the audit', href:'/files-compliance.html', icon:iconShield(), match:['/files-compliance'],          roles:['broker'] },
     { id:'portal',   label:'Agent portal',   href:'/portal.html',         icon:iconUpload(),match:['/portal'],                          roles:['agent'] },
   ];
 
@@ -35,6 +36,7 @@
   function iconFolder(){return svg('<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>');}
   function iconUpload(){return svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>');}
   function iconChart(){return svg('<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>');}
+  function iconShield(){return svg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>');}
   function svg(inner){return '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+inner+'</svg>';}
 
   // ----- CSS injected once -----
