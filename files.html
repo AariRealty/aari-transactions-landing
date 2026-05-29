@@ -97,6 +97,9 @@
   .card{background:#fff;border:0.5px solid rgba(15,15,15,0.12);border-radius:7px;padding:9px 10px;cursor:grab;transition:transform .12s,box-shadow .12s;user-select:none}
   .card:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,0.05)}
   .card.urgent{border-left:3px solid #c44b3b}
+  .card.cash{background:linear-gradient(180deg, #ffffff 0%, #fafaf7 100%)}
+  .card-tag-cash{display:inline-block;font-size:8.5px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#5a4a1f;background:#f3e9c8;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle}
+  .lane[data-stage="appraisal"] .card.cash{opacity:0.55;border-left:3px dashed #999}
   .card-addr{font-size:11.5px;font-weight:500;color:#0f0f0f;margin:0 0 3px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .card-meta{font-size:10px;color:#666;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .card-foot{margin-top:4px;font-size:9.5px;color:#888}
@@ -2773,20 +2776,35 @@
     wireCardClicks();
   }
 
+  function isCashFile(f){
+    // Multiple paths to detect cash: (1) explicit verification mark,
+    // (2) raw_form_data.financing_type === 'cash', (3) earnest_money present but no lender.
+    const v = (_verifByFile[f.id] || {}).intake_financing_type;
+    if(v && v.status === 'confirmed' && v.value === 'cash') return true;
+    const raw = f.raw_form_data || {};
+    if(raw.financing_type === 'cash' || raw.cash_offer === 'yes') return true;
+    if(!f.lender_contact && (raw.financing_type || '').toLowerCase().includes('cash')) return true;
+    return false;
+  }
+
   function cardHtml(f){
     const addr = f.property_address || 'Untitled file';
     const side = f.client_type === 'buyer' ? 'Buy' : (f.client_type === 'seller' ? 'Sell' : '');
     const meta = [side, f.client_name || ''].filter(Boolean).join(' · ');
     const d = daysToClose(f);
+    const cash = isCashFile(f);
+    const stage = deriveStage(f);
     let foot = '', footCls = '';
     if(d != null && d < 0){ foot = 'Overdue'; footCls = ' urgent'; }
     else if(d === 0){ foot = 'Closing today'; footCls = ' urgent'; }
     else if(d != null && d <= 2){ foot = d + ' day' + (d===1?'':'s') + ' · needs you'; footCls = ' urgent'; }
+    else if(cash && stage === 'appraisal'){ foot = 'Cash · skip to CTC'; footCls = ' urgent'; }
     else if(d != null && d <= 14){ foot = 'Closes in ' + d + ' days'; }
-    else if(deriveStage(f) === 'closed' && f.closing_date){ foot = 'Closed ' + fmtDate(f.closing_date); }
+    else if(stage === 'closed' && f.closing_date){ foot = 'Closed ' + fmtDate(f.closing_date); }
     const urgentCls = footCls ? ' urgent' : '';
-    return '<div class="card'+urgentCls+'" draggable="true" data-file-id="'+esc(f.id)+'">' +
-      '<p class="card-addr">'+esc(addr)+'</p>' +
+    const cashBadge = cash ? '<span class="card-tag-cash">Cash</span>' : '';
+    return '<div class="card'+urgentCls+(cash?' cash':'')+'" draggable="true" data-file-id="'+esc(f.id)+'">' +
+      '<p class="card-addr">'+esc(addr)+cashBadge+'</p>' +
       (meta ? '<p class="card-meta">'+esc(meta)+'</p>' : '') +
       (foot ? '<p class="card-foot'+footCls+'">'+esc(foot)+'</p>' : '') +
     '</div>';
