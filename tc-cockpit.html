@@ -1601,6 +1601,232 @@
     });
   }
 
+  // ============== TC EMAIL PLAYBOOK ==============
+  // Stage → recommended emails. Each entry has:
+  //   id        · unique key for tracking in file_email_sends
+  //   label     · what the TC sees in the UI
+  //   to        · who it goes to (drives recipient_role)
+  //   fn        · edge function name to invoke
+  const TPB_STAGE_LABELS = {
+    'new': 'New · awaiting TC',
+    'under_contract': 'Under contract',
+    'inspection': 'Inspection period',
+    'remedy': 'Remedy / negotiations',
+    'appraisal': 'Appraisal period',
+    'ctc': 'Clear to close',
+    'closed': 'Closed',
+  };
+  const TPB_PLAYBOOK = {
+    'new': [
+      { id:'intake_confirm', label:'Intake confirmation', to:'agent', fn:'send-intake-confirmation' },
+      { id:'tc_assignment_notice', label:'TC assignment notice', to:'agent', fn:'send-tc-assignment' },
+    ],
+    'under_contract': [
+      { id:'tc_new_file_welcome', label:'TC welcome · file accepted', to:'agent', fn:'send-tc-new-file' },
+      { id:'tc_acceptance_to_agent', label:'TC acceptance notice', to:'agent', fn:'send-tc-acceptance-to-agent' },
+      { id:'kickoff_status_ping', label:'Kickoff status ping', to:'agent', fn:'send-tc-status-ping' },
+    ],
+    'inspection': [
+      { id:'inspection_scheduled_notice', label:'Inspection scheduled · agent notice', to:'agent', fn:'send-tc-status-ping' },
+      { id:'inspection_report_uploaded', label:'Inspection report uploaded', to:'agent', fn:'send-file-notification' },
+      { id:'repair_request_ack', label:'Repair request acknowledged', to:'agent', fn:'send-tc-message' },
+    ],
+    'remedy': [
+      { id:'remedy_period_status', label:'Remedy period status update', to:'agent', fn:'send-tc-status-ping' },
+      { id:'repair_addendum_filed', label:'Repair addendum filed', to:'agent', fn:'send-file-notification' },
+    ],
+    'appraisal': [
+      { id:'appraisal_ordered_notice', label:'Appraisal ordered notice', to:'agent', fn:'send-tc-status-ping' },
+      { id:'appraisal_status_update', label:'Appraisal status update', to:'agent', fn:'send-tc-status-ping' },
+      { id:'appraisal_cleared_notice', label:'Appraisal cleared confirmation', to:'agent', fn:'send-tc-status-ping' },
+    ],
+    'ctc': [
+      { id:'pre_close_checklist', label:'Pre-close checklist', to:'agent', fn:'send-checklist' },
+      { id:'cd_received_notice', label:'CD received · agent notice', to:'agent', fn:'send-tc-status-ping' },
+      { id:'final_walk_scheduled', label:'Final walk scheduled', to:'agent', fn:'send-tc-status-ping' },
+    ],
+    'closed': [
+      { id:'closing_confirmation', label:'Closing confirmation', to:'agent', fn:'send-tc-status-ping' },
+      { id:'post_close_thank_you', label:'Post-close thank you', to:'agent', fn:'send-tc-message' },
+    ],
+  };
+
+  const TPB_STAGE_ORDER = ['new','under_contract','inspection','remedy','appraisal','ctc','closed'];
+  let _tpbCurrentFile = null;
+  let _tpbSendsByFile = {}; // { file_id: { template_id: { sent_at, recipient_email } } }
+
+  async function tpbLoadSendsForFile(fileId){
+    if(!fileId) return {};
+    if(_tpbSendsByFile[fileId]) return _tpbSendsByFile[fileId];
+    _tpbSendsByFile[fileId] = {};
+    try {
+      if(!window.AariAuth || !window.AariAuth.ensureClient) return _tpbSendsByFile[fileId];
+      const client = await window.AariAuth.ensureClient();
+      if(!client || !client.from) return _tpbSendsByFile[fileId];
+      const { data } = await client.from('file_email_sends')
+        .select('template_id, sent_at, recipient_email, status')
+        .eq('file_id', fileId)
+        .eq('status','succeeded')
+        .order('sent_at', { ascending: false });
+      (data || []).forEach(row => {
+        // Keep newest per template
+        if(!_tpbSendsByFile[fileId][row.template_id]){
+          _tpbSendsByFile[fileId][row.template_id] = row;
+        }
+      });
+    } catch(_){}
+    return _tpbSendsByFile[fileId];
+  }
+
+  function openPlaybook(file){
+    if(!file) return;
+    _tpbCurrentFile = file;
+    document.body.classList.add('tpb-open');
+    renderPlaybook(file);
+  }
+
+  function closePlaybook(){
+    document.body.classList.remove('tpb-open');
+    _tpbCurrentFile = null;
+  }
+
+  async function renderPlaybook(file){
+    const stage = txnDeriveStage(file);
+    const stageLabel = TPB_STAGE_LABELS[stage] || stage;
+    const ebEl = document.getElementById('tpb-stage');
+    const addrEl = document.getElementById('tpb-addr');
+    const metaEl = document.getElementById('tpb-meta');
+    const emailsEl = document.getElementById('tpb-emails');
+    const nextEbEl = document.getElementById('tpb-next-eb');
+    const nextListEl = document.getElementById('tpb-next-list');
+    if(ebEl) ebEl.textContent = stageLabel;
+    if(addrEl) addrEl.textContent = file.property_address || file.address || 'Untitled file';
+    if(metaEl){
+      const parts = [];
+      if(file.agent_name) parts.push(file.agent_name);
+      if(file.client_type === 'buyer') parts.push('Buy-side');
+      else if(file.client_type === 'seller') parts.push('Sell-side');
+      if(file.purchase_price_cents) parts.push('$' + Math.round(file.purchase_price_cents/100000) + 'K');
+      metaEl.textContent = parts.join(' · ');
+    }
+
+    const sends = await tpbLoadSendsForFile(file.id);
+    const playbook = TPB_PLAYBOOK[stage] || [];
+    if(emailsEl){
+      if(!playbook.length){
+        emailsEl.innerHTML = '<div class="tpb-empty">No emails recommended at this stage.</div>';
+      } else {
+        emailsEl.innerHTML = playbook.map(e => {
+          const sent = sends && sends[e.id];
+          const tsStr = sent ? new Date(sent.sent_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }) : '';
+          return '<div class="tpb-email' + (sent ? ' sent' : '') + '">' +
+            '<div class="tpb-email-row">' +
+              '<div class="tpb-email-info">' +
+                '<p class="tpb-email-name">' + escapeHtmlSafe(e.label) + '</p>' +
+                '<p class="tpb-email-sub">To: ' + escapeHtmlSafe(e.to) + ' &middot; Template: ' + escapeHtmlSafe(e.fn) + '</p>' +
+              '</div>' +
+              (sent
+                ? '<div class="tpb-sent"><span class="tpb-sent-ts">&check; Sent ' + escapeHtmlSafe(tsStr) + '</span><button type="button" class="tpb-resend" data-resend="' + e.id + '">Resend</button></div>'
+                : '<button type="button" class="tpb-send" data-send="' + e.id + '">Send</button>') +
+            '</div>' +
+          '</div>';
+        }).join('');
+        // Wire send / resend buttons
+        emailsEl.querySelectorAll('[data-send]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const eid = btn.getAttribute('data-send');
+            tpbSendEmail(file, stage, playbook.find(e => e.id === eid), btn, false);
+          });
+        });
+        emailsEl.querySelectorAll('[data-resend]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            if(!confirm('Resend this email? The recipient will get it again.')) return;
+            const eid = btn.getAttribute('data-resend');
+            tpbSendEmail(file, stage, playbook.find(e => e.id === eid), btn, true);
+          });
+        });
+      }
+    }
+
+    // Coming up next stage
+    const nextIdx = TPB_STAGE_ORDER.indexOf(stage) + 1;
+    const nextStage = TPB_STAGE_ORDER[nextIdx];
+    if(nextEbEl) nextEbEl.textContent = nextStage ? ('Coming up · ' + (TPB_STAGE_LABELS[nextStage] || nextStage)) : 'Pipeline complete';
+    if(nextListEl){
+      const nextList = nextStage ? (TPB_PLAYBOOK[nextStage] || []) : [];
+      nextListEl.innerHTML = nextList.length
+        ? nextList.map(e => '<li>' + escapeHtmlSafe(e.label) + '</li>').join('')
+        : '<li style="list-style:none;color:#aaa;padding-left:0">Nothing queued.</li>';
+    }
+  }
+
+  async function tpbSendEmail(file, stage, email, btn, isResend){
+    if(!file || !email) return;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    let success = false;
+    let errMsg = '';
+    try {
+      const client = await window.AariAuth.ensureClient();
+      // Invoke the edge function · use supabase.functions.invoke when available
+      const session = (await client.auth.getSession()).data.session;
+      const url = 'https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/' + email.fn;
+      const resp = await fetch(url, {
+        method:'POST',
+        headers:{
+          'Content-Type':'application/json',
+          'Authorization': 'Bearer ' + ((session && session.access_token) || ''),
+        },
+        body: JSON.stringify({ file_id: file.id, template_id: email.id, stage: stage, resend: !!isResend }),
+      });
+      success = resp.ok;
+      if(!resp.ok){
+        try { errMsg = (await resp.text()).slice(0, 200); } catch(_){}
+      }
+    } catch(err){
+      errMsg = (err && err.message) || 'send_failed';
+    }
+    // Record the send (succeeded or failed) in file_email_sends.
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { data: { user } } = await client.auth.getUser();
+      await client.from('file_email_sends').insert({
+        file_id: file.id,
+        template_id: email.id,
+        stage: stage,
+        sent_by: user ? user.id : null,
+        recipient_email: file.agent_email || file.client_email || null,
+        recipient_role: email.to,
+        status: success ? 'succeeded' : 'failed',
+        error_message: success ? null : errMsg.slice(0, 200),
+      });
+    } catch(_){}
+    // Invalidate cache, re-render
+    delete _tpbSendsByFile[file.id];
+    if(_tpbCurrentFile && _tpbCurrentFile.id === file.id){
+      renderPlaybook(file);
+    }
+    if(!success){
+      btn.disabled = false;
+      btn.textContent = originalText;
+      alert('Send failed: ' + (errMsg || 'unknown error'));
+    }
+  }
+
+  // Wire close handlers once on init
+  (function wireTpb(){
+    const closeBtn = document.getElementById('tpb-close');
+    const backdrop = document.getElementById('tpb-backdrop');
+    if(closeBtn) closeBtn.addEventListener('click', closePlaybook);
+    if(backdrop) backdrop.addEventListener('click', closePlaybook);
+    document.addEventListener('keydown', (e) => {
+      if((e.key === 'Escape' || e.key === 'Esc') && document.body.classList.contains('tpb-open')){
+        closePlaybook();
+      }
+    });
+  })();
+
   function renderFileList(files){
     // Render the kanban first so the TC sees the pipeline view at the top.
     renderTxnKanban(files);
