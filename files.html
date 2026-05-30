@@ -94,9 +94,27 @@
   .amp-timer{font-family:'Playfair Display',Georgia,serif;font-size:18px;font-weight:500;color:#5f5e5a;text-align:right}
   .amp-timer.warn{color:#b7791f}
   .amp-timer.urgent{color:#c44b3b}
-  .amp-action{text-align:right}
+  .amp-action{text-align:right;display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap}
   .amp-reply-btn{background:#0f0f0f;color:#fff;border:0;padding:6px 12px;border-radius:5px;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit;text-decoration:none;display:inline-block}
   .amp-reply-btn:hover{background:#222}
+  .amp-open-btn{background:#fff;color:#0f0f0f;border:0.5px solid rgba(15,15,15,0.10);padding:6px 10px;border-radius:5px;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit;text-decoration:none;display:inline-block}
+  .amp-open-btn:hover{border-color:#0f0f0f;background:#fafaf9}
+  /* Inline reply form · expanded under the row */
+  .amp-reply-form{grid-column:1 / -1;display:none;padding:10px 0 4px;border-top:0.5px solid rgba(15,15,15,0.06);margin-top:6px}
+  .amp-reply-form.open{display:block}
+  .amp-reply-form textarea{width:100%;font-family:inherit;font-size:12.5px;padding:9px 11px;border:0.5px solid rgba(15,15,15,0.10);border-radius:5px;color:#0f0f0f;resize:vertical;min-height:60px;line-height:1.4}
+  .amp-reply-form textarea:focus{outline:none;border-color:#0f0f0f}
+  .amp-reply-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px}
+  .amp-reply-hint{font-size:10.5px;color:#888}
+  .amp-reply-buttons{display:flex;gap:6px}
+  .amp-reply-cancel{background:none;border:0;color:#5f5e5a;font-size:11px;cursor:pointer;padding:6px 10px;font-family:inherit}
+  .amp-reply-cancel:hover{color:#0f0f0f}
+  .amp-reply-send{background:#0f0f0f;color:#fff;border:0;padding:7px 14px;border-radius:5px;font-size:11.5px;font-weight:500;cursor:pointer;font-family:inherit}
+  .amp-reply-send:hover{background:#222}
+  .amp-reply-send:disabled{opacity:0.6;cursor:not-allowed}
+  .amp-reply-status{font-size:11px;padding:6px 8px;border-radius:4px;margin-top:8px;display:none}
+  .amp-reply-status.ok{display:block;background:#f0f7f3;color:#2f855a}
+  .amp-reply-status.err{display:block;background:#fbeae6;color:#c44b3b}
 
   .kanban-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
   .kanban-title{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#666;font-weight:500;margin:0}
@@ -1600,25 +1618,101 @@ Aari Transactions`,
     list.innerHTML = _agentMsgs.map(m => {
       const file = _files.find(f => f.id === m.file_id);
       const addr = (file && file.property_address) || 'File ' + m.file_id.slice(0,6);
-      const agentName = (file && file.client_name) || 'Agent';
       const minutes = Math.floor((Date.now() - new Date(m.sent_at).getTime()) / 60000);
       const timerLbl = minutes < 60 ? minutes + 'm' : (Math.floor(minutes/60) + 'h ' + (minutes%60) + 'm');
       let band = '';
       if(minutes >= 240) band = 'urgent';   // >4 hours
       else if(minutes >= 120) band = 'warn'; // >2 hours
-      return '<div class="amp-row ' + band + '" data-file-id="' + esc(m.file_id) + '">' +
+      return '<div class="amp-row ' + band + '" data-msg-id="' + esc(m.id) + '" data-file-id="' + esc(m.file_id) + '">' +
         '<div><div class="amp-addr">' + esc(addr) + '</div><div class="amp-from">From your agent</div></div>' +
         '<div class="amp-msg">' + esc(m.message) + '</div>' +
         '<div class="amp-timer ' + band + '">' + esc(timerLbl) + '</div>' +
-        '<div class="amp-action"><button type="button" class="amp-reply-btn" data-reply-file="' + esc(m.file_id) + '">Open file</button></div>' +
+        '<div class="amp-action">' +
+          '<button type="button" class="amp-reply-btn" data-quick-reply="' + esc(m.id) + '">Reply</button>' +
+          '<button type="button" class="amp-open-btn" data-open-file="' + esc(m.file_id) + '">Open file</button>' +
+        '</div>' +
+        // Inline reply form · hidden until Reply clicked
+        '<div class="amp-reply-form" data-reply-form="' + esc(m.id) + '">' +
+          '<textarea data-reply-textarea="' + esc(m.id) + '" placeholder="Reply to your agent…" rows="3"></textarea>' +
+          '<div class="amp-reply-actions">' +
+            '<div class="amp-reply-hint">Agent gets a text + email · timer clears on send.</div>' +
+            '<div class="amp-reply-buttons">' +
+              '<button type="button" class="amp-reply-cancel" data-reply-cancel="' + esc(m.id) + '">Cancel</button>' +
+              '<button type="button" class="amp-reply-send" data-reply-send="' + esc(m.id) + '">Send reply</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="amp-reply-status" data-reply-status="' + esc(m.id) + '"></div>' +
+        '</div>' +
       '</div>';
     }).join('');
 
-    list.querySelectorAll('[data-reply-file]').forEach(btn => btn.addEventListener('click', (e) => {
+    // Open file
+    list.querySelectorAll('[data-open-file]').forEach(btn => btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const fid = btn.getAttribute('data-reply-file');
+      const fid = btn.getAttribute('data-open-file');
       const f = _files.find(x => x.id === fid);
       if(f) openPlaybook(f);
+    }));
+
+    // Toggle reply form
+    list.querySelectorAll('[data-quick-reply]').forEach(btn => btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const mid = btn.getAttribute('data-quick-reply');
+      const form = list.querySelector('[data-reply-form="'+mid+'"]');
+      if(!form) return;
+      // Close any other open form
+      list.querySelectorAll('.amp-reply-form.open').forEach(f => { if(f !== form) f.classList.remove('open'); });
+      form.classList.toggle('open');
+      if(form.classList.contains('open')){
+        const ta = form.querySelector('textarea'); if(ta) ta.focus();
+      }
+    }));
+
+    // Cancel
+    list.querySelectorAll('[data-reply-cancel]').forEach(btn => btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const mid = btn.getAttribute('data-reply-cancel');
+      const form = list.querySelector('[data-reply-form="'+mid+'"]');
+      if(form) form.classList.remove('open');
+    }));
+
+    // Send reply
+    list.querySelectorAll('[data-reply-send]').forEach(btn => btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const mid = btn.getAttribute('data-reply-send');
+      const ta = list.querySelector('[data-reply-textarea="'+mid+'"]');
+      const status = list.querySelector('[data-reply-status="'+mid+'"]');
+      const reply = (ta && ta.value || '').trim();
+      if(reply.length < 2){
+        status.className = 'amp-reply-status err';
+        status.textContent = 'Reply too short.';
+        return;
+      }
+      btn.disabled = true; btn.textContent = 'Sending…';
+      status.className = 'amp-reply-status';
+      try {
+        const session = (await _client.auth.getSession()).data.session;
+        const r = await fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/send-tc-reply-to-agent', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + ((session && session.access_token) || '') },
+          body: JSON.stringify({ original_message_id: mid, reply: reply }),
+        });
+        if(!r.ok){
+          status.className = 'amp-reply-status err';
+          status.textContent = 'Send failed: ' + (await r.text()).slice(0,200);
+          btn.disabled = false; btn.textContent = 'Send reply';
+          return;
+        }
+        status.className = 'amp-reply-status ok';
+        status.textContent = '✓ Reply sent · timer cleared.';
+        // Remove the message from local list and re-render
+        _agentMsgs = _agentMsgs.filter(x => x.id !== mid);
+        setTimeout(() => { renderAgentMessages(); }, 800);
+      } catch(err){
+        status.className = 'amp-reply-status err';
+        status.textContent = 'Send failed: ' + (err.message || 'unknown');
+        btn.disabled = false; btn.textContent = 'Send reply';
+      }
     }));
   }
 
@@ -4319,6 +4413,21 @@ Aari Transactions`,
           property_address: file.property_address || null,
           changed_at: new Date().toISOString(),
         });
+        // ===== NPS AUTO-TRIGGER =====
+        // Fire-and-forget NPS request when a file transitions INTO closed.
+        // Edge function is idempotent · won't double-send.
+        if(newStage === 'closed' && prevStage !== 'closed'){
+          (async () => {
+            try {
+              const session = (await _client.auth.getSession()).data.session;
+              await fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/send-agent-nps-request', {
+                method: 'POST',
+                headers: { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + ((session && session.access_token) || '') },
+                body: JSON.stringify({ file_id: fid }),
+              });
+            } catch(_){ /* non-blocking */ }
+          })();
+        }
         // Undo toast · 5-second window to revert. Stops accidental drag-drops.
         showUndoToast({
           message: 'Moved to ' + (STAGE_LABELS[newStage] || newStage),
