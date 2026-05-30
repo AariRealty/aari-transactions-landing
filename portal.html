@@ -114,9 +114,12 @@
   .lane-count { font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 600; color: var(--ink); background: #ececec; padding: 1px 7px; border-radius: 10px; min-width: 22px; text-align: center; }
   .lane-body { padding: 8px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
   .lane-empty { color: #c7c5be; font-size: 10.5px; text-align: center; padding: 16px 4px; font-style: italic; }
-  .kcard { background: #fff; border: 0.5px solid var(--line); border-radius: 6px; padding: 10px 11px; cursor: pointer; transition: transform .12s, border-color .12s, box-shadow .12s; }
+  .kcard { background: #fff; border: 0.5px solid var(--line); border-radius: 6px; padding: 10px 11px; cursor: grab; transition: transform .12s, border-color .12s, box-shadow .12s; user-select: none; }
   .kcard:hover { transform: translateY(-1px); border-color: var(--ink); box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+  .kcard:active { cursor: grabbing; }
+  .kcard.dragging { opacity: 0.45; }
   .kcard.urgent { border-left: 3px solid var(--red); }
+  .lane.drag-over { background: #f0f0e8; border-color: var(--ink); box-shadow: inset 0 0 0 2px rgba(15,15,15,0.08); }
   .kcard-addr { font-size: 12px; font-weight: 500; color: var(--ink); margin: 0 0 3px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .kcard-meta { font-size: 10px; color: var(--muted); margin: 0 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .kcard-foot { display: flex; justify-content: space-between; align-items: center; font-size: 10px; gap: 6px; }
@@ -568,7 +571,7 @@
     else foot = 'Date TBD';
     const tasks = tasksDone(f);
     const urgentCls = footCls === 'urgent' ? ' urgent' : '';
-    return '<div class="kcard' + urgentCls + '" data-file-id="' + esc(f.id) + '">' +
+    return '<div class="kcard' + urgentCls + '" data-file-id="' + esc(f.id) + '" draggable="true">' +
       '<p class="kcard-addr">' + addr + '</p>' +
       (meta ? '<p class="kcard-meta">' + esc(meta) + '</p>' : '') +
       '<div class="kcard-foot">' +
@@ -618,13 +621,98 @@
       }
     });
 
-    // Wire card clicks
-    document.querySelectorAll('.kcard[data-file-id]').forEach(card => {
-      card.addEventListener('click', () => {
-        const fid = card.getAttribute('data-file-id');
-        const f = _files.find(x => x.id === fid);
-        if(f) openDrawer(f);
-      });
+    wireKanbanInteractions();
+  }
+
+  // ===== Kanban: click (open drawer) + drag-drop (change stage) =====
+  // Uses event delegation on #kanban-wrap so we don't double-bind on every render.
+  let _draggedFileId = null;
+  let _justDragged = false;
+  function wireKanbanInteractions(){
+    const root = document.getElementById('kanban-wrap');
+    if(!root || root._wired) return;
+    root._wired = true;
+
+    // CLICK · open the file detail drawer (suppress if a drag just finished)
+    root.addEventListener('click', (e) => {
+      const card = e.target.closest('.kcard[data-file-id]');
+      if(!card || _justDragged) return;
+      const f = _files.find(x => x.id === card.getAttribute('data-file-id'));
+      if(f) openDrawer(f);
+    });
+
+    // DRAG START
+    root.addEventListener('dragstart', (e) => {
+      const card = e.target.closest && e.target.closest('.kcard[data-file-id]');
+      if(!card) return;
+      _draggedFileId = card.getAttribute('data-file-id');
+      _justDragged = false;
+      try { e.dataTransfer.setData('text/plain', _draggedFileId); e.dataTransfer.effectAllowed = 'move'; } catch(_){}
+      card.classList.add('dragging');
+    });
+
+    root.addEventListener('dragend', (e) => {
+      const card = e.target.closest && e.target.closest('.kcard');
+      if(card) card.classList.remove('dragging');
+      document.querySelectorAll('.lane.drag-over').forEach(l => l.classList.remove('drag-over'));
+      _justDragged = true;
+      setTimeout(() => { _justDragged = false; }, 60);
+    });
+
+    root.addEventListener('dragover', (e) => {
+      const lane = e.target.closest && e.target.closest('.lane');
+      if(!lane) return;
+      e.preventDefault();
+      try { e.dataTransfer.dropEffect = 'move'; } catch(_){}
+      lane.classList.add('drag-over');
+    });
+
+    root.addEventListener('dragleave', (e) => {
+      const lane = e.target.closest && e.target.closest('.lane');
+      if(lane) lane.classList.remove('drag-over');
+    });
+
+    root.addEventListener('drop', async (e) => {
+      const lane = e.target.closest && e.target.closest('.lane');
+      if(!lane) return;
+      e.preventDefault();
+      lane.classList.remove('drag-over');
+      const newStage = lane.getAttribute('data-stage');
+      const fid = _draggedFileId; _draggedFileId = null;
+      if(!fid || !newStage) return;
+      const file = _files.find(x => x.id === fid);
+      if(!file) return;
+      if(file.transaction_stage === newStage) return; // no-op
+      const prevStage = file.transaction_stage;
+      // Optimistic update
+      file.transaction_stage = newStage;
+      renderActive();
+      try {
+        const { error } = await _client.from('files').update({ transaction_stage: newStage }).eq('id', fid);
+        if(error) throw error;
+        // Audit log · agent-initiated stage change
+        try {
+          const { data: { user } } = await _client.auth.getUser();
+          await _client.from('audit_log').insert({
+            actor_id: user ? user.id : null,
+            actor_type: 'agent',
+            action: 'agent_stage_changed',
+            target_table: 'files',
+            target_id: fid,
+            details: {
+              from_stage: prevStage || null,
+              to_stage: newStage,
+              property_address: file.property_address || null,
+              changed_at: new Date().toISOString(),
+            },
+          });
+        } catch(_){}
+      } catch(err){
+        console.warn('[portal] stage update failed; reverting', err);
+        file.transaction_stage = prevStage;
+        renderActive();
+        alert('Could not save the move. Try again.');
+      }
     });
   }
 
