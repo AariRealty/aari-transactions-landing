@@ -661,6 +661,96 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 
     // ---- SECTION 7A · CLIENT ROSTER + CHURN RADAR (NEW · May 2026) ----
     renderClientRoster(agents, files, memberships);
+
+    // SECTION · Agent messages awaiting TC reply (broker oversight + nudge)
+    loadAndRenderBrokerMessages(files, byId);
+  }
+
+  // ============ BROKER MESSAGES PANEL ============
+  let _brokerMsgs = [];
+  let _brokerByIdCache = null;
+  let _brokerFilesCache = null;
+  async function loadAndRenderBrokerMessages(files, byId){
+    _brokerFilesCache = files; _brokerByIdCache = byId;
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { data } = await client.from('file_messages')
+        .select('id, file_id, sender_id, message, sent_at, replied_at, nudge_count, last_nudge_at')
+        .is('replied_at', null)
+        .eq('sender_role','agent')
+        .order('sent_at', { ascending: true });
+      _brokerMsgs = data || [];
+      renderBrokerMessages();
+    } catch(err){ console.warn('[broker-cockpit] msgs load failed', err); }
+  }
+  function renderBrokerMessages(){
+    const panel = document.getElementById('broker-msg-panel');
+    const list = document.getElementById('bmp-list');
+    const sub = document.getElementById('bmp-sub');
+    if(!panel) return;
+    if(!_brokerMsgs.length){ panel.style.display = 'none'; return; }
+    panel.style.display = 'block';
+    const urgent = _brokerMsgs.filter(m => (Date.now() - new Date(m.sent_at).getTime()) / 60000 >= 240).length;
+    sub.textContent = _brokerMsgs.length + ' awaiting reply' + (urgent ? ' · ' + urgent + ' over 4 hours' : '');
+
+    list.innerHTML = _brokerMsgs.map(m => {
+      const file = (_brokerFilesCache || []).find(f => f.id === m.file_id);
+      const tc = file && _brokerByIdCache && file.assigned_tc_id ? _brokerByIdCache[file.assigned_tc_id] : null;
+      const tcName = tc ? ((tc.first_name || '') + ' ' + (tc.last_name || '')).trim() : 'Unassigned';
+      const addr = (file && file.property_address) || 'File';
+      const agentName = (file && file.client_name) || 'Agent';
+      const minutes = Math.floor((Date.now() - new Date(m.sent_at).getTime()) / 60000);
+      const timerLbl = minutes < 60 ? minutes : Math.floor(minutes/60);
+      const timerUnit = minutes < 60 ? 'MIN AGO' : 'HR AGO';
+      let band = '';
+      if(minutes >= 240) band = 'urgent';
+      else if(minutes >= 120) band = 'warn';
+      const nudgedLbl = m.nudge_count > 0 ? ('Nudged ' + m.nudge_count + 'x') : '';
+      const lastN = m.last_nudge_at ? new Date(m.last_nudge_at).toLocaleString('en-US',{hour:'numeric',minute:'2-digit'}) : '';
+      return '<div class="bmp-row ' + band + '" data-msg-id="' + esc(m.id) + '">' +
+        '<div><div class="bmp-addr">' + esc(addr) + '</div><div class="bmp-meta">From ' + esc(agentName) + '</div></div>' +
+        '<div class="bmp-msg">' + esc(m.message) + '</div>' +
+        '<div class="bmp-tc"><div class="bmp-tc-name">' + esc(tcName) + '</div><div class="bmp-tc-since">' + (lastN ? 'Last nudge ' + lastN : '') + '</div></div>' +
+        '<div><div class="bmp-timer ' + band + '">' + timerLbl + '</div><div class="bmp-timer-lbl">' + timerUnit + '</div></div>' +
+        '<div><button class="bmp-nudge-btn" data-nudge-id="' + esc(m.id) + '">Nudge TC</button>' + (nudgedLbl ? '<div class="bmp-nudged">' + nudgedLbl + '</div>' : '') + '</div>' +
+      '</div>';
+    }).join('');
+
+    list.querySelectorAll('[data-nudge-id]').forEach(btn => btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const mid = btn.getAttribute('data-nudge-id');
+      const m = _brokerMsgs.find(x => x.id === mid);
+      if(!m) return;
+      btn.disabled = true; btn.textContent = 'Nudging…';
+      try {
+        const client = await window.AariAuth.ensureClient();
+        const session = (await client.auth.getSession()).data.session;
+        const r = await fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/nudge-tc', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + ((session && session.access_token) || '') },
+          body: JSON.stringify({ message_id: mid }),
+        });
+        if(r.ok){
+          btn.textContent = '✓ Sent';
+          // Update local state
+          m.nudge_count = (m.nudge_count || 0) + 1;
+          m.last_nudge_at = new Date().toISOString();
+          setTimeout(() => { renderBrokerMessages(); }, 600);
+        } else {
+          btn.textContent = 'Nudge TC';
+          btn.disabled = false;
+          alert('Could not nudge: ' + (await r.text()).slice(0,200));
+        }
+      } catch(err){
+        btn.textContent = 'Nudge TC';
+        btn.disabled = false;
+        alert('Nudge failed: ' + (err.message || 'unknown'));
+      }
+    }));
+  }
+  // Refresh timer every 30s, poll for new messages every 60s
+  setInterval(() => { if(_brokerMsgs.length) renderBrokerMessages(); }, 30000);
+  setInterval(() => { if(_brokerFilesCache) loadAndRenderBrokerMessages(_brokerFilesCache, _brokerByIdCache); }, 60000);
   }
 
   // SECTION 2 · Master monthly goal bar · localStorage goal + live MTD payout + pace flag
