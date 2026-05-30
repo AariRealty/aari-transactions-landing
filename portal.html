@@ -231,6 +231,39 @@
   .msg-awaiting { font-size:10px; color:#d97706; margin-top:3px; padding:0 6px; font-weight:500; }
   .thread-empty { padding:20px 0; text-align:center; color:var(--muted); font-size:12px; }
 
+  /* ===== VERIFICATION CHECKLIST · proof of TC value per file ===== */
+  .verif-box { margin-bottom:22px; background:#fafaf9; border-radius:8px; padding:14px 16px; }
+  .verif-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px; }
+  .verif-eb { font-size:10.5px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted); font-weight:600; }
+  .verif-meta { font-size:11px; color:#888; }
+  .verif-bar { height:5px; background:#ececec; border-radius:3px; overflow:hidden; margin-bottom:10px; }
+  .verif-fill { height:100%; background:var(--green); transition:width .3s; }
+  .verif-list { display:flex; flex-direction:column; gap:5px; }
+  .verif-row { display:flex; align-items:center; gap:8px; padding:6px 0; font-size:12px; }
+  .verif-icon { width:14px; height:14px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:9px; color:#fff; font-weight:700; }
+  .verif-icon.done { background:var(--green); }
+  .verif-icon.pending { background:#fff; border:1.5px solid #d4d2cc; }
+  .verif-icon.flagged { background:#d97706; }
+  .verif-label { flex:1; min-width:0; line-height:1.35; color:var(--ink); }
+  .verif-row.pending .verif-label { color:#888; }
+  .verif-toggle { background:none; border:0; color:var(--muted); font-size:11px; cursor:pointer; padding:4px 0 0; font-family:inherit; }
+  .verif-toggle:hover { color:var(--ink); text-decoration:underline; text-underline-offset:2px; }
+  .verif-empty { font-size:11.5px; color:var(--muted); font-style:italic; padding:6px 0; }
+
+  /* ===== UPCOMING DEADLINES · per-file forward-look ===== */
+  .upc-box { margin-bottom:22px; }
+  .upc-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px; }
+  .upc-eb { font-size:10.5px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted); font-weight:600; }
+  .upc-row { display:grid; grid-template-columns:1fr 80px; gap:10px; align-items:center; padding:11px 14px; background:#fff; border:0.5px solid var(--line); border-radius:6px; margin-bottom:6px; }
+  .upc-row.urgent { border-left:3px solid var(--red); }
+  .upc-row.warn { border-left:3px solid #d97706; }
+  .upc-label { font-size:12.5px; font-weight:500; color:var(--ink); line-height:1.35; }
+  .upc-date { font-size:10.5px; color:var(--muted); margin-top:3px; }
+  .upc-when { font-family:'Playfair Display',Georgia,serif; font-size:14px; font-weight:500; text-align:right; color:var(--ink); }
+  .upc-when.urgent { color:var(--red); }
+  .upc-when.warn { color:#d97706; }
+  .upc-empty { font-size:11.5px; color:var(--muted); font-style:italic; padding:8px 0; }
+
   .el-summary { display:flex; gap:18px; padding:14px 16px; margin-bottom:22px; background:#fafaf9; border-radius:8px; flex-wrap:wrap; }
   .el-summary-num { font-family:'Playfair Display',Georgia,serif; font-size:18px; font-weight:500; color:var(--ink); margin-right:4px; }
   .el-day { font-size:10.5px; letter-spacing:.5px; text-transform:uppercase; color:var(--muted); font-weight:600; margin:18px 0 8px; padding-bottom:6px; border-bottom:0.5px solid rgba(15,15,15,0.08); }
@@ -983,7 +1016,7 @@
     document.getElementById('el-back').classList.remove('open');
     document.body.style.overflow = '';
   }
-  function openDrawer(f){
+  async function openDrawer(f){
     const tc = _tcs[f.assigned_tc_id];
     const tcName = tc ? ((tc.first_name||'')+' '+(tc.last_name||'')).trim() : 'Your TC';
     const tcEmail = tc && tc.email ? tc.email : 'hello@aaritransactions.com';
@@ -996,6 +1029,17 @@
     sends.forEach(s => events.push({when:s.sent_at, type:'email', label:tplLabel(s.template_id), detail:s.recipient_email||''}));
     dls.forEach(d => events.push({when:d.completed_at, type:'dl', label:'Deadline met: '+(d.deadline_key||'').replace(/_/g,' '), detail:''}));
     events.sort((a,b) => new Date(b.when) - new Date(a.when));
+
+    // ===== MESSAGE THREAD · pull chronological history for this file =====
+    let messages = [];
+    try {
+      const { data } = await _client.from('file_messages')
+        .select('id, sender_role, message, sent_at, replied_at, parent_message_id')
+        .eq('file_id', f.id)
+        .order('sent_at', { ascending: true });
+      messages = data || [];
+    } catch(_){ /* file_messages may not exist · ignore */ }
+
     const mtc = '<div class="mtc">' +
       '<div class="mtc-head"><div class="mtc-title">Message your TC</div><div class="mtc-tc">'+esc(tcName)+'</div></div>' +
       '<textarea class="mtc-text" id="mtc-text" placeholder="Quick question for '+esc(tcName)+' about '+esc(f.property_address||'this file')+'..."></textarea>' +
@@ -1005,6 +1049,89 @@
       '</div>' +
       '<div class="mtc-status" id="mtc-status"></div>' +
     '</div>';
+
+    // ===== UPCOMING DEADLINES · next 3 unfulfilled for this file =====
+    const now = Date.now();
+    const fileDls = _deadlines
+      .filter(d => d.file_id === f.id && !d.completed_at && d.due_date)
+      .map(d => ({ ...d, ms: new Date(d.due_date+'T17:00:00').getTime() - now }))
+      .sort((a,b) => a.ms - b.ms)
+      .slice(0, 3);
+    let upcoming = '';
+    if(fileDls.length){
+      const rows = fileDls.map(d => {
+        const lbl = String(d.deadline_key || 'Deadline').replace(/_/g,' ');
+        const hours = d.ms / 3600000;
+        const days = d.ms / 86400000;
+        let band = '', whenLbl = '';
+        if(d.ms < 0){ band = 'urgent'; whenLbl = Math.abs(Math.floor(days)) + 'd late'; }
+        else if(hours <= 48){ band = 'urgent'; whenLbl = hours < 24 ? Math.round(hours)+'h' : Math.round(hours)+'h'; }
+        else if(days <= 7){ band = 'warn'; whenLbl = Math.round(days)+'d'; }
+        else { whenLbl = Math.round(days)+'d'; }
+        const dateLbl = new Date(d.due_date+'T17:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+        return '<div class="upc-row '+band+'"><div><div class="upc-label">'+esc(lbl)+'</div><div class="upc-date">'+esc(dateLbl)+'</div></div><div class="upc-when '+band+'">'+esc(whenLbl)+'</div></div>';
+      }).join('');
+      upcoming = '<div class="upc-box"><div class="upc-head"><span class="upc-eb">Coming up on this file</span></div>'+rows+'</div>';
+    } else {
+      upcoming = '<div class="upc-box"><div class="upc-head"><span class="upc-eb">Coming up on this file</span></div><div class="upc-empty">No deadlines tracked yet.</div></div>';
+    }
+
+    // ===== VERIFICATION CHECKLIST · what TC has confirmed on this file =====
+    const fileVerifs = _verifs.filter(v => v.file_id === f.id);
+    let verifBlock = '';
+    if(fileVerifs.length){
+      const done = fileVerifs.filter(v => v.status === 'confirmed').length;
+      const flagged = fileVerifs.filter(v => v.status === 'needs_action').length;
+      const total = fileVerifs.filter(v => v.status !== 'na').length;
+      const pct = total ? Math.round((done/total)*100) : 0;
+      const sortOrder = { needs_action: 0, pending: 1, confirmed: 2, na: 99 };
+      const sorted = fileVerifs.filter(v => v.status !== 'na')
+        .sort((a,b) => (sortOrder[a.status]||5) - (sortOrder[b.status]||5));
+      const showInitial = 6;
+      const itemHtml = (v) => {
+        const key = (v.verification_key || 'item').replace(/_/g,' ');
+        const status = v.status || 'pending';
+        const icon = status === 'confirmed' ? '✓' : (status === 'needs_action' ? '!' : '');
+        const cls = status === 'confirmed' ? 'done' : (status === 'needs_action' ? 'flagged' : 'pending');
+        const rowCls = status === 'confirmed' ? '' : (status === 'needs_action' ? 'flagged' : 'pending');
+        return '<div class="verif-row '+rowCls+'"><span class="verif-icon '+cls+'">'+icon+'</span><span class="verif-label">'+esc(key)+'</span></div>';
+      };
+      const initial = sorted.slice(0, showInitial).map(itemHtml).join('');
+      const rest = sorted.slice(showInitial).map(itemHtml).join('');
+      const restBlock = rest ? '<div id="verif-rest-'+esc(f.id)+'" style="display:none">'+rest+'</div><button type="button" class="verif-toggle" id="verif-toggle-'+esc(f.id)+'">Show '+(sorted.length-showInitial)+' more →</button>' : '';
+      verifBlock = '<div class="verif-box">' +
+        '<div class="verif-head"><span class="verif-eb">What we\'ve verified</span><span class="verif-meta">'+done+' of '+total+(flagged?' · '+flagged+' flagged':'')+'</span></div>' +
+        '<div class="verif-bar"><div class="verif-fill" style="width:'+pct+'%"></div></div>' +
+        '<div class="verif-list">'+initial+'</div>' +
+        restBlock +
+      '</div>';
+    } else {
+      verifBlock = '<div class="verif-box"><div class="verif-head"><span class="verif-eb">What we\'ve verified</span></div><div class="verif-empty">Your TC is reviewing this file · checklist will populate once items are run.</div></div>';
+    }
+
+    let thread = '';
+    if(messages.length){
+      const threadHtml = messages.map(m => {
+        const when = new Date(m.sent_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+        const role = m.sender_role === 'agent' ? 'agent' : (m.sender_role === 'broker' ? 'broker' : 'tc');
+        let awaitingHint = '';
+        if(m.sender_role === 'agent' && !m.replied_at){
+          const mins = Math.floor((Date.now() - new Date(m.sent_at).getTime()) / 60000);
+          const ageLbl = mins < 60 ? mins+'m' : Math.floor(mins/60)+'h';
+          awaitingHint = '<div class="msg-awaiting">Awaiting TC reply · '+ageLbl+'</div>';
+        }
+        return '<div class="msg-row from-'+role+'">' +
+          '<div class="msg-bubble">' + esc(m.message) + '</div>' +
+          '<div class="msg-meta">' + esc(when) + '</div>' +
+          awaitingHint +
+        '</div>';
+      }).join('');
+      thread = '<div class="thread">' +
+        '<div class="thread-head"><span class="thread-eb">Message history</span><span class="thread-meta">'+messages.length+' message'+(messages.length===1?'':'s')+'</span></div>' +
+        '<div class="thread-list">'+threadHtml+'</div>' +
+      '</div>';
+    }
+
     const summary = '<div class="el-summary"><div><span class="el-summary-num">'+sends.length+'</span> emails sent</div><div><span class="el-summary-num">'+dls.length+'</span> deadlines met</div></div>';
     let timeline = '';
     if(!events.length){
@@ -1022,8 +1149,18 @@
         return dayHead + '<div class="el-row"><div class="el-icon '+ic+'">'+icon+'</div><div class="el-content"><div class="el-label">'+esc(ev.label)+'</div>'+(ev.detail?'<div class="el-detail">'+esc(ev.detail)+'</div>':'')+'</div><div class="el-time">'+esc(t)+'</div></div>';
       }).join('');
     }
-    document.getElementById('el-body').innerHTML = mtc + summary + timeline;
+    document.getElementById('el-body').innerHTML = mtc + upcoming + verifBlock + thread + summary + timeline;
     document.getElementById('mtc-send').addEventListener('click', () => sendMsg(f, tc));
+    // Verification "Show more" toggle
+    const vToggle = document.getElementById('verif-toggle-'+f.id);
+    const vRest = document.getElementById('verif-rest-'+f.id);
+    if(vToggle && vRest){
+      vToggle.addEventListener('click', () => {
+        const open = vRest.style.display !== 'none';
+        vRest.style.display = open ? 'none' : 'block';
+        vToggle.textContent = open ? ('Show ' + vRest.querySelectorAll('.verif-row').length + ' more →') : 'Show less ↑';
+      });
+    }
     document.getElementById('el-drawer').classList.add('open');
     document.getElementById('el-back').classList.add('open');
     document.body.style.overflow = 'hidden';
@@ -1073,6 +1210,8 @@
       : '✓ Message saved. TC will see it next time they open the file.';
     ta.value = '';
     btn.disabled = false; btn.textContent='Send to TC';
+    // Repaint the drawer so the new message shows up in the thread immediately
+    setTimeout(() => { openDrawer(f); }, 600);
     setTimeout(loadAll, 1200);
   }
 
