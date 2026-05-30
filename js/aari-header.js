@@ -196,9 +196,9 @@
   function renderBell() {
     var wrap = document.getElementById('aari-hdr-bell-wrap');
     if (!wrap) return;
-    // Bell only visible to broker (and tc viewing-as-broker has access to broker role)
+    // Bell visible to broker + TC · agent role hides bell (no inbound items)
     var role = effectiveRole(currentProfile);
-    if (role !== 'broker') {
+    if (role !== 'broker' && role !== 'tc') {
       wrap.innerHTML = '';
       return;
     }
@@ -640,7 +640,11 @@
   }
 
   function refreshNotifications() {
-    if (effectiveRole(currentProfile) !== 'broker') return;
+    var role = effectiveRole(currentProfile);
+    // Agent role gets file_messages only (their own outbound, no bell items here)
+    // TC role gets file_messages (agent → TC)
+    // Broker role gets bd_contacts + file_messages
+    if (role !== 'broker' && role !== 'tc') return;
     if (!window.AariAuth || typeof window.AariAuth.ensureClient !== 'function') {
       notifLoadError = true;
       renderNotifPanel();
@@ -652,20 +656,100 @@
         renderNotifPanel();
         return;
       }
-      return client
-        .from('bd_contacts')
-        .select('id,first_name,last_name,handle,full_name,email,stage,last_touch_at,created_at,in_campaign,notes')
-        .limit(2000)
-        .then(function (res) {
-          if (res && res.error) throw res.error;
-          notifLoadError = false;
-          notifications = computeNotifications((res && res.data) || []);
-          renderNotifPanel();
-        });
+      var bdPromise = (role === 'broker')
+        ? client.from('bd_contacts')
+            .select('id,first_name,last_name,handle,full_name,email,stage,last_touch_at,created_at,in_campaign,notes')
+            .limit(2000)
+        : Promise.resolve({ data: [] });
+      var fmPromise = client.from('file_messages')
+        .select('id,file_id,sender_id,sender_role,recipient_role,message,sent_at,replied_at,nudge_count')
+        .is('replied_at', null)
+        .eq('sender_role','agent')
+        .order('sent_at', { ascending: false })
+        .limit(50);
+      Promise.all([bdPromise, fmPromise]).then(function (results) {
+        var bdRes = results[0] || {};
+        var fmRes = results[1] || {};
+        if (bdRes && bdRes.error) throw bdRes.error;
+        // file_messages may error if table not yet migrated · don't break the whole bell
+        var fmRows = (fmRes && !fmRes.error && Array.isArray(fmRes.data)) ? fmRes.data : [];
+        notifLoadError = false;
+        var bdNotifs = (role === 'broker') ? computeNotifications((bdRes && bdRes.data) || []) : [];
+        var fmNotifs = computeFileMessageNotifs(fmRows, role, (currentProfile && currentProfile.id) || null, client);
+        notifications = bdNotifs.concat(fmNotifs);
+        renderNotifPanel();
+      }).catch(function () {
+        notifLoadError = true;
+        notifications = [];
+        renderNotifPanel();
+      });
     }).catch(function () {
       notifLoadError = true;
       notifications = [];
       renderNotifPanel();
+    });
+  }
+
+  // Cache the file context lookup (agent name + property address) for message notifs.
+  // file_messages joins to files + agents — we hydrate on first paint so the bell
+  // can show "Marlenyi · 1234 Maple St" instead of opaque IDs.
+  var _fmContextCache = {};
+  function computeFileMessageNotifs(rows, role, userId, client) {
+    if (!Array.isArray(rows) || rows.length === 0) return [];
+    // For TC role · filter to only files this user is assigned to.
+    // (RLS already enforces this server-side · this is a belt-and-suspenders.)
+    // Trigger background hydrate of file context for any uncached file_ids
+    var needsHydrate = [];
+    rows.forEach(function (m) {
+      if (m.file_id && !_fmContextCache[m.file_id]) needsHydrate.push(m.file_id);
+    });
+    if (needsHydrate.length && client && client.from) {
+      client.from('files')
+        .select('id, property_address, agent_id, assigned_tc_id')
+        .in('id', needsHydrate)
+        .then(function (res) {
+          if (!res || res.error || !Array.isArray(res.data)) return;
+          var agentIds = [];
+          res.data.forEach(function (f) {
+            _fmContextCache[f.id] = { address: f.property_address || '', agent_id: f.agent_id, assigned_tc_id: f.assigned_tc_id, agent_name: '' };
+            if (f.agent_id) agentIds.push(f.agent_id);
+          });
+          if (agentIds.length) {
+            client.from('agents').select('id, first_name, last_name').in('id', agentIds).then(function (ar) {
+              if (!ar || ar.error || !Array.isArray(ar.data)) return;
+              var nameById = {};
+              ar.data.forEach(function (a) { nameById[a.id] = ((a.first_name || '') + ' ' + (a.last_name || '')).trim(); });
+              Object.keys(_fmContextCache).forEach(function (fid) {
+                var ctx = _fmContextCache[fid];
+                if (ctx && ctx.agent_id && nameById[ctx.agent_id]) ctx.agent_name = nameById[ctx.agent_id];
+              });
+              // re-render once names land
+              renderNotifPanel();
+            });
+          } else {
+            renderNotifPanel();
+          }
+        });
+    }
+    var landing = role === 'broker' ? '/broker-cockpit.html#messages' : '/files.html';
+    return rows.map(function (m) {
+      var ctx = _fmContextCache[m.file_id] || {};
+      var agentName = ctx.agent_name || 'Agent';
+      var addr = ctx.address || 'a file';
+      var mins = Math.floor((Date.now() - new Date(m.sent_at).getTime()) / 60000);
+      var timeLbl = mins < 60 ? (mins + 'm') : (mins < 1440 ? (Math.floor(mins/60) + 'h') : (Math.floor(mins/1440) + 'd'));
+      var urgent = mins >= 240;
+      var title = (role === 'broker' ? 'Agent → TC' : 'Agent message') + ' · ' + addr;
+      var sub = agentName + ': ' + String(m.message || '').slice(0, 80) + (m.message && m.message.length > 80 ? '…' : '');
+      if (urgent) sub = '⚠ Overdue (' + timeLbl + ') · ' + sub;
+      return {
+        id: 'fm-' + m.id,
+        icon: iconMail(),
+        title: title,
+        subtitle: sub,
+        time: timeLbl,
+        href: landing + (role === 'tc' ? '' : '')
+      };
     });
   }
 
