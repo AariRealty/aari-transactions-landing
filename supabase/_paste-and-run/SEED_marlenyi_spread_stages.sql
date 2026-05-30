@@ -35,7 +35,7 @@ update public.files
   join stages s on s.ord = ((r.rn - 1) % 6) + 1
  where public.files.id = r.file_id;
 
--- Confirmation
+-- Confirmation · shows file count per stage
 select
   coalesce(transaction_stage,'(null)') as stage,
   count(*) as files
