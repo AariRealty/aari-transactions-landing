@@ -20,13 +20,17 @@
   // ----- Card destinations (role-filtered · May 2026) -----
   // Each role sees ONLY their own card(s). Brokers use View-as pills to switch into TC or Agent views.
   const CARDS = [
-    { id:'start',    label:'Morning Briefing', href:'/briefing.html',      icon:iconSun(),   match:['/briefing'],                       roles:['agent'] },
+    // Briefing is Marlenyi's personal Morning Briefing page · broker only.
+    { id:'briefing', label:'Morning briefing', href:'/briefing.html',    icon:iconSun(),    match:['/briefing'],                       roles:['broker'] },
     { id:'team',     label:'Run the team',   href:'/broker-cockpit.html', icon:iconUsers(), match:['/broker-cockpit','/tc-cockpit'],   roles:['broker'] },
     { id:'prospecting', label:'Fill the pipeline', href:'/prospecting.html', icon:iconBook(), match:['/prospecting','/bd'], roles:['tc','broker'] },
     { id:'files',    label:'Move the files', href:'/files.html',          icon:iconFolder(),match:['/files.html','/tc-cockpit','/pipeline'], roles:['tc','broker'] },
     { id:'quality',  label:'Prove the quality', href:'/files-sla.html',    icon:iconChart(), match:['/files-sla'],                       roles:['broker'] },
     { id:'compliance', label:'Defend the audit', href:'/files-compliance.html', icon:iconShield(), match:['/files-compliance'],          roles:['broker'] },
-    { id:'portal',   label:'Agent portal',   href:'/portal.html',         icon:iconUpload(),match:['/portal'],                          roles:['agent'] },
+    // Agent-side hub · what an agent actually needs from a navigation rib.
+    { id:'portal',   label:'My files',       href:'/portal.html',         icon:iconFolder(),match:['/portal'],                          roles:['agent'] },
+    { id:'submit',   label:'Submit a file',  href:'/agent-submit.html',   icon:iconUpload(),match:['/agent-submit','/index.html#services'], roles:['agent'] },
+    { id:'refer',    label:'Refer an agent', href:'/portal.html#refer',   icon:iconHandshake(), match:[],                              roles:['agent'] },
   ];
 
   // ----- Inline SVG icons (no external font dependency) -----
@@ -37,6 +41,7 @@
   function iconUpload(){return svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>');}
   function iconChart(){return svg('<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>');}
   function iconShield(){return svg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>');}
+  function iconHandshake(){return svg('<path d="M3 12h2l3-3 4 2 4-2 3 3h2"/><path d="M8 12l3 3 4-4 3 3"/><path d="M3 12v4"/><path d="M21 12v4"/>');}
   function svg(inner){return '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+inner+'</svg>';}
 
   // ----- CSS injected once -----
