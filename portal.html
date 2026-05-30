@@ -176,9 +176,9 @@
   .lane-empty { color:#c7c5be; font-size:10.5px; text-align:center; padding:16px 4px; font-style:italic; }
   .lane.drag-over { background:#f0efe6; border-color:var(--ink); box-shadow: inset 0 0 0 2px rgba(15,15,15,0.08); }
 
-  .kcard { background:#fff; border:0.5px solid var(--line); border-radius:6px; padding:10px 11px; cursor:grab; transition:transform .12s,border-color .12s,box-shadow .12s; user-select:none; }
+  .kcard { background:#fff; border:0.5px solid var(--line); border-radius:6px; padding:10px 11px; cursor:pointer; transition:transform .12s,border-color .12s,box-shadow .12s; user-select:none; }
   .kcard:hover { transform:translateY(-1px); border-color:var(--ink); box-shadow:0 4px 12px rgba(0,0,0,0.05); }
-  .kcard:active { cursor:grabbing; }
+  .kcard:active { transform:scale(0.99); }
   .kcard.dragging { opacity:0.45; }
   .kcard.urgent { border-left:3px solid var(--red); }
   .kc-top { display:flex; align-items:center; gap:6px; margin-bottom:3px; }
@@ -593,7 +593,7 @@
   <div class="kanban-section">
     <div class="section-head">
       <p class="section-eb">Active transactions</p>
-      <span class="section-meta" id="active-meta">&nbsp;</span>
+      <span class="section-meta" id="active-meta">Your TC moves cards as the deal progresses · click any card for the file detail</span>
     </div>
     <!-- Compliance dot legend · explains what the colors on each card mean -->
     <div class="dot-legend" aria-label="Compliance status legend">
@@ -1166,7 +1166,7 @@
     else if(d!=null) foot=d+'d to close';
     else foot='Date TBD';
     const c = complianceState(f);
-    return '<div class="kcard'+(urg?' '+urg:'')+'" data-file-id="'+esc(f.id)+'" draggable="true">' +
+    return '<div class="kcard'+(urg?' '+urg:'')+'" data-file-id="'+esc(f.id)+'">' +
       '<div class="kc-top">' +
         '<div class="kc-addr">'+addr+'</div>' +
         '<span class="kc-dot kc-dot-'+c.dot+'" title="'+esc(c.label)+'"></span>' +
@@ -1199,73 +1199,21 @@
     wireKanbanDnD();
   }
 
-  // ===== DRAG & DROP =====
-  let _dragId = null;
-  let _justDragged = false;
+  // ===== KANBAN CLICK HANDLER · READ-ONLY =====
+  // Agent kanban is intentionally NOT draggable · only TC + broker can move
+  // stage on /files.html. Stage values carry attestation weight (inspection
+  // scheduled, CD sent, etc.) and the audit log records who changed what.
+  // Letting agents self-move would muddy the FREC trail and risk false
+  // implicit attestations. Agent sees the current stage; TC moves the card.
   function wireKanbanDnD(){
     const root = document.getElementById('kanban');
     if(!root || root._wired) return;
     root._wired = true;
     root.addEventListener('click', (e) => {
       const card = e.target.closest('.kcard[data-file-id]');
-      if(!card || _justDragged) return;
+      if(!card) return;
       const f = _files.find(x => x.id === card.getAttribute('data-file-id'));
       if(f) openDrawer(f);
-    });
-    root.addEventListener('dragstart', (e) => {
-      const card = e.target.closest && e.target.closest('.kcard[data-file-id]');
-      if(!card) return;
-      _dragId = card.getAttribute('data-file-id');
-      _justDragged = false;
-      try { e.dataTransfer.setData('text/plain', _dragId); e.dataTransfer.effectAllowed='move'; } catch(_){}
-      card.classList.add('dragging');
-    });
-    root.addEventListener('dragend', (e) => {
-      const card = e.target.closest && e.target.closest('.kcard');
-      if(card) card.classList.remove('dragging');
-      document.querySelectorAll('.lane.drag-over').forEach(l => l.classList.remove('drag-over'));
-      _justDragged = true;
-      setTimeout(() => { _justDragged = false; }, 60);
-    });
-    root.addEventListener('dragover', (e) => {
-      const lane = e.target.closest && e.target.closest('.lane');
-      if(!lane) return;
-      e.preventDefault();
-      try { e.dataTransfer.dropEffect='move'; } catch(_){}
-      lane.classList.add('drag-over');
-    });
-    root.addEventListener('dragleave', (e) => {
-      const lane = e.target.closest && e.target.closest('.lane');
-      if(lane) lane.classList.remove('drag-over');
-    });
-    root.addEventListener('drop', async (e) => {
-      const lane = e.target.closest && e.target.closest('.lane');
-      if(!lane) return;
-      e.preventDefault();
-      lane.classList.remove('drag-over');
-      const newStage = lane.getAttribute('data-stage');
-      const fid = _dragId; _dragId = null;
-      if(!fid || !newStage) return;
-      const f = _files.find(x => x.id === fid);
-      if(!f || f.transaction_stage === newStage) return;
-      const prev = f.transaction_stage;
-      f.transaction_stage = newStage;
-      renderKanban();
-      try {
-        await _client.from('files').update({ transaction_stage: newStage }).eq('id', fid);
-        try {
-          const { data:{user} } = await _client.auth.getUser();
-          await _client.from('audit_log').insert({
-            actor_id: user?user.id:null, actor_type:'agent', action:'agent_stage_changed',
-            target_table:'files', target_id: fid,
-            details: { from_stage: prev||null, to_stage: newStage, property_address: f.property_address||null },
-          });
-        } catch(_){}
-      } catch(err){
-        f.transaction_stage = prev;
-        renderKanban();
-        alert('Could not save the move. Try again.');
-      }
     });
   }
 
