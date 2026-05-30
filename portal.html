@@ -102,8 +102,45 @@
     .kanban { grid-template-columns: 1fr !important; }
   }
 
-  /* Team section · full width */
-  .team-section { margin-bottom:32px; }
+  /* Team + Refer split */
+  .team-refer-row { display:grid; grid-template-columns:1.6fr 1fr; gap:18px; margin-bottom:32px; }
+  @media (max-width: 900px) { .team-refer-row { grid-template-columns:1fr; } }
+  .team-section { min-width:0; }
+  .refer-section { min-width:0; }
+  .refer-card { background:#fff; border:0.5px solid var(--line); border-radius:8px; padding:18px 20px; display:flex; flex-direction:column; gap:10px; }
+  .refer-title { font-family:'Playfair Display',Georgia,serif; font-size:16px; font-weight:500; line-height:1.3; }
+  .refer-sub { font-size:12px; color:var(--muted); line-height:1.45; }
+  .refer-cta-row { display:flex; gap:8px; margin-top:4px; flex-wrap:wrap; }
+  .refer-btn { padding:9px 14px; border-radius:6px; font-size:12px; font-weight:500; cursor:pointer; border:0; font-family:inherit; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .refer-btn-primary { background:var(--ink); color:#fff; }
+  .refer-btn-primary:hover { background:#222; }
+  .refer-btn-secondary { background:#fff; color:var(--ink); border:0.5px solid var(--line); }
+  .refer-btn-secondary:hover { border-color:var(--ink); background:#fafaf9; }
+  .refer-fine { font-size:10px; color:#888; margin-top:4px; line-height:1.4; }
+
+  /* Refer modal */
+  .ref-back { display:none; position:fixed; inset:0; background:rgba(15,15,15,0.45); z-index:9990; }
+  .ref-back.open { display:block; }
+  .ref-modal { display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#fff; border-radius:10px; width:min(440px,92vw); max-height:90vh; z-index:9991; box-shadow:0 12px 40px rgba(0,0,0,0.2); overflow:hidden; }
+  .ref-modal.open { display:flex; flex-direction:column; }
+  .ref-head { display:flex; justify-content:space-between; align-items:flex-start; padding:18px 22px; border-bottom:0.5px solid var(--line); gap:10px; }
+  .ref-eb { font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; font-weight:600; margin-bottom:4px; }
+  .ref-title { font-family:'Playfair Display',Georgia,serif; font-size:18px; font-weight:500; }
+  .ref-close { background:none; border:0; font-size:24px; color:var(--muted); cursor:pointer; line-height:1; padding:0; }
+  .ref-close:hover { color:var(--ink); }
+  .ref-body { padding:18px 22px 22px; display:flex; flex-direction:column; gap:12px; overflow-y:auto; }
+  .ref-lbl { display:flex; flex-direction:column; gap:5px; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; font-weight:600; }
+  .ref-lbl input, .ref-lbl textarea { font-family:inherit; font-size:13px; padding:9px 11px; border:0.5px solid var(--line); border-radius:5px; color:var(--ink); text-transform:none; letter-spacing:0; font-weight:400; }
+  .ref-lbl input:focus, .ref-lbl textarea:focus { outline:none; border-color:var(--ink); }
+  .ref-lbl textarea { resize:vertical; min-height:60px; }
+  .ref-opt { color:#888; text-transform:none; letter-spacing:0; font-weight:400; }
+  .ref-status { font-size:12px; padding:8px 10px; border-radius:5px; display:none; }
+  .ref-status.show { display:block; }
+  .ref-status.ok { background:#f0f7f3; color:var(--green); }
+  .ref-status.err { background:#fbeae6; color:var(--red); }
+  .ref-submit { background:var(--ink); color:#fff; border:0; padding:11px 18px; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer; font-family:inherit; margin-top:4px; }
+  .ref-submit:hover { background:#222; }
+  .ref-submit:disabled { opacity:0.6; cursor:not-allowed; }
   .team { background:#fff; border:0.5px solid var(--line); border-radius:8px; overflow:hidden; }
   .team-row { padding:12px 14px; border-bottom:0.5px solid var(--soft); }
   .team-row:last-child { border-bottom:0; }
@@ -407,8 +444,96 @@
     document.getElementById('welcome-sub').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
     wireDrawer();
     wireClosedToggle();
+    wireRefer();
     forceKanbanLayout();
     await loadAll();
+  }
+
+  // ===== REFER AN AGENT =====
+  // Opens a modal pre-tagged for Aari Transactions or Aari Realty.
+  // Writes to agent_referrals table if it exists; falls back to mailto.
+  // Compliance: agent-to-agent only, no compensation on the referral form
+  // itself · any thank-you is handled offline.
+  function wireRefer(){
+    const open = (target) => {
+      document.getElementById('ref-eb').textContent = target === 'realty'
+        ? 'Refer to Aari Realty' : 'Refer to Aari Transactions';
+      document.getElementById('ref-title').textContent = target === 'realty'
+        ? 'Who should join the brokerage?' : 'Who should we set up?';
+      const m = document.getElementById('ref-modal');
+      m.classList.add('open');
+      m.setAttribute('data-target', target);
+      document.getElementById('ref-back').classList.add('open');
+      document.getElementById('ref-status').className = 'ref-status';
+      document.body.style.overflow = 'hidden';
+      setTimeout(() => { const n = document.getElementById('ref-name'); if(n) n.focus(); }, 50);
+    };
+    const close = () => {
+      document.getElementById('ref-modal').classList.remove('open');
+      document.getElementById('ref-back').classList.remove('open');
+      document.body.style.overflow = '';
+      ['ref-name','ref-email','ref-phone','ref-note'].forEach(id => {
+        const el = document.getElementById(id); if(el) el.value = '';
+      });
+    };
+    const btnTc = document.getElementById('refer-tc');
+    const btnRealty = document.getElementById('refer-realty');
+    if(btnTc) btnTc.addEventListener('click', () => open('tc'));
+    if(btnRealty) btnRealty.addEventListener('click', () => open('realty'));
+    const closeBtn = document.getElementById('ref-close');
+    const back = document.getElementById('ref-back');
+    if(closeBtn) closeBtn.addEventListener('click', close);
+    if(back) back.addEventListener('click', close);
+
+    const submit = document.getElementById('ref-submit');
+    if(submit) submit.addEventListener('click', async () => {
+      const status = document.getElementById('ref-status');
+      const m = document.getElementById('ref-modal');
+      const target = m.getAttribute('data-target') || 'tc';
+      const name = document.getElementById('ref-name').value.trim();
+      const email = document.getElementById('ref-email').value.trim();
+      const phone = document.getElementById('ref-phone').value.trim();
+      const note = document.getElementById('ref-note').value.trim();
+
+      if(!name || (!email && !phone)){
+        status.className = 'ref-status show err';
+        status.textContent = 'Need at least a name and one way to reach them.';
+        return;
+      }
+      submit.disabled = true; submit.textContent = 'Sending…';
+
+      // Try Supabase insert first · falls back to mailto if table doesn't exist
+      let inserted = false;
+      try {
+        const { error } = await _client.from('agent_referrals').insert({
+          referrer_id: _profile && _profile.id,
+          referrer_email: _profile && _profile.email,
+          target_entity: target === 'realty' ? 'aari_realty' : 'aari_transactions',
+          referred_name: name,
+          referred_email: email || null,
+          referred_phone: phone || null,
+          note: note || null,
+        });
+        if(!error) inserted = true;
+      } catch(_){}
+
+      if(inserted){
+        status.className = 'ref-status show ok';
+        status.textContent = '✓ Sent. We\'ll reach out within 1 business day.';
+        submit.textContent = 'Sent';
+        setTimeout(close, 1800);
+      } else {
+        // Fallback: open a mailto so the referral still goes through
+        const to = target === 'realty' ? 'hello@aarirealty.com' : 'hello@aaritransactions.com';
+        const subj = (target === 'realty' ? 'Brokerage referral' : 'TC referral') + ' from ' + ((_profile && _profile.first_name) || 'an agent');
+        const body = 'Referred by: ' + ((_profile && (_profile.first_name + ' ' + (_profile.last_name||''))) || 'Aari agent') + '\nMy email: ' + ((_profile && _profile.email) || '') + '\n\nWho to contact:\n  Name: ' + name + '\n  Email: ' + email + '\n  Phone: ' + phone + '\n\nNotes: ' + note;
+        window.location.href = 'mailto:' + to + '?subject=' + encodeURIComponent(subj) + '&body=' + encodeURIComponent(body);
+        status.className = 'ref-status show ok';
+        status.textContent = 'Opening your email to finish sending.';
+        submit.textContent = 'Send referral';
+        submit.disabled = false;
+      }
+    });
   }
 
   function wireClosedToggle(){
