@@ -96,6 +96,36 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 .bgr-empty{font-size:11px;color:#888;font-style:italic;text-align:center;padding:6px 0}
 @media(max-width:900px){.bgr-strip{grid-template-columns:1fr;margin:14px 20px 0}}
 
+/* ============ TEAM PULSE PANEL ============ */
+.tp-panel{background:#fff;border:1px solid var(--line);border-radius:8px;margin:18px 28px 0;padding:18px 22px}
+.tp-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px}
+.tp-eb{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);font-weight:600;margin:0}
+.tp-meta{font-size:11px;color:#888}
+.tp-list{display:flex;flex-direction:column;gap:8px}
+.tp-empty{font-size:12px;color:var(--muted);font-style:italic;padding:8px 0;text-align:center}
+.tp-row{display:grid;grid-template-columns:14px 1.5fr repeat(4,1fr);gap:14px;align-items:center;padding:12px 14px;background:#fafaf9;border-radius:6px;font-size:12px}
+.tp-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.tp-dot.green{background:var(--green,#2f855a)}
+.tp-dot.amber{background:#d97706}
+.tp-dot.red{background:var(--red,#c44b3b)}
+.tp-name{font-weight:500;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tp-sub{font-size:10.5px;color:var(--muted);margin-top:2px;font-weight:400}
+.tp-metric{font-family:'Playfair Display',Georgia,serif;font-size:18px;font-weight:500;line-height:1;color:var(--ink);text-align:center}
+.tp-metric.warn{color:#d97706}
+.tp-metric.bad{color:var(--red,#c44b3b)}
+.tp-mlbl{font-size:9.5px;color:var(--muted);letter-spacing:.4px;text-transform:uppercase;font-weight:600;margin-top:5px;text-align:center;line-height:1.1}
+.tp-head-row{display:grid;grid-template-columns:14px 1.5fr repeat(4,1fr);gap:14px;padding:0 14px 6px;font-size:9.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);font-weight:600}
+.tp-head-row span{text-align:center}
+.tp-head-row span:nth-child(2){text-align:left}
+@media(max-width:900px){
+  .tp-panel{margin:14px 20px 0;padding:14px 16px}
+  .tp-row{grid-template-columns:14px 1fr;gap:10px;padding:12px}
+  .tp-row > div:not(.tp-name-cell){grid-column:2;display:flex;justify-content:space-between;align-items:baseline;font-size:11px}
+  .tp-row > div:not(.tp-name-cell) .tp-metric{font-size:14px}
+  .tp-row > div:not(.tp-name-cell) .tp-mlbl::before{content:attr(data-lbl) " · ";color:var(--muted)}
+  .tp-head-row{display:none}
+}
+
 /* NPS modal */
 .ng-back{position:fixed;inset:0;background:rgba(15,15,15,0.45);z-index:9990}
 .ng-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:10px;width:min(640px,92vw);max-height:85vh;z-index:9991;box-shadow:0 12px 40px rgba(0,0,0,0.2);overflow:hidden;display:flex;flex-direction:column}
@@ -526,6 +556,17 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     </div>
   </section>
 
+  <!-- ============ TEAM PULSE · per-TC load + reply SLA + capacity dot ============ -->
+  <section class="tp-panel" id="tp-panel">
+    <div class="tp-head">
+      <p class="tp-eb">Team pulse · TC load + service quality</p>
+      <span class="tp-meta" id="tp-meta">&nbsp;</span>
+    </div>
+    <div class="tp-list" id="tp-list">
+      <div class="tp-empty">Loading TC stats…</div>
+    </div>
+  </section>
+
   <!-- NPS modal · view all responses -->
   <div class="ng-back" id="ng-back" style="display:none"></div>
   <div class="ng-modal" id="ng-modal" role="dialog" aria-modal="true" style="display:none">
@@ -754,6 +795,83 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 
     // SECTION · Growth + retention strip (NPS · referrals · digest health)
     loadAndRenderGrowthStrip();
+
+    // SECTION · Team pulse (per-TC load + reply SLA + capacity)
+    loadAndRenderTeamPulse(files, byId);
+  }
+
+  // ============ TEAM PULSE · per-TC load + reply SLA ============
+  async function loadAndRenderTeamPulse(files, byId){
+    const panel = document.getElementById('tp-panel');
+    const list = document.getElementById('tp-list');
+    const meta = document.getElementById('tp-meta');
+    if(!panel || !list) return;
+
+    const tcs = Object.values(byId || {}).filter(a => (a.role || '').toLowerCase() === 'tc');
+    if(!tcs.length){
+      list.innerHTML = '<div class="tp-empty">No TCs on the team yet · hire one to see load + SLA.</div>';
+      return;
+    }
+
+    // Compute per-TC stats from files + file_messages
+    let msgs = [];
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const since = new Date(Date.now() - 30 * 86400000).toISOString();
+      const { data } = await client.from('file_messages')
+        .select('file_id, sender_role, sent_at, replied_at')
+        .eq('sender_role','agent')
+        .not('replied_at','is',null)
+        .gte('sent_at', since);
+      msgs = data || [];
+    } catch(_){}
+
+    const now = Date.now();
+    const weekFromNow = now + 7 * 86400000;
+    const stats = tcs.map(tc => {
+      const tcFiles = (files || []).filter(f => f.assigned_tc_id === tc.id && (f.status !== 'closed' && f.status !== 'archived') && f.transaction_stage !== 'closed');
+      const closingThisWeek = tcFiles.filter(f => {
+        if(!f.closing_date) return false;
+        const t = new Date(f.closing_date+'T00:00:00').getTime();
+        return t >= now && t <= weekFromNow;
+      }).length;
+      // Reply stats · file_messages rows for files this TC owns
+      const fileIds = new Set(tcFiles.map(f => f.id));
+      // Cross-reference: also include closed files this TC handled in last 30d for SLA history
+      const allTcFileIds = new Set((files || []).filter(f => f.assigned_tc_id === tc.id).map(f => f.id));
+      const tcMsgs = msgs.filter(m => allTcFileIds.has(m.file_id));
+      const replyMins = tcMsgs.map(m => (new Date(m.replied_at).getTime() - new Date(m.sent_at).getTime()) / 60000).filter(n => n >= 0);
+      const avgReply = replyMins.length ? Math.round(replyMins.reduce((a,b) => a+b, 0) / replyMins.length) : null;
+      const onTime = replyMins.length ? Math.round((replyMins.filter(n => n <= 240).length / replyMins.length) * 100) : null;
+      // Capacity color: green <15, amber 15-24, red 25+
+      const load = tcFiles.length;
+      let band = 'green';
+      if(load >= 25) band = 'red';
+      else if(load >= 15) band = 'amber';
+      return { tc, load, closingThisWeek, avgReply, onTime, band };
+    }).sort((a,b) => b.load - a.load);
+
+    const totalLoad = stats.reduce((s,r) => s + r.load, 0);
+    const overCap = stats.filter(r => r.band === 'red').length;
+    meta.textContent = stats.length + ' TC' + (stats.length===1?'':'s') + ' · ' + totalLoad + ' active file' + (totalLoad===1?'':'s') + (overCap ? ' · ' + overCap + ' over capacity' : '');
+
+    const headerRow = '<div class="tp-head-row"><span></span><span>Coordinator</span><span>Active</span><span>Closing wk</span><span>Avg reply</span><span>On-time</span></div>';
+    list.innerHTML = headerRow + stats.map(r => {
+      const name = ((r.tc.first_name || '') + ' ' + (r.tc.last_name || '')).trim() || 'Unnamed TC';
+      const loadCls = r.band === 'red' ? 'bad' : (r.band === 'amber' ? 'warn' : '');
+      const replyLbl = r.avgReply == null ? '—' : (r.avgReply < 60 ? r.avgReply + 'm' : (r.avgReply/60).toFixed(1) + 'h');
+      const replyCls = r.avgReply == null ? '' : (r.avgReply > 240 ? 'bad' : (r.avgReply > 120 ? 'warn' : ''));
+      const otLbl = r.onTime == null ? '—' : r.onTime + '%';
+      const otCls = r.onTime == null ? '' : (r.onTime < 70 ? 'bad' : (r.onTime < 90 ? 'warn' : ''));
+      return '<div class="tp-row">' +
+        '<span class="tp-dot ' + r.band + '" title="' + (r.band === 'red' ? 'Over capacity' : r.band === 'amber' ? 'Near capacity' : 'Healthy load') + '"></span>' +
+        '<div class="tp-name-cell"><div class="tp-name">' + esc(name) + '</div><div class="tp-sub">Transaction Coordinator</div></div>' +
+        '<div><div class="tp-metric ' + loadCls + '">' + r.load + '</div><div class="tp-mlbl" data-lbl="Active">Active</div></div>' +
+        '<div><div class="tp-metric">' + r.closingThisWeek + '</div><div class="tp-mlbl" data-lbl="Closing wk">Closing wk</div></div>' +
+        '<div><div class="tp-metric ' + replyCls + '">' + replyLbl + '</div><div class="tp-mlbl" data-lbl="Avg reply">Avg reply</div></div>' +
+        '<div><div class="tp-metric ' + otCls + '">' + otLbl + '</div><div class="tp-mlbl" data-lbl="On-time">On-time</div></div>' +
+      '</div>';
+    }).join('');
   }
 
   // ============ GROWTH + RETENTION STRIP ============
