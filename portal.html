@@ -83,6 +83,13 @@
   .kcard:active { cursor:grabbing; }
   .kcard.dragging { opacity:0.45; }
   .kcard.urgent { border-left:3px solid var(--red); }
+  .kc-top { display:flex; align-items:center; gap:6px; margin-bottom:3px; }
+  .kc-top .kc-addr { margin-bottom:0; flex:1; min-width:0; }
+  .kc-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .kc-dot-green { background:var(--green); }
+  .kc-dot-amber { background:#d97706; }
+  .kc-dot-red { background:var(--red); box-shadow:0 0 0 2px rgba(196,75,59,0.18); }
+  .kc-dot-gray { background:#d4d2cc; }
   .kc-addr { font-size:12px; font-weight:500; color:var(--ink); margin-bottom:3px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .kc-meta { font-size:10px; color:var(--muted); margin-bottom:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .kc-foot { display:flex; justify-content:space-between; align-items:center; font-size:10px; gap:6px; }
@@ -452,6 +459,23 @@
          + _deadlines.filter(x => x.file_id===f.id && x.completed_at).length
          + _sends.filter(x => x.file_id===f.id).length;
   }
+
+  // ===== COMPLIANCE STATE PER FILE =====
+  // 3-state dot · defensible by actual verification row status, not inference.
+  // green = all required items confirmed
+  // amber = at least one item awaiting TC action OR agent response
+  // red   = at least one needs_action AND file closing in <14 days (time pressure)
+  // gray  = no verifications tracked yet (new intake)
+  function complianceState(f){
+    const v = _verifs.filter(x => x.file_id === f.id && x.status !== 'na');
+    if(!v.length) return { dot: 'gray', label: 'No checks yet' };
+    const open = v.filter(x => x.status !== 'confirmed');
+    if(!open.length) return { dot: 'green', label: 'All clear' };
+    const needs = v.filter(x => x.status === 'needs_action');
+    const d = daysToClose(f);
+    if(needs.length > 0 && d != null && d < 14) return { dot: 'red', label: needs.length + ' open · closing soon' };
+    return { dot: 'amber', label: open.length + ' open' };
+  }
   const LABELS = {
     sale_new_agent_setup:'Welcome sent', sale_uc_master_open:'Coordination opened',
     sale_uc_title_open:'Title order sent', sale_uc_lender_open:'Lender opened',
@@ -485,8 +509,12 @@
     else if(d!=null && d<=7){ foot=d+'d to close'; urg='urgent'; }
     else if(d!=null) foot=d+'d to close';
     else foot='Date TBD';
+    const c = complianceState(f);
     return '<div class="kcard'+(urg?' '+urg:'')+'" data-file-id="'+esc(f.id)+'" draggable="true">' +
-      '<div class="kc-addr">'+addr+'</div>' +
+      '<div class="kc-top">' +
+        '<div class="kc-addr">'+addr+'</div>' +
+        '<span class="kc-dot kc-dot-'+c.dot+'" title="'+esc(c.label)+'"></span>' +
+      '</div>' +
       (meta?'<div class="kc-meta">'+esc(meta)+'</div>':'') +
       '<div class="kc-foot"><span class="kc-days '+urg+'">'+esc(foot)+'</span><span class="kc-tasks">'+tasksDone(f)+' done</span></div>' +
     '</div>';
