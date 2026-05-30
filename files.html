@@ -141,6 +141,28 @@
   .amp-reply-status.err{display:block;background:#fbeae6;color:#c44b3b}
 
   .kanban-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+
+  /* Keyboard shortcuts hint chip + cheatsheet */
+  .kbd-hint-btn{background:none;border:0;color:#5f5e5a;font-size:10.5px;cursor:pointer;font-family:inherit;padding:0;margin-left:10px;letter-spacing:0.2px}
+  .kbd-hint-btn:hover{color:#0f0f0f;text-decoration:underline;text-underline-offset:2px}
+  .kbd-hint-btn kbd{font-family:'Inter',sans-serif;font-size:10px;padding:1px 5px;background:#fff;border:0.5px solid rgba(15,15,15,0.20);border-radius:3px;box-shadow:0 1px 0 rgba(15,15,15,0.10);color:#0f0f0f;font-weight:600}
+  .kbd-backdrop{display:none;position:fixed;inset:0;background:rgba(15,15,15,0.45);z-index:9990}
+  .kbd-backdrop.open{display:block}
+  .kbd-modal{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:10px;width:min(520px,92vw);max-height:85vh;z-index:9991;box-shadow:0 12px 40px rgba(0,0,0,0.20);overflow:hidden}
+  .kbd-modal.open{display:flex;flex-direction:column}
+  .kbd-head{display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-bottom:0.5px solid rgba(15,15,15,0.10)}
+  .kbd-eb{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#5f5e5a;font-weight:600;margin:0}
+  .kbd-close{background:none;border:0;font-size:22px;color:#5f5e5a;cursor:pointer;line-height:1;padding:0 4px}
+  .kbd-close:hover{color:#0f0f0f}
+  .kbd-body{padding:18px 22px 22px;display:grid;grid-template-columns:1fr 1fr;gap:24px;overflow-y:auto}
+  .kbd-group-h{font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#0f0f0f;font-weight:600;margin:0 0 10px;padding-bottom:6px;border-bottom:0.5px solid rgba(15,15,15,0.10)}
+  .kbd-row{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12px;color:#0f0f0f}
+  .kbd-row kbd{font-family:'Inter',sans-serif;font-size:11px;padding:2px 7px;background:#fafaf9;border:0.5px solid rgba(15,15,15,0.20);border-radius:4px;box-shadow:0 1px 0 rgba(15,15,15,0.10);color:#0f0f0f;font-weight:600;min-width:22px;text-align:center}
+  .kbd-row span{color:#5f5e5a;font-size:12px;line-height:1.4}
+  @media (max-width:560px){.kbd-body{grid-template-columns:1fr;gap:18px}}
+
+  /* Selected card outline · driven by JS shortcut nav */
+  .card.kbd-selected{outline:2px solid #0f0f0f;outline-offset:-1px;box-shadow:0 4px 12px rgba(0,0,0,0.10)}
   .kanban-title{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#666;font-weight:500;margin:0}
   .kanban-hint{font-size:10.5px;color:#888;margin:0}
   .kanban{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}
@@ -474,11 +496,37 @@
   <!-- Kanban · stages rendered dynamically based on file_type filter -->
   <div class="kanban-head">
     <p class="kanban-title" id="kanban-title">Transaction Pipeline</p>
-    <p class="kanban-hint">Drag cards between stages. Click any card for the playbook.</p>
+    <p class="kanban-hint">Drag cards between stages. Click any card for the playbook. <button type="button" class="kbd-hint-btn" id="kbd-hint-btn" aria-label="Keyboard shortcuts">Press <kbd>?</kbd> for shortcuts</button></p>
   </div>
   <div class="kanban" id="kanban"></div>
 
 </main>
+
+<!-- Keyboard shortcuts cheatsheet · summoned via ? -->
+<div class="kbd-backdrop" id="kbd-backdrop"></div>
+<div class="kbd-modal" id="kbd-modal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+  <div class="kbd-head">
+    <p class="kbd-eb">Keyboard shortcuts</p>
+    <button type="button" class="kbd-close" id="kbd-close" aria-label="Close">&times;</button>
+  </div>
+  <div class="kbd-body">
+    <div class="kbd-group">
+      <p class="kbd-group-h">Navigate</p>
+      <div class="kbd-row"><kbd>/</kbd><span>Focus search</span></div>
+      <div class="kbd-row"><kbd>j</kbd> <kbd>k</kbd><span>Next / previous card</span></div>
+      <div class="kbd-row"><kbd>h</kbd> <kbd>l</kbd><span>Previous / next lane</span></div>
+      <div class="kbd-row"><kbd>1</kbd>–<kbd>7</kbd><span>Jump to lane by number</span></div>
+      <div class="kbd-row"><kbd>g</kbd><span>Back to top</span></div>
+    </div>
+    <div class="kbd-group">
+      <p class="kbd-group-h">Actions</p>
+      <div class="kbd-row"><kbd>Enter</kbd><span>Open selected file&rsquo;s playbook</span></div>
+      <div class="kbd-row"><kbd>Esc</kbd><span>Close playbook / clear search</span></div>
+      <div class="kbd-row"><kbd>r</kbd><span>Refresh file list</span></div>
+      <div class="kbd-row"><kbd>?</kbd><span>Show this cheatsheet</span></div>
+    </div>
+  </div>
+</div>
 
 <!-- Email Playbook modal -->
 <div class="tpb-backdrop" id="tpb-backdrop"></div>
@@ -4818,6 +4866,124 @@ Aari Transactions`,
   function wireUi(){
     document.getElementById('tpb-close').addEventListener('click', closePlaybook);
     document.getElementById('tpb-backdrop').addEventListener('click', closePlaybook);
+    wireKeyboardShortcuts();
+  }
+
+  // ===== KEYBOARD SHORTCUTS · TC speed mode =====
+  // / focus search · j/k card next/prev · h/l lane prev/next · 1-7 jump lane
+  // Enter open · Esc close/clear · g top · r refresh · ? cheatsheet
+  let _kbdSelectedFileId = null;
+  function wireKeyboardShortcuts(){
+    const cheatBtn = document.getElementById('kbd-hint-btn');
+    const cheatModal = document.getElementById('kbd-modal');
+    const cheatBack = document.getElementById('kbd-backdrop');
+    const cheatClose = document.getElementById('kbd-close');
+    const openCheat = () => { cheatModal.classList.add('open'); cheatBack.classList.add('open'); };
+    const closeCheat = () => { cheatModal.classList.remove('open'); cheatBack.classList.remove('open'); };
+    if(cheatBtn) cheatBtn.addEventListener('click', openCheat);
+    if(cheatClose) cheatClose.addEventListener('click', closeCheat);
+    if(cheatBack) cheatBack.addEventListener('click', closeCheat);
+
+    document.addEventListener('keydown', (e) => {
+      // Skip if user is typing in any input/textarea
+      const t = e.target;
+      const inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.isContentEditable === true));
+      // Esc is the only key that works even while typing (closes the playbook)
+      if(e.key === 'Escape'){
+        if(cheatModal.classList.contains('open')){ closeCheat(); return; }
+        if(document.body.classList.contains('tpb-open')){ closePlaybook(); return; }
+        const searchEl = document.getElementById('file-search');
+        if(searchEl && searchEl.value){ searchEl.value = ''; searchEl.dispatchEvent(new Event('input', { bubbles:true })); }
+        return;
+      }
+      if(inField) return;
+      // Ignore with modifiers · the shortcuts are plain keys
+      if(e.metaKey || e.ctrlKey || e.altKey) return;
+
+      switch(e.key){
+        case '/':
+          e.preventDefault();
+          { const s = document.getElementById('file-search'); if(s){ s.focus(); s.select && s.select(); } }
+          break;
+        case '?':
+          e.preventDefault();
+          openCheat();
+          break;
+        case 'r':
+          e.preventDefault();
+          if(typeof loadAndRender === 'function') loadAndRender();
+          break;
+        case 'g':
+          e.preventDefault();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          break;
+        case 'j':
+        case 'k':
+          e.preventDefault();
+          kbdNavCard(e.key === 'j' ? 1 : -1);
+          break;
+        case 'h':
+        case 'l':
+          e.preventDefault();
+          kbdNavLane(e.key === 'l' ? 1 : -1);
+          break;
+        case 'Enter':
+          if(_kbdSelectedFileId){
+            e.preventDefault();
+            const f = _files.find(x => x.id === _kbdSelectedFileId);
+            if(f) openPlaybook(f);
+          }
+          break;
+        case '1': case '2': case '3': case '4': case '5': case '6': case '7':
+          e.preventDefault();
+          kbdJumpLane(parseInt(e.key, 10) - 1);
+          break;
+      }
+    });
+  }
+
+  function kbdAllCards(){
+    return Array.from(document.querySelectorAll('#kanban .card[data-file-id]'));
+  }
+  function kbdSetSelected(card){
+    document.querySelectorAll('#kanban .card.kbd-selected').forEach(c => c.classList.remove('kbd-selected'));
+    if(card){
+      card.classList.add('kbd-selected');
+      _kbdSelectedFileId = card.getAttribute('data-file-id');
+      card.scrollIntoView({ block:'nearest', inline:'nearest', behavior:'smooth' });
+    } else {
+      _kbdSelectedFileId = null;
+    }
+  }
+  function kbdNavCard(dir){
+    const cards = kbdAllCards();
+    if(!cards.length){ _kbdSelectedFileId = null; return; }
+    let idx = cards.findIndex(c => c.classList.contains('kbd-selected'));
+    if(idx < 0) idx = dir > 0 ? -1 : cards.length;
+    const next = (idx + dir + cards.length) % cards.length;
+    kbdSetSelected(cards[next]);
+  }
+  function kbdNavLane(dir){
+    const lanes = Array.from(document.querySelectorAll('#kanban .lane'));
+    if(!lanes.length) return;
+    const selected = document.querySelector('#kanban .card.kbd-selected');
+    let laneIdx = 0;
+    if(selected){
+      const cur = selected.closest('.lane');
+      laneIdx = Math.max(0, lanes.indexOf(cur));
+    }
+    const nextLane = lanes[(laneIdx + dir + lanes.length) % lanes.length];
+    const firstCard = nextLane && nextLane.querySelector('.card[data-file-id]');
+    if(firstCard) kbdSetSelected(firstCard);
+    else nextLane && nextLane.scrollIntoView({ block:'nearest', inline:'center', behavior:'smooth' });
+  }
+  function kbdJumpLane(idx){
+    const lanes = Array.from(document.querySelectorAll('#kanban .lane'));
+    if(idx < 0 || idx >= lanes.length) return;
+    const firstCard = lanes[idx].querySelector('.card[data-file-id]');
+    if(firstCard) kbdSetSelected(firstCard);
+    else lanes[idx].scrollIntoView({ block:'nearest', inline:'center', behavior:'smooth' });
+  }
 
     // Deadline config controls · contract / effective / closing
     const ctSel = document.getElementById('tpb-contract');
