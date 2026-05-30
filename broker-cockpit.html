@@ -114,6 +114,10 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 .tp-metric.warn{color:#d97706}
 .tp-metric.bad{color:var(--red,#c44b3b)}
 .tp-mlbl{font-size:9.5px;color:var(--muted);letter-spacing:.4px;text-transform:uppercase;font-weight:600;margin-top:5px;text-align:center;line-height:1.1}
+.tp-seen{font-size:10px;color:var(--green,#2f855a);font-weight:500;margin-left:2px}
+.tp-seen-warn{color:#d97706}
+.tp-seen-bad{color:var(--red,#c44b3b)}
+.tp-seen-dim{color:#888;font-style:italic}
 .tp-head-row{display:grid;grid-template-columns:14px 1.5fr repeat(4,1fr);gap:14px;padding:0 14px 6px;font-size:9.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);font-weight:600}
 .tp-head-row span{text-align:center}
 .tp-head-row span:nth-child(2){text-align:left}
@@ -800,7 +804,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     loadAndRenderTeamPulse(files, byId);
   }
 
-  // ============ TEAM PULSE · per-TC load + reply SLA ============
+  // ============ TEAM PULSE · per-TC load + reply SLA + last seen ============
   async function loadAndRenderTeamPulse(files, byId){
     const panel = document.getElementById('tp-panel');
     const list = document.getElementById('tp-list');
@@ -813,18 +817,33 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
       return;
     }
 
-    // Compute per-TC stats from files + file_messages
-    let msgs = [];
+    // Compute per-TC stats from files + file_messages + audit_log (last seen)
+    let msgs = [], audit = [];
     try {
       const client = await window.AariAuth.ensureClient();
-      const since = new Date(Date.now() - 30 * 86400000).toISOString();
-      const { data } = await client.from('file_messages')
-        .select('file_id, sender_role, sent_at, replied_at')
-        .eq('sender_role','agent')
-        .not('replied_at','is',null)
-        .gte('sent_at', since);
-      msgs = data || [];
+      const since30 = new Date(Date.now() - 30 * 86400000).toISOString();
+      const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
+      const [msgRes, auditRes] = await Promise.all([
+        client.from('file_messages')
+          .select('file_id, sender_role, sent_at, replied_at')
+          .eq('sender_role','agent')
+          .not('replied_at','is',null)
+          .gte('sent_at', since30),
+        client.from('audit_log')
+          .select('actor_id, created_at')
+          .gte('created_at', since90)
+          .order('created_at', { ascending: false })
+          .limit(2000),
+      ]);
+      msgs = (msgRes && msgRes.data) || [];
+      audit = (auditRes && auditRes.data) || [];
     } catch(_){}
+
+    // Build a map of actor_id → most recent activity timestamp
+    const lastSeenMap = {};
+    audit.forEach(a => {
+      if(a.actor_id && !lastSeenMap[a.actor_id]) lastSeenMap[a.actor_id] = a.created_at;
+    });
 
     const now = Date.now();
     const weekFromNow = now + 7 * 86400000;
@@ -855,6 +874,18 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     const overCap = stats.filter(r => r.band === 'red').length;
     meta.textContent = stats.length + ' TC' + (stats.length===1?'':'s') + ' · ' + totalLoad + ' active file' + (totalLoad===1?'':'s') + (overCap ? ' · ' + overCap + ' over capacity' : '');
 
+    // Helper: render a "last seen" relative-time chip · color-coded by recency
+    const lastSeenChip = (iso) => {
+      if(!iso) return '<span class="tp-seen tp-seen-dim">never</span>';
+      const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+      let lbl, cls;
+      if(mins < 60){ lbl = mins + 'm ago'; cls = ''; }
+      else if(mins < 1440){ lbl = Math.floor(mins/60) + 'h ago'; cls = ''; }
+      else if(mins < 1440*7){ lbl = Math.floor(mins/1440) + 'd ago'; cls = (mins >= 1440*2) ? 'tp-seen-warn' : ''; }
+      else { lbl = Math.floor(mins/1440) + 'd ago'; cls = 'tp-seen-bad'; }
+      return '<span class="tp-seen ' + cls + '">active ' + lbl + '</span>';
+    };
+
     const headerRow = '<div class="tp-head-row"><span></span><span>Coordinator</span><span>Active</span><span>Closing wk</span><span>Avg reply</span><span>On-time</span></div>';
     list.innerHTML = headerRow + stats.map(r => {
       const name = ((r.tc.first_name || '') + ' ' + (r.tc.last_name || '')).trim() || 'Unnamed TC';
@@ -863,9 +894,10 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
       const replyCls = r.avgReply == null ? '' : (r.avgReply > 240 ? 'bad' : (r.avgReply > 120 ? 'warn' : ''));
       const otLbl = r.onTime == null ? '—' : r.onTime + '%';
       const otCls = r.onTime == null ? '' : (r.onTime < 70 ? 'bad' : (r.onTime < 90 ? 'warn' : ''));
+      const lastSeen = lastSeenChip(lastSeenMap[r.tc.id]);
       return '<div class="tp-row">' +
         '<span class="tp-dot ' + r.band + '" title="' + (r.band === 'red' ? 'Over capacity' : r.band === 'amber' ? 'Near capacity' : 'Healthy load') + '"></span>' +
-        '<div class="tp-name-cell"><div class="tp-name">' + esc(name) + '</div><div class="tp-sub">Transaction Coordinator</div></div>' +
+        '<div class="tp-name-cell"><div class="tp-name">' + esc(name) + '</div><div class="tp-sub">Transaction Coordinator · ' + lastSeen + '</div></div>' +
         '<div><div class="tp-metric ' + loadCls + '">' + r.load + '</div><div class="tp-mlbl" data-lbl="Active">Active</div></div>' +
         '<div><div class="tp-metric">' + r.closingThisWeek + '</div><div class="tp-mlbl" data-lbl="Closing wk">Closing wk</div></div>' +
         '<div><div class="tp-metric ' + replyCls + '">' + replyLbl + '</div><div class="tp-mlbl" data-lbl="Avg reply">Avg reply</div></div>' +
