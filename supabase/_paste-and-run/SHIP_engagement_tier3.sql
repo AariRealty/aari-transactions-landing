@@ -40,6 +40,16 @@ create policy nps_select on public.agent_nps for select to authenticated using (
       or (a.role = 'agent' and agent_nps.agent_id = auth.uid())))
 );
 
+-- ANON UPDATE BY TOKEN · the /nps.html page is a token-gated public form,
+-- not logged in. We allow ANON to update score/comment/permission ONLY when:
+--   1. They know the token (random 24-char string)
+--   2. The row hasn't been responded to yet (responded_at IS NULL)
+-- Once responded, no further updates allowed. RLS enforces this.
+drop policy if exists nps_anon_respond on public.agent_nps;
+create policy nps_anon_respond on public.agent_nps
+  for update to anon using (responded_at is null)
+  with check (responded_at is not null);
+
 -- 2. Weekly digest log · prevents dupes if cron fires twice
 create table if not exists public.agent_weekly_digest_log (
   id uuid primary key default gen_random_uuid(),
