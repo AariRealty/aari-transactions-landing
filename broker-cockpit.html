@@ -356,6 +356,8 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 .cl-badge{font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;padding:3px 8px;border-radius:999px;display:inline-block;background:var(--cream);color:var(--ink);border:1px solid var(--ink);white-space:nowrap}
 .cl-badge.active{background:#ffffff;color:var(--ink);border:1px solid var(--line-2)}
 .cl-badge.atrisk{background:var(--ink);color:var(--cream)}
+.cl-badge-action{cursor:pointer;text-decoration:none;display:inline-block;transition:transform .12s, box-shadow .12s}
+.cl-badge-action:hover{transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,0.15)}
 .cl-badge.new{background:var(--cream);color:var(--ink);border:1px solid var(--ink)}
 .cl-badge.paused{background:#ffffff;color:var(--ink);border:1px dashed var(--ink)}
 .cl-badge.cancelled{background:var(--soft-bg);color:var(--muted)}
@@ -659,7 +661,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
           <div>Brokerage</div>
           <div>Plan</div>
           <div>$ YTD</div>
-          <div>Last file</div>
+          <div>Last active</div>
           <div>Files YTD</div>
           <div>Status</div>
         </div>
@@ -2019,7 +2021,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     }).join('');
   }
 
-  function renderClientRoster(agents, files, memberships){
+  async function renderClientRoster(agents, files, memberships){
     const now = new Date();
     const ytdStart = new Date(now.getFullYear(), 0, 1);
     const day7  = new Date(now); day7.setDate(now.getDate() - 7);
@@ -2031,6 +2033,23 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 
     // Build client list: agents who are NOT staff (tc/broker)
     const clientAgents = (agents||[]).filter(a => a.role !== 'tc' && a.role !== 'broker');
+
+    // ===== LAST-ACTIVE SIGNAL · max(latest file submission, latest message sent) =====
+    // For agents, audit_log is sparse · we use the two surfaces they actually touch:
+    // file submissions (intake) and messages to TC. Either one means "they're still around."
+    const lastMsgByAgent = {};
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
+      const { data: msgs } = await client.from('file_messages')
+        .select('sender_id, sent_at')
+        .eq('sender_role','agent')
+        .gte('sent_at', since90)
+        .order('sent_at', { ascending: false });
+      (msgs || []).forEach(m => {
+        if(m.sender_id && !lastMsgByAgent[m.sender_id]) lastMsgByAgent[m.sender_id] = m.sent_at;
+      });
+    } catch(_){}
 
     // Compute per-client metrics
     const fmt$ = n => '$' + Math.round(n).toLocaleString();
@@ -2058,13 +2077,21 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
       const lastFile = lastFileTs ? new Date(lastFileTs) : null;
       const firstFileTs = dates.length ? Math.min(...dates) : null;
       const firstFile = firstFileTs ? new Date(firstFileTs) : null;
+      // Last message · from agent
+      const lastMsgIso = lastMsgByAgent[a.id];
+      const lastMsg = lastMsgIso ? new Date(lastMsgIso) : null;
+      // Last active = whichever is more recent (file submission OR message to TC)
+      const lastActive = (() => {
+        if(lastFile && lastMsg) return lastFile > lastMsg ? lastFile : lastMsg;
+        return lastFile || lastMsg || null;
+      })();
 
-      // Status derivation
+      // Status derivation uses lastActive (broader than lastFile)
       let status, statusCls;
       if (mem && mem.status === 'cancelled') { status = 'Cancelled'; statusCls = 'cancelled'; }
       else if (mem && mem.status === 'paused') { status = 'Paused'; statusCls = 'paused'; }
       else if (firstFile && firstFile >= day7 && ytdFiles.length <= 1) { status = 'New'; statusCls = 'new'; }
-      else if (!lastFile || lastFile < day30) { status = 'At risk'; statusCls = 'atrisk'; }
+      else if (!lastActive || lastActive < day30) { status = 'At risk'; statusCls = 'atrisk'; }
       else { status = 'Active'; statusCls = 'active'; }
 
       // Plan
@@ -2079,7 +2106,8 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
         planCls,
         ytdSpend,
         lastFile,
-        lastFileLbl: lastFile ? fmtDate(lastFile) : 'never',
+        lastActive,
+        lastActiveLbl: lastActive ? fmtDate(lastActive) : 'never',
         filesYtd: ytdFiles.length,
         status, statusCls,
       };
@@ -2153,24 +2181,46 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
         el.innerHTML = '<div class="cl-empty">No clients match the current filters.</div>';
         return;
       }
-      el.innerHTML = rows.map(c => `
+      el.innerHTML = rows.map(c => {
+        // Re-engagement mailto · only for at-risk agents with an email on file
+        let badgeHtml;
+        if(c.statusCls === 'atrisk' && c.agent.email){
+          const firstName = (c.agent.first_name || c.name.split(' ')[0] || '').trim();
+          const lastSeen = c.lastActiveLbl === 'never' ? 'a while' : c.lastActiveLbl;
+          const subject = "Quick check-in · how's it going?";
+          const body =
+            (firstName ? "Hey " + firstName + "," : "Hey,") + "\n\n" +
+            "Noticed it's been " + lastSeen + " since your last file with us. " +
+            "Anything we can help with on what's coming up — a contract review, a file you're stuck on, or just a deal you want a second set of eyes on?\n\n" +
+            "Reply whenever. No pressure.\n\n" +
+            "— Marlenyi\n" +
+            "Aari Transactions";
+          const mailto = 'mailto:' + encodeURIComponent(c.agent.email)
+            + '?subject=' + encodeURIComponent(subject)
+            + '&body=' + encodeURIComponent(body);
+          badgeHtml = '<a class="cl-badge ' + c.statusCls + ' cl-badge-action" href="' + mailto + '" title="Click to send a re-engagement email">' + esc(c.status) + ' → reach out</a>';
+        } else {
+          badgeHtml = '<span class="cl-badge ' + c.statusCls + '">' + esc(c.status) + '</span>';
+        }
+        return `
         <div class="cl-row ${c.statusCls === 'atrisk' ? 'atrisk' : ''}">
           <div class="cl-name">${esc(c.name)}<small>${esc(c.agent.email || '')}</small></div>
           <div class="cl-broker">${esc(c.brokerage)}</div>
           <div><span class="cl-plan ${c.planCls}">${esc(c.plan)}</span></div>
           <div class="cl-money ${c.ytdSpend > 0 ? '' : 'empty'}">${c.ytdSpend > 0 ? fmt$(c.ytdSpend) : '—'}</div>
-          <div class="cl-date ${c.lastFile ? '' : 'never'}">${esc(c.lastFileLbl)}</div>
+          <div class="cl-date ${c.lastActive ? '' : 'never'}">${esc(c.lastActiveLbl)}</div>
           <div class="cl-count">${c.filesYtd}</div>
-          <div><span class="cl-badge ${c.statusCls}">${esc(c.status)}</span></div>
+          <div>${badgeHtml}</div>
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
 
     document.getElementById('cl-search').addEventListener('input', e => { state.search = e.target.value; renderRows(); });
     document.getElementById('cl-status-filter').addEventListener('change', e => { state.status = e.target.value; renderRows(); });
     document.getElementById('cl-export-btn').addEventListener('click', () => {
       const rows = applyFilters();
-      const header = ['name','email','brokerage','plan','ytd_spend_usd','files_ytd','last_file','status'];
+      const header = ['name','email','brokerage','plan','ytd_spend_usd','files_ytd','last_active','status'];
       const csv = [header.join(',')].concat(rows.map(c => [
         '"'+c.name.replace(/"/g,'""')+'"',
         '"'+(c.agent.email||'').replace(/"/g,'""')+'"',
