@@ -104,6 +104,23 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 .bgr-empty{font-size:11px;color:#888;font-style:italic;text-align:center;padding:6px 0}
 @media(max-width:900px){.bgr-strip{grid-template-columns:1fr;margin:14px 20px 0}}
 
+/* ============ LAST 5 CLOSINGS ============ */
+.lc-panel{background:#fff;border:1px solid var(--line);border-left:3px solid #2f855a;border-radius:8px;margin:18px 28px 0;padding:16px 22px}
+.lc-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.lc-eb{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);font-weight:600;margin:0}
+.lc-meta{font-size:11px;color:#888}
+.lc-list{display:flex;flex-direction:column;gap:6px}
+.lc-row{display:grid;grid-template-columns:1.6fr 1.2fr 80px 90px;gap:14px;align-items:center;padding:9px 12px;background:#fafaf9;border-radius:6px;font-size:12px}
+.lc-addr{font-weight:500;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lc-agent{color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lc-date{font-size:11px;color:var(--muted);text-align:right;white-space:nowrap}
+.lc-vol{font-family:'Playfair Display',Georgia,serif;font-size:14px;font-weight:500;color:var(--ink);text-align:right}
+@media(max-width:760px){
+  .lc-panel{margin:14px 20px 0;padding:14px 16px}
+  .lc-row{grid-template-columns:1fr 80px;gap:8px;padding:10px}
+  .lc-agent,.lc-date{grid-column:1 / -1;font-size:10.5px}
+}
+
 /* ============ TEAM PULSE PANEL ============ */
 .tp-panel{background:#fff;border:1px solid var(--line);border-radius:8px;margin:18px 28px 0;padding:18px 22px}
 .tp-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px}
@@ -576,6 +593,15 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     </div>
   </section>
 
+  <!-- ============ LAST 5 CLOSINGS · recent wins ============ -->
+  <section class="lc-panel" id="lc-panel" style="display:none">
+    <div class="lc-head">
+      <p class="lc-eb">Recent closings · latest 5 funded files</p>
+      <span class="lc-meta" id="lc-meta">&nbsp;</span>
+    </div>
+    <div class="lc-list" id="lc-list"></div>
+  </section>
+
   <!-- ============ TEAM PULSE · per-TC load + reply SLA + capacity dot ============ -->
   <section class="tp-panel" id="tp-panel">
     <div class="tp-head">
@@ -819,8 +845,50 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     // SECTION · Team pulse (per-TC load + reply SLA + capacity)
     loadAndRenderTeamPulse(files, byId);
 
+    // SECTION · Last 5 closings (recent wins)
+    renderLastClosings(files, byId);
+
     // SECTION · "Since you were last here" engagement summary
     loadAndRenderSinceLastVisit(files);
+  }
+
+  // ============ LAST 5 CLOSINGS · recent wins ============
+  function renderLastClosings(files, byId){
+    const panel = document.getElementById('lc-panel');
+    const list = document.getElementById('lc-list');
+    const meta = document.getElementById('lc-meta');
+    if(!panel || !list) return;
+    const closed = (files || [])
+      .filter(f => (f.status === 'closed' || f.transaction_stage === 'closed') && f.closing_date)
+      .sort((a,b) => new Date(b.closing_date) - new Date(a.closing_date))
+      .slice(0, 5);
+    if(!closed.length){ panel.style.display = 'none'; return; }
+    panel.style.display = 'block';
+
+    const fm = (n) => {
+      if(!n) return '—';
+      if(n >= 1000000) return '$' + (n/1000000).toFixed(1).replace('.0','') + 'M';
+      if(n >= 1000) return '$' + Math.round(n/1000) + 'K';
+      return '$' + Math.round(n).toLocaleString();
+    };
+    const totalVol = closed.reduce((s,f) => s + ((f.purchase_price_cents || 0) / 100), 0);
+    meta.textContent = closed.length + ' file' + (closed.length===1?'':'s') + ' · ' + fm(totalVol) + ' combined volume';
+
+    list.innerHTML = closed.map(f => {
+      const addr = f.property_address || 'Untitled file';
+      const agent = byId && byId[f.agent_id];
+      const agentName = agent ? ((agent.first_name || '') + ' ' + (agent.last_name || '')).trim() : 'Unknown agent';
+      const dt = new Date(f.closing_date + 'T00:00:00');
+      const days = Math.floor((Date.now() - dt.getTime()) / 86400000);
+      const dateLbl = days < 1 ? 'today' : (days < 2 ? 'yesterday' : (days < 30 ? days + 'd ago' : dt.toLocaleDateString('en-US',{month:'short',day:'numeric'})));
+      const vol = f.purchase_price_cents ? fm(f.purchase_price_cents / 100) : '—';
+      return '<div class="lc-row">' +
+        '<div class="lc-addr">' + esc(addr) + '</div>' +
+        '<div class="lc-agent">' + esc(agentName) + '</div>' +
+        '<div class="lc-date">' + esc(dateLbl) + '</div>' +
+        '<div class="lc-vol">' + esc(vol) + '</div>' +
+      '</div>';
+    }).join('');
   }
 
   // ============ SINCE YOU WERE LAST HERE ============
