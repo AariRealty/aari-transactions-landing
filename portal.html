@@ -25,11 +25,28 @@
   .btn-submit { font-size:12.5px; color:#fff; background:var(--ink); padding:10px 18px; border-radius:6px; text-decoration:none; font-weight:500; border:0; cursor:pointer; }
   .btn-submit:hover { background:#222; }
 
-  /* Hero stats · white tiles */
-  .hero { display:grid; grid-template-columns:repeat(4, 1fr); gap:1px; background:rgba(15,15,15,0.10); border:0.5px solid rgba(15,15,15,0.10); border-radius:10px; overflow:hidden; margin-bottom:28px; }
-  .hero-tile { background:#fff; padding:22px 24px; }
-  .hero-num { font-family:'Playfair Display',Georgia,serif; font-size:34px; font-weight:500; line-height:1; letter-spacing:-0.5px; color:var(--ink); }
-  .hero-lbl { font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; font-weight:600; margin-top:8px; }
+  /* TODAY CARD · the only thing the agent needs to act on right now */
+  .today-card { display:flex; align-items:stretch; background:#fff; border:0.5px solid var(--line); border-radius:10px; overflow:hidden; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,0.02); }
+  .today-band { width:4px; flex-shrink:0; background:#d4d2cc; transition:background .2s; }
+  .today-card.urgent .today-band { background:var(--red); }
+  .today-card.warn .today-band { background:#d97706; }
+  .today-card.calm .today-band { background:var(--green); }
+  .today-body { flex:1; padding:18px 22px; min-width:0; }
+  .today-eb { font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; font-weight:600; margin-bottom:6px; }
+  .today-msg { font-family:'Playfair Display',Georgia,serif; font-size:20px; font-weight:500; letter-spacing:-0.2px; line-height:1.3; color:var(--ink); }
+  .today-sub { font-size:12px; color:var(--muted); margin-top:4px; }
+  .today-card.urgent .today-msg { color:var(--red); }
+  .today-cta { align-self:center; margin-right:18px; padding:9px 16px; font-size:12.5px; font-weight:500; color:#fff; background:var(--ink); border-radius:6px; text-decoration:none; white-space:nowrap; flex-shrink:0; }
+  .today-cta:hover { background:#222; }
+  @media (max-width: 640px) { .today-card { flex-direction:column; } .today-cta { margin:0 22px 18px; align-self:flex-start; } }
+
+  /* TRUST STRIP · defensible TC value proof */
+  .trust-strip { display:grid; grid-template-columns:repeat(3, 1fr); gap:1px; background:rgba(15,15,15,0.10); border:0.5px solid rgba(15,15,15,0.10); border-radius:10px; overflow:hidden; margin-bottom:28px; }
+  .trust-tile { background:#fff; padding:18px 20px; }
+  .trust-num { font-family:'Playfair Display',Georgia,serif; font-size:28px; font-weight:500; line-height:1; letter-spacing:-0.3px; color:var(--ink); }
+  .trust-lbl { font-size:10.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; font-weight:600; margin-top:8px; line-height:1.35; }
+  .trust-sub { font-size:10.5px; color:#888; margin-top:6px; font-style:italic; }
+  @media (max-width: 640px) { .trust-strip { grid-template-columns:1fr; } }
 
   /* Section header */
   .section-head { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:14px; gap:12px; }
@@ -177,12 +194,34 @@
     <a class="btn-submit" href="/index.html#services">+ Submit a new file</a>
   </div>
 
-  <!-- Hero stats -->
-  <div class="hero">
-    <div class="hero-tile"><div class="hero-num" id="stat-closed">—</div><div class="hero-lbl">Files closed</div></div>
-    <div class="hero-tile"><div class="hero-num" id="stat-volume">$—</div><div class="hero-lbl">Volume YTD</div></div>
-    <div class="hero-tile"><div class="hero-num" id="stat-cycle">—</div><div class="hero-lbl">Avg days to close</div></div>
-    <div class="hero-tile"><div class="hero-num" id="stat-tasks">—</div><div class="hero-lbl">TC actions completed</div></div>
+  <!-- TODAY LINE · most urgent deadline or calm clear state -->
+  <div class="today-card" id="today-card">
+    <div class="today-band" id="today-band"></div>
+    <div class="today-body">
+      <div class="today-eb" id="today-eb">Today</div>
+      <div class="today-msg" id="today-msg">Loading your files…</div>
+      <div class="today-sub" id="today-sub">&nbsp;</div>
+    </div>
+    <a href="#" class="today-cta" id="today-cta" style="display:none">Open file →</a>
+  </div>
+
+  <!-- TRUST STRIP · 3 defensible metrics that prove TC value -->
+  <div class="trust-strip">
+    <div class="trust-tile">
+      <div class="trust-num" id="trust-risks">—</div>
+      <div class="trust-lbl">Compliance checks completed by your TC</div>
+      <div class="trust-sub" id="trust-risks-sub">&nbsp;</div>
+    </div>
+    <div class="trust-tile">
+      <div class="trust-num" id="trust-sla">—</div>
+      <div class="trust-lbl">Avg TC reply time · last 30 days</div>
+      <div class="trust-sub" id="trust-sla-sub">&nbsp;</div>
+    </div>
+    <div class="trust-tile">
+      <div class="trust-num" id="trust-ontime">—</div>
+      <div class="trust-lbl">On-time reply rate · last 30 days</div>
+      <div class="trust-sub" id="trust-ontime-sub">&nbsp;</div>
+    </div>
   </div>
 
   <!-- KANBAN -->
@@ -303,6 +342,7 @@
   let _deadlines = [];
   let _sends = [];
   let _tcs = {};
+  let _replyStats = { avgMinutes: null, onTimePct: null, sampleSize: 0 };
 
   async function init(){
     forceKanbanLayout();
@@ -346,7 +386,29 @@
       const { data: tcs } = await _client.from('agents').select('id, first_name, last_name, email, phone').in('id', tcIds);
       (tcs || []).forEach(t => { _tcs[t.id] = t; });
     }
-    renderStats();
+    // SLA STATS · pull replied agent messages from the last 30 days
+    // Defensible: actual timestamps, not claims. RLS scopes to the agent's own files.
+    try {
+      const since = new Date(Date.now() - 30*86400000).toISOString();
+      const { data: msgs } = await _client.from('file_messages')
+        .select('sent_at, replied_at')
+        .eq('sender_role','agent')
+        .not('replied_at','is',null)
+        .gte('sent_at', since);
+      if(msgs && msgs.length){
+        const mins = msgs.map(m => (new Date(m.replied_at) - new Date(m.sent_at))/60000).filter(n => n>=0);
+        const avg = mins.length ? Math.round(mins.reduce((a,b)=>a+b,0)/mins.length) : null;
+        const onTime = mins.filter(n => n <= 240).length;
+        _replyStats = {
+          avgMinutes: avg,
+          onTimePct: mins.length ? Math.round((onTime/mins.length)*100) : null,
+          sampleSize: mins.length,
+        };
+      }
+    } catch(_) { /* file_messages may not exist yet · ignore */ }
+
+    renderTodayLine();
+    renderTrustStrip();
     renderKanban();
     renderClosed();
     renderTeam();
@@ -502,21 +564,126 @@
     });
   }
 
-  function renderStats(){
-    const closed = _files.filter(isClosed);
-    const yStart = new Date(new Date().getFullYear(),0,1);
-    const closedYTD = closed.filter(f => f.closing_date && new Date(f.closing_date+'T00:00:00') >= yStart);
-    const volume = closedYTD.reduce((s,f) => s + (f.purchase_price_cents||0), 0) / 100;
-    const cycles = closed.filter(f => f.effective_date && f.closing_date)
-      .map(f => Math.round((new Date(f.closing_date+'T00:00:00') - new Date(f.effective_date+'T00:00:00'))/86400000))
-      .filter(n => n>=0 && n<365);
-    const avg = cycles.length ? Math.round(cycles.reduce((a,b)=>a+b,0)/cycles.length) : null;
-    const total = _verifs.filter(v => v.status==='confirmed').length + _deadlines.filter(d => d.completed_at).length + _sends.length;
-    const fm = n => n>=1000000 ? '$'+(n/1000000).toFixed(1).replace('.0','')+'M' : (n>=1000 ? '$'+Math.round(n/1000)+'K' : '$'+Math.round(n).toLocaleString());
-    document.getElementById('stat-closed').textContent = closed.length || 0;
-    document.getElementById('stat-volume').textContent = volume>0 ? fm(volume) : '$0';
-    document.getElementById('stat-cycle').textContent = avg!=null ? avg+'d' : '—';
-    document.getElementById('stat-tasks').textContent = total || 0;
+  // ========== TODAY LINE ==========
+  // Surfaces the single most actionable thing for the agent right now.
+  // Priority: overdue → due in <48h → due in 2-7d → calm next-deadline → all clear.
+  function renderTodayLine(){
+    const card = document.getElementById('today-card');
+    const eb = document.getElementById('today-eb');
+    const msg = document.getElementById('today-msg');
+    const sub = document.getElementById('today-sub');
+    const cta = document.getElementById('today-cta');
+    card.classList.remove('urgent','warn','calm');
+
+    const active = _files.filter(f => !isClosed(f));
+    if(!active.length){
+      eb.textContent = 'Today';
+      msg.textContent = 'No active files right now.';
+      sub.textContent = 'Submit a new file and your TC will pick it up.';
+      cta.style.display = 'none';
+      card.classList.add('calm');
+      return;
+    }
+
+    // Build a flat list of open deadlines tied to active files
+    const activeIds = new Set(active.map(f => f.id));
+    const fileById = {}; active.forEach(f => { fileById[f.id] = f; });
+    const now = Date.now();
+    const open = _deadlines
+      .filter(d => activeIds.has(d.file_id) && !d.completed_at && d.due_date)
+      .map(d => ({ ...d, ms: new Date(d.due_date+'T17:00:00').getTime() - now }))
+      .sort((a,b) => a.ms - b.ms);
+
+    if(!open.length){
+      eb.textContent = 'Today';
+      msg.textContent = "You're all clear.";
+      sub.textContent = active.length + ' active file' + (active.length===1?'':'s') + ' · no deadlines tracked yet.';
+      cta.style.display = 'none';
+      card.classList.add('calm');
+      return;
+    }
+
+    const top = open[0];
+    const f = fileById[top.file_id];
+    const addr = (f && f.property_address) || 'a file';
+    const lbl = String(top.deadline_key || 'Deadline').replace(/_/g,' ');
+    const hours = top.ms / 3600000;
+    const days = top.ms / 86400000;
+
+    let band = 'calm', ebTxt = 'Today', msgTxt = '', subTxt = '';
+    if(top.ms < 0){
+      band = 'urgent';
+      ebTxt = 'Overdue';
+      const overdueDays = Math.abs(Math.floor(days));
+      msgTxt = lbl + ' on ' + addr + ' was due ' + (overdueDays===0 ? 'today' : (overdueDays+'d ago'));
+      subTxt = 'Open the file and clear it · your TC has been notified.';
+    } else if(hours <= 48){
+      band = 'urgent';
+      ebTxt = 'Action needed today';
+      msgTxt = lbl + ' on ' + addr + ' due in ' + (hours < 24 ? Math.round(hours)+'h' : Math.round(hours)+' hours');
+      subTxt = 'Confirm with your TC the deliverable is in motion.';
+    } else if(days <= 7){
+      band = 'warn';
+      ebTxt = 'Coming up this week';
+      msgTxt = lbl + ' on ' + addr + ' due in ' + Math.round(days) + ' days';
+      subTxt = 'Tracked. Your TC will send the reminder as the date approaches.';
+    } else {
+      band = 'calm';
+      ebTxt = 'Next deadline';
+      msgTxt = lbl + ' on ' + addr + ' in ' + Math.round(days) + ' days';
+      subTxt = "You're ahead of the clock. " + (active.length-1>0 ? ((active.length-1) + ' other file' + (active.length-1===1?'':'s') + ' in motion.') : '');
+    }
+
+    eb.textContent = ebTxt;
+    msg.textContent = msgTxt;
+    sub.textContent = subTxt;
+    card.classList.add(band);
+    cta.style.display = '';
+    cta.textContent = 'Open file →';
+    cta.href = '#file-' + f.id;
+    cta.onclick = (e) => { e.preventDefault(); openDrawer(f); };
+  }
+
+  // ========== TRUST STRIP ==========
+  // Three numbers, all defensible from actual data.
+  function renderTrustStrip(){
+    // Risks caught · count of verifications the TC has confirmed across the agent's files this year.
+    // Defensible: each row is a real audit entry, no marketing claim.
+    const yStart = new Date(new Date().getFullYear(),0,1).getTime();
+    const confirmed = _verifs.filter(v => {
+      if(v.status !== 'confirmed') return false;
+      const t = v.confirmed_at ? new Date(v.confirmed_at).getTime() : null;
+      return !t || t >= yStart;
+    });
+    const risksEl = document.getElementById('trust-risks');
+    const risksSub = document.getElementById('trust-risks-sub');
+    risksEl.textContent = confirmed.length || '—';
+    risksSub.textContent = confirmed.length
+      ? ('Across ' + new Set(confirmed.map(v=>v.file_id)).size + ' file' + (new Set(confirmed.map(v=>v.file_id)).size===1?'':'s') + ' · YTD')
+      : 'Your TC has not confirmed any items yet.';
+
+    // SLA reply time
+    const slaEl = document.getElementById('trust-sla');
+    const slaSub = document.getElementById('trust-sla-sub');
+    if(_replyStats.avgMinutes != null){
+      const m = _replyStats.avgMinutes;
+      slaEl.textContent = m < 60 ? m + 'm' : (m < 120 ? '1.' + Math.round((m-60)/6) + 'h' : (m/60).toFixed(1) + 'h');
+      slaSub.textContent = _replyStats.sampleSize + ' message' + (_replyStats.sampleSize===1?'':'s') + ' · last 30d';
+    } else {
+      slaEl.textContent = '—';
+      slaSub.textContent = 'No messages yet · send your TC a note from any file.';
+    }
+
+    // On-time rate
+    const otEl = document.getElementById('trust-ontime');
+    const otSub = document.getElementById('trust-ontime-sub');
+    if(_replyStats.onTimePct != null){
+      otEl.textContent = _replyStats.onTimePct + '%';
+      otSub.textContent = 'Replies within 4hr SLA';
+    } else {
+      otEl.textContent = '—';
+      otSub.textContent = 'Awaiting first SLA-tracked reply.';
+    }
   }
 
   function renderClosed(){
