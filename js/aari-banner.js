@@ -23,9 +23,11 @@
     // Briefing is Marlenyi's personal Morning Briefing page · broker only.
     { id:'briefing', label:'Morning briefing', href:'/briefing.html',    icon:iconSun(),    match:['/briefing'],                       roles:['broker'] },
     { id:'team',     label:'Run the team',   href:'/broker-cockpit.html', icon:iconUsers(), match:['/broker-cockpit','/tc-cockpit'],   roles:['broker'] },
-    { id:'prospecting', label:'Fill the pipeline', href:'/prospecting.html', icon:iconBook(), match:['/prospecting','/bd'], roles:['tc','broker'] },
+    // Prospecting is broker BD work · removed from TC role (was muck).
+    { id:'prospecting', label:'Fill the pipeline', href:'/prospecting.html', icon:iconBook(), match:['/prospecting','/bd'], roles:['broker'] },
     { id:'files',    label:'Move the files', href:'/files.html',          icon:iconFolder(),match:['/files.html','/tc-cockpit','/pipeline'], roles:['tc','broker'] },
-    { id:'quality',  label:'Prove the quality', href:'/files-sla.html',    icon:iconChart(), match:['/files-sla'],                       roles:['broker'] },
+    // Quality dashboard self-scopes to TC's own SLA stats when role === 'tc'.
+    { id:'quality',  label:'Service quality', href:'/files-sla.html',     icon:iconChart(), match:['/files-sla'],                       roles:['tc','broker'] },
     { id:'compliance', label:'Defend the audit', href:'/files-compliance.html', icon:iconShield(), match:['/files-compliance'],          roles:['broker'] },
     // Agent-side hub · what an agent actually needs from a navigation rib.
     { id:'portal',   label:'My files',       href:'/portal.html',         icon:iconFolder(),match:['/portal'],                          roles:['agent'] },
