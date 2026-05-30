@@ -111,6 +111,15 @@
   .goal-input-row input:focus { outline:none; border-color:var(--ink); }
   .goal-unit, .goal-unit-pre { font-size:14px; color:var(--muted); font-weight:500; text-transform:none; letter-spacing:0; }
   .goal-helper { font-size:11px; color:#888; font-weight:400; text-transform:none; letter-spacing:0; font-style:italic; line-height:1.45; }
+  /* Section grouping inside the settings modal */
+  .goal-group-eb { font-size:10px; letter-spacing:.7px; text-transform:uppercase; color:var(--muted); font-weight:600; padding-top:4px; padding-bottom:2px; border-top:0.5px solid var(--line); margin-top:4px; }
+  .goal-group-eb:first-child { border-top:0; margin-top:0; padding-top:0; }
+  /* Toggle row · checkbox + label with bold title + small explainer */
+  .goal-toggle { display:flex; gap:11px; align-items:flex-start; padding:8px 0; cursor:pointer; }
+  .goal-toggle input[type="checkbox"] { margin-top:3px; flex-shrink:0; cursor:pointer; }
+  .goal-toggle span { display:flex; flex-direction:column; gap:3px; }
+  .goal-toggle strong { font-size:13px; color:var(--ink); font-weight:500; text-transform:none; letter-spacing:0; }
+  .goal-toggle em { font-size:11.5px; color:var(--muted); font-style:normal; line-height:1.45; }
   .goal-status { font-size:12px; padding:8px 10px; border-radius:5px; display:none; }
   .goal-status.show { display:block; }
   .goal-status.ok { background:#f0f7f3; color:var(--green); }
@@ -484,7 +493,7 @@
   <section class="earn-section" id="earn-section">
     <div class="earn-head">
       <p class="section-eb">Your business this month</p>
-      <button type="button" class="earn-goal-btn" id="earn-goal-btn">Set goal →</button>
+      <button type="button" class="earn-goal-btn" id="earn-goal-btn">My settings →</button>
     </div>
     <div class="earn-strip">
       <div class="earn-tile">
@@ -525,12 +534,13 @@
   <aside class="goal-modal" id="goal-modal" role="dialog" aria-modal="true">
     <div class="goal-head">
       <div>
-        <p class="goal-eb">Set your numbers</p>
-        <h3 class="goal-title">Default commission rate + monthly goal</h3>
+        <p class="goal-eb">My settings</p>
+        <h3 class="goal-title">Numbers + notifications</h3>
       </div>
       <button type="button" class="goal-close" id="goal-close">×</button>
     </div>
     <div class="goal-body">
+      <div class="goal-group-eb">Earnings tracking</div>
       <label class="goal-lbl">Default commission rate
         <div class="goal-input-row">
           <input type="number" id="goal-rate" min="0" max="25" step="0.05" placeholder="3.0">
@@ -545,6 +555,16 @@
         </div>
         <span class="goal-helper">Personal target. Tracks against your closed volume. Skip if you don't track this.</span>
       </label>
+
+      <div class="goal-group-eb" style="margin-top:6px">Notifications</div>
+      <label class="goal-toggle">
+        <input type="checkbox" id="goal-digest" checked>
+        <span>
+          <strong>Sunday weekly digest</strong>
+          <em>A summary of the week ahead — top deadlines on your files, TC reply stats, what your TC is watching. Sent Sunday evening.</em>
+        </span>
+      </label>
+
       <div class="goal-status" id="goal-status"></div>
       <button type="button" class="goal-save" id="goal-save">Save</button>
     </div>
@@ -785,6 +805,13 @@
     if(closeBtn) closeBtn.addEventListener('click', close);
     if(back) back.addEventListener('click', close);
 
+    // Auto-open modal when arriving with #refer in the URL (from the Where to? hub card)
+    if(window.location.hash === '#refer' || window.location.hash === '#refer-tc'){
+      setTimeout(() => open('tc'), 200);
+    } else if(window.location.hash === '#refer-realty'){
+      setTimeout(() => open('realty'), 200);
+    }
+
     const submit = document.getElementById('ref-submit');
     if(submit) submit.addEventListener('click', async () => {
       const status = document.getElementById('ref-status');
@@ -976,6 +1003,9 @@
       document.getElementById('goal-rate').value = (_profile && _profile.default_commission_pct != null) ? _profile.default_commission_pct : '';
       const goalCents = _profile && _profile.monthly_volume_goal_cents;
       document.getElementById('goal-volume').value = goalCents ? Math.round(Number(goalCents)/100) : '';
+      // Default to true if column is missing (e.g. SQL not yet run · ergo opted-in)
+      const digestOn = !_profile || _profile.weekly_digest_opt_in !== false;
+      document.getElementById('goal-digest').checked = digestOn;
       document.getElementById('goal-status').className = 'goal-status';
       document.getElementById('goal-modal').classList.add('open');
       document.getElementById('goal-back').classList.add('open');
@@ -1011,16 +1041,19 @@
         status.textContent = 'Volume goal must be a positive number.';
         return;
       }
+      const digestOn = !!document.getElementById('goal-digest').checked;
       save.disabled = true; save.textContent = 'Saving…';
       try {
         const { error } = await _client.from('agents').update({
           default_commission_pct: rate,
           monthly_volume_goal_cents: volume != null ? volume * 100 : null,
+          weekly_digest_opt_in: digestOn,
         }).eq('id', _profile.id);
         if(error) throw error;
         // Update local profile + re-render
         _profile.default_commission_pct = rate;
         _profile.monthly_volume_goal_cents = volume != null ? volume * 100 : null;
+        _profile.weekly_digest_opt_in = digestOn;
         renderEarnings();
         status.className = 'goal-status show ok';
         status.textContent = '✓ Saved.';
