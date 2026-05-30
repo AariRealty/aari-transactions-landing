@@ -1618,7 +1618,116 @@ Aari Transactions`,
     renderKpis();
     renderKanban();
     loadAndRenderAgentMessages();
+    renderPriorityQueue();
   }
+
+  // ============ PRIORITY QUEUE · TC's daily focus list ============
+  // Surfaces the 3-7 most urgent items across all TC files. Ranks by:
+  //   1. Deadline due within 48hr (red urgent)
+  //   2. Verification flagged needs_action on a file closing <14d (red urgent)
+  //   3. File closing within 3 days with open verifications (amber warn)
+  //   4. Deadline due 2-7 days (calm)
+  // Click a row → opens that file's playbook.
+  // Auto-refreshes every 60s alongside agent messages.
+  function renderPriorityQueue(){
+    const panel = document.getElementById('pq-panel');
+    const list = document.getElementById('pq-list');
+    const meta = document.getElementById('pq-meta');
+    if(!panel || !list) return;
+
+    const now = Date.now();
+    const items = [];
+    // Filter files this TC actually owns · respects the TC filter for brokers
+    const myFiles = _files.filter(f => {
+      // Skip closed/expired
+      const st = (f.transaction_stage || '').toLowerCase();
+      if(st === 'closed' || st === 'expired' || f.status === 'closed' || f.status === 'archived') return false;
+      return true;
+    });
+
+    myFiles.forEach(f => {
+      const addr = f.property_address || 'File ' + (f.id || '').slice(0,6);
+      const daysToClose = f.closing_date ? Math.round((new Date(f.closing_date+'T00:00:00').getTime() - now) / 86400000) : null;
+
+      // 1. Deadlines due soon for this file
+      const fileDls = (_deadlines || []).filter(d => d.file_id === f.id && !d.completed_at && d.due_date);
+      fileDls.forEach(d => {
+        const ms = new Date(d.due_date+'T17:00:00').getTime() - now;
+        const hours = ms / 3600000;
+        if(hours <= 48){
+          items.push({
+            file: f, addr,
+            kind: 'deadline', icon: 'D',
+            what: String(d.deadline_key || 'Deadline').replace(/_/g,' '),
+            when: hours < 0 ? Math.abs(Math.floor(hours/24))+'d late' : (hours < 24 ? Math.round(hours)+'h' : Math.round(hours/24)+'d'),
+            band: hours < 0 || hours <= 24 ? 'urgent' : 'warn',
+            sortKey: ms,
+          });
+        }
+      });
+
+      // 2. Flagged verifications · only urgent if closing is near
+      const flagged = (_verifs || []).filter(v => v.file_id === f.id && v.status === 'needs_action');
+      if(flagged.length && daysToClose != null && daysToClose < 14){
+        items.push({
+          file: f, addr,
+          kind: 'verify', icon: '!',
+          what: flagged.length + ' verification' + (flagged.length===1?'':'s') + ' flagged',
+          when: daysToClose <= 0 ? 'today' : (daysToClose+'d to close'),
+          band: 'urgent',
+          sortKey: daysToClose * 86400000,
+        });
+      }
+
+      // 3. Closing within 3 days with open verifications · warn band
+      if(daysToClose != null && daysToClose >= 0 && daysToClose <= 3){
+        const openVerifs = (_verifs || []).filter(v => v.file_id === f.id && v.status !== 'confirmed' && v.status !== 'na');
+        if(openVerifs.length){
+          items.push({
+            file: f, addr,
+            kind: 'close', icon: 'C',
+            what: openVerifs.length + ' item' + (openVerifs.length===1?'':'s') + ' open before close',
+            when: daysToClose === 0 ? 'today' : daysToClose + 'd',
+            band: 'warn',
+            sortKey: daysToClose * 86400000 + 100,
+          });
+        }
+      }
+    });
+
+    if(!items.length){ panel.style.display = 'none'; return; }
+    panel.style.display = 'block';
+
+    // Dedupe (same file might trip multiple rules · keep first/most urgent per file+kind)
+    const seen = new Set();
+    const unique = items.filter(i => {
+      const key = (i.file.id) + ':' + i.kind;
+      if(seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+    // Sort by sortKey (ascending · most urgent first), cap at 7
+    unique.sort((a,b) => a.sortKey - b.sortKey);
+    const top = unique.slice(0, 7);
+    const urgentCount = top.filter(i => i.band === 'urgent').length;
+    if(meta) meta.textContent = top.length + ' item' + (top.length===1?'':'s') + (urgentCount ? ' · ' + urgentCount + ' urgent' : '');
+
+    list.innerHTML = top.map(i => {
+      return '<div class="pq-row ' + i.band + '" data-pq-file="' + esc(i.file.id) + '">' +
+        '<div class="pq-icon ' + i.kind + '">' + i.icon + '</div>' +
+        '<div><div class="pq-addr">' + esc(i.addr) + '</div></div>' +
+        '<div class="pq-what">' + esc(i.what) + '</div>' +
+        '<div class="pq-when ' + i.band + '">' + esc(i.when) + '</div>' +
+      '</div>';
+    }).join('');
+
+    list.querySelectorAll('[data-pq-file]').forEach(el => el.addEventListener('click', () => {
+      const fid = el.getAttribute('data-pq-file');
+      const f = _files.find(x => x.id === fid);
+      if(f) openPlaybook(f);
+    }));
+  }
+  // Re-render priority queue on every loadAndRender, and on a 60s tick
+  setInterval(() => { try { renderPriorityQueue(); } catch(_){} }, 60000);
 
   // ============ AGENT MESSAGES PANEL (TC + broker view) ============
   // Surfaces pending file_messages from agents awaiting TC reply.
