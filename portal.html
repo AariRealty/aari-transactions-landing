@@ -95,9 +95,8 @@
     .kanban { grid-template-columns: 1fr !important; }
   }
 
-  /* Util row · 2 columns now (services moved to settings) */
-  .util { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:32px; }
-  .util-col .section-eb { display:block; margin-bottom:10px; }
+  /* Team section · full width */
+  .team-section { margin-bottom:32px; }
   .team { background:#fff; border:0.5px solid var(--line); border-radius:8px; overflow:hidden; }
   .team-row { padding:12px 14px; border-bottom:0.5px solid var(--soft); }
   .team-row:last-child { border-bottom:0; }
@@ -116,6 +115,16 @@
   .about-v { font-size:11.5px; color:var(--ink); line-height:1.45; }
   .about-v a { color:var(--ink); text-decoration:underline; }
   @media (max-width: 900px) { .util { grid-template-columns:1fr; } }
+
+  /* Closed transactions collapse · graveyard data hidden by default */
+  .closed-collapse { margin-bottom:24px; }
+  .closed-toggle { display:flex; align-items:center; gap:10px; width:100%; padding:14px 18px; background:#fff; border:0.5px solid var(--line); border-radius:8px; cursor:pointer; text-align:left; font-family:inherit; transition:border-color .15s,background .15s; }
+  .closed-toggle:hover { border-color:var(--ink); background:#fafaf9; }
+  .closed-toggle-eb { font-size:11px; letter-spacing:.6px; text-transform:uppercase; color:var(--ink); font-weight:600; }
+  .closed-toggle-meta { font-size:11px; color:var(--muted); flex:1; }
+  .closed-toggle-arrow { font-size:18px; color:var(--muted); transition:transform .2s; line-height:1; }
+  .closed-toggle[aria-expanded="true"] .closed-toggle-arrow { transform:rotate(90deg); }
+  .closed-body { padding-top:4px; }
 
   /* Closed table */
   .table-wrap { background:#fff; border:0.5px solid var(--line); border-radius:8px; overflow-x:auto; }
@@ -258,38 +267,38 @@
     </div>
   </div>
 
-  <!-- Util row -->
-  <div class="util">
-    <div class="util-col">
+  <!-- Team row · full width, single source of truth for "who's working on my files" -->
+  <div class="team-section">
+    <div class="section-head">
       <p class="section-eb">Your Aari team</p>
-      <div class="team" id="team-list">
-        <div class="team-empty">No TC assigned yet.</div>
-      </div>
+      <span class="section-meta">Direct line · M–F 9am–5pm ET</span>
     </div>
-    <div class="util-col">
-      <p class="section-eb">About Aari</p>
-      <div class="about">
-        <div><div class="about-l">Email</div><div class="about-v"><a href="mailto:hello@aaritransactions.com">hello@aaritransactions.com</a></div></div>
-        <div><div class="about-l">Office hours</div><div class="about-v">M–F · 9am–5pm ET</div></div>
-        <div><div class="about-l">Coverage</div><div class="about-v">Southwest Florida<br>Fort Myers · Cape Coral · Lehigh · Naples</div></div>
-      </div>
+    <div class="team" id="team-list">
+      <div class="team-empty">No TC assigned yet.</div>
     </div>
   </div>
 
-  <!-- Closed transactions -->
-  <div>
-    <div class="section-head">
-      <p class="section-eb">Closed transactions</p>
-      <span class="section-meta" id="closed-meta">&nbsp;</span>
-    </div>
-    <div class="table-wrap" id="closed-wrap">
-      <table class="ctable">
-        <thead><tr><th>Property</th><th>Closed</th><th>Your TC</th><th class="num">Tasks done</th><th>Package</th></tr></thead>
-        <tbody id="closed-rows"></tbody>
-      </table>
-    </div>
-    <div class="empty-card" id="closed-empty">
-      <div class="empty-sub">No closed files yet. We'll add them here as deals fund.</div>
+  <!-- Closed transactions · collapsed by default · graveyard data shouldn't take prime space -->
+  <div class="closed-collapse" id="closed-collapse">
+    <button type="button" class="closed-toggle" id="closed-toggle" aria-expanded="false">
+      <span class="closed-toggle-eb">Closed transactions</span>
+      <span class="closed-toggle-meta" id="closed-toggle-meta">&nbsp;</span>
+      <span class="closed-toggle-arrow" aria-hidden="true">›</span>
+    </button>
+    <div class="closed-body" id="closed-body" style="display:none">
+      <div class="section-head" style="margin-top:14px">
+        <p class="section-eb">Closed transactions</p>
+        <span class="section-meta" id="closed-meta">&nbsp;</span>
+      </div>
+      <div class="table-wrap" id="closed-wrap">
+        <table class="ctable">
+          <thead><tr><th>Property</th><th>Closed</th><th>Your TC</th><th class="num">Tasks done</th><th>Package</th></tr></thead>
+          <tbody id="closed-rows"></tbody>
+        </table>
+      </div>
+      <div class="empty-card" id="closed-empty">
+        <div class="empty-sub">No closed files yet. We'll add them here as deals fund.</div>
+      </div>
     </div>
   </div>
 
@@ -356,8 +365,20 @@
     if(_profile.first_name) document.getElementById('welcome-greet').textContent = 'Welcome back, ' + _profile.first_name;
     document.getElementById('welcome-sub').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
     wireDrawer();
+    wireClosedToggle();
     forceKanbanLayout();
     await loadAll();
+  }
+
+  function wireClosedToggle(){
+    const btn = document.getElementById('closed-toggle');
+    const body = document.getElementById('closed-body');
+    if(!btn || !body) return;
+    btn.addEventListener('click', () => {
+      const open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+      body.style.display = open ? 'none' : 'block';
+    });
   }
 
   function showGate(t,m,h){
@@ -690,11 +711,19 @@
     const closed = _files.filter(isClosed);
     const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const thisMonth = closed.filter(f => f.closing_date && new Date(f.closing_date+'T00:00:00') >= monthStart);
+    const collapse = document.getElementById('closed-collapse');
+    const toggleMeta = document.getElementById('closed-toggle-meta');
+    // Hide entire section if zero · no graveyard, no empty card
+    if(!closed.length){
+      if(collapse) collapse.style.display = 'none';
+      return;
+    }
+    if(collapse) collapse.style.display = '';
+    if(toggleMeta) toggleMeta.textContent = closed.length + ' total · ' + thisMonth.length + ' this month';
     document.getElementById('closed-meta').textContent = closed.length + ' total · ' + thisMonth.length + ' this month';
     const wrap = document.getElementById('closed-wrap');
     const empty = document.getElementById('closed-empty');
     const rows = document.getElementById('closed-rows');
-    if(!closed.length){ wrap.style.display='none'; empty.style.display='block'; return; }
     wrap.style.display='block'; empty.style.display='none';
     closed.sort((a,b) => new Date(b.closing_date||0) - new Date(a.closing_date||0));
     rows.innerHTML = closed.slice(0,50).map(f => {
