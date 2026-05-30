@@ -78,6 +78,26 @@
   .kpi-val.danger{color:#c44b3b}
 
   /* Kanban */
+  /* Agent messages awaiting TC reply · prominent panel above kanban */
+  .agent-msg-panel{background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-left:3px solid #b7791f;border-radius:8px;padding:14px 18px;margin-bottom:18px}
+  .amp-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+  .amp-eb{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#5f5e5a;font-weight:600;margin:0}
+  .amp-meta{font-size:11px;color:#888}
+  .amp-list{display:flex;flex-direction:column;gap:8px}
+  .amp-row{display:grid;grid-template-columns:1.8fr 2fr 90px 100px;gap:14px;align-items:center;padding:10px 12px;background:#fafaf9;border-radius:6px;font-size:12px;cursor:pointer;transition:background .12s}
+  .amp-row:hover{background:#f3f1ea}
+  .amp-row.urgent{border-left:3px solid #c44b3b;padding-left:9px}
+  .amp-row.warn{border-left:3px solid #b7791f;padding-left:9px}
+  .amp-addr{font-weight:500;color:#0f0f0f;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .amp-from{font-size:10.5px;color:#5f5e5a;margin-top:2px}
+  .amp-msg{color:#0f0f0f;line-height:1.4;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .amp-timer{font-family:'Playfair Display',Georgia,serif;font-size:18px;font-weight:500;color:#5f5e5a;text-align:right}
+  .amp-timer.warn{color:#b7791f}
+  .amp-timer.urgent{color:#c44b3b}
+  .amp-action{text-align:right}
+  .amp-reply-btn{background:#0f0f0f;color:#fff;border:0;padding:6px 12px;border-radius:5px;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit;text-decoration:none;display:inline-block}
+  .amp-reply-btn:hover{background:#222}
+
   .kanban-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
   .kanban-title{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#666;font-weight:500;margin:0}
   .kanban-hint{font-size:10.5px;color:#888;margin:0}
@@ -384,6 +404,15 @@
     <div class="kpi"><p class="kpi-lbl">Active</p><p class="kpi-val" id="kpi-active">0</p></div>
     <div class="kpi"><p class="kpi-lbl">Closing this week</p><p class="kpi-val" id="kpi-closing">0</p></div>
     <div class="kpi"><p class="kpi-lbl">YTD closed</p><p class="kpi-val" id="kpi-ytd">0</p></div>
+  </div>
+
+  <!-- ============ AGENT MESSAGES PANEL (TC + broker view) ============ -->
+  <div class="agent-msg-panel" id="agent-msg-panel" style="display:none">
+    <div class="amp-head">
+      <p class="amp-eb">Agent messages awaiting reply</p>
+      <span class="amp-meta" id="amp-meta">&nbsp;</span>
+    </div>
+    <div class="amp-list" id="amp-list"></div>
   </div>
 
   <!-- File type filter pills · Sale / Listing / Lease / Buyer-rep -->
@@ -1535,7 +1564,68 @@ Aari Transactions`,
     renderKanbanShell();
     renderKpis();
     renderKanban();
+    loadAndRenderAgentMessages();
   }
+
+  // ============ AGENT MESSAGES PANEL (TC + broker view) ============
+  // Surfaces pending file_messages from agents awaiting TC reply.
+  // Shows time-since-sent with green/yellow/red SLA bands.
+  // Polls every 60s. Auto-refreshes timers every 30s.
+  let _agentMsgs = [];
+  async function loadAndRenderAgentMessages(){
+    try {
+      const role = (_profile && _profile.role || '').toLowerCase();
+      if(role !== 'tc' && role !== 'broker') return;
+      // For TCs: only messages on their assigned files (RLS enforces this)
+      // For brokers: all messages
+      const { data } = await _client.from('file_messages')
+        .select('id, file_id, sender_id, message, sent_at, read_at, replied_at, nudge_count, last_nudge_at')
+        .is('replied_at', null)
+        .eq('sender_role','agent')
+        .order('sent_at', { ascending: true });
+      _agentMsgs = data || [];
+      renderAgentMessages();
+    } catch(err){ console.warn('[files] agent msgs load failed', err); }
+  }
+
+  function renderAgentMessages(){
+    const panel = document.getElementById('agent-msg-panel');
+    const list = document.getElementById('amp-list');
+    const meta = document.getElementById('amp-meta');
+    if(!panel) return;
+    if(!_agentMsgs.length){ panel.style.display = 'none'; return; }
+    panel.style.display = 'block';
+    if(meta) meta.textContent = _agentMsgs.length + ' message' + (_agentMsgs.length === 1 ? '' : 's') + ' need reply';
+
+    list.innerHTML = _agentMsgs.map(m => {
+      const file = _files.find(f => f.id === m.file_id);
+      const addr = (file && file.property_address) || 'File ' + m.file_id.slice(0,6);
+      const agentName = (file && file.client_name) || 'Agent';
+      const minutes = Math.floor((Date.now() - new Date(m.sent_at).getTime()) / 60000);
+      const timerLbl = minutes < 60 ? minutes + 'm' : (Math.floor(minutes/60) + 'h ' + (minutes%60) + 'm');
+      let band = '';
+      if(minutes >= 240) band = 'urgent';   // >4 hours
+      else if(minutes >= 120) band = 'warn'; // >2 hours
+      return '<div class="amp-row ' + band + '" data-file-id="' + esc(m.file_id) + '">' +
+        '<div><div class="amp-addr">' + esc(addr) + '</div><div class="amp-from">From your agent</div></div>' +
+        '<div class="amp-msg">' + esc(m.message) + '</div>' +
+        '<div class="amp-timer ' + band + '">' + esc(timerLbl) + '</div>' +
+        '<div class="amp-action"><button type="button" class="amp-reply-btn" data-reply-file="' + esc(m.file_id) + '">Open file</button></div>' +
+      '</div>';
+    }).join('');
+
+    list.querySelectorAll('[data-reply-file]').forEach(btn => btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const fid = btn.getAttribute('data-reply-file');
+      const f = _files.find(x => x.id === fid);
+      if(f) openPlaybook(f);
+    }));
+  }
+
+  // Auto-refresh every 30s so the timer ages live
+  setInterval(() => { if(_agentMsgs.length) renderAgentMessages(); }, 30000);
+  // Re-poll every 60s for new messages
+  setInterval(() => { loadAndRenderAgentMessages(); }, 60000);
 
   function renderTcFilter(){
     const sel = document.getElementById('tc-filter-select');
