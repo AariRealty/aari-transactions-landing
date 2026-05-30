@@ -37,6 +37,14 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 
 
 /* RUN-THE-TEAM HERO · one-thing focus (May 2026 · white/cream/black) */
+/* "Since you were last here" engagement line · top of page */
+.slv-line{background:#fafaf9;border-bottom:1px solid var(--line);padding:10px 28px;display:flex;align-items:baseline;gap:14px;font-size:13px;color:var(--ink);flex-wrap:wrap}
+.slv-eb{font-size:9.5px;letter-spacing:.7px;text-transform:uppercase;color:var(--muted);font-weight:600;white-space:nowrap}
+.slv-body{flex:1;min-width:0;line-height:1.5}
+.slv-body strong{font-weight:600}
+.slv-empty{color:var(--muted);font-style:italic}
+@media(max-width:760px){.slv-line{padding:10px 20px;font-size:12.5px}}
+
 .run-hero{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line)}
 .run-hero-left{background:var(--cream);padding:22px 28px}
 .run-hero-date{font-size:11px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:#0f0f0f;opacity:0.55;margin-bottom:6px}
@@ -478,6 +486,12 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
   <div id="aari-header" data-aari-view="broker-cockpit" data-aari-show-submit="no"></div>
   <script src="/js/aari-header.js" defer></script>
 
+  <!-- "Since you were last here" · daily-pull engagement signal -->
+  <div class="slv-line" id="slv-line" style="display:none">
+    <span class="slv-eb">Since you were last here</span>
+    <span class="slv-body" id="slv-body">—</span>
+  </div>
+
   <!-- Section 1 · Run the team hero · team business focus (rebuild · cuts file overlap) -->
   <div class="run-hero">
     <div class="run-hero-left">
@@ -804,6 +818,107 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 
     // SECTION · Team pulse (per-TC load + reply SLA + capacity)
     loadAndRenderTeamPulse(files, byId);
+
+    // SECTION · "Since you were last here" engagement summary
+    loadAndRenderSinceLastVisit(files);
+  }
+
+  // ============ SINCE YOU WERE LAST HERE ============
+  // Compares the last-visit timestamp (localStorage) against new activity
+  // across audit_log + agent_nps + agent_referrals + file_messages.
+  // Then stamps the current visit so the next load has a fresh baseline.
+  async function loadAndRenderSinceLastVisit(files){
+    const line = document.getElementById('slv-line');
+    const body = document.getElementById('slv-body');
+    if(!line || !body) return;
+    const STORE = 'aari_broker_last_visit';
+    let lastVisit = null;
+    try { lastVisit = localStorage.getItem(STORE); } catch(_){}
+    const now = new Date().toISOString();
+    // First visit: just record + skip the summary
+    if(!lastVisit){
+      try { localStorage.setItem(STORE, now); } catch(_){}
+      return;
+    }
+    // If last visit was <15 min ago, treat as same session · skip
+    if((Date.now() - new Date(lastVisit).getTime()) < 15 * 60 * 1000){
+      try { localStorage.setItem(STORE, now); } catch(_){}
+      return;
+    }
+
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const [stageRes, npsRes, refRes, msgRes] = await Promise.all([
+        client.from('audit_log')
+          .select('action, target_id, created_at, details')
+          .gte('created_at', lastVisit)
+          .in('action', ['file_stage_changed','agent_stage_changed'])
+          .limit(500),
+        client.from('agent_nps')
+          .select('id, score, comment, responded_at')
+          .not('responded_at','is',null)
+          .gte('responded_at', lastVisit)
+          .limit(100),
+        client.from('agent_referrals')
+          .select('id, referred_name, created_at')
+          .gte('created_at', lastVisit)
+          .limit(100),
+        client.from('file_messages')
+          .select('id, sent_at, replied_at')
+          .eq('sender_role','agent')
+          .gte('sent_at', lastVisit)
+          .limit(200),
+      ]);
+      const stageMoves = (stageRes && stageRes.data) || [];
+      const closedMoves = stageMoves.filter(s => (s.details && (s.details.to_stage === 'closed')));
+      const npsResponses = (npsRes && npsRes.data) || [];
+      const newReferrals = (refRes && refRes.data) || [];
+      const newMsgs = (msgRes && msgRes.data) || [];
+
+      // Render
+      const parts = [];
+      if(closedMoves.length){
+        const totalVolume = closedMoves.reduce((s, m) => {
+          const fid = m.target_id;
+          const file = (files || []).find(f => f.id === fid);
+          return s + ((file && file.purchase_price_cents) || 0);
+        }, 0) / 100;
+        const volumeLbl = totalVolume >= 1000000
+          ? '$' + (totalVolume / 1000000).toFixed(1).replace('.0','') + 'M'
+          : (totalVolume >= 1000 ? '$' + Math.round(totalVolume / 1000) + 'K' : '');
+        parts.push('<strong>' + closedMoves.length + '</strong> file' + (closedMoves.length===1?'':'s') + ' closed' + (volumeLbl ? ' (' + volumeLbl + ' volume)' : ''));
+      }
+      const otherStageMoves = stageMoves.length - closedMoves.length;
+      if(otherStageMoves > 0){
+        parts.push('<strong>' + otherStageMoves + '</strong> stage move' + (otherStageMoves===1?'':'s'));
+      }
+      if(newMsgs.length){
+        const unreplied = newMsgs.filter(m => !m.replied_at).length;
+        parts.push('<strong>' + newMsgs.length + '</strong> agent message' + (newMsgs.length===1?'':'s') + (unreplied ? ' (' + unreplied + ' awaiting reply)' : ''));
+      }
+      if(npsResponses.length){
+        const avg = (npsResponses.reduce((s,r) => s + (r.score||0), 0) / npsResponses.length).toFixed(1);
+        parts.push('<strong>' + npsResponses.length + '</strong> NPS response' + (npsResponses.length===1?'':'s') + ' (avg ' + avg + ')');
+      }
+      if(newReferrals.length){
+        parts.push('<strong>' + newReferrals.length + '</strong> new agent referral' + (newReferrals.length===1?'':'s'));
+      }
+
+      const sinceMins = Math.floor((Date.now() - new Date(lastVisit).getTime()) / 60000);
+      const sinceLbl = sinceMins < 60 ? sinceMins + 'm' : (sinceMins < 1440 ? Math.floor(sinceMins/60) + 'h' : Math.floor(sinceMins/1440) + 'd');
+
+      if(parts.length){
+        body.innerHTML = parts.join(' &middot; ') + ' <span style="color:#888;font-size:11.5px">· ' + sinceLbl + ' ago</span>';
+      } else {
+        body.innerHTML = '<span class="slv-empty">All quiet · nothing happened in the last ' + sinceLbl + '.</span>';
+      }
+      line.style.display = 'flex';
+    } catch(err){
+      console.warn('[broker-cockpit] since-last-visit query failed', err);
+    }
+
+    // Stamp the new visit time AFTER computing (so we don't lose the delta)
+    try { localStorage.setItem(STORE, now); } catch(_){}
   }
 
   // ============ TEAM PULSE · per-TC load + reply SLA + last seen ============
