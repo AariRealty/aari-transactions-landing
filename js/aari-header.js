@@ -78,7 +78,24 @@
     '  .aari-hdr-viewas-pill{padding:5px 10px;font-size:9.5px}',
     '  .aari-hdr-menu{right:14px;left:14px;width:auto}',
     '  .aari-hdr-notif{right:14px;left:14px;width:auto}',
-    '}'
+    '}',
+    /* ===== PREVIEW MODE BANNER ===== */
+    '#aari-preview-banner{position:relative;background:#fef3e2;border-bottom:1px solid #f3d597;color:#854f0b;padding:10px 24px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:12.5px;line-height:1.4;z-index:5}',
+    '.apb-eb{font-size:9.5px;letter-spacing:1.2px;text-transform:uppercase;font-weight:700;background:#854f0b;color:#fef3e2;padding:3px 8px;border-radius:4px;white-space:nowrap}',
+    '.apb-body{flex:1;min-width:0}',
+    '.apb-body strong{font-weight:600}',
+    '.apb-exit{background:#854f0b;color:#fef3e2;border:0;padding:6px 12px;border-radius:5px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap}',
+    '.apb-exit:hover{background:#623806}',
+    '@media(max-width:560px){#aari-preview-banner{padding:8px 14px;font-size:11.5px}.apb-body{font-size:11.5px}}',
+    /* ===== AVATAR MENU · preview section + visual hierarchy ===== */
+    '.menu-section-eb{font-size:9.5px;letter-spacing:1.1px;text-transform:uppercase;color:#6b6760;font-weight:700;padding:6px 14px 4px}',
+    '.menu-preview{display:flex;justify-content:space-between;align-items:center}',
+    '.menu-preview.active{background:#fef3e2;color:#854f0b;font-weight:500}',
+    '.menu-preview-check{color:#854f0b;font-weight:700}',
+    '.menu-preview-exit{color:#854f0b;font-weight:500;font-style:italic}',
+    '.menu-preview-exit:hover{background:#fef3e2}',
+    '.menu-sep{height:0.5px;background:#e8e8e6;margin:4px 0}',
+    '.who-preview{color:#854f0b;font-size:10px;font-weight:600;letter-spacing:.3px}',
   ].join('');
 
   function injectCss() {
@@ -138,7 +155,13 @@
   }
 
   function renderViewAs() {
+    // Pills retired · preview now lives in the avatar dropdown menu (cleaner header).
+    // We still render the preview banner across the top when sessionStorage has aari-view-as set.
+    renderPreviewBanner();
     var container = document.getElementById('aari-hdr-viewas');
+    if (container) container.innerHTML = '';
+    return;
+    // ----- legacy pill code preserved below for reference, no longer reached -----
     if (!container) return;
     var actualRole = effectiveRole(currentProfile);
     // Agent role · no pills (nothing to view-as)
@@ -172,15 +195,39 @@
     var menu = document.getElementById('aari-hdr-menu');
     if (!menu) return;
     var p = currentProfile || {};
+    var actualRole = (p.role || 'agent').toLowerCase();
     var role = effectiveRole(p);
     var roleWord = { broker: 'Broker', tc: 'Transaction Coordinator', agent: 'Agent' }[role] || 'Agent';
     var fullName = ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || (p.email || 'Account');
 
+    // Preview-as menu items · only for users whose actual role allows previewing
+    var previewItems = '';
+    var currentView = '';
+    try { currentView = sessionStorage.getItem('aari-view-as') || ''; } catch(_){}
+    if (actualRole === 'broker' || actualRole === 'tc') {
+      var options = [];
+      if (actualRole === 'broker') options.push({ value: 'tc', label: 'Preview as TC' });
+      options.push({ value: 'agent', label: 'Preview as Agent' });
+      previewItems = '<div class="menu-section-eb">Preview mode</div>';
+      previewItems += options.map(function(o){
+        var active = currentView === o.value;
+        return '<a href="#" data-preview-as="' + o.value + '" role="menuitem" class="menu-preview' + (active ? ' active' : '') + '">' +
+          '<span>' + o.label + '</span>' +
+          (active ? '<span class="menu-preview-check">✓</span>' : '') +
+        '</a>';
+      }).join('');
+      if (currentView) {
+        previewItems += '<a href="#" data-preview-as="__exit" role="menuitem" class="menu-preview-exit">Return to my view</a>';
+      }
+    }
+
     menu.innerHTML = [
       '<div class="who">',
       '  <div class="who-name">' + esc(fullName) + '</div>',
-      '  <div class="who-role">' + esc(roleWord) + '</div>',
+      '  <div class="who-role">' + esc(roleWord) + (currentView ? ' <span class="who-preview">· previewing as ' + esc(currentView.toUpperCase()) + '</span>' : '') + '</div>',
       '</div>',
+      previewItems,
+      previewItems ? '<div class="menu-sep"></div>' : '',
       '<a href="/portal.html#recent-activity" role="menuitem">Recent activity</a>',
       '<a href="/portal.html#billing-documents" role="menuitem">Billing &amp; Documents</a>',
       '<a href="/portal.html#completion-card" role="menuitem" style="display:flex;justify-content:space-between;align-items:center">' +
@@ -191,6 +238,57 @@
       '<a href="#" id="aari-signout" role="menuitem">Sign out</a>'
     ].join('\n');
     wireSignOut();
+    wirePreviewMenu();
+  }
+
+  // Wire preview menu items · click switches view + reloads to the role's landing
+  function wirePreviewMenu() {
+    var items = document.querySelectorAll('[data-preview-as]');
+    items.forEach(function(it){
+      it.addEventListener('click', function(e){
+        e.preventDefault();
+        var v = it.getAttribute('data-preview-as');
+        try {
+          if (v === '__exit') sessionStorage.removeItem('aari-view-as');
+          else if (v && v !== effectiveRole(currentProfile)) sessionStorage.setItem('aari-view-as', v);
+          else sessionStorage.removeItem('aari-view-as');
+        } catch(_){}
+        var dest = v === '__exit'
+          ? (ROLE_DEFAULT_LANDING[(currentProfile && currentProfile.role) || 'agent'] || '/portal.html')
+          : (ROLE_DEFAULT_LANDING[v] || '/portal.html');
+        if (dest && location.pathname !== dest) location.href = dest;
+        else location.reload();
+      });
+    });
+  }
+
+  // ===== PREVIEW BANNER · top-of-page indicator when in preview mode =====
+  function renderPreviewBanner() {
+    var existing = document.getElementById('aari-preview-banner');
+    var viewAs = '';
+    try { viewAs = sessionStorage.getItem('aari-view-as') || ''; } catch(_){}
+    var actualRole = currentProfile ? (currentProfile.role || 'agent').toLowerCase() : '';
+    if (!viewAs || viewAs === actualRole) {
+      if (existing) existing.remove();
+      document.body.classList.remove('aari-preview-mode');
+      return;
+    }
+    if (existing) return; // already rendered
+    var roleWord = { tc: 'Transaction Coordinator', agent: 'Agent', broker: 'Broker' }[viewAs] || viewAs.toUpperCase();
+    var banner = document.createElement('div');
+    banner.id = 'aari-preview-banner';
+    banner.innerHTML = '<span class="apb-eb">Preview mode</span>' +
+      '<span class="apb-body">You\'re seeing what a <strong>' + esc(roleWord) + '</strong> sees.</span>' +
+      '<button type="button" class="apb-exit" id="aari-preview-exit">Return to my view</button>';
+    document.body.insertBefore(banner, document.body.firstChild);
+    document.body.classList.add('aari-preview-mode');
+    var exitBtn = document.getElementById('aari-preview-exit');
+    if (exitBtn) exitBtn.addEventListener('click', function(){
+      try { sessionStorage.removeItem('aari-view-as'); } catch(_){}
+      var dest = ROLE_DEFAULT_LANDING[actualRole] || '/portal.html';
+      if (location.pathname !== dest) location.href = dest;
+      else location.reload();
+    });
   }
 
   function renderBell() {
