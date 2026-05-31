@@ -132,6 +132,26 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 .bcast-send:hover{background:#222}
 .bcast-send:disabled{opacity:0.6;cursor:not-allowed}
 
+/* ============ SIGNED AGREEMENTS PANEL ============ */
+.sa-panel{position:relative;background:#fff;border:1px solid var(--line);border-left:3px solid #854f0b;border-radius:8px;margin:18px 28px 0;padding:16px 22px}
+.sa-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+.sa-eb{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);font-weight:600;margin:0}
+.sa-meta{font-size:11px;color:#888}
+.sa-list{display:flex;flex-direction:column;gap:6px}
+.sa-row{display:grid;grid-template-columns:1.4fr 1fr 90px 110px;gap:14px;align-items:center;padding:10px 12px;background:#fafaf9;border-radius:6px;font-size:12.5px}
+.sa-row-name{font-weight:500;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sa-row-email{color:var(--muted);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px}
+.sa-row-ver{font-size:10px;background:#fef3e2;color:#854f0b;padding:2px 8px;border-radius:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;text-align:center;justify-self:center}
+.sa-row-action{text-align:right}
+.sa-row-action a{font-size:11.5px;color:var(--ink);text-decoration:underline;text-underline-offset:2px}
+.sa-row-action a:hover{color:#000}
+.sa-row-date{font-size:11px;color:var(--muted);text-align:right;display:none}
+@media(max-width:760px){
+  .sa-panel{margin:14px 20px 0;padding:14px 16px}
+  .sa-row{grid-template-columns:1fr 90px;gap:8px;padding:10px}
+  .sa-row-email,.sa-row-action{grid-column:1 / -1;font-size:11px}
+}
+
 /* ============ LAST 5 CLOSINGS ============ */
 .lc-panel{background:#fff;border:1px solid var(--line);border-left:3px solid #2f855a;border-radius:8px;margin:18px 28px 0;padding:16px 22px}
 .lc-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
@@ -653,6 +673,16 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     </div>
   </aside>
 
+  <!-- ============ SIGNED AGREEMENTS · audit trail ============ -->
+  <section class="sa-panel" id="sa-panel" style="display:none">
+    <a id="signed-agreements" style="position:absolute;margin-top:-80px"></a>
+    <div class="sa-head">
+      <p class="sa-eb">Signed Services Agreements · audit trail</p>
+      <span class="sa-meta" id="sa-meta">&nbsp;</span>
+    </div>
+    <div class="sa-list" id="sa-list"></div>
+  </section>
+
   <!-- ============ LAST 5 CLOSINGS · recent wins ============ -->
   <section class="lc-panel" id="lc-panel" style="display:none">
     <div class="lc-head">
@@ -908,8 +938,68 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     // SECTION · Last 5 closings (recent wins)
     renderLastClosings(files, byId);
 
+    // SECTION · Signed agreements audit trail
+    loadAndRenderSignedAgreements(byId);
+
     // SECTION · "Since you were last here" engagement summary
     loadAndRenderSinceLastVisit(files);
+  }
+
+  // ============ SIGNED AGREEMENTS · broker audit trail ============
+  // Lists every signed SA with download link to the PDF in Supabase storage.
+  // Powers the broker-side "I need a copy" requirement and FREC audit defense.
+  async function loadAndRenderSignedAgreements(byId){
+    const panel = document.getElementById('sa-panel');
+    const list = document.getElementById('sa-list');
+    const meta = document.getElementById('sa-meta');
+    if(!panel || !list) return;
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { data: sigs } = await client.from('agreement_signatures')
+        .select('id, agent_id, agreement_version, signed_at, signed_agreement_pdf_url, typed_full_name')
+        .eq('agreement_type','service_agreement')
+        .order('signed_at', { ascending: false })
+        .limit(20);
+      if(!sigs || !sigs.length){ panel.style.display = 'none'; return; }
+      panel.style.display = 'block';
+
+      // Pre-fetch signed URLs for each PDF (1hr expiry) so download click is one-shot
+      const enriched = await Promise.all(sigs.map(async (s) => {
+        let downloadUrl = null;
+        if(s.signed_agreement_pdf_url){
+          try {
+            const { data } = await client.storage.from('signed-agreements').createSignedUrl(s.signed_agreement_pdf_url, 3600);
+            downloadUrl = data && data.signedUrl;
+          } catch(_){}
+        }
+        return { ...s, downloadUrl };
+      }));
+
+      const thisYear = new Date(Date.now() - 365 * 86400000).toISOString();
+      const ytdCount = enriched.filter(s => s.signed_at >= thisYear).length;
+      meta.textContent = enriched.length + ' total · ' + ytdCount + ' in last 12 months';
+
+      list.innerHTML = enriched.map(s => {
+        const a = byId && byId[s.agent_id];
+        const name = (a ? ((a.first_name || '') + ' ' + (a.last_name || '')).trim() : null) || s.typed_full_name || 'Unknown agent';
+        const email = (a && a.email) || '';
+        const date = new Date(s.signed_at);
+        const dateLbl = date.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+        const ver = (s.agreement_version || '').replace(/^v/, 'v');
+        const downloadBtn = s.downloadUrl
+          ? '<a href="' + s.downloadUrl + '" target="_blank" rel="noopener" download>Download PDF →</a>'
+          : '<span style="color:#888;font-style:italic;font-size:11px">PDF not generated</span>';
+        return '<div class="sa-row">' +
+          '<div><div class="sa-row-name">' + esc(name) + '</div><div class="sa-row-email">' + esc(email) + ' · ' + esc(dateLbl) + '</div></div>' +
+          '<div class="sa-row-email">' + esc(email) + '</div>' +
+          '<div class="sa-row-ver">' + esc(ver || 'v?') + '</div>' +
+          '<div class="sa-row-action">' + downloadBtn + '</div>' +
+        '</div>';
+      }).join('');
+    } catch(err){
+      console.warn('[broker-cockpit] signed agreements load failed', err);
+      panel.style.display = 'none';
+    }
   }
 
   // ============ LAST 5 CLOSINGS · recent wins ============

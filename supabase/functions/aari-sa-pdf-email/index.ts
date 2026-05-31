@@ -741,6 +741,50 @@ Deno.serve(async (req) => {
       console.warn("[aari-sa-pdf-email] no agent_id found for email; skipping DB insert");
     }
 
+    // 4.5. Notify the broker(s) by SMS · works today even with Resend domain unverified.
+    // The broker of record (Marlenyi) must know every time an SA is signed for FREC defensibility.
+    if (supabaseAdmin) {
+      try {
+        const twilioSid = Deno.env.get("TWILIO_ACCOUNT_SID");
+        const twilioToken = Deno.env.get("TWILIO_AUTH_TOKEN");
+        const twilioFrom = Deno.env.get("TWILIO_FROM_NUMBER");
+        if (twilioSid && twilioToken && twilioFrom) {
+          const { data: brokers } = await supabaseAdmin
+            .from("agents")
+            .select("phone, first_name, last_name")
+            .eq("role", "broker")
+            .not("phone", "is", null);
+          if (brokers && brokers.length > 0) {
+            const agentDisplay = payload.agent_name || payload.agent_email || "an agent";
+            const version = payload.agreement_version || "v4.7";
+            const portalLink = "https://aaritransactions.com/broker-cockpit.html#signed-agreements";
+            const smsBody = `Aari · ${agentDisplay} just signed the Services Agreement (${version}).\n\nView signed copy: ${portalLink}`;
+            for (const broker of brokers) {
+              if (!broker.phone) continue;
+              try {
+                await fetch(`https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`, {
+                  method: "POST",
+                  headers: {
+                    "Authorization": `Basic ${btoa(`${twilioSid}:${twilioToken}`)}`,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                  },
+                  body: new URLSearchParams({
+                    From: twilioFrom,
+                    To: broker.phone,
+                    Body: smsBody,
+                  }).toString(),
+                });
+              } catch (twErr) {
+                console.warn("[aari-sa-pdf-email] broker SMS send failed for " + broker.phone + ":", twErr);
+              }
+            }
+          }
+        }
+      } catch (notifyErr) {
+        console.warn("[aari-sa-pdf-email] broker notify block threw:", notifyErr);
+      }
+    }
+
     // 5. Send email with PDF attachment (existing behavior)
     const sendResult = await sendEmail(pdfBytes, filename, payload);
     if (!sendResult.ok) {
