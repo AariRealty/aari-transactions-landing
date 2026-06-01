@@ -416,9 +416,23 @@
   .el-label { font-size:12.5px; font-weight:500; margin-bottom:2px; line-height:1.4; }
   .el-detail { font-size:11px; color:var(--muted); line-height:1.4; }
   .el-time { font-size:10.5px; color:var(--muted); flex-shrink:0; padding-top:6px; }
+
+  /* Intake overlay · embeds /index.html?modal-only=1#apply in an iframe so agents
+     submit a file WITHOUT leaving the portal (no public homepage chrome). */
+  .intake-overlay { display:none; position:fixed; inset:0; z-index:10000; background:rgba(15,15,15,0.55); }
+  .intake-overlay.open { display:block; }
+  .intake-overlay-frame { position:absolute; inset:0; width:100%; height:100%; border:0; background:transparent; }
+  .intake-overlay-close { position:fixed; top:16px; right:18px; z-index:10001; width:40px; height:40px; border-radius:50%; border:0; background:#fff; color:#111; font-size:22px; line-height:1; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,0.25); }
+  .intake-overlay-close:hover { background:#f0f0ee; }
 </style>
 </head>
 <body>
+
+<!-- In-portal intake overlay · iframe loads the intake modal in modal-only mode -->
+<div class="intake-overlay" id="intakeOverlay" role="dialog" aria-modal="true" aria-label="Submit a file">
+  <button type="button" class="intake-overlay-close" id="intakeOverlayClose" aria-label="Close">&times;</button>
+  <iframe class="intake-overlay-frame" id="intakeOverlayFrame" title="Submit a file" src="about:blank"></iframe>
+</div>
 
 <section class="gate" id="gate" style="display:none">
   <h2 id="gate-title">Sign in required</h2>
@@ -435,7 +449,7 @@
       <h1 id="welcome-greet">Welcome back</h1>
       <p id="welcome-sub">&nbsp;</p>
     </div>
-    <a class="btn-submit" href="/index.html#apply">+ Submit a new file</a>
+    <a class="btn-submit" href="/index.html?modal-only=1#apply" data-intake-open>+ Submit a new file</a>
   </div>
 
   <!-- FIRST-TIME WELCOME · shown only when agent has zero files -->
@@ -469,7 +483,7 @@
     </div>
 
     <div class="welcome-cta-row">
-      <a class="welcome-cta-primary" href="/index.html#apply">Submit my first file</a>
+      <a class="welcome-cta-primary" href="/index.html?modal-only=1#apply" data-intake-open>Submit my first file</a>
       <a class="welcome-cta-secondary" href="mailto:hello@aaritransactions.com?subject=Question%20before%20I%20submit">Have a question first?</a>
     </div>
 
@@ -1607,6 +1621,38 @@
     setTimeout(() => { openDrawer(f); }, 600);
     setTimeout(loadAll, 1200);
   }
+
+  /* ---- In-portal intake overlay ---- */
+  const INTAKE_SRC = '/index.html?modal-only=1#apply';
+  function openIntakeOverlay(){
+    const ov = document.getElementById('intakeOverlay');
+    const fr = document.getElementById('intakeOverlayFrame');
+    if(!ov || !fr) return;
+    if(fr.getAttribute('src') !== INTAKE_SRC) fr.setAttribute('src', INTAKE_SRC);
+    ov.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeIntakeOverlay(){
+    const ov = document.getElementById('intakeOverlay');
+    const fr = document.getElementById('intakeOverlayFrame');
+    if(ov) ov.classList.remove('open');
+    if(fr) fr.setAttribute('src', 'about:blank');   // stop the iframe when closed
+    document.body.style.overflow = '';
+  }
+  document.addEventListener('click', (e) => {
+    const opener = e.target.closest('[data-intake-open]');
+    if(opener){ e.preventDefault(); openIntakeOverlay(); return; }
+    if(e.target.id === 'intakeOverlayClose') closeIntakeOverlay();
+  });
+  document.addEventListener('keydown', (e) => { if(e.key === 'Escape') closeIntakeOverlay(); });
+  // Intake iframe posts this up when a file is submitted · close overlay + refresh dashboard
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if(d && d.type === 'aari:intake-submitted'){
+      closeIntakeOverlay();
+      if(typeof loadAll === 'function') loadAll();
+    }
+  });
 
   function boot(){
     if(window.AariAuth && window.AariAuth.ensureClient) init();
