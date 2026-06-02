@@ -11708,12 +11708,18 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     }
 
     async function actualSubmit(){
+      if(window.__aariSubmitStatus) window.__aariSubmitStatus('Uploading your file…');
       // Persist saved title + lender to the agent's profile in the background.
-      persistSavedContacts();
+      try { persistSavedContacts(); } catch(_){}
 
-      const supabase = (window.AariAuth && window.AariAuth.client) || null;
+      // Resolve the Supabase client · ensureClient() creates it if it wasn't
+      // already initialized (can happen inside the portal iframe).
+      let supabase = (window.AariAuth && window.AariAuth.client) || null;
+      if(!supabase && window.AariAuth && typeof window.AariAuth.ensureClient === 'function'){
+        try { supabase = await window.AariAuth.ensureClient(); } catch(_){ supabase = null; }
+      }
       if(!supabase){
-        alert('Account service unavailable · refresh the page and try again.');
+        if(window.__aariSubmitStatus) window.__aariSubmitStatus('Account service didn’t load — refresh the page and try again.', true);
         return;
       }
 
@@ -11860,11 +11866,12 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         if(fnResp && fnResp.error) throw new Error('Notification failed · ' + fnResp.error);
 
         console.log('[path-a] file submission shipped · contract + ' + additionalUrls.length + ' addl docs in Supabase, email via Resend · submission_id=' + submissionId);
+        var sb = document.getElementById('aariSubmitStatus'); if(sb) sb.style.display = 'none';
         state.step = 'done';
         render();
       } catch(err){
         console.error('[path-a] file submission failed', err);
-        alert('We could not send your file · ' + (err.message || 'check your connection and try again.'));
+        if(window.__aariSubmitStatus) window.__aariSubmitStatus('Could not send your file · ' + (err.message || 'check your connection and try again.'), true);
         if(submitBtn){
           submitBtn.disabled = false;
           submitBtn.innerHTML = originalBtnHtml;
