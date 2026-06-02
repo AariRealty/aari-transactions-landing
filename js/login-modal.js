@@ -52,6 +52,15 @@
     closeBtn.addEventListener('click', close);
     card.appendChild(closeBtn);
 
+    // Aari "A" mark · keeps the Transactions sign-in consistent with the other
+    // Aari logins. Just the A · no wordmark, no license line.
+    const logo = el('div', {
+      class: 'aari-auth-logo',
+      style: 'display:flex;justify-content:center;margin:2px 0 20px',
+      html: '<span style="display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:13px;background:#0f0f0f;color:#fff;font-family:\'Cormorant Garamond\',\'Playfair Display\',Georgia,serif;font-weight:600;font-size:36px;line-height:1;letter-spacing:-1px">A</span>'
+    });
+    card.appendChild(logo);
+
     if (_state === 'login') card.appendChild(loginView());
     else if (_state === 'reset') card.appendChild(resetView());
     else if (_state === 'reset-sent') card.appendChild(resetSentView());

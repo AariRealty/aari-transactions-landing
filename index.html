@@ -10497,6 +10497,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         renderCombo('title');
         renderCombo('lender');
         initClientCombos(); // type-ahead saved-client dropdown built into the Full Name field
+        initAgentCombos();  // same type-ahead for other-side agent + co-agent
         // Fix 4 · forceStep1 callers (Path B v2 fresh signup) skip applyPendingPrefill
         // AND explicitly clear all service-related state. Defense beyond Fix 3's
         // sessionStorage clear · covers any future prefill source (URL, localStorage, etc.).
@@ -10803,6 +10804,77 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       bindClientCombos();
     }
 
+    /* ============================================================
+       Other-side agent + co-agent store · aari_tc_agents
+       Same Full-Name type-ahead as clients · saves name + brokerage + email + phone.
+       ============================================================ */
+    var AGENT_IDS = {
+      listing: { name:'paListingAgentName', company:'paListingAgentCompany', email:'paListingAgentEmail', phone:'paListingAgentPhone', combo:'aariListingAgentCombo', menu:'aariListingAgentComboMenu', label:'agent' },
+      coagent: { name:'paCoAgentName',      company:'paCoAgentCompany',      email:'paCoAgentEmail',      phone:'paCoAgentPhone',      combo:'aariCoAgentCombo',      menu:'aariCoAgentComboMenu',      label:'co-agent' }
+    };
+    function loadAgents(){ try { var v = JSON.parse(localStorage.getItem('aari_tc_agents') || '[]'); return Array.isArray(v) ? v : []; } catch(_) { return []; } }
+    function writeAgents(list){ try { localStorage.setItem('aari_tc_agents', JSON.stringify(list || [])); } catch(_){ } renderAgentMenu('listing'); renderAgentMenu('coagent'); }
+    function fillAgentByName(type, name){
+      var ids = AGENT_IDS[type]; var norm = function(s){ return (s||'').trim().toLowerCase(); };
+      var rec = loadAgents().find(function(e){ return norm(e.name) === norm(name); }); if(!rec) return;
+      var setv = function(id, v){ var e = document.getElementById(id); if(e) e.value = v || ''; };
+      setv(ids.name, rec.name); setv(ids.company, rec.company); setv(ids.email, rec.email); setv(ids.phone, rec.phone);
+    }
+    function saveAgentCurrent(type){
+      var ids = AGENT_IDS[type]; var g = function(id){ var e = document.getElementById(id); return e ? (e.value||'').trim() : ''; };
+      var name = g(ids.name); if(!name) return;
+      var list = loadAgents(); var norm = function(s){ return (s||'').trim().toLowerCase(); };
+      var rec = { name:name, company:g(ids.company), email:g(ids.email), phone:g(ids.phone), last_used_at:new Date().toISOString() };
+      var i = list.findIndex(function(e){ return norm(e.name) === norm(name); });
+      if(i >= 0) list[i] = rec; else list.unshift(rec);
+      writeAgents(list.slice(0, 60));
+    }
+    function buildAgentMenu(type){
+      var ids = AGENT_IDS[type]; var inp = document.getElementById(ids.name);
+      var raw = (inp && inp.value) || ''; var q = raw.trim().toLowerCase();
+      var all = loadAgents(); var matches = all.filter(function(e){ return !q || (e.name||'').toLowerCase().indexOf(q) >= 0; });
+      var html = '';
+      if(matches.length){
+        html += '<div class="pa-combo-section"><div class="pa-combo-head">Saved ' + ids.label + 's</div>';
+        matches.forEach(function(e){ var meta = [e.company, e.email, e.phone].filter(Boolean).join(' · ');
+          html += '<div class="pa-combo-item" data-agent-pick="' + escapeHtml(e.name||'') + '"><span class="pa-combo-name">' + escapeHtml(e.name||'') + '</span>' + (meta ? '<span class="pa-combo-meta">' + escapeHtml(meta) + '</span>' : '') + '</div>'; });
+        html += '</div>';
+      }
+      var typed = raw.trim(); var norm = function(s){ return (s||'').trim().toLowerCase(); };
+      var exact = all.some(function(e){ return norm(e.name) === norm(typed); });
+      if(typed && !exact){ html += '<div class="pa-combo-new" data-agent-save="1"><i class="ti ti-plus" aria-hidden="true" style="font-size:14px"></i><span>Save &ldquo;' + escapeHtml(typed) + '&rdquo; for next time</span></div>'; }
+      else if(typed && exact){ html += '<div class="pa-combo-empty">&ldquo;' + escapeHtml(typed) + '&rdquo; is already saved.</div>'; }
+      else if(!matches.length){ html += '<div class="pa-combo-empty">No saved ' + ids.label + 's yet &middot; type a name, then Save.</div>'; }
+      return html;
+    }
+    function renderAgentMenu(type){ var m = document.getElementById(AGENT_IDS[type].menu); if(m) m.innerHTML = buildAgentMenu(type); }
+    function injectAgentCombo(type){
+      var ids = AGENT_IDS[type]; if(document.getElementById(ids.combo)){ renderAgentMenu(type); return; }
+      var inp = document.getElementById(ids.name); if(!inp) return;
+      var combo = document.createElement('div'); combo.className = 'pa-combo'; combo.id = ids.combo;
+      inp.parentNode.insertBefore(combo, inp); combo.appendChild(inp);
+      var menu = document.createElement('div'); menu.className = 'pa-combo-menu'; menu.id = ids.menu; menu.hidden = true; combo.appendChild(menu);
+      inp.setAttribute('autocomplete', 'off');
+      var open = function(){ renderAgentMenu(type); menu.hidden = false; };
+      inp.addEventListener('focus', open); inp.addEventListener('input', open);
+    }
+    var _agentCombosBound = false;
+    function bindAgentCombos(){
+      if(_agentCombosBound) return; _agentCombosBound = true;
+      document.addEventListener('click', function(e){
+        var inL = e.target.closest && e.target.closest('#' + AGENT_IDS.listing.combo);
+        var inC = e.target.closest && e.target.closest('#' + AGENT_IDS.coagent.combo);
+        var combo = inL || inC;
+        if(!combo){ [AGENT_IDS.listing.menu, AGENT_IDS.coagent.menu].forEach(function(id){ var m = document.getElementById(id); if(m) m.hidden = true; }); return; }
+        var type = inL ? 'listing' : 'coagent';
+        var pick = e.target.closest('[data-agent-pick]'); var save = e.target.closest('[data-agent-save]');
+        if(pick){ fillAgentByName(type, pick.getAttribute('data-agent-pick')); var mp = document.getElementById(AGENT_IDS[type].menu); if(mp) mp.hidden = true; return; }
+        if(save){ saveAgentCurrent(type); renderAgentMenu(type); return; }
+        renderAgentMenu(type); var menu = combo.querySelector('.pa-combo-menu'); if(menu) menu.hidden = false;
+      });
+    }
+    function initAgentCombos(){ injectAgentCombo('listing'); injectAgentCombo('coagent'); bindAgentCombos(); }
+
     function renderCombo(kind){
       const menuEl = document.getElementById(kind === 'title' ? 'paTitleComboMenu' : 'paLenderComboMenu');
       if(!menuEl) return;
@@ -10948,6 +11020,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const lenderList = dedupeAndCap(loadLocalContacts('lender'), lenderEntry);
       writeLocalContacts('title',  titleList);
       writeLocalContacts('lender', lenderList);
+      // Save EVERY contact entered on this file · name + email + phone (+ company for
+      // title/lender/agents). Belt-and-suspenders so nothing entered is ever lost,
+      // and all of it autofills next time.
+      try { saveClientCurrent('buyer'); saveClientCurrent('seller'); } catch(_){}
+      try { saveAgentCurrent('listing'); saveAgentCurrent('coagent'); } catch(_){}
       // 2) SECONDARY · best-effort sync to the agents row (non-blocking, never throws up).
       try {
         const supabase = (window.AariAuth && window.AariAuth.client) || null;
