@@ -65,6 +65,7 @@ interface FileSubmission {
   service_id?: string;
   representation?: string;
   property_address?: string;
+  effective_date?: string;
   closing_date?: string;
   title_company?: string;
   title_company_address?: string;
@@ -104,6 +105,9 @@ function buildEmailHTML(d: FileSubmission): string {
   const closingDate = d.closing_date ? new Date(d.closing_date).toLocaleDateString("en-US", {
     month: "long", day: "numeric", year: "numeric"
   }) : "—";
+  const effectiveDate = d.effective_date ? new Date(d.effective_date).toLocaleDateString("en-US", {
+    month: "long", day: "numeric", year: "numeric"
+  }) : "";
 
   const titleBlock = d.title_company ? `
     <tr><td style="padding:12px 16px;background:#fff;border:0.5px solid rgba(15,15,15,0.12);border-radius:8px">
@@ -224,7 +228,7 @@ function buildEmailHTML(d: FileSubmission): string {
         <tr><td style="padding:14px 18px;background:#fff;border:0.5px solid rgba(15,15,15,0.12);border-radius:8px">
           <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#5f5e5a;margin-bottom:4px">Service</div>
           <div style="font-size:15px;font-weight:500;color:#0f0f0f">${e(d.service_package || d.service_type || "—")}</div>
-          <div style="font-size:12.5px;color:#5f5e5a;margin-top:2px">Representing: ${e(rep)} &middot; Closing: ${e(closingDate)}</div>
+          <div style="font-size:12.5px;color:#5f5e5a;margin-top:2px">Representing: ${e(rep)}${effectiveDate ? " &middot; Effective: " + e(effectiveDate) : ""} &middot; Closing: ${e(closingDate)}</div>
         </td></tr>
         <tr><td style="height:12px;line-height:12px;font-size:0">&nbsp;</td></tr>
 
