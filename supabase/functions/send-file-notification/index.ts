@@ -67,6 +67,7 @@ interface FileSubmission {
   property_address?: string;
   closing_date?: string;
   title_company?: string;
+  title_company_address?: string;
   title_contact_name?: string;
   title_contact_email?: string;
   title_contact_phone?: string;
@@ -108,6 +109,7 @@ function buildEmailHTML(d: FileSubmission): string {
     <tr><td style="padding:12px 16px;background:#fff;border:0.5px solid rgba(15,15,15,0.12);border-radius:8px">
       <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#5f5e5a;margin-bottom:6px">Title Company</div>
       <div style="font-size:14px;font-weight:500;color:#0f0f0f">${e(d.title_company)}</div>
+      ${d.title_company_address ? `<div style="font-size:13px;color:#5f5e5a;margin-top:2px">${e(d.title_company_address)}</div>` : ""}
       ${d.title_contact_name ? `<div style="font-size:13px;color:#3a3a38;margin-top:6px">${e(d.title_contact_name)}</div>` : ""}
       ${d.title_contact_email ? `<div style="font-size:13px;color:#5f5e5a"><a href="mailto:${e(d.title_contact_email)}" style="color:#0f0f0f;text-decoration:underline">${e(d.title_contact_email)}</a></div>` : ""}
       ${d.title_contact_phone ? `<div style="font-size:13px;color:#5f5e5a">${e(d.title_contact_phone)}</div>` : ""}
