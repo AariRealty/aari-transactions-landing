@@ -35,10 +35,6 @@
 (function (global) {
   'use strict';
 
-  // TEMP DIAGNOSTIC marker · lets index.html's submit diagnostic confirm whether
-  // THIS (updated) file is actually the one deployed/served. Remove with the diag.
-  try { global.__intakeSubmitLoaded = true; } catch (_) {}
-
   const SERVICE_AGREEMENT_VERSION = 'v4.7';
   const SERVICE_TYPE_TO_PAYMENT = {
     tc_one_side:         { timing: 'at_closing', billed_via: 'pay_at_closing_da' },
@@ -201,7 +197,6 @@
       if ((global.AariPathA && typeof global.AariPathA.isActive === 'function' && global.AariPathA.isActive()) ||
           (global.AariPathB && typeof global.AariPathB.isActive === 'function' && global.AariPathB.isActive())) {
         console.log('[intake-submit] Path A/B active · yielding to its own submit handler');
-        try { global.__intakeSubmitYielded = true; } catch (_) {}
         return;
       }
       // ── DIAGNOSTIC LOGGING · removed once submit is verified reliable ──
