@@ -422,11 +422,8 @@
     // Fire a custom event the page's modal-only script forwards to the parent
     // window (the portal's iframe overlay) so the portal can close the popup
     // and refresh the agent's file list. Browsers ignore it on standalone pages.
-    try {
-      window.dispatchEvent(new CustomEvent('aari:intake-submitted', {
-        detail: { fileId: fileId, serviceId: serviceId, agentId: agentId }
-      }));
-    } catch (_) {}
+    // Detect whether we're running inside the portal's iframe overlay.
+    const inFrame = (function(){ try { return window.parent && window.parent !== window; } catch(_) { return false; } })();
 
     // May 2026 · Phase 2 of lifecycle flow · inline success instead of redirect
     // At-closing services (TC): render success card in modal, agent stays put.
@@ -449,12 +446,21 @@
         service_type: serviceId,
         service_price_cents,
       }) || buildThankYouUrl('unpaid', serviceId, fileId);
-      // Show success card for 1.5s then redirect to Stripe so the agent
-      // never sees a blank "thank-you.html" page — payment is the next step,
-      // not the end of the flow.
+      // Show success card for 1.5s then redirect to Stripe. When we're inside the
+      // portal overlay we must navigate the TOP window — Stripe refuses to load in
+      // an iframe, and we do NOT auto-close the overlay here (that would kill the
+      // redirect). On a standalone page window.top === window, so behavior is
+      // unchanged.
       renderInlineSuccess({ ...successOpts, primaryCtaLabel: 'Continue to payment →', primaryCtaUrl: url });
-      setTimeout(() => { window.location.href = url; }, 1500);
+      setTimeout(() => { (inFrame ? window.top : window).location.href = url; }, 1500);
     } else {
+      // At-closing (TC): safe to tell the portal overlay to close + refresh the
+      // file list. Browsers ignore this event on standalone pages.
+      try {
+        window.dispatchEvent(new CustomEvent('aari:intake-submitted', {
+          detail: { fileId: fileId, serviceId: serviceId, agentId: agentId }
+        }));
+      } catch (_) {}
       renderInlineSuccess({ ...successOpts, primaryCtaLabel: 'Open in portal →', primaryCtaUrl: '/portal.html' });
     }
   }
