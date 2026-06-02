@@ -164,6 +164,9 @@
   body.aari-modal-only > :not(#intake-modal):not(script):not(style):not(link):not(noscript){display:none!important}
   body.aari-modal-only{background:transparent}
   body.aari-modal-only #intake-modal{background:transparent!important}
+  /* When embedded in the portal overlay, the portal supplies its own close button.
+     Hide the intake modal's own × so the agent sees a single exit, not two. */
+  body.aari-modal-only #intake-close{display:none!important}
 
   /* ===== UTILITIES ===== */
   .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
@@ -9814,8 +9817,35 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         sessionStorage.removeItem('aari_intake_closed_at');
       } catch(_){}
       hideResumeBanner();
+      maybeAutoRouteOrGate();
+    }
+
+    /* If the agent already has an active Supabase session (e.g. they opened the
+       flow from inside the portal, or are simply logged in), skip the email gate
+       entirely and go straight to Path A. Falls back to the Step 0 gate for
+       anonymous visitors. */
+    async function maybeAutoRouteOrGate(){
       suspendSave = true;
-      console.log('[v3-gate] cold open · showing Step 0');
+      try {
+        if(window.AariAuth && typeof window.AariAuth.getCurrentSession === 'function'){
+          const session = await window.AariAuth.getCurrentSession();
+          if(session && session.user && window.AariPathA && typeof window.AariPathA.init === 'function'){
+            let row = null;
+            try {
+              const client = await window.AariAuth.ensureClient();
+              const res = await client.from('agents').select('*').eq('id', session.user.id).maybeSingle();
+              row = res && res.data;
+            } catch(e){ console.warn('[v3-gate] profile fetch failed · routing with minimal profile', e); }
+            window.AariPathA.init(mapAgentRowToProfile(row, (session.user.email || '')));
+            console.log('[v3-gate] active session · skipped email gate → Path A');
+            suspendSave = false;
+            return;
+          }
+        }
+      } catch(err){
+        console.warn('[v3-gate] session check failed · showing email gate', err);
+      }
+      console.log('[v3-gate] no session · showing Step 0 email gate');
       showStep(0);
       suspendSave = false;
     }
