@@ -10489,7 +10489,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         bindCombobox();
         renderCombo('title');
         renderCombo('lender');
-        initClientPickers(); // saved-client dropdown + Save-contact button on the buyer/seller steps
+        initClientCombos(); // type-ahead saved-client dropdown built into the Full Name field
         // Fix 4 · forceStep1 callers (Path B v2 fresh signup) skip applyPendingPrefill
         // AND explicitly clear all service-related state. Defense beyond Fix 3's
         // sessionStorage clear · covers any future prefill source (URL, localStorage, etc.).
@@ -10670,10 +10670,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     /* ============================================================
        localStorage-backed CLIENT store (June 2026)
        Agents often work with the same buyer/seller more than once.
-       UX: a "Use a saved client" DROPDOWN (pick → fills name/email/phone)
-       plus an explicit "Save contact" BUTTON. No duplicates — saving a name
-       that already exists is rejected with a clear message.
-       Stored under aari_tc_clients · Record: { name, email, phone, last_used_at }
+       UX: the FULL NAME field is a type-ahead. As you type, matching saved
+       contacts appear in a dropdown under it (pick → fills email/phone). If the
+       name is new, a "Save … for next time" row appears in the same dropdown.
+       No duplicates. Stored under aari_tc_clients · { name, email, phone, last_used_at }
        ============================================================ */
     function loadClients(){
       try { var v = JSON.parse(localStorage.getItem('aari_tc_clients') || '[]'); return Array.isArray(v) ? v : []; }
@@ -10681,89 +10681,119 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     }
     function writeClients(list){
       try { localStorage.setItem('aari_tc_clients', JSON.stringify(list || [])); } catch(_){}
-      populateClientSelect('buyer');
-      populateClientSelect('seller');
+      renderClientMenu('buyer');
+      renderClientMenu('seller');
     }
     var CLIENT_IDS = {
-      buyer:  { name:'paBuyerName',  email:'paBuyerEmail',  phone:'paBuyerPhone',  sel:'aariClientSelBuyer',  btn:'aariSaveBtnBuyer',  msg:'aariSaveMsgBuyer'  },
-      seller: { name:'paSellerName', email:'paSellerEmail', phone:'paSellerPhone', sel:'aariClientSelSeller', btn:'aariSaveBtnSeller', msg:'aariSaveMsgSeller' }
+      buyer:  { name:'paBuyerName',  email:'paBuyerEmail',  phone:'paBuyerPhone',  combo:'aariBuyerCombo',  menu:'aariBuyerComboMenu'  },
+      seller: { name:'paSellerName', email:'paSellerEmail', phone:'paSellerPhone', combo:'aariSellerCombo', menu:'aariSellerComboMenu' }
     };
-    function clientMsg(role, text, ok){
-      var el = document.getElementById(CLIENT_IDS[role].msg);
-      if(el){ el.textContent = text || ''; el.style.color = ok ? '#6a8a6a' : '#a64c33'; }
-    }
-    function populateClientSelect(role){
+    function fillClientByName(role, name){
       var ids = CLIENT_IDS[role];
-      var sel = document.getElementById(ids.sel);
-      if(!sel) return;
-      var list = loadClients();
-      var opts = '<option value="">— Saved ' + role + 's (' + list.length + ') —</option>';
-      list.forEach(function(e, idx){
-        opts += '<option value="' + idx + '">' + escapeHtml(e.name || '') + (e.email ? ' · ' + escapeHtml(e.email) : '') + '</option>';
-      });
-      sel.innerHTML = opts;
-    }
-    function onPickClient(role){
-      var ids = CLIENT_IDS[role];
-      var sel = document.getElementById(ids.sel);
-      if(!sel) return;
-      var idx = parseInt(sel.value, 10);
-      if(isNaN(idx)) return;
-      var rec = loadClients()[idx];
+      var norm = function(s){ return (s || '').trim().toLowerCase(); };
+      var rec = loadClients().find(function(e){ return norm(e.name) === norm(name); });
       if(!rec) return;
       var setv = function(id, v){ var e = document.getElementById(id); if(e) e.value = v || ''; };
       setv(ids.name, rec.name); setv(ids.email, rec.email); setv(ids.phone, rec.phone);
-      clientMsg(role, 'Loaded “' + (rec.name || '') + '”.', true);
     }
-    function saveClientExplicit(role){
+    function saveClientCurrent(role){
       var ids = CLIENT_IDS[role];
       var g = function(id){ var e = document.getElementById(id); return e ? (e.value || '').trim() : ''; };
       var name = g(ids.name);
-      if(!name){ clientMsg(role, 'Enter a name first, then Save contact.', false); return; }
+      if(!name) return;
       var list = loadClients();
       var norm = function(s){ return (s || '').trim().toLowerCase(); };
-      if(list.some(function(e){ return norm(e.name) === norm(name); })){
-        clientMsg(role, '“' + name + '” is already saved — no duplicate added.', true);
-        return;
-      }
+      if(list.some(function(e){ return norm(e.name) === norm(name); })) return; // no duplicates
       list.unshift({ name:name, email:g(ids.email), phone:g(ids.phone), last_used_at:new Date().toISOString() });
       writeClients(list.slice(0, 40));
-      clientMsg(role, '✓ Saved “' + name + '” for next time.', true);
     }
-    // Inject the dropdown (above name) + Save button (below phone) into a client step.
-    function injectClientPicker(role){
+    function buildClientMenu(role){
       var ids = CLIENT_IDS[role];
-      if(document.getElementById(ids.sel)){ populateClientSelect(role); return; }
-      var nameInp = document.getElementById(ids.name);
-      var phoneInp = document.getElementById(ids.phone);
-      if(!nameInp || !phoneInp) return;
-      var nameField  = (nameInp.closest && nameInp.closest('.field'))  || nameInp.parentElement;
-      var phoneField = (phoneInp.closest && phoneInp.closest('.field')) || phoneInp.parentElement;
-      // Dropdown row · inserted before the FULL NAME field.
-      var pick = document.createElement('div');
-      pick.className = 'field';
-      pick.style.cssText = 'margin-bottom:16px';
-      pick.innerHTML =
-        '<label for="' + ids.sel + '" style="display:block;font-size:11px;letter-spacing:0.8px;text-transform:uppercase;color:#8a8580;font-weight:700;margin-bottom:6px">Use a saved ' + role + '</label>' +
-        '<select id="' + ids.sel + '" style="width:100%;padding:11px 14px;font-size:14px;color:#0f0f0f;background:#fff;border:0.5px solid rgba(15,15,15,0.22);border-radius:8px;font-family:Inter,sans-serif;cursor:pointer"></select>';
-      if(nameField && nameField.parentNode) nameField.parentNode.insertBefore(pick, nameField);
-      // Save button row · inserted after the PHONE field.
-      var saveRow = document.createElement('div');
-      saveRow.style.cssText = 'margin-top:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap';
-      saveRow.innerHTML =
-        '<button type="button" id="' + ids.btn + '" style="background:#0f0f0f;color:#fff;border:0;border-radius:999px;padding:10px 18px;font:600 13px Inter,sans-serif;cursor:pointer">Save contact</button>' +
-        '<span id="' + ids.msg + '" style="font-size:12.5px;color:#8a8580"></span>';
-      if(phoneField && phoneField.parentNode) phoneField.parentNode.insertBefore(saveRow, phoneField.nextSibling);
-      // Wire events.
-      var sel = document.getElementById(ids.sel);
-      if(sel) sel.addEventListener('change', function(){ onPickClient(role); });
-      var btn = document.getElementById(ids.btn);
-      if(btn) btn.addEventListener('click', function(){ saveClientExplicit(role); });
-      populateClientSelect(role);
+      var inp = document.getElementById(ids.name);
+      var raw = (inp && inp.value) || '';
+      var q = raw.trim().toLowerCase();
+      var all = loadClients();
+      var matches = all.filter(function(e){ return !q || (e.name || '').toLowerCase().indexOf(q) >= 0; });
+      var html = '';
+      if(matches.length){
+        html += '<div class="pa-combo-section"><div class="pa-combo-head">Saved ' + role + 's</div>';
+        matches.forEach(function(e){
+          var meta = [e.email, e.phone].filter(Boolean).join(' · ');
+          html += '<div class="pa-combo-item" data-client-pick="' + escapeHtml(e.name || '') + '"><span class="pa-combo-name">' + escapeHtml(e.name || '') + '</span>' + (meta ? '<span class="pa-combo-meta">' + escapeHtml(meta) + '</span>' : '') + '</div>';
+        });
+        html += '</div>';
+      }
+      var typed = raw.trim();
+      var norm = function(s){ return (s || '').trim().toLowerCase(); };
+      var exact = all.some(function(e){ return norm(e.name) === norm(typed); });
+      if(typed && !exact){
+        html += '<div class="pa-combo-new" data-client-save="1"><i class="ti ti-plus" aria-hidden="true" style="font-size:14px"></i><span>Save &ldquo;' + escapeHtml(typed) + '&rdquo; for next time</span></div>';
+      } else if(typed && exact){
+        html += '<div class="pa-combo-empty">&ldquo;' + escapeHtml(typed) + '&rdquo; is already saved.</div>';
+      } else if(!matches.length){
+        html += '<div class="pa-combo-empty">No saved ' + role + 's yet &middot; type a name, then Save.</div>';
+      }
+      return html;
     }
-    function initClientPickers(){
-      injectClientPicker('buyer');
-      injectClientPicker('seller');
+    function renderClientMenu(role){
+      var m = document.getElementById(CLIENT_IDS[role].menu);
+      if(m) m.innerHTML = buildClientMenu(role);
+    }
+    // Turn the FULL NAME field into a type-ahead combo (reuses .pa-combo styles).
+    function injectClientCombo(role){
+      var ids = CLIENT_IDS[role];
+      if(document.getElementById(ids.combo)){ renderClientMenu(role); return; }
+      var inp = document.getElementById(ids.name);
+      if(!inp) return;
+      var combo = document.createElement('div');
+      combo.className = 'pa-combo';
+      combo.id = ids.combo;
+      inp.parentNode.insertBefore(combo, inp);
+      combo.appendChild(inp);
+      var menu = document.createElement('div');
+      menu.className = 'pa-combo-menu';
+      menu.id = ids.menu;
+      menu.hidden = true;
+      combo.appendChild(menu);
+      inp.setAttribute('autocomplete', 'off');
+      var open = function(){ renderClientMenu(role); menu.hidden = false; };
+      inp.addEventListener('focus', open);
+      inp.addEventListener('input', open);
+    }
+    var _clientCombosBound = false;
+    function bindClientCombos(){
+      if(_clientCombosBound) return;
+      _clientCombosBound = true;
+      document.addEventListener('click', function(e){
+        var inBuyer  = e.target.closest && e.target.closest('#' + CLIENT_IDS.buyer.combo);
+        var inSeller = e.target.closest && e.target.closest('#' + CLIENT_IDS.seller.combo);
+        var combo = inBuyer || inSeller;
+        if(!combo){
+          [CLIENT_IDS.buyer.menu, CLIENT_IDS.seller.menu].forEach(function(id){ var m = document.getElementById(id); if(m) m.hidden = true; });
+          return;
+        }
+        var role = inBuyer ? 'buyer' : 'seller';
+        var pick = e.target.closest('[data-client-pick]');
+        var save = e.target.closest('[data-client-save]');
+        if(pick){
+          fillClientByName(role, pick.getAttribute('data-client-pick'));
+          var mp = document.getElementById(CLIENT_IDS[role].menu); if(mp) mp.hidden = true;
+          return;
+        }
+        if(save){
+          saveClientCurrent(role);
+          renderClientMenu(role); // now shows the saved entry + "already saved"
+          return;
+        }
+        // Clicked the input itself · open the menu.
+        renderClientMenu(role);
+        var menu = combo.querySelector('.pa-combo-menu'); if(menu) menu.hidden = false;
+      });
+    }
+    function initClientCombos(){
+      injectClientCombo('buyer');
+      injectClientCombo('seller');
+      bindClientCombos();
     }
 
     function renderCombo(kind){
@@ -10877,7 +10907,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         });
       });
       // CLIENT (buyer/seller) save + pick is handled by the dropdown + Save button
-      // injected via initClientPickers() · no blur auto-save here by design.
+      // injected via initClientCombos() · type-ahead on the Full Name field.
     }
 
     /* Escape helper for safely rendering saved entries into combobox HTML. */
