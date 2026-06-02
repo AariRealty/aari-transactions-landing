@@ -10459,6 +10459,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         bindCombobox();
         renderCombo('title');
         renderCombo('lender');
+        initClientDatalist(); // type-ahead of saved buyers/sellers on the name fields
         // Fix 4 · forceStep1 callers (Path B v2 fresh signup) skip applyPendingPrefill
         // AND explicitly clear all service-related state. Defense beyond Fix 3's
         // sessionStorage clear · covers any future prefill source (URL, localStorage, etc.).
@@ -10636,6 +10637,65 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(match) fillFromEntry(match, kind);
     }
 
+    /* ============================================================
+       localStorage-backed CLIENT store (June 2026)
+       Agents often work with the same buyer/seller more than once. Saved
+       under aari_tc_clients · keyed by name (case-insensitive). Native
+       <datalist> gives a type-ahead dropdown on the name fields; email +
+       phone autofill when the typed name matches a saved client.
+       Record: { name, email, phone, last_used_at }
+       ============================================================ */
+    function loadClients(){
+      try { var v = JSON.parse(localStorage.getItem('aari_tc_clients') || '[]'); return Array.isArray(v) ? v : []; }
+      catch(_) { return []; }
+    }
+    function writeClients(list){
+      try { localStorage.setItem('aari_tc_clients', JSON.stringify(list || [])); } catch(_){}
+      refreshClientDatalist();
+    }
+    function dedupeClients(list, rec){
+      if(!rec || !rec.name) return list;
+      var norm = function(s){ return (s || '').trim().toLowerCase(); };
+      var i = list.findIndex(function(e){ return norm(e.name) === norm(rec.name); });
+      if(i >= 0) list[i] = rec; else list.unshift(rec);
+      return list.sort(function(a, b){ return new Date(b.last_used_at || 0) - new Date(a.last_used_at || 0); }).slice(0, 40);
+    }
+    function saveClientFromDom(role){ // role: 'buyer' | 'seller'
+      var g = function(id){ var e = document.getElementById(id); return e ? (e.value || '').trim() : ''; };
+      var name = g(role === 'buyer' ? 'paBuyerName' : 'paSellerName');
+      if(!name) return;
+      var rec = {
+        name:  name,
+        email: g(role === 'buyer' ? 'paBuyerEmail' : 'paSellerEmail'),
+        phone: g(role === 'buyer' ? 'paBuyerPhone' : 'paSellerPhone'),
+        last_used_at: new Date().toISOString()
+      };
+      writeClients(dedupeClients(loadClients(), rec));
+    }
+    function autofillClientIfMatch(role){
+      var inp = document.getElementById(role === 'buyer' ? 'paBuyerName' : 'paSellerName');
+      if(!inp) return;
+      var v = (inp.value || '').trim().toLowerCase();
+      if(!v) return;
+      var m = loadClients().find(function(e){ return (e.name || '').trim().toLowerCase() === v; });
+      if(!m) return;
+      // Fill email/phone only if empty · never clobber what the agent already typed.
+      var setIfEmpty = function(id, val){ var e = document.getElementById(id); if(e && !e.value && val) e.value = val; };
+      setIfEmpty(role === 'buyer' ? 'paBuyerEmail' : 'paSellerEmail', m.email);
+      setIfEmpty(role === 'buyer' ? 'paBuyerPhone' : 'paSellerPhone', m.phone);
+    }
+    function refreshClientDatalist(){
+      var dl = document.getElementById('aariClientNames');
+      if(!dl) return;
+      dl.innerHTML = loadClients().map(function(e){ return '<option value="' + escapeHtml(e.name || '') + '"></option>'; }).join('');
+    }
+    function initClientDatalist(){
+      var dl = document.getElementById('aariClientNames');
+      if(!dl){ dl = document.createElement('datalist'); dl.id = 'aariClientNames'; document.body.appendChild(dl); }
+      ['paBuyerName','paSellerName'].forEach(function(id){ var e = document.getElementById(id); if(e) e.setAttribute('list', 'aariClientNames'); });
+      refreshClientDatalist();
+    }
+
     function renderCombo(kind){
       const menuEl = document.getElementById(kind === 'title' ? 'paTitleComboMenu' : 'paLenderComboMenu');
       if(!menuEl) return;
@@ -10744,6 +10804,19 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         grp.slice(1).forEach(fid => {
           const el = document.getElementById(fid);
           if(el) el.addEventListener('blur', () => { saveContactToLocal(kind); });
+        });
+      });
+      // CLIENT (buyer/seller) · name-field blur autofills email+phone from a saved
+      // client; any field blur saves the client for reuse on future files.
+      [['buyer','paBuyerName','paBuyerEmail','paBuyerPhone'],
+       ['seller','paSellerName','paSellerEmail','paSellerPhone']
+      ].forEach(grp => {
+        const role = grp[0];
+        const nameEl = document.getElementById(grp[1]);
+        if(nameEl) nameEl.addEventListener('blur', () => { setTimeout(() => autofillClientIfMatch(role), 150); });
+        grp.slice(1).forEach(fid => {
+          const el = document.getElementById(fid);
+          if(el) el.addEventListener('blur', () => { saveClientFromDom(role); });
         });
       });
     }
@@ -11212,6 +11285,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           state.data.buyer_name = n;
           state.data.buyer_email = e;
           state.data.buyer_phone = p;
+          saveClientFromDom('buyer'); // remember this client for future files
           return true;
         }
         case 'clients-seller': {
@@ -11224,6 +11298,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           state.data.seller_name = n;
           state.data.seller_email = e;
           state.data.seller_phone = p;
+          saveClientFromDom('seller'); // remember this client for future files
           return true;
         }
         case 4: {
