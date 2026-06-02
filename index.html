@@ -11842,13 +11842,25 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           user_agent:           (navigator && navigator.userAgent) || ''
         };
 
-        const { data: fnResp, error: fnErr } = await supabase.functions.invoke('send-file-notification', {
-          body: payload
-        });
-        if(fnErr) throw new Error('Notification failed · ' + (fnErr.message || fnErr));
-        if(fnResp && fnResp.error) throw new Error('Notification failed · ' + fnResp.error);
+        // The file + docs are already saved in Supabase Storage at this point.
+        // The TC email is a NICE-TO-HAVE final step · do NOT let it block the
+        // submission. If it fails (e.g. the sending domain isn't verified yet in
+        // Resend), log it and still confirm to the agent. The file is captured;
+        // the email flows automatically once the domain verifies.
+        try {
+          const { data: fnResp, error: fnErr } = await supabase.functions.invoke('send-file-notification', {
+            body: payload
+          });
+          if(fnErr || (fnResp && fnResp.error)){
+            console.warn('[path-a] TC email notification failed (file already saved in Storage) ·', fnErr || (fnResp && fnResp.error));
+          } else {
+            console.log('[path-a] TC email sent · submission_id=' + submissionId);
+          }
+        } catch(notifyErr){
+          console.warn('[path-a] TC email notification threw (file already saved in Storage) ·', notifyErr);
+        }
 
-        console.log('[path-a] file submission shipped · contract + ' + additionalUrls.length + ' addl docs in Supabase, email via Resend · submission_id=' + submissionId);
+        console.log('[path-a] file submission complete · contract + ' + additionalUrls.length + ' addl docs in Supabase · submission_id=' + submissionId);
         var sb = document.getElementById('aariSubmitStatus'); if(sb) sb.style.display = 'none';
         state.step = 'done';
         render();
