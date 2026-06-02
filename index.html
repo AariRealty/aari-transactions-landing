@@ -10448,7 +10448,20 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         // Clear stale DOM inputs from any prior session.
         clearPathAInputs();
         prefillFromProfile();
-        // Combobox · bind once, render fresh against this session's saved lists.
+        // One-time migration · merge any contacts previously saved to the agents row
+        // (Supabase) into localStorage so the dropdown keeps them after the switch.
+        try {
+          ['title','lender'].forEach(function(kind){
+            var sk = kind === 'title' ? 'saved_title_contacts' : 'saved_lender_contacts';
+            var fromProfile = (state.profile && Array.isArray(state.profile[sk])) ? state.profile[sk] : [];
+            if(fromProfile.length){
+              var merged = loadLocalContacts(kind);
+              fromProfile.forEach(function(rec){ merged = dedupeAndCap(merged, rec); });
+              writeLocalContacts(kind, merged);
+            }
+          });
+        } catch(_){}
+        // Combobox · bind once, render fresh against localStorage-backed saved lists.
         bindCombobox();
         renderCombo('title');
         renderCombo('lender');
@@ -10558,25 +10571,81 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         html += '<div class="pa-combo-head">' + escapeHtml(headLabel) + '</div>';
         items.forEach((e, idx) => {
           const meta = [e.contact_name, e.contact_email, e.contact_phone].filter(Boolean).join(' · ');
-          html += '<div class="pa-combo-item" data-pa-combo-pick="' + idx + '">';
+          html += '<div class="pa-combo-item" data-pa-combo-pick="' + idx + '" style="position:relative;padding-right:34px">';
           html += '<span class="pa-combo-name">' + escapeHtml(e.company_name || '') + '</span>';
           if(meta) html += '<span class="pa-combo-meta">' + escapeHtml(meta) + '</span>';
+          // Delete control · removes this saved contact from localStorage.
+          html += '<button type="button" class="pa-combo-del" data-pa-combo-del="' + escapeHtml(e.company_name || '') + '" aria-label="Delete saved contact" title="Delete" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:0;color:#b0a9a0;font-size:16px;line-height:1;cursor:pointer;padding:4px 6px">&times;</button>';
           html += '</div>';
         });
         html += '</div>';
       } else {
-        html += '<div class="pa-combo-empty">No saved ' + (kind === 'title' ? 'title companies' : 'lenders') + ' yet · this list builds as you submit files.</div>';
+        html += '<div class="pa-combo-empty">No saved ' + (kind === 'title' ? 'title companies' : 'lenders') + ' yet · the first one you enter is saved automatically for next time.</div>';
       }
       const newLabel = kind === 'title' ? 'Add a new title company' : 'Add a new lender';
       html += '<div class="pa-combo-new" data-pa-combo-new="1"><i class="ti ti-plus" aria-hidden="true" style="font-size:14px"></i><span>' + escapeHtml(newLabel) + '</span></div>';
       return html;
     }
 
+    /* ============================================================
+       localStorage-backed contact store (Bugs 2 & 3 · June 2026)
+       Title + lender contacts persist in localStorage so they survive
+       refresh AND new sessions, independent of Supabase / submit success.
+       Keys: aari_tc_title_contacts · aari_tc_lender_contacts
+       Each record: { company_name, contact_name, contact_email,
+                      contact_phone, last_used_at }
+       ============================================================ */
+    function lcKey(kind){ return kind === 'title' ? 'aari_tc_title_contacts' : 'aari_tc_lender_contacts'; }
+    function loadLocalContacts(kind){
+      try { var v = JSON.parse(localStorage.getItem(lcKey(kind)) || '[]'); return Array.isArray(v) ? v : []; }
+      catch(_) { return []; }
+    }
+    function writeLocalContacts(kind, list){
+      try { localStorage.setItem(lcKey(kind), JSON.stringify(list || [])); } catch(_){}
+      // Mirror into state.profile so the rest of the flow (review, payload) stays consistent.
+      var sk = kind === 'title' ? 'saved_title_contacts' : 'saved_lender_contacts';
+      if(state && state.profile) state.profile[sk] = list || [];
+    }
+    function currentContactRecord(kind){
+      var g = function(id){ var e = document.getElementById(id); return e ? (e.value || '').trim() : ''; };
+      var company = g(kind === 'title' ? 'paTitleCompany' : 'paLender');
+      if(!company) return null;
+      return {
+        company_name:  company,
+        contact_name:  g(kind === 'title' ? 'paTitleContactName'  : 'paLenderContactName'),
+        contact_email: g(kind === 'title' ? 'paTitleContactEmail' : 'paLenderContactEmail'),
+        contact_phone: g(kind === 'title' ? 'paTitleContactPhone' : 'paLenderContactPhone'),
+        last_used_at:  new Date().toISOString()
+      };
+    }
+    // Save whatever's currently typed for this kind · called on blur + step-advance + submit.
+    function saveContactToLocal(kind){
+      var rec = currentContactRecord(kind);
+      if(!rec) return;
+      var list = dedupeAndCap(loadLocalContacts(kind), rec);
+      writeLocalContacts(kind, list);
+      renderCombo(kind);
+    }
+    function deleteLocalContact(kind, companyName){
+      var norm = function(s){ return (s || '').trim().toLowerCase(); };
+      var list = loadLocalContacts(kind).filter(function(e){ return norm(e.company_name) !== norm(companyName); });
+      writeLocalContacts(kind, list);
+      renderCombo(kind);
+    }
+    // Auto-fill name/email/phone when the typed company exactly matches a saved one.
+    function autofillIfMatch(kind){
+      var inp = document.getElementById(kind === 'title' ? 'paTitleCompany' : 'paLender');
+      if(!inp) return;
+      var v = (inp.value || '').trim().toLowerCase();
+      if(!v) return;
+      var match = loadLocalContacts(kind).find(function(e){ return (e.company_name || '').trim().toLowerCase() === v; });
+      if(match) fillFromEntry(match, kind);
+    }
+
     function renderCombo(kind){
       const menuEl = document.getElementById(kind === 'title' ? 'paTitleComboMenu' : 'paLenderComboMenu');
       if(!menuEl) return;
-      const savedKey = kind === 'title' ? 'saved_title_contacts' : 'saved_lender_contacts';
-      const list = (state.profile && state.profile[savedKey]) || [];
+      const list = loadLocalContacts(kind);
       menuEl.innerHTML = buildComboMenu(list, kind);
     }
 
@@ -10611,6 +10680,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       document.addEventListener('click', e => {
         if(!state.active) return;
         const combo = e.target.closest && e.target.closest('#paTitleCombo, #paLenderCombo');
+        const delBtn= e.target.closest && e.target.closest('.pa-combo-del');
         const item  = e.target.closest && e.target.closest('.pa-combo-item');
         const newBtn= e.target.closest && e.target.closest('.pa-combo-new');
         // Close-on-outside-click · runs first so an open menu collapses when clicking elsewhere.
@@ -10621,11 +10691,18 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           return;
         }
         const kind = combo.id === 'paTitleCombo' ? 'title' : 'lender';
-        // Pick existing entry · fill all 4 fields, close menu.
+        // Delete a saved contact · must run BEFORE pick (del button lives inside the item).
+        if(delBtn){
+          e.stopPropagation();
+          deleteLocalContact(kind, delBtn.getAttribute('data-pa-combo-del') || '');
+          const menu = combo.querySelector('.pa-combo-menu'); if(menu) menu.hidden = false;
+          return;
+        }
+        // Pick existing entry · fill all 4 fields, close menu. Read from localStorage,
+        // sorted the same way buildComboMenu rendered it so the index lines up.
         if(item){
           const idx = parseInt(item.getAttribute('data-pa-combo-pick'), 10);
-          const savedKey = kind === 'title' ? 'saved_title_contacts' : 'saved_lender_contacts';
-          const list = ((state.profile && state.profile[savedKey]) || []).slice().sort((a, b) => {
+          const list = loadLocalContacts(kind).slice().sort((a, b) => {
             return new Date(b.last_used_at || 0) - new Date(a.last_used_at || 0);
           });
           if(!isNaN(idx) && list[idx]) fillFromEntry(list[idx], kind);
@@ -10649,8 +10726,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       ['paTitleCompany','paLender'].forEach(id => {
         const inp = document.getElementById(id);
         if(!inp) return;
+        const kind = id === 'paTitleCompany' ? 'title' : 'lender';
         inp.addEventListener('input', e => {
-          const kind = id === 'paTitleCompany' ? 'title' : 'lender';
           const menu = document.getElementById(kind === 'title' ? 'paTitleComboMenu' : 'paLenderComboMenu');
           if(!menu) return;
           if(menu.hidden) menu.hidden = false;
@@ -10660,6 +10737,19 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             const name = (nameEl && nameEl.textContent || '').toLowerCase();
             itemEl.style.display = (!q || name.indexOf(q) >= 0) ? '' : 'none';
           });
+        });
+        // On blur · if the typed company exactly matches a saved one, auto-fill its contact.
+        inp.addEventListener('blur', () => { setTimeout(() => autofillIfMatch(kind), 150); });
+      });
+      // Auto-save the contact record whenever any of its fields loses focus · so it
+      // persists for next time even if the agent never reaches submit.
+      [['title','paTitleCompany','paTitleContactName','paTitleContactEmail','paTitleContactPhone'],
+       ['lender','paLender','paLenderContactName','paLenderContactEmail','paLenderContactPhone']
+      ].forEach(grp => {
+        const kind = grp[0];
+        grp.slice(1).forEach(fid => {
+          const el = document.getElementById(fid);
+          if(el) el.addEventListener('blur', () => { saveContactToLocal(kind); });
         });
       });
     }
@@ -10675,38 +10765,39 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
        Dedupe by company_name (case-insensitive). Sort by last_used_at DESC.
        Cap at 20 entries per list to keep JSONB column small + dropdown clean. */
     async function persistSavedContacts(){
-      const supabase = (window.AariAuth && window.AariAuth.client) || null;
-      if(!supabase) return;
+      const nowIso = new Date().toISOString();
+      const titleEntry = state.data.titleCompany ? {
+        company_name:  state.data.titleCompany,
+        contact_name:  state.data.titleContactName  || '',
+        contact_email: state.data.titleContactEmail || '',
+        contact_phone: state.data.titleContactPhone || '',
+        last_used_at:  nowIso
+      } : null;
+      const lenderEntry = state.data.lender ? {
+        company_name:  state.data.lender,
+        contact_name:  state.data.lenderContactName  || '',
+        contact_email: state.data.lenderContactEmail || '',
+        contact_phone: state.data.lenderContactPhone || '',
+        last_used_at:  nowIso
+      } : null;
+      // 1) PRIMARY persistence · localStorage (survives refresh + new sessions).
+      const titleList  = dedupeAndCap(loadLocalContacts('title'),  titleEntry);
+      const lenderList = dedupeAndCap(loadLocalContacts('lender'), lenderEntry);
+      writeLocalContacts('title',  titleList);
+      writeLocalContacts('lender', lenderList);
+      // 2) SECONDARY · best-effort sync to the agents row (non-blocking, never throws up).
       try {
+        const supabase = (window.AariAuth && window.AariAuth.client) || null;
+        if(!supabase) return;
         const { data: userResp } = await supabase.auth.getUser();
         const uid = userResp && userResp.user && userResp.user.id;
         if(!uid) return;
-        const nowIso = new Date().toISOString();
-        const titleEntry = state.data.titleCompany ? {
-          company_name:  state.data.titleCompany,
-          contact_name:  state.data.titleContactName  || '',
-          contact_email: state.data.titleContactEmail || '',
-          contact_phone: state.data.titleContactPhone || '',
-          last_used_at:  nowIso
-        } : null;
-        const lenderEntry = state.data.lender ? {
-          company_name:  state.data.lender,
-          contact_name:  state.data.lenderContactName  || '',
-          contact_email: state.data.lenderContactEmail || '',
-          contact_phone: state.data.lenderContactPhone || '',
-          last_used_at:  nowIso
-        } : null;
-        const titleList  = dedupeAndCap((state.profile.saved_title_contacts  || []).slice(), titleEntry);
-        const lenderList = dedupeAndCap((state.profile.saved_lender_contacts || []).slice(), lenderEntry);
         await supabase.from('agents').update({
           saved_title_contacts:  titleList,
           saved_lender_contacts: lenderList
         }).eq('id', uid);
-        // Sync local cache so the next submit in this session sees the updated list.
-        state.profile.saved_title_contacts  = titleList;
-        state.profile.saved_lender_contacts = lenderList;
       } catch(err){
-        console.warn('[path-a] persistSavedContacts failed', err);
+        console.warn('[path-a] persistSavedContacts Supabase sync failed (localStorage already saved)', err);
       }
     }
     function dedupeAndCap(list, entry){
@@ -11159,6 +11250,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           state.data.titleContactName   = document.getElementById('paTitleContactName').value.trim();
           state.data.titleContactEmail  = document.getElementById('paTitleContactEmail').value.trim();
           state.data.titleContactPhone  = document.getElementById('paTitleContactPhone').value.trim();
+          saveContactToLocal('title'); // persist on advance (covers pick-then-Continue without blur)
           return true;
         }
         case 7: {
@@ -11167,6 +11259,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           state.data.lenderContactName   = document.getElementById('paLenderContactName').value.trim();
           state.data.lenderContactEmail  = document.getElementById('paLenderContactEmail').value.trim();
           state.data.lenderContactPhone  = document.getElementById('paLenderContactPhone').value.trim();
+          saveContactToLocal('lender');
           return true;
         }
         case 8: {
@@ -11219,17 +11312,22 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     }
 
     function submit(){
+      console.log('[path-a] submit() invoked · agreement_signed =', !!(state.profile && state.profile.agreement_signed));
       // Option 1 enforcement · SA signature gated at file-submit time (not at login).
       // If the agreement isn't on file, open the SA popup in 'resign' mode with the
       // agent's profile · onComplete fires the actual file send.
       const signed = !!(state.profile && state.profile.agreement_signed);
       if(!signed){
-        if(window.AariSaPopup && typeof window.AariSaPopup.open === 'function'){
+        const overlayEl = document.getElementById('saPopupOverlay');
+        const canPopup = window.AariSaPopup && typeof window.AariSaPopup.open === 'function' && overlayEl;
+        if(canPopup){
+          // Force the agreement popup ABOVE the intake modal so it can never open
+          // behind it (which would look like "nothing happened" to the agent).
+          try { overlayEl.style.zIndex = '2147483646'; } catch(_){}
           window.AariSaPopup.open({
             mode: 'resign',
             profile: state.profile || {},
             onComplete: () => {
-              // SA popup just updated agents row · refresh local cache + send the file.
               if(state.profile){
                 state.profile.agreement_signed = true;
                 state.profile.agreement_signed_at = new Date().toISOString();
@@ -11239,8 +11337,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           });
           return;
         }
-        // Defensive: if popup module didn't load, block submission rather than send unsigned.
-        alert('Service agreement signature required · refresh the page and try again.');
+        // Popup unavailable · NEVER fail silently · tell the agent exactly what to do.
+        console.error('[path-a] SA popup unavailable · cannot collect signature', { hasModule: !!window.AariSaPopup, hasOverlay: !!overlayEl });
+        alert('We need your signed service agreement before this file can send. Please refresh the page and try again, or email hello@aaritransactions.com and we will re-send it for signature.');
         return;
       }
       actualSubmit();
