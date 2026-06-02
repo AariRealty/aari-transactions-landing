@@ -186,6 +186,19 @@
       const t = e.target;
       const inSubmit = t === submitBtn || (submitBtn.contains && submitBtn.contains(t));
       if (!inSubmit) return;
+      // ── Yield to Path A / Path B ────────────────────────────────────────
+      // Path A (returning-agent file wizard) and Path B (in-modal signup) each
+      // own their own submit handler, wired in index.html (the bubble-phase
+      // listener on #intakeSubmit at ~line 9565 routes to AariPathA.submit()).
+      // This legacy SERVICES hijack must NOT intercept their clicks — if it
+      // does, stopImmediatePropagation() below kills the bubble handler and the
+      // file is never uploaded (submit appears to "do nothing"). Return WITHOUT
+      // preventDefault/stopImmediatePropagation so the click bubbles normally.
+      if ((global.AariPathA && typeof global.AariPathA.isActive === 'function' && global.AariPathA.isActive()) ||
+          (global.AariPathB && typeof global.AariPathB.isActive === 'function' && global.AariPathB.isActive())) {
+        console.log('[intake-submit] Path A/B active · yielding to its own submit handler');
+        return;
+      }
       // ── DIAGNOSTIC LOGGING · removed once submit is verified reliable ──
       // If a future click on Submit "does nothing," the console + on-screen
       // alert tell us EXACTLY which gate it hit. Each return path below now

@@ -80,6 +80,14 @@ interface FileSubmission {
   seller_name?: string;
   seller_email?: string;
   seller_phone?: string;
+  listing_agent_name?: string;
+  listing_agent_company?: string;
+  listing_agent_phone?: string;
+  listing_agent_email?: string;
+  co_agent_name?: string;
+  co_agent_company?: string;
+  co_agent_phone?: string;
+  co_agent_email?: string;
   commission_notes?: string;
   agent_notes?: string;
   contract_url?: string;
@@ -134,6 +142,28 @@ function buildEmailHTML(d: FileSubmission): string {
       <div style="font-size:14px;font-weight:500;color:#0f0f0f">${e(d.seller_name)}</div>
       ${d.seller_email ? `<div style="font-size:13px;color:#5f5e5a"><a href="mailto:${e(d.seller_email)}" style="color:#0f0f0f;text-decoration:underline">${e(d.seller_email)}</a></div>` : ""}
       ${d.seller_phone ? `<div style="font-size:13px;color:#5f5e5a">${e(d.seller_phone)}</div>` : ""}
+    </td></tr>
+    <tr><td style="height:10px;line-height:10px;font-size:0">&nbsp;</td></tr>
+  ` : "";
+
+  const otherAgentBlock = (d.listing_agent_name || d.listing_agent_company || d.listing_agent_email || d.listing_agent_phone) ? `
+    <tr><td style="padding:12px 16px;background:#fff;border:0.5px solid rgba(15,15,15,0.12);border-radius:8px">
+      <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#5f5e5a;margin-bottom:6px">Other-Side Agent</div>
+      ${d.listing_agent_name ? `<div style="font-size:14px;font-weight:500;color:#0f0f0f">${e(d.listing_agent_name)}</div>` : ""}
+      ${d.listing_agent_company ? `<div style="font-size:13px;color:#3a3a38;margin-top:2px">${e(d.listing_agent_company)}</div>` : ""}
+      ${d.listing_agent_email ? `<div style="font-size:13px;color:#5f5e5a"><a href="mailto:${e(d.listing_agent_email)}" style="color:#0f0f0f;text-decoration:underline">${e(d.listing_agent_email)}</a></div>` : ""}
+      ${d.listing_agent_phone ? `<div style="font-size:13px;color:#5f5e5a">${e(d.listing_agent_phone)}</div>` : ""}
+    </td></tr>
+    <tr><td style="height:10px;line-height:10px;font-size:0">&nbsp;</td></tr>
+  ` : "";
+
+  const coAgentBlock = (d.co_agent_name || d.co_agent_company || d.co_agent_email || d.co_agent_phone) ? `
+    <tr><td style="padding:12px 16px;background:#fff;border:0.5px solid rgba(15,15,15,0.12);border-radius:8px">
+      <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#5f5e5a;margin-bottom:6px">Co-Agent (Our Side)</div>
+      ${d.co_agent_name ? `<div style="font-size:14px;font-weight:500;color:#0f0f0f">${e(d.co_agent_name)}</div>` : ""}
+      ${d.co_agent_company ? `<div style="font-size:13px;color:#3a3a38;margin-top:2px">${e(d.co_agent_company)}</div>` : ""}
+      ${d.co_agent_email ? `<div style="font-size:13px;color:#5f5e5a"><a href="mailto:${e(d.co_agent_email)}" style="color:#0f0f0f;text-decoration:underline">${e(d.co_agent_email)}</a></div>` : ""}
+      ${d.co_agent_phone ? `<div style="font-size:13px;color:#5f5e5a">${e(d.co_agent_phone)}</div>` : ""}
     </td></tr>
     <tr><td style="height:10px;line-height:10px;font-size:0">&nbsp;</td></tr>
   ` : "";
@@ -219,6 +249,8 @@ function buildEmailHTML(d: FileSubmission): string {
         ${lenderBlock}
         ${buyerBlock}
         ${sellerBlock}
+        ${otherAgentBlock}
+        ${coAgentBlock}
         ${notesBlock}
 
         <!-- Footer -->
