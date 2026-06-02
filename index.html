@@ -10716,6 +10716,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(!rec) return;
       var setv = function(id, v){ var e = document.getElementById(id); if(e) e.value = v || ''; };
       setv(ids.name, rec.name); setv(ids.email, rec.email); setv(ids.phone, rec.phone);
+      if(typeof refreshSaveBtn === 'function') refreshSaveBtn(ids.name);
     }
     function saveClientCurrent(role){
       var ids = CLIENT_IDS[role];
@@ -10838,6 +10839,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       var rec = loadAgents().find(function(e){ return norm(e.name) === norm(name); }); if(!rec) return;
       var setv = function(id, v){ var e = document.getElementById(id); if(e) e.value = v || ''; };
       setv(ids.name, rec.name); setv(ids.company, rec.company); setv(ids.email, rec.email); setv(ids.phone, rec.phone);
+      if(typeof refreshSaveBtn === 'function') refreshSaveBtn(ids.name);
     }
     function saveAgentCurrent(type){
       var ids = AGENT_IDS[type]; var g = function(id){ var e = document.getElementById(id); return e ? (e.value||'').trim() : ''; };
@@ -10902,7 +10904,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     /* "Save contact" button placed AFTER the last field of a contact group, so the
        save is offered once all the info is entered — not while typing just the name.
        The name/company field above still type-aheads for picking saved contacts. */
-    function injectSaveBtn(afterId, btnId, saveFn){
+    var _saveBtnRefreshers = {}; // keyFieldId -> refresh fn · lets fills update labels
+    function injectSaveBtn(afterId, btnId, keyFieldId, existsFn, saveFn){
       if(document.getElementById(btnId)) return;
       var inp = document.getElementById(afterId); if(!inp) return;
       var anchor = (inp.closest && inp.closest('.field')) || inp.parentElement;
@@ -10912,18 +10915,32 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       row.innerHTML = '<button type="button" id="' + btnId + '" style="background:transparent;color:#0f0f0f;border:1px solid #0f0f0f;border-radius:999px;padding:9px 18px;font:600 13px Inter,sans-serif;cursor:pointer">Save contact</button>' +
                       '<span id="' + btnId + 'Msg" style="font-size:12.5px;color:#8a8580"></span>';
       anchor.parentNode.insertBefore(row, anchor.nextSibling);
-      document.getElementById(btnId).addEventListener('click', function(){
+      var btn = document.getElementById(btnId);
+      var msg = document.getElementById(btnId + 'Msg');
+      // Label reflects state: "Update contact" when this name is already saved.
+      var refresh = function(){ btn.textContent = existsFn() ? 'Update contact' : 'Save contact'; };
+      refresh();
+      var keyEl = document.getElementById(keyFieldId);
+      if(keyEl) keyEl.addEventListener('input', function(){ refresh(); if(msg) msg.textContent = ''; });
+      _saveBtnRefreshers[keyFieldId] = refresh; // so a dropdown-pick can refresh the label too
+      btn.addEventListener('click', function(){
+        var wasExisting = existsFn();
         try { saveFn(); } catch(_){}
-        var m = document.getElementById(btnId + 'Msg'); if(m){ m.textContent = '✓ Saved for next time'; m.style.color = '#6a8a6a'; }
+        refresh();
+        if(msg){ msg.textContent = wasExisting ? '✓ Updated' : '✓ Saved for next time'; msg.style.color = '#6a8a6a'; }
       });
     }
+    function refreshSaveBtn(keyFieldId){ var f = _saveBtnRefreshers[keyFieldId]; if(typeof f === 'function') f(); }
+    function clientExists(role){ var ids = CLIENT_IDS[role]; var inp = document.getElementById(ids.name); var n = (inp && inp.value || '').trim().toLowerCase(); if(!n) return false; return loadClients().some(function(e){ return (e.name || '').trim().toLowerCase() === n; }); }
+    function agentExists(type){ var ids = AGENT_IDS[type]; var inp = document.getElementById(ids.name); var n = (inp && inp.value || '').trim().toLowerCase(); if(!n) return false; return loadAgents().some(function(e){ return (e.name || '').trim().toLowerCase() === n; }); }
+    function contactExists(kind){ var inp = document.getElementById(kind === 'title' ? 'paTitleCompany' : 'paLender'); var n = (inp && inp.value || '').trim().toLowerCase(); if(!n) return false; return loadLocalContacts(kind).some(function(e){ return (e.company_name || '').trim().toLowerCase() === n; }); }
     function initSaveButtons(){
-      injectSaveBtn('paTitleContactPhone',  'aariSaveBtnTitle',   function(){ saveContactToLocal('title'); });
-      injectSaveBtn('paLenderContactPhone', 'aariSaveBtnLender',  function(){ saveContactToLocal('lender'); });
-      injectSaveBtn('paBuyerPhone',         'aariSaveBtnBuyer',   function(){ saveClientCurrent('buyer'); });
-      injectSaveBtn('paSellerPhone',        'aariSaveBtnSeller',  function(){ saveClientCurrent('seller'); });
-      injectSaveBtn('paListingAgentPhone',  'aariSaveBtnListing', function(){ saveAgentCurrent('listing'); });
-      injectSaveBtn('paCoAgentPhone',       'aariSaveBtnCoAgent', function(){ saveAgentCurrent('coagent'); });
+      injectSaveBtn('paTitleContactPhone',  'aariSaveBtnTitle',   'paTitleCompany',     function(){ return contactExists('title'); },  function(){ saveContactToLocal('title'); });
+      injectSaveBtn('paLenderContactPhone', 'aariSaveBtnLender',  'paLender',           function(){ return contactExists('lender'); }, function(){ saveContactToLocal('lender'); });
+      injectSaveBtn('paBuyerPhone',         'aariSaveBtnBuyer',   'paBuyerName',        function(){ return clientExists('buyer'); },   function(){ saveClientCurrent('buyer'); });
+      injectSaveBtn('paSellerPhone',        'aariSaveBtnSeller',  'paSellerName',       function(){ return clientExists('seller'); },  function(){ saveClientCurrent('seller'); });
+      injectSaveBtn('paListingAgentPhone',  'aariSaveBtnListing', 'paListingAgentName', function(){ return agentExists('listing'); },  function(){ saveAgentCurrent('listing'); });
+      injectSaveBtn('paCoAgentPhone',       'aariSaveBtnCoAgent', 'paCoAgentName',      function(){ return agentExists('coagent'); },  function(){ saveAgentCurrent('coagent'); });
     }
 
     function renderCombo(kind){
@@ -10945,6 +10962,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       set(cnameId,   entry.contact_name);
       set(cemailId,  entry.contact_email);
       set(cphoneId,  entry.contact_phone);
+      if(typeof refreshSaveBtn === 'function') refreshSaveBtn(companyId);
     }
 
     function clearComboFields(kind){
