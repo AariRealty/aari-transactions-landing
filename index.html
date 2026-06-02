@@ -9576,25 +9576,39 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     }
 
     /* --- Final submit (Step 5) --- */
+    // Visible status banner · so the submit can never fail in total silence.
+    window.__aariSubmitStatus = function(msg, isError){
+      var b = document.getElementById('aariSubmitStatus');
+      if(!b){ b = document.createElement('div'); b.id = 'aariSubmitStatus'; b.style.cssText = 'position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:2147483647;max-width:520px;width:calc(100% - 40px);padding:13px 18px;border-radius:10px;font:600 13.5px Inter,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.25);text-align:center'; document.body.appendChild(b); }
+      b.style.background = isError ? '#fdf0ec' : '#0f0f0f';
+      b.style.color = isError ? '#a64c33' : '#fff';
+      b.style.border = isError ? '1px solid #f0c8c0' : '0';
+      b.textContent = msg;
+      b.style.display = 'block';
+      if(isError){ clearTimeout(b._t); b._t = setTimeout(function(){ b.style.display = 'none'; }, 9000); }
+    };
     submitBtn.addEventListener('click', (e) => {
       // V3 · Path A returning-agent submit · intercept before existing logic.
-      // Robust trigger: route to Path A if it reports active OR its container is
-      // simply visible on screen (belt-and-suspenders against a stale isActive()).
       var paContainer = document.getElementById('aariPathA');
       var paVisible = !!(paContainer && !paContainer.hidden && paContainer.offsetParent !== null);
       var paActive = !!(window.AariPathA && typeof window.AariPathA.isActive === 'function' && window.AariPathA.isActive());
-      if(window.AariPathA && (paActive || paVisible)){
+      var legacySvc = SERVICE_BY_ID[state.serviceId];
+      // Route to Path A whenever it's active/visible OR there's no legacy service
+      // selected (the only other job this button has). This guarantees the click
+      // reaches Path A's submit even if the visibility/active checks read false.
+      if(window.AariPathA && (paActive || paVisible || !legacySvc)){
         e.preventDefault();
-        console.log('[submit] routing to Path A · active=', paActive, 'visible=', paVisible);
+        window.__aariSubmitStatus('Sending your file…');
+        console.log('[submit] routing to Path A · active=', paActive, 'visible=', paVisible, 'noLegacySvc=', !legacySvc);
         try {
           window.AariPathA.submit();
         } catch(err){
           console.error('[submit] Path A submit threw', err);
-          alert('Something went wrong sending your file: ' + (err && err.message ? err.message : 'unexpected error') + '. Please try again or email hello@aaritransactions.com.');
+          window.__aariSubmitStatus('Could not send: ' + (err && err.message ? err.message : 'unexpected error'), true);
         }
         return;
       }
-      const svc = SERVICE_BY_ID[state.serviceId];
+      const svc = legacySvc;
       if(!svc) return;
       // Task 2.2 · block submit when any visible entity acknowledgment is not checked
       if (window.AariEntityAck && !window.AariEntityAck.validate()) {
