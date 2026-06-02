@@ -72,9 +72,17 @@
 
   function loginView() {
     const wrap = el('div');
-    wrap.appendChild(el('div', { class: 'aari-auth-eyebrow', html: 'Member portal' }));
-    wrap.appendChild(el('h1', { class: 'aari-auth-title', html: 'Sign in' }));
-    wrap.appendChild(el('p', { class: 'aari-auth-sub', html: 'Use the email and password you registered with.' }));
+    wrap.appendChild(el('h1', { style: "font-family:'Cormorant Garamond','Playfair Display',Georgia,serif;font-size:34px;font-weight:600;color:#0f0f0f;margin:0 0 6px;letter-spacing:-0.01em", html: 'Agent Portal' }));
+    wrap.appendChild(el('p', { style: 'font-size:14px;color:#6b6b6b;line-height:1.5;margin:0 0 20px', html: 'Sign in to access your files and transactions.' }));
+    wrap.appendChild(el('div', { style: 'height:1px;background:#e6e2d8;margin:0 0 22px' }));
+
+    // SIGN IN / CREATE ACCOUNT segmented toggle
+    const seg = el('div', { style: 'display:flex;border:1px solid #e6e2d8;border-radius:10px;overflow:hidden;margin:0 0 22px' });
+    seg.appendChild(el('button', { type: 'button', style: 'flex:1;padding:13px 0;border:0;background:#0f0f0f;color:#fff;font:700 12px Inter,sans-serif;letter-spacing:0.08em;text-transform:uppercase;cursor:default', html: 'Sign in' }));
+    const segCreate = el('button', { type: 'button', style: 'flex:1;padding:13px 0;border:0;background:#faf9f6;color:#6b6b6b;font:700 12px Inter,sans-serif;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer', html: 'Create account' });
+    segCreate.addEventListener('click', function(){ window.location.href = '/register.html'; });
+    seg.appendChild(segCreate);
+    wrap.appendChild(seg);
 
     const alertSlot = el('div');
     wrap.appendChild(alertSlot);
@@ -121,8 +129,8 @@
     pwField.appendChild(forgotWrap);
     form.appendChild(pwField);
 
-    const actions = el('div', { class: 'aari-actions right', style: 'margin-top:18px' });
-    const submitBtn = el('button', { class: 'aari-btn primary full lg', type: 'submit', html: 'Sign in' });
+    const actions = el('div', { style: 'margin-top:22px' });
+    const submitBtn = el('button', { type: 'submit', style: 'width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:10px;padding:16px 0;font:700 13px Inter,sans-serif;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer', html: 'Sign in &rarr;' });
     actions.appendChild(submitBtn);
     form.appendChild(actions);
 
@@ -162,15 +170,15 @@
         window.location.href = '/portal';
       } catch (err) {
         submitBtn.disabled = false;
-        submitBtn.innerHTML = 'Sign in';
+        submitBtn.innerHTML = 'Sign in &rarr;';
         showAlert(alertSlot, 'error', err.message || 'Sign-in failed. Please try again.');
       }
     });
 
     wrap.appendChild(form);
 
-    const below = el('div', { class: 'aari-below-actions', html: 'Don\'t have an account? <a href="register.html">Register</a>' });
-    wrap.appendChild(below);
+    // Privacy footer · matches the Aari sign-in family. No BK license line here.
+    wrap.appendChild(el('p', { style: 'text-align:center;font-size:12px;color:#9a9588;line-height:1.5;margin:18px 0 0', html: 'Your data is private, encrypted, and only accessible by you.' }));
 
     return wrap;
   }
