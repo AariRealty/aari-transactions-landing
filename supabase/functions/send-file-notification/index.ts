@@ -64,6 +64,7 @@ interface FileSubmission {
   service_package?: string;
   service_id?: string;
   representation?: string;
+  preferred_tc?: string;
   property_address?: string;
   effective_date?: string;
   closing_date?: string;
@@ -229,6 +230,7 @@ function buildEmailHTML(d: FileSubmission): string {
           <div style="font-size:10px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#5f5e5a;margin-bottom:4px">Service</div>
           <div style="font-size:15px;font-weight:500;color:#0f0f0f">${e(d.service_package || d.service_type || "—")}</div>
           <div style="font-size:12.5px;color:#5f5e5a;margin-top:2px">Representing: ${e(rep)}${effectiveDate ? " &middot; Effective: " + e(effectiveDate) : ""} &middot; Closing: ${e(closingDate)}</div>
+          ${d.preferred_tc ? `<div style="font-size:12.5px;color:#5f5e5a;margin-top:2px">Requested TC: <strong>${e(d.preferred_tc)}</strong></div>` : ""}
         </td></tr>
         <tr><td style="height:12px;line-height:12px;font-size:0">&nbsp;</td></tr>
 

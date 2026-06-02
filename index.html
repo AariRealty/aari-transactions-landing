@@ -5889,6 +5889,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             <textarea id="paAgentNotes" name="pa_agent_notes" rows="4"></textarea>
           </div>
         </section>
+        <section class="pa-step" data-pa-step="tc" hidden>
+          <div class="pa-chip-stack" id="paTcStack"></div>
+        </section>
         <section class="pa-step" data-pa-step="final" hidden>
           <div class="pa-final">
             <p class="pa-final-headline">Ready to send your file.</p>
@@ -10453,11 +10456,12 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       8:  { h:'Commission <em>notes?</em>',       s:'Optional. Referral fees, splits, concessions.' },
       9:  { h:'Drop the <em>contract.</em>',      s:'PDF only.' },
       10: { h:'Anything <em>else?</em>',          s:'Extra docs + notes for your TC. Optional.' },
+      'tc': { h:'Who’s your <em>TC?</em>',   s:'Pick a coordinator, or let us auto-assign.' },
       'final': { h:'Ready to <em>send.</em>',     s:'Review and submit.' },
       'done':  { h:'',                             s:'' }
     };
 
-    const ALL_STEPS = [1,2,3,'clients-buyer','clients-seller',4,'effective',5,6,7,8,9,10,'final','done'];
+    const ALL_STEPS = [1,2,3,'clients-buyer','clients-seller',4,'effective',5,6,7,8,9,10,'tc','final','done'];
 
     let state = { step: 1, data: {}, profile: null, active: false };
 
@@ -11212,6 +11216,48 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(state.step === 1) renderServiceTypes();
       if(state.step === 2) renderPackages();
       if(state.step === 3) renderRepresentation();
+      if(state.step === 'tc') renderTcPicker();
+    }
+
+    /* ===== TC picker (last step before review) · agent picks a coordinator or
+       lets us auto-assign. Optional · auto-assign is the default. ===== */
+    var paTcs = [];
+    try { fetch('/tcs.json').then(function(r){ return r.json(); }).then(function(d){ paTcs = (d && d.tcs) ? d.tcs.filter(function(t){ return t.isActive && t.showInCarousel; }) : []; if(state && state.step === 'tc') renderTcPicker(); }).catch(function(){}); } catch(_){}
+    function renderTcPicker(){
+      var stack = document.getElementById('paTcStack');
+      if(!stack) return;
+      var sel = state.data.preferredTcId || 'auto';
+      var html = '';
+      // Auto-assign option first.
+      html += tcOptionHtml('auto', 'Auto-assign', 'We match your file to the right coordinator.', sel === 'auto');
+      paTcs.forEach(function(t){
+        html += tcOptionHtml(t.id, t.displayName, t.bestFor || '', sel === t.id);
+      });
+      stack.innerHTML = html;
+      stack.querySelectorAll('[data-tc-pick]').forEach(function(b){
+        b.addEventListener('click', function(){
+          var id = b.getAttribute('data-tc-pick');
+          if(id === 'auto'){
+            state.data.preferredTcId = 'auto';
+            state.data.preferredTcName = 'Auto-assign';
+            state.data.preferredTcEmail = '';
+          } else {
+            var t = paTcs.find(function(x){ return x.id === id; });
+            state.data.preferredTcId = id;
+            state.data.preferredTcName = t ? t.displayName : id;
+            state.data.preferredTcEmail = t ? (t.email || '') : '';
+          }
+          advance(); // auto-advance to the review screen on pick
+        });
+      });
+    }
+    function tcOptionHtml(id, name, sub, selected){
+      return '<button type="button" class="pa-chip-option pa-chip-option--outline" data-tc-pick="' + escapeHtml(id) + '"' + (selected ? ' style="border-width:2px"' : '') + '>' +
+               '<span class="pa-chip-body">' +
+                 '<span class="pa-chip-opt-name">' + escapeHtml(name) + (selected ? ' ✓' : '') + '</span>' +
+                 (sub ? '<span class="pa-chip-opt-sum">' + escapeHtml(sub) + '</span>' : '') +
+               '</span>' +
+             '</button>';
     }
 
     /* Continuous qwiz · build compact "answered" rows for every completed step
@@ -11261,7 +11307,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
                      : '';
         const notes = s.data.agentNotes ? '"' + s.data.agentNotes.slice(0, 40) + (s.data.agentNotes.length > 40 ? '…' : '') + '"' : '';
         return [docs, notes].filter(Boolean).join(' · ') || 'None';
-      }}
+      }},
+      { step: 'tc', label: 'Your TC', get: (s) => s.data.preferredTcName || 'Auto-assign' }
     ];
 
     function formatDate(d){
@@ -11430,7 +11477,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       back.hidden = (state.step === 1);
       submit.hidden = true;
       // Chip-only steps (1 service type, 2 package, 3 representation) auto-advance on pick · no Continue.
-      const chipOnly = (state.step === 1 || state.step === 2 || state.step === 3);
+      const chipOnly = (state.step === 1 || state.step === 2 || state.step === 3 || state.step === 'tc');
       next.hidden = chipOnly;
       next.innerHTML = 'Continue <span class="arr">→</span>';
     }
@@ -11670,6 +11717,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           state.data.agentNotes = document.getElementById('paAgentNotes').value.trim();
           return true;
         }
+        case 'tc': {
+          // Optional · default to auto-assign if the agent didn't pick one.
+          if(!state.data.preferredTcId){ state.data.preferredTcId = 'auto'; state.data.preferredTcName = 'Auto-assign'; }
+          return true;
+        }
         default: return true;
       }
     }
@@ -11843,6 +11895,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           co_agent_company: state.data.coAgentCompany || '',
           co_agent_phone:   state.data.coAgentPhone   || '',
           co_agent_email:   state.data.coAgentEmail   || '',
+          preferred_tc:        state.data.preferredTcName  || 'Auto-assign',
+          preferred_tc_id:     state.data.preferredTcId    || 'auto',
+          preferred_tc_email:  state.data.preferredTcEmail || '',
           agent_notes:      state.data.agentNotes      || '',
           contract_url:       contractUrl,
           contract_filename:  safeContractName,
