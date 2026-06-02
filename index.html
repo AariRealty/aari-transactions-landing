@@ -10459,7 +10459,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         bindCombobox();
         renderCombo('title');
         renderCombo('lender');
-        initClientDatalist(); // type-ahead of saved buyers/sellers on the name fields
+        initClientPickers(); // saved-client dropdown + Save-contact button on the buyer/seller steps
         // Fix 4 · forceStep1 callers (Path B v2 fresh signup) skip applyPendingPrefill
         // AND explicitly clear all service-related state. Defense beyond Fix 3's
         // sessionStorage clear · covers any future prefill source (URL, localStorage, etc.).
@@ -10639,11 +10639,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     /* ============================================================
        localStorage-backed CLIENT store (June 2026)
-       Agents often work with the same buyer/seller more than once. Saved
-       under aari_tc_clients · keyed by name (case-insensitive). Native
-       <datalist> gives a type-ahead dropdown on the name fields; email +
-       phone autofill when the typed name matches a saved client.
-       Record: { name, email, phone, last_used_at }
+       Agents often work with the same buyer/seller more than once.
+       UX: a "Use a saved client" DROPDOWN (pick → fills name/email/phone)
+       plus an explicit "Save contact" BUTTON. No duplicates — saving a name
+       that already exists is rejected with a clear message.
+       Stored under aari_tc_clients · Record: { name, email, phone, last_used_at }
        ============================================================ */
     function loadClients(){
       try { var v = JSON.parse(localStorage.getItem('aari_tc_clients') || '[]'); return Array.isArray(v) ? v : []; }
@@ -10651,76 +10651,89 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     }
     function writeClients(list){
       try { localStorage.setItem('aari_tc_clients', JSON.stringify(list || [])); } catch(_){}
-      refreshClientDatalist();
+      populateClientSelect('buyer');
+      populateClientSelect('seller');
     }
-    function dedupeClients(list, rec){
-      if(!rec || !rec.name) return list;
-      var norm = function(s){ return (s || '').trim().toLowerCase(); };
-      var i = list.findIndex(function(e){ return norm(e.name) === norm(rec.name); });
-      if(i >= 0) list[i] = rec; else list.unshift(rec);
-      return list.sort(function(a, b){ return new Date(b.last_used_at || 0) - new Date(a.last_used_at || 0); }).slice(0, 40);
+    var CLIENT_IDS = {
+      buyer:  { name:'paBuyerName',  email:'paBuyerEmail',  phone:'paBuyerPhone',  sel:'aariClientSelBuyer',  btn:'aariSaveBtnBuyer',  msg:'aariSaveMsgBuyer'  },
+      seller: { name:'paSellerName', email:'paSellerEmail', phone:'paSellerPhone', sel:'aariClientSelSeller', btn:'aariSaveBtnSeller', msg:'aariSaveMsgSeller' }
+    };
+    function clientMsg(role, text, ok){
+      var el = document.getElementById(CLIENT_IDS[role].msg);
+      if(el){ el.textContent = text || ''; el.style.color = ok ? '#6a8a6a' : '#a64c33'; }
     }
-    function saveClientFromDom(role){ // role: 'buyer' | 'seller'
-      // Respect the visible "Save this client" toggle · agent can opt out.
-      var tgl = document.getElementById(role === 'buyer' ? 'aariSaveBuyer' : 'aariSaveSeller');
-      if(tgl && !tgl.checked) return;
+    function populateClientSelect(role){
+      var ids = CLIENT_IDS[role];
+      var sel = document.getElementById(ids.sel);
+      if(!sel) return;
+      var list = loadClients();
+      var opts = '<option value="">— Saved ' + role + 's (' + list.length + ') —</option>';
+      list.forEach(function(e, idx){
+        opts += '<option value="' + idx + '">' + escapeHtml(e.name || '') + (e.email ? ' · ' + escapeHtml(e.email) : '') + '</option>';
+      });
+      sel.innerHTML = opts;
+    }
+    function onPickClient(role){
+      var ids = CLIENT_IDS[role];
+      var sel = document.getElementById(ids.sel);
+      if(!sel) return;
+      var idx = parseInt(sel.value, 10);
+      if(isNaN(idx)) return;
+      var rec = loadClients()[idx];
+      if(!rec) return;
+      var setv = function(id, v){ var e = document.getElementById(id); if(e) e.value = v || ''; };
+      setv(ids.name, rec.name); setv(ids.email, rec.email); setv(ids.phone, rec.phone);
+      clientMsg(role, 'Loaded “' + (rec.name || '') + '”.', true);
+    }
+    function saveClientExplicit(role){
+      var ids = CLIENT_IDS[role];
       var g = function(id){ var e = document.getElementById(id); return e ? (e.value || '').trim() : ''; };
-      var name = g(role === 'buyer' ? 'paBuyerName' : 'paSellerName');
-      if(!name) return;
-      var rec = {
-        name:  name,
-        email: g(role === 'buyer' ? 'paBuyerEmail' : 'paSellerEmail'),
-        phone: g(role === 'buyer' ? 'paBuyerPhone' : 'paSellerPhone'),
-        last_used_at: new Date().toISOString()
-      };
-      writeClients(dedupeClients(loadClients(), rec));
-      // Visible confirmation so the agent knows it saved.
-      var note = document.getElementById(role === 'buyer' ? 'aariSaveBuyerNote' : 'aariSaveSellerNote');
-      if(note){ note.textContent = '✓ Saved — will autofill next time'; note.style.color = '#6a8a6a'; }
+      var name = g(ids.name);
+      if(!name){ clientMsg(role, 'Enter a name first, then Save contact.', false); return; }
+      var list = loadClients();
+      var norm = function(s){ return (s || '').trim().toLowerCase(); };
+      if(list.some(function(e){ return norm(e.name) === norm(name); })){
+        clientMsg(role, '“' + name + '” is already saved — no duplicate added.', true);
+        return;
+      }
+      list.unshift({ name:name, email:g(ids.email), phone:g(ids.phone), last_used_at:new Date().toISOString() });
+      writeClients(list.slice(0, 40));
+      clientMsg(role, '✓ Saved “' + name + '” for next time.', true);
     }
-    // Inject a visible "Save this client" checkbox under the client step.
-    function injectClientSaveToggle(role){
-      var toggleId = role === 'buyer' ? 'aariSaveBuyer' : 'aariSaveSeller';
-      if(document.getElementById(toggleId)) return;
-      var phoneId = role === 'buyer' ? 'paBuyerPhone' : 'paSellerPhone';
-      var phoneInp = document.getElementById(phoneId);
-      if(!phoneInp) return;
-      var anchor = (phoneInp.closest && phoneInp.closest('.field')) || phoneInp.parentElement;
-      if(!anchor || !anchor.parentNode) return;
-      var wrap = document.createElement('div');
-      wrap.style.cssText = 'margin-top:14px';
-      wrap.innerHTML =
-        '<label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#3a3a38;cursor:pointer">' +
-          '<input type="checkbox" id="' + toggleId + '" checked style="width:16px;height:16px;cursor:pointer">' +
-          '<span>Save this ' + role + ' so it autofills next time</span>' +
-        '</label>' +
-        '<div id="' + toggleId + 'Note" style="font-size:11.5px;color:#8a8580;margin-top:4px;margin-left:24px"></div>';
-      anchor.parentNode.insertBefore(wrap, anchor.nextSibling);
+    // Inject the dropdown (above name) + Save button (below phone) into a client step.
+    function injectClientPicker(role){
+      var ids = CLIENT_IDS[role];
+      if(document.getElementById(ids.sel)){ populateClientSelect(role); return; }
+      var nameInp = document.getElementById(ids.name);
+      var phoneInp = document.getElementById(ids.phone);
+      if(!nameInp || !phoneInp) return;
+      var nameField  = (nameInp.closest && nameInp.closest('.field'))  || nameInp.parentElement;
+      var phoneField = (phoneInp.closest && phoneInp.closest('.field')) || phoneInp.parentElement;
+      // Dropdown row · inserted before the FULL NAME field.
+      var pick = document.createElement('div');
+      pick.className = 'field';
+      pick.style.cssText = 'margin-bottom:16px';
+      pick.innerHTML =
+        '<label for="' + ids.sel + '" style="display:block;font-size:11px;letter-spacing:0.8px;text-transform:uppercase;color:#8a8580;font-weight:700;margin-bottom:6px">Use a saved ' + role + '</label>' +
+        '<select id="' + ids.sel + '" style="width:100%;padding:11px 14px;font-size:14px;color:#0f0f0f;background:#fff;border:0.5px solid rgba(15,15,15,0.22);border-radius:8px;font-family:Inter,sans-serif;cursor:pointer"></select>';
+      if(nameField && nameField.parentNode) nameField.parentNode.insertBefore(pick, nameField);
+      // Save button row · inserted after the PHONE field.
+      var saveRow = document.createElement('div');
+      saveRow.style.cssText = 'margin-top:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap';
+      saveRow.innerHTML =
+        '<button type="button" id="' + ids.btn + '" style="background:#0f0f0f;color:#fff;border:0;border-radius:999px;padding:10px 18px;font:600 13px Inter,sans-serif;cursor:pointer">Save contact</button>' +
+        '<span id="' + ids.msg + '" style="font-size:12.5px;color:#8a8580"></span>';
+      if(phoneField && phoneField.parentNode) phoneField.parentNode.insertBefore(saveRow, phoneField.nextSibling);
+      // Wire events.
+      var sel = document.getElementById(ids.sel);
+      if(sel) sel.addEventListener('change', function(){ onPickClient(role); });
+      var btn = document.getElementById(ids.btn);
+      if(btn) btn.addEventListener('click', function(){ saveClientExplicit(role); });
+      populateClientSelect(role);
     }
-    function autofillClientIfMatch(role){
-      var inp = document.getElementById(role === 'buyer' ? 'paBuyerName' : 'paSellerName');
-      if(!inp) return;
-      var v = (inp.value || '').trim().toLowerCase();
-      if(!v) return;
-      var m = loadClients().find(function(e){ return (e.name || '').trim().toLowerCase() === v; });
-      if(!m) return;
-      // Fill email/phone only if empty · never clobber what the agent already typed.
-      var setIfEmpty = function(id, val){ var e = document.getElementById(id); if(e && !e.value && val) e.value = val; };
-      setIfEmpty(role === 'buyer' ? 'paBuyerEmail' : 'paSellerEmail', m.email);
-      setIfEmpty(role === 'buyer' ? 'paBuyerPhone' : 'paSellerPhone', m.phone);
-    }
-    function refreshClientDatalist(){
-      var dl = document.getElementById('aariClientNames');
-      if(!dl) return;
-      dl.innerHTML = loadClients().map(function(e){ return '<option value="' + escapeHtml(e.name || '') + '"></option>'; }).join('');
-    }
-    function initClientDatalist(){
-      var dl = document.getElementById('aariClientNames');
-      if(!dl){ dl = document.createElement('datalist'); dl.id = 'aariClientNames'; document.body.appendChild(dl); }
-      ['paBuyerName','paSellerName'].forEach(function(id){ var e = document.getElementById(id); if(e) e.setAttribute('list', 'aariClientNames'); });
-      injectClientSaveToggle('buyer');
-      injectClientSaveToggle('seller');
-      refreshClientDatalist();
+    function initClientPickers(){
+      injectClientPicker('buyer');
+      injectClientPicker('seller');
     }
 
     function renderCombo(kind){
@@ -10833,19 +10846,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           if(el) el.addEventListener('blur', () => { saveContactToLocal(kind); });
         });
       });
-      // CLIENT (buyer/seller) · name-field blur autofills email+phone from a saved
-      // client; any field blur saves the client for reuse on future files.
-      [['buyer','paBuyerName','paBuyerEmail','paBuyerPhone'],
-       ['seller','paSellerName','paSellerEmail','paSellerPhone']
-      ].forEach(grp => {
-        const role = grp[0];
-        const nameEl = document.getElementById(grp[1]);
-        if(nameEl) nameEl.addEventListener('blur', () => { setTimeout(() => autofillClientIfMatch(role), 150); });
-        grp.slice(1).forEach(fid => {
-          const el = document.getElementById(fid);
-          if(el) el.addEventListener('blur', () => { saveClientFromDom(role); });
-        });
-      });
+      // CLIENT (buyer/seller) save + pick is handled by the dropdown + Save button
+      // injected via initClientPickers() · no blur auto-save here by design.
     }
 
     /* Escape helper for safely rendering saved entries into combobox HTML. */
@@ -11312,7 +11314,6 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           state.data.buyer_name = n;
           state.data.buyer_email = e;
           state.data.buyer_phone = p;
-          saveClientFromDom('buyer'); // remember this client for future files
           return true;
         }
         case 'clients-seller': {
@@ -11325,7 +11326,6 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           state.data.seller_name = n;
           state.data.seller_email = e;
           state.data.seller_phone = p;
-          saveClientFromDom('seller'); // remember this client for future files
           return true;
         }
         case 4: {
