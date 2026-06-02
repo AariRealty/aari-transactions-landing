@@ -9826,33 +9826,40 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
        anonymous visitors. */
     async function maybeAutoRouteOrGate(){
       suspendSave = true;
+      // Embedded = opened from inside the portal (iframe). The portal already
+      // required sign-in to load, so we trust that and NEVER show the email gate
+      // here · this avoids a second login when a Safari iframe doesn't surface the
+      // session on the first ticks.
+      let embedded = false;
+      try { embedded = (document.body && document.body.classList.contains('aari-modal-only')) || /[?&]modal-only=1/.test(location.search); } catch(_){}
       try {
+        let session = null;
         if(window.AariAuth && typeof window.AariAuth.getCurrentSession === 'function'){
-          // Retry briefly · inside the portal iframe the Supabase client may still be
-          // restoring the session from localStorage on the first tick. Don't fall
-          // through to the email gate just because we asked a few ms too early.
-          let session = null;
           for(let attempt = 0; attempt < 6 && !session; attempt++){
             try { session = await window.AariAuth.getCurrentSession(); } catch(_){ session = null; }
             if(!session) await new Promise(r => setTimeout(r, 150));
           }
-          if(session && session.user && window.AariPathA && typeof window.AariPathA.init === 'function'){
-            let row = null;
-            try {
-              const client = await window.AariAuth.ensureClient();
-              const res = await client.from('agents').select('*').eq('id', session.user.id).maybeSingle();
+        }
+        if((session || embedded) && window.AariPathA && typeof window.AariPathA.init === 'function'){
+          let row = null, email = '';
+          try {
+            const client = await window.AariAuth.ensureClient();
+            const uid = session && session.user && session.user.id;
+            if(uid){
+              const res = await client.from('agents').select('*').eq('id', uid).maybeSingle();
               row = res && res.data;
-            } catch(e){ console.warn('[v3-gate] profile fetch failed · routing with minimal profile', e); }
-            window.AariPathA.init(mapAgentRowToProfile(row, (session.user.email || '')));
-            console.log('[v3-gate] active session · skipped email gate → Path A');
-            suspendSave = false;
-            return;
-          }
+              email = (session.user.email) || '';
+            }
+          } catch(e){ console.warn('[v3-gate] profile fetch failed · routing with minimal profile', e); }
+          window.AariPathA.init(mapAgentRowToProfile(row, email));
+          console.log('[v3-gate] routed to Path A · session=' + !!session + ' embedded=' + embedded);
+          suspendSave = false;
+          return;
         }
       } catch(err){
-        console.warn('[v3-gate] session check failed · showing email gate', err);
+        console.warn('[v3-gate] auto-route failed · showing email gate', err);
       }
-      console.log('[v3-gate] no session · showing Step 0 email gate');
+      console.log('[v3-gate] no session (standalone) · showing Step 0 email gate');
       showStep(0);
       suspendSave = false;
     }
