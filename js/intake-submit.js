@@ -194,9 +194,16 @@
       // does, stopImmediatePropagation() below kills the bubble handler and the
       // file is never uploaded (submit appears to "do nothing"). Return WITHOUT
       // preventDefault/stopImmediatePropagation so the click bubbles normally.
-      if ((global.AariPathA && typeof global.AariPathA.isActive === 'function' && global.AariPathA.isActive()) ||
-          (global.AariPathB && typeof global.AariPathB.isActive === 'function' && global.AariPathB.isActive())) {
-        console.log('[intake-submit] Path A/B active · yielding to its own submit handler');
+      // Yield whenever Path A / Path B is active OR simply visible on screen. The
+      // visibility check is the belt-and-suspenders: inside the portal iframe
+      // isActive() can momentarily read false, and without this the hijack would
+      // swallow the click before Path A's own submit handler (index.html) runs —
+      // which is exactly the "Send My File does nothing" failure.
+      var _vis = function(id){ var el = document.getElementById(id); return !!(el && !el.hidden && el.offsetParent !== null); };
+      var paOn = (global.AariPathA && typeof global.AariPathA.isActive === 'function' && global.AariPathA.isActive()) || _vis('aariPathA');
+      var pbOn = (global.AariPathB && typeof global.AariPathB.isActive === 'function' && global.AariPathB.isActive()) || _vis('aariPathB');
+      if (paOn || pbOn) {
+        console.log('[intake-submit] Path A/B active/visible · yielding to its own submit handler');
         return;
       }
       // ── DIAGNOSTIC LOGGING · removed once submit is verified reliable ──

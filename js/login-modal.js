@@ -52,16 +52,11 @@
     closeBtn.addEventListener('click', close);
     card.appendChild(closeBtn);
 
-    // Aari "A" mark · keeps the Transactions sign-in consistent with the other
-    // Aari logins. Just the A · no wordmark, no license line. Uses the brand logo
-    // file when present; falls back to a simple A so the popup never breaks.
-    const logo = el('div', { class: 'aari-auth-logo', style: 'display:flex;justify-content:center;margin:2px 0 20px' });
-    const logoImg = el('img', { src: '/images/aari-a-logo.png', alt: 'Aari', style: 'height:58px;width:auto;display:block' });
-    logoImg.addEventListener('error', function(){
-      logo.innerHTML = '<span style="display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:13px;background:#0f0f0f;color:#fff;font-family:\'Cormorant Garamond\',\'Playfair Display\',Georgia,serif;font-weight:600;font-size:36px;line-height:1;letter-spacing:-1px">A</span>';
-    });
-    logo.appendChild(logoImg);
-    card.appendChild(logo);
+    // Brand logo · only renders if the real logo file exists. No placeholder/"A"
+    // fallback (per request) · if the file is missing, nothing shows.
+    const logoImg = el('img', { src: '/images/aari-a-logo.png', alt: 'Aari', style: 'height:58px;width:auto;display:block;margin:2px auto 20px' });
+    logoImg.addEventListener('error', function(){ logoImg.remove(); });
+    card.appendChild(logoImg);
 
     if (_state === 'login') card.appendChild(loginView());
     else if (_state === 'reset') card.appendChild(resetView());
