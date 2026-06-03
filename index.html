@@ -10771,6 +10771,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             applyDraft(pd);
           }
         }catch(_){}
+        // Pull saved contacts into the Saved buyers/sellers dropdown.
+        try { syncContactsToLocal(); } catch(_){}
       } catch(err){
         // If anything throws mid-mutation · rollback so the modal isn't half-dead.
         console.error('[AariPathA] init failed · rolling back', err);
@@ -10963,6 +10965,15 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(!rec) return;
       var setv = function(id, v){ var e = document.getElementById(id); if(e) e.value = v || ''; };
       setv(ids.name, rec.name); setv(ids.email, rec.email); setv(ids.phone, rec.phone);
+      // Write-through · programmatic fills fire no input events, so push the
+      // picked contact into state + the draft directly.
+      try{
+        const keys = role === 'seller' ? ['seller_name','seller_email','seller_phone'] : ['buyer_name','buyer_email','buyer_phone'];
+        state.data[keys[0]] = rec.name || '';
+        state.data[keys[1]] = rec.email || '';
+        state.data[keys[2]] = rec.phone || '';
+        scheduleAutoSave(document.getElementById(ids.name));
+      }catch(_){}
       if(typeof refreshSaveBtn === 'function') refreshSaveBtn(ids.name);
     }
     function saveClientCurrent(role){
@@ -11624,7 +11635,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       paLender: 'lender',
       paLenderContactName: 'lenderContactName', paLenderContactEmail: 'lenderContactEmail', paLenderContactPhone: 'lenderContactPhone',
       paListingAgentName: 'listingAgentName', paListingAgentCompany: 'listingAgentCompany', paListingAgentEmail: 'listingAgentEmail', paListingAgentPhone: 'listingAgentPhone',
-      paCoAgentName: 'coAgentName', paCoAgentCompany: 'coAgentCompany', paCoAgentEmail: 'coAgentEmail', paCoAgentPhone: 'coAgentPhone'
+      paCoAgentName: 'coAgentName', paCoAgentCompany: 'coAgentCompany', paCoAgentEmail: 'coAgentEmail', paCoAgentPhone: 'coAgentPhone',
+      // Not contacts, but they must survive close/reopen the same way:
+      paAddress: 'address', paEffectiveDate: 'effectiveDate', paClosingDate: 'closingDate',
+      paCommissionNotes: 'commissionNotes', paAgentNotes: 'agentNotes'
     };
     Object.keys(CONTACT_LIVE_BINDINGS).forEach(function(id){
       const inp = document.getElementById(id);
@@ -11849,7 +11863,39 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         if(!row.email) continue; // email is the dedupe key · skip if somehow empty
         const r = await client.from('contacts').upsert(row, { onConflict: 'owner_id,email' });
         if(r && r.error) console.warn('[path-a] contact upsert failed ·', r.error.message || r.error);
+        // Mirror into the local Saved buyers/sellers dropdown so it shows the
+        // full email + phone immediately (it reads aari_tc_clients).
+        try { saveClientCurrent(row.role === 'seller' ? 'seller' : 'buyer'); } catch(_){}
       }
+    }
+
+    /* Pull the Supabase contacts table into the local Saved buyers/sellers
+       dropdown on load — heals name-only local entries and surfaces contacts
+       saved on other devices. Fill-not-wipe merge, capped at 40. */
+    async function syncContactsToLocal(){
+      try{
+        if(!window.AariAuth) return;
+        const session = await window.AariAuth.getCurrentSession();
+        if(!session || !session.user) return;
+        const client = await window.AariAuth.ensureClient();
+        const r = await client.from('contacts').select('full_name,email,phone').order('updated_at', { ascending: false }).limit(40);
+        if(!r || r.error || !Array.isArray(r.data)) return;
+        const list = loadClients();
+        const norm = function(s){ return (s || '').trim().toLowerCase(); };
+        r.data.forEach(function(c){
+          if(!c.full_name && !c.email) return;
+          const i = list.findIndex(function(e){
+            return (c.email && norm(e.email) === norm(c.email)) || (c.full_name && norm(e.name) === norm(c.full_name));
+          });
+          if(i >= 0){
+            const ex = list[i];
+            list[i] = { name: ex.name || c.full_name || '', email: ex.email || c.email || '', phone: ex.phone || c.phone || '', last_used_at: ex.last_used_at || new Date().toISOString() };
+          } else {
+            list.push({ name: c.full_name || '', email: c.email || '', phone: c.phone || '', last_used_at: new Date().toISOString() });
+          }
+        });
+        writeClients(list.slice(0, 40));
+      }catch(e){ console.warn('[path-a] contacts sync failed', e); }
     }
 
     /* Instant save · checking the box saves the contact RIGHT NOW (and edits
