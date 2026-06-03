@@ -4903,42 +4903,76 @@ Aari Transactions`,
     const sends = _sendsByFile[file.id] || {};
     const ft = file.file_type || 'sale';
     const ftPlaybook = EMAIL_PLAYBOOK[ft] || {};
-    let list = (ftPlaybook[stage] || []).filter(e => (typeof e.showIf === 'function' ? e.showIf(file) : true));
     const agent = await loadAgentForFile(file.agent_id);
     const emailsEl = document.getElementById('tpb-emails');
-    if(!list.length){
-      emailsEl.innerHTML = '<div class="tpb-empty">No emails recommended at this stage.</div>';
-    } else {
-      emailsEl.innerHTML = list.map(e => {
-        const sent = sends[e.id];
-        const tsStr = sent ? new Date(sent.sent_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
-        const thread = EMAIL_THREADS[e.thread] || EMAIL_THREADS[1];
-        const filledTo = fillEmailVars(e.to || '', file, agent);
-        const filledCc = fillEmailVars(e.cc || '', file, agent);
-        const filledSubject = fillEmailVars(e.subject || '', file, agent);
-        const filledBody = fillEmailVars(e.body || '', file, agent);
-        const eid = esc(e.id);
-        return '<div class="tpb-email'+(sent?' sent':'')+'" data-email-id="'+eid+'">' +
-          '<div class="tpb-email-head">' +
-            '<span class="tpb-thread-badge" style="background:'+thread.color+'">Thread ' + e.thread + ' · ' + esc(thread.name) + '</span>' +
-            '<p class="tpb-email-name">'+esc(e.label)+'</p>' +
-            (sent ? '<span class="tpb-sent-pill">&check; Sent '+esc(tsStr)+'</span>' : '') +
-          '</div>' +
-          '<div class="tpb-email-fields">' +
-            '<div class="tpb-ef-row"><span class="tpb-ef-key">TO</span><span class="tpb-ef-val" data-copy-field="to">'+esc(filledTo)+'</span><button class="tpb-ef-copy" data-copy-target="to" data-eid="'+eid+'">Copy</button></div>' +
-            (filledCc ? '<div class="tpb-ef-row"><span class="tpb-ef-key">CC</span><span class="tpb-ef-val" data-copy-field="cc">'+esc(filledCc)+'</span><button class="tpb-ef-copy" data-copy-target="cc" data-eid="'+eid+'">Copy</button></div>' : '') +
-            '<div class="tpb-ef-row"><span class="tpb-ef-key">SUBJECT</span><span class="tpb-ef-val" data-copy-field="subject">'+esc(filledSubject)+'</span><button class="tpb-ef-copy" data-copy-target="subject" data-eid="'+eid+'">Copy</button></div>' +
-            '<div class="tpb-ef-body"><textarea class="tpb-ef-textarea" readonly data-copy-field="body">'+esc(filledBody)+'</textarea></div>' +
-          '</div>' +
-          '<div class="tpb-email-actions">' +
-            '<button class="tpb-email-copy-all" data-copy-all="'+eid+'">Copy email (subject + body)</button>' +
-            (sent
-              ? '<button class="tpb-email-mark-sent" data-unmark="'+eid+'">Unmark sent</button>'
-              : '<button class="tpb-email-mark-sent" data-mark-sent="'+eid+'">Mark sent</button>') +
-          '</div>' +
-        '</div>';
-      }).join('');
 
+    // Toggle button reflects current state.
+    const toggleBtn = document.getElementById('tpb-emails-toggle');
+    if(toggleBtn){
+      toggleBtn.setAttribute('aria-pressed', _showAllEmailStages ? 'true' : 'false');
+      toggleBtn.textContent = _showAllEmailStages ? 'Show current stage' : 'Show all stages';
+      toggleBtn.onclick = () => { _showAllEmailStages = !_showAllEmailStages; renderPlaybook(file); };
+    }
+
+    // Current stage only (default) vs. every stage in the transaction sequence.
+    const stageOrder = STAGES_BY_TYPE[ft] || STAGES_BY_TYPE.sale || [stage];
+    const visibleFor = (st) => (ftPlaybook[st] || []).filter(e => (typeof e.showIf === 'function' ? e.showIf(file) : true));
+
+    function cardFor(e){
+      const sent = sends[e.id];
+      const tsStr = sent ? new Date(sent.sent_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
+      const thread = EMAIL_THREADS[e.thread] || EMAIL_THREADS[1];
+      const filledTo = fillEmailVars(e.to || '', file, agent);
+      const filledCc = fillEmailVars(e.cc || '', file, agent);
+      const filledSubject = fillEmailVars(e.subject || '', file, agent);
+      const filledBody = fillEmailVars(e.body || '', file, agent);
+      const eid = esc(e.id);
+      return '<div class="tpb-email'+(sent?' sent':'')+'" data-email-id="'+eid+'">' +
+        '<div class="tpb-email-head">' +
+          '<span class="tpb-thread-badge" style="background:'+thread.color+'">Thread ' + e.thread + ' · ' + esc(thread.name) + '</span>' +
+          '<p class="tpb-email-name">'+esc(e.label)+'</p>' +
+          (sent ? '<span class="tpb-sent-pill">&check; Sent '+esc(tsStr)+'</span>' : '') +
+        '</div>' +
+        '<div class="tpb-email-fields">' +
+          '<div class="tpb-ef-row"><span class="tpb-ef-key">TO</span><span class="tpb-ef-val" data-copy-field="to">'+esc(filledTo)+'</span><button class="tpb-ef-copy" data-copy-target="to" data-eid="'+eid+'">Copy</button></div>' +
+          (filledCc ? '<div class="tpb-ef-row"><span class="tpb-ef-key">CC</span><span class="tpb-ef-val" data-copy-field="cc">'+esc(filledCc)+'</span><button class="tpb-ef-copy" data-copy-target="cc" data-eid="'+eid+'">Copy</button></div>' : '') +
+          '<div class="tpb-ef-row"><span class="tpb-ef-key">SUBJECT</span><span class="tpb-ef-val" data-copy-field="subject">'+esc(filledSubject)+'</span><button class="tpb-ef-copy" data-copy-target="subject" data-eid="'+eid+'">Copy</button></div>' +
+          '<div class="tpb-ef-body"><textarea class="tpb-ef-textarea" readonly data-copy-field="body">'+esc(filledBody)+'</textarea></div>' +
+        '</div>' +
+        '<div class="tpb-email-actions">' +
+          '<button class="tpb-email-copy-all" data-copy-all="'+eid+'">Copy email (subject + body)</button>' +
+          (sent
+            ? '<button class="tpb-email-mark-sent" data-unmark="'+eid+'">Unmark sent</button>'
+            : '<button class="tpb-email-mark-sent" data-mark-sent="'+eid+'">Mark sent</button>') +
+        '</div>' +
+      '</div>';
+    }
+
+    let list = [];
+    const stageById = {};
+    if(_showAllEmailStages){
+      let html = '';
+      stageOrder.forEach(st => {
+        const items = visibleFor(st);
+        if(!items.length) return;
+        items.forEach(e => { stageById[e.id] = st; });
+        list = list.concat(items);
+        const isCur = (st === stage);
+        html += '<div class="tpb-emails-stage-group">' +
+          '<p class="tpb-emails-stage-label'+(isCur?' current':'')+'">' + esc(STAGE_LABELS[st] || st) + (isCur ? ' · current' : '') + '</p>' +
+          items.map(cardFor).join('') +
+        '</div>';
+      });
+      emailsEl.innerHTML = html || '<div class="tpb-empty">No emails in the playbook for this file type.</div>';
+    } else {
+      list = visibleFor(stage);
+      list.forEach(e => { stageById[e.id] = stage; });
+      emailsEl.innerHTML = list.length
+        ? list.map(cardFor).join('')
+        : '<div class="tpb-empty">No emails recommended at this stage.</div>';
+    }
+
+    if(list.length){
       // ===== wire copy buttons =====
       const tplById = {};
       list.forEach(e => { tplById[e.id] = e; });
@@ -4985,7 +5019,7 @@ Aari Transactions`,
 
       emailsEl.querySelectorAll('[data-mark-sent]').forEach(btn => btn.addEventListener('click', async () => {
         const eid = btn.getAttribute('data-mark-sent');
-        await markEmailSent(file, stage, eid);
+        await markEmailSent(file, stageById[eid] || stage, eid);
         renderPlaybook(file);
       }));
       emailsEl.querySelectorAll('[data-unmark]').forEach(btn => btn.addEventListener('click', async () => {
