@@ -1,21 +1,25 @@
 /* Aari Transactions · TC cockpit "+ New File" launcher
    ---------------------------------------------------------------------------
    Adds a floating "+ New File" button to a TC cockpit (Eileen / Milennys /
-   Marlenyi). Clicking it opens the EXISTING public intake (/index.html#apply)
-   INSIDE the cockpit via a same-origin iframe overlay.
+   Marlenyi). Clicking it opens the EXISTING public intake full-screen via the
+   index.html "?modal-only=1" mode (chrome hidden, intake modal only).
 
-   Why this is safe:
-   - Same origin => the TC's Supabase session in localStorage is shared with the
-     iframe, so the intake auto-routes to the signed-in flow. No re-login, no
-     auth token in the URL, no redirect away from the cockpit.
+   Why navigation and not an iframe: index.html's modal-only close (×) logic is
+   written for window.top === window.self (full page) and returns the user to
+   the portal. Embedding it in an iframe is the path the codebase explicitly
+   abandoned ("loads full-screen now, not in an iframe"), so the iframe rendered
+   blank. Full-page navigation is the supported pattern — and matches the
+   original window.open(..., '_self') instinct.
+
+   Why it's still safe:
+   - Same origin => the TC's Supabase session in localStorage carries through, so
+     the intake auto-routes to the signed-in flow. No re-login, no auth token in
+     the URL.
    - It does NOT modify index.html, the intake code, the Kanban, or any table.
-   - ?modal-only=1 is an existing index.html mode that hides page chrome and
-     shows only the intake modal on a transparent background.
 
-   NOT YET DONE (separate step, by design): the post-submit "payment link"
-   screen for TC submissions. That needs submit-completion detection AND a
-   business rule (TC services bill at closing => no Stripe link; only
-   a-la-carte services have one). */
+   NOT YET DONE (separate step, by design): the post-submit "payment link" screen
+   for TC submissions (needs submit-completion detection + the business rule that
+   TC services bill at closing and have no Stripe link; only a-la-carte do). */
 (function () {
   if (window.__aariNewFileLauncher) return;
   window.__aariNewFileLauncher = true;
@@ -34,40 +38,11 @@
       'padding:14px 22px;font:600 15px/1 system-ui,-apple-system,sans-serif;' +
       'cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.25)';
 
-    var overlay = document.createElement('div');
-    overlay.id = 'aariNewFileOverlay';
-    overlay.style.cssText =
-      'position:fixed;inset:0;z-index:99999;display:none;background:rgba(15,15,15,.6)';
-    overlay.innerHTML =
-      '<button id="aariNewFileClose" aria-label="Close" ' +
-      'style="position:fixed;top:16px;right:18px;z-index:100000;width:40px;height:40px;' +
-      'border-radius:50%;border:none;background:#fff;color:#0f0f0f;font-size:22px;' +
-      'line-height:1;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.2)">&times;</button>' +
-      '<iframe id="aariNewFileFrame" title="Submit a file" ' +
-      'style="width:100%;height:100%;border:0;background:transparent" ' +
-      'allow="clipboard-write"></iframe>';
+    btn.addEventListener('click', function () {
+      window.location.href = '/index.html?modal-only=1#apply';
+    });
 
     document.body.appendChild(btn);
-    document.body.appendChild(overlay);
-
-    var frame = overlay.querySelector('#aariNewFileFrame');
-
-    function open() {
-      frame.src = '/index.html?modal-only=1#apply';
-      overlay.style.display = 'block';
-      document.body.style.overflow = 'hidden';
-    }
-    function close() {
-      overlay.style.display = 'none';
-      frame.src = 'about:blank';
-      document.body.style.overflow = '';
-    }
-
-    btn.addEventListener('click', open);
-    overlay.querySelector('#aariNewFileClose').addEventListener('click', close);
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && overlay.style.display === 'block') close();
-    });
   }
 
   if (document.readyState === 'loading') {
