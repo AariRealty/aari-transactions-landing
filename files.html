@@ -1468,10 +1468,22 @@ Aari Transactions`,
   // a map of EMAIL VARIABLE NAMES → formatted date strings.
   // Returns empty object {} if computation isn't possible (missing contract,
   // missing dates, contract type without a defined deadline schedule).
+  // Default contract type by file_type when the TC hasn't set one yet.
+  // These are the standard SW-FL forms; the computed dates use each form's
+  // STANDARD statutory/paragraph day-counts. The TC overrides any custom-
+  // negotiated period in the Deadline tab (deadline_overrides) before sending.
+  const DEFAULT_CONTRACT_BY_TYPE = {
+    sale:      'frbar_asis',
+    listing:   'ers_21tn',
+    lease:     'rlhd_3x',
+    buyer_rep: 'bbe_1',
+  };
+
   function getDeadlinesForEmail(file){
     if(!file) return {};
-    const ct = file.contract_type;
-    if(!ct) return {};
+    // Use the TC-set contract type; fall back to the standard form for this
+    // file_type so deadlines populate even before the TC opens the Deadline tab.
+    const ct = file.contract_type || DEFAULT_CONTRACT_BY_TYPE[file.file_type || 'sale'] || 'frbar_asis';
     const schedule = CONTRACT_DEADLINES[ct];
     if(!schedule) return {};
     if(!file.effective_date || !file.closing_date) return {};
@@ -1506,12 +1518,20 @@ Aari Transactions`,
       const leaseEnd  = byKey['lease_expires'] || byKey['lease_start'];
       const bbaEnd    = byKey['bba_term_end'];
       const protEnd   = byKey['protection_end'];
-      return {
+      // Conditional omission: cash deals have no loan deadlines; an explicitly
+      // waived inspection has no inspection deadline. Anything left null is
+      // dropped from the email by the cleaning pass in fillEmailVars.
+      const cash = (typeof isCashFile === 'function') && isCashFile(file);
+      const raw = file.raw_form_data || {};
+      const inspWaived = raw.inspection_waived === '1' || raw.inspection_waived === true ||
+                         raw.inspection_period === '0' || raw.inspection === 'waived' ||
+                         (file.deadline_overrides && file.deadline_overrides.inspection_waived);
+      const out = {
         em_deadline: fmt(byKey['init_deposit']) || null,
-        loan_app_deadline: fmt(byKey['loan_app']) || null,
-        loan_approval_deadline: fmt(byKey['loan_approval'] || byKey['finance_cont']) || null,
-        inspection_deadline: fmt(inspKey) || null,
-        inspection_objection_deadline: fmt(inspKey) || null,
+        loan_app_deadline: cash ? null : (fmt(byKey['loan_app']) || null),
+        loan_approval_deadline: cash ? null : (fmt(byKey['loan_approval'] || byKey['finance_cont']) || null),
+        inspection_deadline: inspWaived ? null : (fmt(inspKey) || null),
+        inspection_objection_deadline: inspWaived ? null : (fmt(inspKey) || null),
         feasibility_deadline: fmt(byKey['feasibility_end']) || null,
         due_diligence_deadline: fmt(ddKey) || null,
         title_deadline: fmt(titleKey) || null,
@@ -1529,6 +1549,7 @@ Aari Transactions`,
         estoppels_deadline: fmt(byKey['estoppels_due']) || null,
         snda_deadline: fmt(byKey['snda_received']) || null,
       };
+      return out;
     } catch(err){
       console.warn('[files] getDeadlinesForEmail failed', err);
       return {};
