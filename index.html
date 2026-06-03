@@ -12067,14 +12067,16 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           phone: state.data.seller_phone || '',
           updated_at: new Date().toISOString() });
       }
+      let failed = false;
       for(const row of jobs){
         if(!row.email) continue; // email is the dedupe key · skip if somehow empty
         const r = await client.from('agent_contacts').upsert(row, { onConflict: 'agent_id,email' });
-        if(r && r.error) console.warn('[path-a] contact upsert failed ·', r.error.message || r.error);
+        if(r && r.error){ failed = true; console.warn('[path-a] contact upsert failed ·', r.error.message || r.error); }
         // Mirror into the local Saved buyers/sellers dropdown so it shows the
         // full email + phone immediately (it reads aari_tc_clients).
         try { saveClientCurrent(row.contact_type === 'seller' ? 'seller' : 'buyer'); } catch(_){}
       }
+      return !failed;
     }
 
     /* Pull the Supabase contacts table into the local Saved buyers/sellers
@@ -12114,14 +12116,15 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         const session = await window.AariAuth.getCurrentSession();
         if(!session || !session.user) return false;
         const client = await window.AariAuth.ensureClient();
-        await persistKeptContacts(client, session.user.id);
-        return true;
+        const ok = await persistKeptContacts(client, session.user.id);
+        return ok !== false;
       }catch(e){ console.warn('[path-a] instant contact save failed', e); return false; }
     }
     function keepBoxFeedback(cbId, saved){
       const lbl = document.getElementById(cbId + 'Lbl');
       if(!lbl) return;
-      if(saved){ lbl.textContent = '✓ Saved to your list — updates as you type'; lbl.style.color = '#5a9e72'; }
+      if(saved === 'error'){ lbl.textContent = "Couldn't save — try again in a moment"; lbl.style.color = '#c96b6b'; }
+      else if(saved){ lbl.textContent = '✓ Saved to your list — updates as you type'; lbl.style.color = '#5a9e72'; }
       else { lbl.textContent = 'Save this contact to my list for next time'; lbl.style.color = ''; }
     }
     [['paBuyerKeep','paBuyerEmail','buyer_email'],['paSellerKeep','paSellerEmail','seller_email']].forEach(function(cfg){
@@ -12137,7 +12140,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           return;
         }
         const ok = await persistKeptContactsNow();
-        keepBoxFeedback(cfg[0], ok);
+        keepBoxFeedback(cfg[0], ok ? true : 'error');
         if(!ok) cb.checked = false;
       });
     });
