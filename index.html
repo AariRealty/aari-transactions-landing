@@ -11780,6 +11780,104 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }, 2000);
     }
 
+    /* Contract reader · when the agent drops the executed contract, extract its
+       text in the browser (pdf.js, lazy-loaded only when needed) and have the
+       extract-contract edge function pull the key fields. Pre-fills are
+       NEVER overwrites — anything the agent already typed wins — and the agent
+       confirms every value step by step. Scans fail gracefully. */
+    function contractReadStatus(msg, color){
+      let el = document.getElementById('paContractReadStatus');
+      if(!el){
+        const anchor = document.getElementById('paContract');
+        const field = anchor ? anchor.closest('.field') : null;
+        if(!field) return;
+        el = document.createElement('div');
+        el.id = 'paContractReadStatus';
+        el.style.cssText = 'font-size:12px;margin-top:8px;letter-spacing:.02em';
+        field.appendChild(el);
+      }
+      el.textContent = msg || '';
+      el.style.color = color || '#6b6b6b';
+      el.style.display = msg ? 'block' : 'none';
+    }
+    let pdfjsReady = null;
+    function loadPdfJs(){
+      if(pdfjsReady) return pdfjsReady;
+      pdfjsReady = new Promise(function(resolve, reject){
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        s.onload = function(){
+          try{
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            resolve(window.pdfjsLib);
+          }catch(e){ reject(e); }
+        };
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+      return pdfjsReady;
+    }
+    async function extractPdfText(file){
+      const lib = await loadPdfJs();
+      const buf = await file.arrayBuffer();
+      const doc = await lib.getDocument({ data: buf }).promise;
+      let out = '';
+      const maxPages = Math.min(doc.numPages, 25);
+      for(let i = 1; i <= maxPages; i++){
+        const page = await doc.getPage(i);
+        const tc = await page.getTextContent();
+        out += tc.items.map(function(it){ return it.str; }).join(' ') + '\n';
+      }
+      return out;
+    }
+    function applyExtracted(f){
+      const setIf = function(id, key, v){
+        if(!v) return;
+        const inp = document.getElementById(id);
+        if(inp && !inp.value) inp.value = v; // the agent's own typing always wins
+        if(state.data[key] == null || state.data[key] === '') state.data[key] = v;
+      };
+      setIf('paBuyerName',     'buyer_name',    (f.buyer_names || []).join(' & '));
+      setIf('paSellerName',    'seller_name',   (f.seller_names || []).join(' & '));
+      setIf('paAddress',       'address',       f.property_address || '');
+      setIf('paEffectiveDate', 'effectiveDate', f.effective_date || '');
+      setIf('paClosingDate',   'closingDate',   f.closing_date || '');
+      setIf('paTitleCompany',  'titleCompany',  f.title_company_or_escrow_agent || '');
+      if(f.form_type && f.form_type !== 'Unknown') state.data.contractFormType = f.form_type;
+      if(f.purchase_price) state.data.contractPurchasePrice = f.purchase_price;
+      if(f.escrow_amount) state.data.contractEscrowAmount = f.escrow_amount;
+      try { scheduleAutoSave(null); } catch(_){}
+    }
+    (function(){
+      const inp = document.getElementById('paContract');
+      if(!inp) return;
+      inp.addEventListener('change', async function(){
+        const file = inp.files && inp.files[0];
+        if(!file) return;
+        contractReadStatus('Reading the contract…', '#c49a3c');
+        try{
+          const text = await extractPdfText(file);
+          if(!text || text.trim().length < 200){
+            contractReadStatus("Couldn't read this copy (likely a scan) — fill the details manually.", '#c96b6b');
+            return;
+          }
+          const client = await window.AariAuth.ensureClient();
+          const r = await client.functions.invoke('extract-contract', { body: { text: text } });
+          const d = r && r.data;
+          if(d && d.ok && d.fields){
+            applyExtracted(d.fields);
+            const ft = (d.fields.form_type && d.fields.form_type !== 'Unknown') ? ('Reads as ' + d.fields.form_type + ' · ') : '';
+            contractReadStatus('✓ ' + ft + 'pre-filled what we found — confirm each step as you go.', '#5a9e72');
+          } else {
+            contractReadStatus("Couldn't extract the details — fill them in manually.", '#c96b6b');
+          }
+        }catch(e){
+          console.warn('[contract-read] failed', e);
+          contractReadStatus("Couldn't extract the details — fill them in manually.", '#c96b6b');
+        }
+      });
+    })();
+
     /* Property-address autocomplete · free Photon geocoder (OpenStreetMap data),
        biased to Southwest Florida, no API key. Debounced 300ms; suggestions
        render in the existing pa-combo dropdown styling. Picking one fills the
