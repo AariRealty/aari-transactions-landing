@@ -360,6 +360,10 @@
   .tpb-cert-clean{font-size:11.5px;color:#2f855a;margin:6px 0 0}
   .tpb-body{padding:18px 22px;background:#fafafa}
   .tpb-section-eb{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#0f0f0f;font-weight:600;margin:0 0 12px}
+  .tpb-assign{display:flex;align-items:center;gap:10px;margin-top:12px}
+  .tpb-assign label{font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:#888;font-weight:600;flex:none}
+  .tpb-assign select{font:inherit;font-size:12.5px;padding:6px 10px;border:0.5px solid rgba(15,15,15,0.25);border-radius:7px;background:#fff;color:#0f0f0f;cursor:pointer;max-width:220px}
+  .tpb-assign-status{font-size:11px;color:#3b6d11;font-weight:500}
   .tpb-docs-section{padding:14px 22px;border-bottom:0.5px solid rgba(15,15,15,0.08)}
   .tpb-docs-head{margin-bottom:10px}
   .tpb-docs-eb{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#0f0f0f;font-weight:600;margin:0}
@@ -605,6 +609,11 @@
     <p class="tpb-eb" id="tpb-stage">&nbsp;</p>
     <p class="tpb-addr" id="tpb-addr">&nbsp;</p>
     <p class="tpb-meta" id="tpb-meta">&nbsp;</p>
+    <div class="tpb-assign" id="tpb-assign" hidden>
+      <label for="tpb-assign-sel">Assigned TC</label>
+      <select id="tpb-assign-sel"></select>
+      <span class="tpb-assign-status" id="tpb-assign-status"></span>
+    </div>
     <div class="tpb-cert" id="tpb-cert"></div>
   </div>
   <div class="tpb-docs-section" id="tpb-docs-section">
@@ -5011,6 +5020,60 @@ Aari Transactions`,
     }));
   }
 
+  // ============== ASSIGN TC (broker only) ==============
+  // Lets the broker assign any file to a TC. Sets files.assigned_tc_id and fires
+  // the existing acceptance SMS so the TC is notified to accept the file.
+  function renderAssignControl(file){
+    const wrap = document.getElementById('tpb-assign');
+    const sel = document.getElementById('tpb-assign-sel');
+    const statusEl = document.getElementById('tpb-assign-status');
+    if(!wrap || !sel) return;
+    const role = (_profile && _profile.role || '').toLowerCase();
+    if(role !== 'broker'){ wrap.hidden = true; return; }
+    wrap.hidden = false;
+    if(statusEl) statusEl.textContent = '';
+    const tcs = Object.values(_tcsById);
+    const cur = file.assigned_tc_id || '';
+    let html = '<option value="">— Unassigned —</option>';
+    tcs.forEach(t => {
+      const name = ((t.first_name||'') + ' ' + (t.last_name||'')).trim() || t.id;
+      html += '<option value="'+esc(t.id)+'"'+(t.id===cur?' selected':'')+'>'+esc(name)+'</option>';
+    });
+    sel.innerHTML = html;
+    sel.onchange = () => assignTcToFile(file, sel.value);
+  }
+
+  async function assignTcToFile(file, tcId){
+    const statusEl = document.getElementById('tpb-assign-status');
+    if(statusEl){ statusEl.style.color = '#888'; statusEl.textContent = 'Saving…'; }
+    try {
+      const { error } = await _client.from('files').update({ assigned_tc_id: tcId || null }).eq('id', file.id);
+      if(error) throw error;
+      file.assigned_tc_id = tcId || null;
+      const idx = _files.findIndex(f => f.id === file.id);
+      if(idx >= 0) _files[idx].assigned_tc_id = tcId || null;
+      renderKanban();
+      const tc = _tcsById[tcId];
+      const tcName = tc ? (((tc.first_name||'') + ' ' + (tc.last_name||'')).trim()) : '';
+      if(statusEl){ statusEl.style.color = '#3b6d11'; statusEl.textContent = tcId ? ('✓ Assigned to ' + tcName + ' · texting them') : '✓ Unassigned'; }
+      // Notify the TC · best-effort, uses the existing acceptance SMS.
+      if(tcId){
+        try {
+          const session = (await _client.auth.getSession()).data.session;
+          const r = await fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/send-tc-assignment-sms', {
+            method: 'POST',
+            headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + ((session && session.access_token) || '') },
+            body: JSON.stringify({ file_id: file.id }),
+          });
+          if(statusEl && r && r.ok){ statusEl.textContent = '✓ Assigned to ' + tcName + ' · text sent'; }
+        } catch(smsErr){ console.warn('[files] assignment SMS failed (non-fatal)', smsErr); }
+      }
+    } catch(err){
+      console.warn('[files] assignTcToFile failed', err);
+      if(statusEl){ statusEl.style.color = '#a32d2d'; statusEl.textContent = 'Save failed · ' + (err.message || 'try again'); }
+    }
+  }
+
   // ============== PLAYBOOK ==============
   function openPlaybook(file){
     _currentFile = file;
@@ -5036,6 +5099,9 @@ Aari Transactions`,
 
     // Documents · uploaded contract + addenda (fresh signed URL on click).
     renderDocsForFile(file);
+
+    // Assign TC · broker-only control in the drawer head.
+    renderAssignControl(file);
 
     // Closing Certainty Score · why this file scores what it scores.
     const cert = computeClosingCertainty(file);
