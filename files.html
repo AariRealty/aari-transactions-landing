@@ -57,6 +57,12 @@
   .file-search::placeholder{color:#999}
   .btn-newfile{background:#0f0f0f;color:#fff;border:none;padding:7px 14px;border-radius:7px;font-size:12px;font-weight:500;cursor:pointer;font-family:inherit}
   .btn-newfile:hover{background:#2a2a2a}
+  /* Submit-a-file overlay · embeds the intake so the TC never leaves the cockpit. */
+  .intake-overlay{display:none;position:fixed;inset:0;z-index:10000;background:rgba(15,15,15,0.55)}
+  .intake-overlay.open{display:block}
+  .intake-overlay-frame{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent}
+  .intake-overlay-close{position:fixed;top:16px;right:18px;z-index:10001;width:40px;height:40px;border-radius:50%;border:0;background:#fff;color:#111;font-size:22px;line-height:1;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.25)}
+  .intake-overlay-close:hover{background:#f0f0ee}
 
   /* Broker TC filter */
   .tc-filter{display:flex;align-items:center;gap:6px;margin-bottom:14px;font-size:11.5px}
@@ -827,6 +833,12 @@
     <p class="tpb-next-eb" id="tpb-next-eb">Coming up next stage</p>
     <ul class="tpb-next-list" id="tpb-next-list"></ul>
   </div>
+</div>
+
+<!-- Submit-a-file overlay · embeds /index.html?modal-only=1#apply in an iframe -->
+<div class="intake-overlay" id="intakeOverlay" role="dialog" aria-modal="true" aria-label="Submit a file">
+  <button type="button" class="intake-overlay-close" id="intakeOverlayClose" aria-label="Close">&times;</button>
+  <iframe class="intake-overlay-frame" id="intakeOverlayFrame" title="Submit a file" src="about:blank"></iframe>
 </div>
 
 <!-- Scripts -->
@@ -5834,8 +5846,42 @@ Aari Transactions`,
     document.addEventListener('keydown', (e) => {
       if((e.key==='Escape'||e.key==='Esc') && document.body.classList.contains('tpb-open')) closePlaybook();
     });
-    document.getElementById('btn-newfile').addEventListener('click', () => {
-      window.location.href = '/agent-submit.html';
+    // "+ New file" · open the intake in an in-page overlay (no redirect, no
+    // re-login). Same-origin iframe shares the Supabase session in localStorage.
+    function openIntakeOverlay(){
+      try { localStorage.setItem('aari_portal_authed','1'); sessionStorage.setItem('aari_portal_authed','1'); } catch(_){}
+      const ov = document.getElementById('intakeOverlay');
+      const fr = document.getElementById('intakeOverlayFrame');
+      if(!ov || !fr) return;
+      fr.setAttribute('src', '/index.html?modal-only=1&v=' + Date.now() + '#apply');
+      ov.classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeIntakeOverlay(){
+      const ov = document.getElementById('intakeOverlay');
+      const fr = document.getElementById('intakeOverlayFrame');
+      if(ov) ov.classList.remove('open');
+      if(fr) fr.setAttribute('src','about:blank');
+      document.body.style.overflow = '';
+    }
+    document.getElementById('btn-newfile').addEventListener('click', (e) => { e.preventDefault(); openIntakeOverlay(); });
+    const _ioClose = document.getElementById('intakeOverlayClose');
+    if(_ioClose) _ioClose.addEventListener('click', closeIntakeOverlay);
+    document.addEventListener('keydown', (e) => { if(e.key === 'Escape') closeIntakeOverlay(); });
+    // Intake iframe posts this when a file is submitted · close, pre-assign to this
+    // TC (so it's not stuck in Waiting for TC), and refresh the board.
+    window.addEventListener('message', async (e) => {
+      const d = e.data;
+      if(!(d && d.type === 'aari:intake-submitted')) return;
+      closeIntakeOverlay();
+      try {
+        const fileId = d.detail && d.detail.file_id;
+        const role = (_profile && _profile.role || '').toLowerCase();
+        if(fileId && _profile && role === 'tc'){
+          await _client.from('files').update({ assigned_tc_id: _profile.id }).eq('id', fileId);
+        }
+      } catch(err){ console.warn('[files] pre-assign after submit failed', err); }
+      if(typeof loadAndRender === 'function') loadAndRender();
     });
     // Live search · filters the kanban as the TC types. Searches address,
     // client name, agent contact, and raw intake fields (lender, title).
