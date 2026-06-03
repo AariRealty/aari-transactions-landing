@@ -89,7 +89,11 @@
       if (local) draft = local;
     }
     if (!draft) return;
-    showResumeModal(draft);
+    // Resume prompt removed (June 2026, Marlenyi) · the modal's Continue kept
+    // colliding with the auth gate. Instead, park the draft silently — the
+    // intake's Path A init applies window.__aariPendingDraft the moment the
+    // signed-in form activates, so the fields are simply there. No card.
+    try { window.__aariPendingDraft = draft; } catch (_) {}
   }
 
   // ===== Save / clear API =====
