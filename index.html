@@ -11866,6 +11866,54 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         // --- 6. Build audit timestamps. ---
         // (already done above · variables nowIso, submittedAtDisplay)
 
+        // --- 6.5 · Create the file record in the tracker (NON-FATAL) ---
+        // Writes a row into public.files so the submission appears in your Client
+        // Tracker / Files view for broker review + TC assignment. Mirrors the proven
+        // intake insert. If it fails (schema/RLS), the submit STILL completes — the
+        // contract + docs are already in Storage, so nothing is lost.
+        try {
+          if(submitBtn) submitBtn.innerHTML = 'Filing your transaction&hellip;';
+          var repMap = { buyer:'Buyer', seller:'Seller', both_sides:'Both' };
+          var titleContactText  = [state.data.titleCompany, state.data.titleAddress, state.data.titleContactName, state.data.titleContactEmail, state.data.titleContactPhone].filter(Boolean).join(' · ');
+          var lenderContactText = [state.data.lender, state.data.lenderContactName, state.data.lenderContactEmail, state.data.lenderContactPhone].filter(Boolean).join(' · ');
+          var rawForm = {
+            pa_title_company: state.data.titleCompany || '', pa_title_address: state.data.titleAddress || '',
+            pa_title_contact_name: state.data.titleContactName || '', pa_title_contact_email: state.data.titleContactEmail || '', pa_title_contact_phone: state.data.titleContactPhone || '',
+            pa_lender: state.data.lender || '',
+            pa_lender_contact_name: state.data.lenderContactName || '', pa_lender_contact_email: state.data.lenderContactEmail || '', pa_lender_contact_phone: state.data.lenderContactPhone || '',
+            pa_listing_agent_name: state.data.listingAgentName || '', pa_listing_agent_company: state.data.listingAgentCompany || '', pa_listing_agent_email: state.data.listingAgentEmail || '', pa_listing_agent_phone: state.data.listingAgentPhone || '',
+            pa_co_agent_name: state.data.coAgentName || '', pa_co_agent_company: state.data.coAgentCompany || '', pa_co_agent_email: state.data.coAgentEmail || '', pa_co_agent_phone: state.data.coAgentPhone || '',
+            commission_notes: state.data.commissionNotes || '', agent_notes: state.data.agentNotes || '',
+            preferred_tc: state.data.preferredTcName || 'Auto-assign', preferred_tc_id: state.data.preferredTcId || 'auto', preferred_tc_email: state.data.preferredTcEmail || '',
+            contract_url: contractUrl, contract_filename: safeContractName, additional_docs: additionalUrls, submission_id: submissionId
+          };
+          var fileRow = {
+            id: submissionId,
+            agent_id: uid,
+            service_type: state.data.serviceId || state.data.serviceType || 'tc_one_side',
+            file_type: (state.data.serviceType === 'listing' ? 'listing' : 'sale'),
+            client_type: repMap[state.data.representation] || null,
+            client_name:  state.data.buyer_name  || state.data.seller_name  || '',
+            client_email: state.data.buyer_email || state.data.seller_email || '',
+            client_phone: state.data.buyer_phone || state.data.seller_phone || '',
+            property_address: state.data.address || '',
+            effective_date: state.data.effectiveDate || null,
+            closing_date:   state.data.closingDate   || null,
+            lender_contact: lenderContactText || null,
+            title_contact:  titleContactText  || null,
+            assigned_tc_id: null,
+            is_aari_engaged: true,
+            service_agreement_signed: !!(state.profile && state.profile.agreement_signed),
+            status: 'intake_received',
+            raw_form_data: rawForm
+          };
+          var insRes = await supabase.from('files').insert(fileRow).select().single();
+          if(insRes && insRes.error){ console.warn('[path-a] files-row insert failed (file is in Storage; submission still complete) ·', insRes.error.message || insRes.error); }
+          else { console.log('[path-a] file record created in tracker · id=' + submissionId); }
+        } catch(fileRowErr){
+          console.warn('[path-a] files-row insert threw (non-fatal) ·', fileRowErr);
+        }
+
         // --- 7. Call the Supabase Edge Function · send-file-notification.
         // The function sends a branded HTML email via Resend to the configured
         // TC inbox. NOT Netlify Forms · this path is free up to ~2,500 file
