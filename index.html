@@ -161,7 +161,7 @@
   ::selection{background:var(--accent);color:#fff}
   /* ?modal-only=1 · used when /index.html#apply is embedded in an iframe from the portal.
      Hides every page chrome element so the iframe shows only the intake modal popup. */
-  body.aari-modal-only > :not(#intake-modal):not(script):not(style):not(link):not(noscript){display:none!important}
+  body.aari-modal-only > :not(#intake-modal):not(#aari-resume-modal):not(script):not(style):not(link):not(noscript){display:none!important}
   body.aari-modal-only{background:transparent}
   body.aari-modal-only #intake-modal{background:transparent!important}
   /* In modal-only mode the intake's own × is the single exit (the page loads
@@ -10100,6 +10100,24 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     if(window.location.hash === '#apply') setTimeout(open, 50);
     window.addEventListener('hashchange', () => { if(window.location.hash === '#apply') open(); });
 
+    /* Step 2 · resume a saved draft. js/draft-detection.js shows the
+       "Continue or start over?" prompt and fires this event on Continue.
+       Open the modal, wait for Path A to activate (authed auto-route),
+       then restore every field + the step position. */
+    window.addEventListener('aari:resume-intake', (e) => {
+      const draft = e.detail && e.detail.draft;
+      if(!draft) return;
+      open();
+      let tries = 0;
+      const poll = setInterval(() => {
+        tries++;
+        if(window.AariPathA && window.AariPathA.isActive && window.AariPathA.isActive()){
+          clearInterval(poll);
+          if(window.AariPathA.applyDraft) window.AariPathA.applyDraft(draft);
+        } else if(tries > 50){ clearInterval(poll); } // give up quietly after ~5s
+      }, 100);
+    });
+
     /* --- Load TC data --- */
     fetch('/tcs.json').then(r => r.json()).then(data => { tcsData = data.tcs; });
   })();
@@ -11448,10 +11466,86 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     Object.keys(CONTACT_LIVE_BINDINGS).forEach(function(id){
       const inp = document.getElementById(id);
       if(!inp) return;
-      const write = function(){ state.data[CONTACT_LIVE_BINDINGS[id]] = inp.value.trim(); };
+      const write = function(){
+        state.data[CONTACT_LIVE_BINDINGS[id]] = inp.value.trim();
+        scheduleAutoSave(inp); // Step 2 · debounced draft save 2s after typing stops
+      };
       inp.addEventListener('input', write);
       inp.addEventListener('change', write); // catches programmatic/combobox fills too
     });
+
+    /* Step 2 · auto-save (2s after typing stops) with Saving… / ✓ Saved.
+       Persists via AariDraft (js/draft-detection.js): localStorage always,
+       Supabase `drafts` table when signed in. Close the form mid-way and the
+       resume prompt restores everything on the next visit via applyDraft(). */
+    let autoSaveTimer = null;
+    let saveStatusEl = null;
+    let saveStatusHideTimer = null;
+    function saveStatus(afterInput, mode){
+      if(!saveStatusEl){
+        saveStatusEl = document.createElement('div');
+        saveStatusEl.id = 'paAutoSaveStatus';
+        saveStatusEl.setAttribute('aria-live', 'polite');
+        saveStatusEl.style.cssText = 'font-size:12px;margin-top:6px;letter-spacing:.02em;transition:opacity .3s';
+      }
+      if(afterInput && afterInput.parentNode && saveStatusEl.parentNode !== afterInput.parentNode){
+        afterInput.parentNode.appendChild(saveStatusEl);
+      }
+      if(saveStatusHideTimer){ clearTimeout(saveStatusHideTimer); saveStatusHideTimer = null; }
+      saveStatusEl.style.opacity = '1';
+      if(mode === 'saving'){
+        saveStatusEl.textContent = 'Saving…';
+        saveStatusEl.style.color = '#6b6b6b';
+      } else if(mode === 'saved'){
+        saveStatusEl.textContent = '✓ Saved';
+        saveStatusEl.style.color = '#1D9E75';
+        saveStatusHideTimer = setTimeout(function(){ saveStatusEl.style.opacity = '0'; }, 2500);
+      } else if(mode === 'error'){
+        saveStatusEl.textContent = 'Not saved — check connection';
+        saveStatusEl.style.color = '#A32D2D';
+      }
+    }
+    function scheduleAutoSave(inp){
+      if(autoSaveTimer) clearTimeout(autoSaveTimer);
+      autoSaveTimer = setTimeout(async function(){
+        autoSaveTimer = null;
+        if(!window.AariDraft || typeof window.AariDraft.save !== 'function') return;
+        saveStatus(inp, 'saving');
+        try{
+          await window.AariDraft.save({
+            service_type: state.data.serviceId || state.data.serviceType || '',
+            current_step: state.step,
+            form_data: state.data,
+            property_address: state.data.address || ''
+          });
+          saveStatus(inp, 'saved');
+        }catch(e){
+          console.warn('[path-a] auto-save failed', e);
+          saveStatus(inp, 'error');
+        }
+      }, 2000);
+    }
+
+    /* Step 2 · restore a saved draft into the live form (called on resume). */
+    function applyDraft(draft){
+      try{
+        const fd = (draft && draft.form_data) || {};
+        Object.assign(state.data, fd);
+        Object.keys(CONTACT_LIVE_BINDINGS).forEach(function(id){
+          const inp = document.getElementById(id);
+          const v = fd[CONTACT_LIVE_BINDINGS[id]];
+          if(inp && v != null) inp.value = v;
+        });
+        const MISC_RESTORE = { paAddress:'address', paEffectiveDate:'effectiveDate', paClosingDate:'closingDate', paCommissionNotes:'commissionNotes', paAgentNotes:'agentNotes' };
+        Object.keys(MISC_RESTORE).forEach(function(id){
+          const inp = document.getElementById(id);
+          const v = fd[MISC_RESTORE[id]];
+          if(inp && v != null) inp.value = v;
+        });
+        if(draft && draft.current_step != null) state.step = draft.current_step;
+        render();
+      }catch(e){ console.warn('[path-a] applyDraft failed', e); }
+    }
 
     /* Service-confirm chip · Option J · clean chip with DETAILS/CHANGE below outside.
        Shows on Path A from Step 3 onward once a service is locked in.
@@ -11825,6 +11919,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     function advance(){
       if(!validate()) return;
+      try { scheduleAutoSave(null); } catch(_){} // Step 2 · keep the draft's step position fresh
       // Editing a single field from review · go straight back to review, not through every later step.
       if(state.editingReturn){
         state.editingReturn = false;
@@ -12084,6 +12179,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         console.log('[path-a] file submission complete · contract + ' + additionalUrls.length + ' addl docs in Supabase · submission_id=' + submissionId);
         var sb = document.getElementById('aariSubmitStatus'); if(sb) sb.style.display = 'none';
         try { window.__aariFileSubmitted = true; } catch(_){} // success screen · X closes to portal, no discard prompt
+        try { if(window.AariDraft && window.AariDraft.clear) window.AariDraft.clear(); } catch(_){} // Step 2 · submitted = draft no longer needed
         state.step = 'done';
         render();
       } catch(err){
@@ -12129,7 +12225,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     // Expose state.profile so the signed-history modal can resolve the agent's email.
     function getProfile(){ return state.profile || {}; }
 
-    window.AariPathA = { init, advance, back, submit, isActive, deactivate, getProfile };
+    window.AariPathA = { init, advance, back, submit, isActive, deactivate, getProfile, applyDraft };
   })();
 
   /* ============================================================
