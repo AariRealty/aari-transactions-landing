@@ -4985,7 +4985,7 @@ Aari Transactions`,
     }
   }
 
-  function renderDocsForFile(file){
+  async function renderDocsForFile(file){
     const host = document.getElementById('tpb-docs-body');
     if(!host) return;
     const raw = file.raw_form_data || {};
@@ -5008,16 +5008,37 @@ Aari Transactions`,
       host.innerHTML = '<p class="tpb-docs-empty">No contract or documents on file yet.</p>';
       return;
     }
+    const rowHtml = (d, open) =>
+      '<span class="tpb-doc-ico">'+docIcon+'</span>' +
+      '<span class="tpb-doc-main"><p class="tpb-doc-name">'+esc(d.name)+'</p><p class="tpb-doc-kind">'+esc(d.kind)+'</p></span>' +
+      '<span class="tpb-doc-open">'+open+'</span>';
+    // Render placeholders immediately, then mint fresh signed links and turn each
+    // row into a REAL anchor · native open, immune to popup blockers.
     host.innerHTML = docs.map((d, i) =>
-      '<button type="button" class="tpb-doc" data-doc-idx="'+i+'">' +
-        '<span class="tpb-doc-ico">'+docIcon+'</span>' +
-        '<span class="tpb-doc-main"><p class="tpb-doc-name">'+esc(d.name)+'</p><p class="tpb-doc-kind">'+esc(d.kind)+'</p></span>' +
-        '<span class="tpb-doc-open">Open</span>' +
-      '</button>'
+      '<div class="tpb-doc" data-doc-idx="'+i+'">'+rowHtml(d, 'Preparing…')+'</div>'
     ).join('');
-    host.querySelectorAll('[data-doc-idx]').forEach(btn => btn.addEventListener('click', () => {
-      const d = docs[parseInt(btn.getAttribute('data-doc-idx'),10)];
-      if(d) openFileDoc(btn, d.path, d.url);
+    await Promise.all(docs.map(async (d, i) => {
+      let url = '';
+      try {
+        if(d.path && _client && _client.storage){
+          const { data, error } = await _client.storage.from('transaction-files').createSignedUrl(d.path, 3600);
+          if(error){ console.warn('[files] signed URL error for', d.path, error); }
+          if(data && data.signedUrl) url = data.signedUrl;
+        }
+      } catch(err){ console.warn('[files] createSignedUrl threw', err); }
+      if(!url && d.url) url = d.url;
+      const row = host.querySelector('[data-doc-idx="'+i+'"]');
+      if(!row) return;
+      if(url){
+        const a = document.createElement('a');
+        a.className = 'tpb-doc';
+        a.href = url; a.target = '_blank'; a.rel = 'noopener';
+        a.innerHTML = rowHtml(d, 'Open');
+        row.replaceWith(a);
+      } else {
+        const openEl = row.querySelector('.tpb-doc-open');
+        if(openEl){ openEl.textContent = 'Unavailable'; openEl.style.color = '#a32d2d'; }
+      }
     }));
   }
 
