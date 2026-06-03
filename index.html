@@ -10091,6 +10091,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       // If the file was already submitted (success screen), there's nothing to
       // discard · close cleanly and return to the portal, no confirmation.
       var alreadySubmitted = !!window.__aariFileSubmitted;
+      // Flush any pending auto-save BEFORE closing — the 2s debounce timer dies
+      // with the modal, which was silently losing the last-typed fields.
+      if(!alreadySubmitted){
+        try { if(window.AariPathA && window.AariPathA.flushAutoSave) window.AariPathA.flushAutoSave(); } catch(_){}
+      }
       // Full-page modal-only mode (opened from the portal): the × returns to the
       // portal rather than leaving a blank page behind the closed modal.
       try {
@@ -10751,6 +10756,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     /* Reset all Path A per-file inputs so a re-open with a different agent starts clean. */
     function clearPathAInputs(){
+      try { resetFieldVisuals(); } catch(_){} // no phantom "Saved" on blank reopened fields
       ['paAddress','paEffectiveDate','paClosingDate',
        'paTitleCompany','paTitleAddress','paTitleContactName','paTitleContactEmail','paTitleContactPhone',
        'paLender','paLenderContactName','paLenderContactEmail','paLenderContactPhone',
@@ -11651,7 +11657,39 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     }
     function paintSaving(){ /* the saving pill is already on screen while the timer runs */ }
     function paintSavedField(inp){
+      // An empty field is never "Saved" — clear its state instead. (Stale green
+      // borders on blank inputs were confusing after typing-then-clearing.)
+      if(!inp.value || !inp.value.trim()){ setFieldState(inp, null, null, ''); return; }
       setFieldState(inp, 'field-saved', 'field-status-saved', '✓ Saved');
+    }
+    /* Wipe every save/error visual · used when the form resets so a fresh or
+       reopened form never shows phantom "Saved" on blank fields. */
+    function resetFieldVisuals(){
+      Object.keys(CONTACT_LIVE_BINDINGS).forEach(function(id){
+        const inp = document.getElementById(id);
+        if(inp) setFieldState(inp, null, null, '');
+      });
+      dirtyFields.clear();
+    }
+    /* Save RIGHT NOW (no debounce) · called when the modal closes so the last
+       typed fields are never lost to a cancelled timer. Local write is sync. */
+    function flushAutoSave(){
+      if(autoSaveTimer){ clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+      if(!window.AariDraft || typeof window.AariDraft.save !== 'function') return;
+      const d = state.data || {};
+      const hasData = Object.keys(d).some(function(k){
+        const v = d[k];
+        return v && typeof v === 'string' && v.trim() !== '';
+      });
+      if(!hasData) return; // nothing typed yet · don't create junk drafts
+      try{
+        window.AariDraft.save({
+          service_type: d.serviceId || d.serviceType || '',
+          current_step: state.step,
+          form_data: d,
+          property_address: d.address || ''
+        });
+      }catch(e){ console.warn('[path-a] flush save failed', e); }
     }
     function paintSaved(){
       dirtyFields.forEach(function(id){
@@ -12398,7 +12436,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     // Expose state.profile so the signed-history modal can resolve the agent's email.
     function getProfile(){ return state.profile || {}; }
 
-    window.AariPathA = { init, advance, back, submit, isActive, deactivate, getProfile, applyDraft };
+    window.AariPathA = { init, advance, back, submit, isActive, deactivate, getProfile, applyDraft, flushAutoSave };
   })();
 
   /* ============================================================
