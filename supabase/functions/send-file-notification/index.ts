@@ -18,15 +18,10 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { sendQuoSms } from "../_shared/quo-sms.ts";
 
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
 const TC_INBOX       = Deno.env.get("TC_INBOX")       ?? "agreements@aaritransactions.com";
 const FROM_ADDRESS   = Deno.env.get("FROM_ADDRESS")   ?? "files@aaritransactions.com";
-// SMS fallback recipient for auto-assign files (no preferred TC picked).
-// Set as a Supabase secret · e.g. the broker/ops line in E.164 (+1239...).
-const QUO_OPS_NUMBER = Deno.env.get("QUO_OPS_NUMBER") ?? "";
-const SITE_URL       = Deno.env.get("SITE_URL")       ?? "https://aaritransactions.com";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -70,7 +65,6 @@ interface FileSubmission {
   service_id?: string;
   representation?: string;
   preferred_tc?: string;
-  preferred_tc_phone?: string;
   property_address?: string;
   effective_date?: string;
   closing_date?: string;
@@ -292,6 +286,11 @@ serve(async (req) => {
     return jsonResp({ error: "Method not allowed" }, 405);
   }
 
+  if (!RESEND_API_KEY) {
+    console.error("[send-file-notification] RESEND_API_KEY env var not set");
+    return jsonResp({ error: "Server misconfigured · RESEND_API_KEY missing" }, 500);
+  }
+
   let data: FileSubmission;
   try {
     data = await req.json();
@@ -299,78 +298,38 @@ serve(async (req) => {
     return jsonResp({ error: "Invalid JSON body" }, 400);
   }
 
-  // ---- 1. PRIMARY ALERT · text the TC (Quo SMS works today; email is stuck on
-  //         Resend domain verification, so SMS is the reliable channel). ----
-  const propertyShort = (data.property_address || "a new property").split(",")[0].trim();
-  const agentName = data.agent_name || "an agent";
-  const smsTo = (data.preferred_tc_phone && data.preferred_tc_phone.trim()) || QUO_OPS_NUMBER;
-  let smsResult: { ok: boolean; error?: string; skipped?: boolean } = { ok: false, skipped: true };
-  if (smsTo) {
-    const smsBody =
-      `Aari · New file: ${propertyShort} from ${agentName}` +
-      `${data.preferred_tc ? ` · TC: ${data.preferred_tc}` : ""}.\n\n` +
-      `Open the tracker: ${SITE_URL}/files`;
-    try {
-      smsResult = await sendQuoSms({
-        to: smsTo,
-        body: smsBody,
-        sourceContext: {
-          reason: "new_file_submission",
-          submission_id: data.submission_id || null,
-          preferred_tc: data.preferred_tc || null,
-        },
-      });
-    } catch (e: any) {
-      smsResult = { ok: false, error: String(e?.message || e) };
-      console.error("[send-file-notification] SMS threw", e);
-    }
-  } else {
-    console.warn("[send-file-notification] no SMS recipient (no preferred_tc_phone, no QUO_OPS_NUMBER)");
-  }
+  const subject =
+    `New file · ${data.agent_name || "Agent"} · ${data.property_address || "Property"}`;
 
-  // ---- 2. SECONDARY · branded email to the TC inbox. Best-effort: a failure
-  //         here (e.g. unverified Resend domain) must NOT fail the request. ----
-  let emailOk = false;
-  let emailId: string | undefined;
-  if (RESEND_API_KEY) {
-    try {
-      const subject = `New file · ${agentName} · ${data.property_address || "Property"}`;
-      const html = buildEmailHTML(data);
-      const resp = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${RESEND_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: `Aari Transactions <${FROM_ADDRESS}>`,
-          to: [TC_INBOX],
-          reply_to: data.agent_email || undefined,
-          subject,
-          html,
-        }),
-      });
-      if (resp.ok) {
-        const result = await resp.json();
-        emailOk = true;
-        emailId = result?.id;
-        console.log("[send-file-notification] email sent", emailId);
-      } else {
-        console.error("[send-file-notification] Resend failed (non-fatal)", resp.status, await resp.text());
-      }
-    } catch (err: any) {
-      console.error("[send-file-notification] email exception (non-fatal)", err);
-    }
-  }
+  const html = buildEmailHTML(data);
 
-  // Success as long as at least one channel went out. SMS is the one that
-  // matters right now, so the request succeeds whenever the SMS sends.
-  return jsonResp({
-    success: smsResult.ok || emailOk,
-    sms_sent: smsResult.ok,
-    sms_skipped: !!smsResult.skipped,
-    sms_error: smsResult.error || null,
-    email_sent: emailOk,
-    email_id: emailId || null,
-  });
+  try {
+    const resp = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: `Aari Transactions <${FROM_ADDRESS}>`,
+        to: [TC_INBOX],
+        reply_to: data.agent_email || undefined,
+        subject,
+        html,
+      }),
+    });
+
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      console.error("[send-file-notification] Resend API failed", resp.status, errBody);
+      return jsonResp({ error: "Email send failed", detail: errBody }, 502);
+    }
+
+    const result = await resp.json();
+    console.log("[send-file-notification] sent", result?.id);
+    return jsonResp({ success: true, email_id: result?.id });
+  } catch (err: any) {
+    console.error("[send-file-notification] exception", err);
+    return jsonResp({ error: String(err?.message || err) }, 500);
+  }
 });
