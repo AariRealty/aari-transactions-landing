@@ -5863,8 +5863,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         <section class="pa-step" data-pa-step="4" hidden>
           <div class="field">
             <label for="paAddress">Property address</label>
-            <input type="text" id="paAddress" name="pa_address" placeholder="1247 SE 14th Pl" autocomplete="off">
-            <div class="help">Street address only. No city or state needed.</div>
+            <div class="pa-combo">
+              <input type="text" id="paAddress" name="pa_address" placeholder="Start typing the address&hellip;" autocomplete="off">
+              <div class="pa-combo-menu" id="paAddressMenu" hidden></div>
+            </div>
+            <div class="help">Start typing &middot; pick the full address from the list.</div>
           </div>
         </section>
         <section class="pa-step" data-pa-step="effective" hidden>
@@ -10639,7 +10642,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       3:  { h:'Who are you <em>representing?</em>', s:'One pick.' },
       'clients-buyer':  { h:'Buyer <em>client?</em>',  s:'Name, email, phone · how we identify your buyer.' },
       'clients-seller': { h:'Seller <em>client?</em>', s:'Name, email, phone · how we identify your seller.' },
-      4:  { h:'<em>Property</em> address?',       s:'Street address only.' },
+      4:  { h:'<em>Property</em> address?',       s:'Start typing and pick the address.' },
       'effective': { h:'<em>Effective</em> date?', s:'When the contract was fully executed.' },
       5:  { h:'<em>Closing</em> date?',           s:'When does this deal close?' },
       'hoa': { h:'<em>HOA</em> or condo?',         s:'Is the property in an association?' },
@@ -11755,6 +11758,64 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         }
       }, 2000);
     }
+
+    /* Property-address autocomplete · free Photon geocoder (OpenStreetMap data),
+       biased to Southwest Florida, no API key. Debounced 300ms; suggestions
+       render in the existing pa-combo dropdown styling. Picking one fills the
+       FULL address (street, city, state, zip) and auto-saves the draft. */
+    (function(){
+      const inp = document.getElementById('paAddress');
+      const menu = document.getElementById('paAddressMenu');
+      if(!inp || !menu) return;
+      let timer = null;
+      let reqSeq = 0;
+      function hideMenu(){ menu.hidden = true; menu.innerHTML = ''; }
+      function formatFeature(f){
+        const p = (f && f.properties) || {};
+        const parts = [];
+        const line1 = [p.housenumber, p.street].filter(Boolean).join(' ');
+        if(line1) parts.push(line1); else if(p.name) parts.push(p.name);
+        if(p.city) parts.push(p.city);
+        else if(p.county) parts.push(p.county.replace(/ County$/,''));
+        if(p.state) parts.push(p.state);
+        if(p.postcode) parts.push(p.postcode);
+        return parts.join(', ');
+      }
+      inp.addEventListener('input', function(){
+        const q = inp.value.trim();
+        if(timer) clearTimeout(timer);
+        if(q.length < 4){ hideMenu(); return; }
+        timer = setTimeout(async function(){
+          const mySeq = ++reqSeq;
+          try{
+            const r = await fetch('https://photon.komoot.io/api/?q=' + encodeURIComponent(q) + '&limit=6&lat=26.64&lon=-81.87&lang=en');
+            const d = await r.json();
+            if(mySeq !== reqSeq) return; // a newer keystroke superseded this request
+            const seen = {};
+            const rows = ((d && d.features) || []).map(formatFeature).filter(function(s){
+              if(!s || seen[s]) return false; seen[s] = true; return true;
+            }).slice(0, 6);
+            if(!rows.length){ hideMenu(); return; }
+            menu.innerHTML = rows.map(function(s){
+              return '<div class="pa-combo-item" data-addr-pick="' + escapeHtml(s) + '"><span class="pa-combo-name">' + escapeHtml(s) + '</span></div>';
+            }).join('');
+            menu.hidden = false;
+            menu.querySelectorAll('[data-addr-pick]').forEach(function(b){
+              b.addEventListener('click', function(){
+                inp.value = b.getAttribute('data-addr-pick');
+                state.data.address = inp.value;
+                hideMenu();
+                scheduleAutoSave(inp);
+              });
+            });
+          }catch(_){ if(mySeq === reqSeq) hideMenu(); }
+        }, 300);
+      });
+      document.addEventListener('click', function(e){
+        if(e.target !== inp && !menu.contains(e.target)) hideMenu();
+      });
+      inp.addEventListener('keydown', function(e){ if(e.key === 'Escape') hideMenu(); });
+    })();
 
     /* Option C · opt-in contact book. Only contacts the agent EXPLICITLY checked
        "Save this contact to my list" for are written to the contacts table —
