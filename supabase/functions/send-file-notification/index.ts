@@ -18,10 +18,15 @@
 
 // deno-lint-ignore-file no-explicit-any
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { sendQuoSms } from "../_shared/quo-sms.ts";
 
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
 const TC_INBOX       = Deno.env.get("TC_INBOX")       ?? "agreements@aaritransactions.com";
 const FROM_ADDRESS   = Deno.env.get("FROM_ADDRESS")   ?? "files@aaritransactions.com";
+// SMS fallback recipient for auto-assign files (no preferred TC picked).
+// Set as a Supabase secret · e.g. the broker/ops line in E.164 (+1239...).
+const QUO_OPS_NUMBER = Deno.env.get("QUO_OPS_NUMBER") ?? "";
+const SITE_URL       = Deno.env.get("SITE_URL")       ?? "https://aaritransactions.com";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -65,6 +70,7 @@ interface FileSubmission {
   service_id?: string;
   representation?: string;
   preferred_tc?: string;
+  preferred_tc_phone?: string;
   property_address?: string;
   effective_date?: string;
   closing_date?: string;
