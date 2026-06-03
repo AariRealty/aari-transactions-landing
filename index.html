@@ -10104,9 +10104,27 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
        "Continue or start over?" prompt and fires this event on Continue.
        Open the modal, wait for Path A to activate (authed auto-route),
        then restore every field + the step position. */
-    window.addEventListener('aari:resume-intake', (e) => {
+    window.addEventListener('aari:resume-intake', async (e) => {
       const draft = e.detail && e.detail.draft;
       if(!draft) return;
+      // Carry the existing auth session forward BEFORE opening. The resume
+      // card can fire before Supabase finishes restoring the session from
+      // localStorage, so without this warm-up the auto-route saw "no session"
+      // and showed the login gate. getSession() also silently refreshes an
+      // expired token in the background — no login screen.
+      try{
+        if(window.AariAuth){
+          if(window.AariAuth.ensureClient){
+            const client = await window.AariAuth.ensureClient();
+            if(client && client.auth && client.auth.getSession){
+              await client.auth.getSession();
+            }
+          }
+          if(window.AariAuth.getCurrentSession){
+            await window.AariAuth.getCurrentSession();
+          }
+        }
+      }catch(err){ console.warn('[resume] session warm-up failed', err); }
       open();
       let tries = 0;
       const poll = setInterval(() => {
@@ -10114,7 +10132,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         if(window.AariPathA && window.AariPathA.isActive && window.AariPathA.isActive()){
           clearInterval(poll);
           if(window.AariPathA.applyDraft) window.AariPathA.applyDraft(draft);
-        } else if(tries > 50){ clearInterval(poll); } // give up quietly after ~5s
+        } else if(tries > 100){ clearInterval(poll); } // give up quietly after ~10s
       }, 100);
     });
 
