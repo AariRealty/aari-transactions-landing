@@ -364,6 +364,21 @@
   .tpb-assign label{font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:#888;font-weight:600;flex:none}
   .tpb-assign select{font:inherit;font-size:12.5px;padding:6px 10px;border:0.5px solid rgba(15,15,15,0.25);border-radius:7px;background:#fff;color:#0f0f0f;cursor:pointer;max-width:220px}
   .tpb-assign-status{font-size:11px;color:#3b6d11;font-weight:500}
+  .tpb-vf-emailwrap{margin-top:14px;padding-top:14px;border-top:0.5px solid rgba(15,15,15,0.1)}
+  .tpb-vf-email-head{font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:#888;font-weight:600;margin:0 0 10px}
+  .tpb-vfe{border:0.5px solid rgba(24,95,165,0.35);border-radius:8px;padding:12px;margin-bottom:10px;background:#fbfdff}
+  .tpb-vfe.sent{border-color:rgba(15,15,15,0.12);background:#fff}
+  .tpb-vfe-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .tpb-vfe-name{font-size:12.5px;font-weight:600;color:#0f0f0f}
+  .tpb-vfe-badge{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;color:#185fa5;background:#e6f1fb;padding:2px 8px;border-radius:6px}
+  .tpb-vfe-badge.sent{color:#3b6d11;background:#eaf3de}
+  .tpb-vfe-row{display:flex;gap:8px;font-size:12px;margin-bottom:3px}
+  .tpb-vfe-k{flex:none;width:50px;color:#999;text-transform:uppercase;font-size:10px;letter-spacing:.3px;padding-top:1px}
+  .tpb-vfe-v{color:#3a3a38;word-break:break-word}
+  .tpb-vfe-body{width:100%;min-height:118px;margin-top:8px;font:inherit;font-size:12px;line-height:1.5;color:#3a3a38;border:0.5px solid rgba(15,15,15,0.14);border-radius:6px;padding:9px;background:#fff;resize:vertical}
+  .tpb-vfe-actions{display:flex;gap:8px;margin-top:9px}
+  .tpb-vfe-actions button{font:inherit;font-size:11.5px;font-weight:600;padding:6px 12px;border-radius:7px;border:0.5px solid rgba(15,15,15,0.25);background:#fff;color:#0f0f0f;cursor:pointer}
+  .tpb-vfe-actions button:hover{background:#fafafa}
   .tpb-docs-section{padding:14px 22px;border-bottom:0.5px solid rgba(15,15,15,0.08)}
   .tpb-docs-head{margin-bottom:10px}
   .tpb-docs-eb{font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#0f0f0f;font-weight:600;margin:0}
@@ -685,6 +700,9 @@
         <optgroup label="Buyer Reps">
           <option value="bbe_1">BBA Exclusive (BBE-1)</option>
           <option value="bbe_2">BBA Non-Exclusive (BBE-2)</option>
+        </optgroup>
+        <optgroup label="New Construction">
+          <option value="builder">Builder / New Construction</option>
         </optgroup>
       </select>
       <label for="tpb-eff" style="margin-left:4px">Effective</label>
@@ -3621,7 +3639,7 @@ Aari Transactions`,
     return (labels[ft] || {})[stage] || stage;
   }
 
-  function renderVerificationsForFile(file){
+  async function renderVerificationsForFile(file){
     const ct = file.contract_type || _dlState.contract;
     const hostEl = document.getElementById('tpb-vf-body');
     const metaEl = document.getElementById('tpb-vf-meta');
@@ -3725,6 +3743,59 @@ Aari Transactions`,
       if(!item) return;
       sendVerificationAction(file, item, btn);
     }));
+
+    // Option B · embed the stage's email(s) directly in the task stream.
+    await embedStageEmails(file, hostEl);
+  }
+
+  // Option B · render the stage's recommended email(s) as cards inside the task
+  // stream — the full email lives with the work it belongs to. Reuses the email
+  // playbook + fillEmailVars; hides the separate "What to send next" section.
+  async function embedStageEmails(file, host){
+    if(!host) return;
+    const stage = deriveStage(file);
+    const ft = file.file_type || 'sale';
+    const list = ((EMAIL_PLAYBOOK[ft] || {})[stage] || []).filter(e => (typeof e.showIf === 'function' ? e.showIf(file) : true));
+    const sep = document.getElementById('tpb-body');
+    if(sep) sep.style.display = list.length ? 'none' : '';
+    if(!list.length) return;
+    const agent = await loadAgentForFile(file.agent_id);
+    const sends = _sendsByFile[file.id] || {};
+    const wrap = document.createElement('div');
+    wrap.className = 'tpb-vf-emailwrap';
+    wrap.innerHTML = '<p class="tpb-vf-email-head">Email to send at this stage</p>' + list.map(e => {
+      const sent = sends[e.id];
+      const to = esc(fillEmailVars(e.to || '', file, agent));
+      const cc = esc(fillEmailVars(e.cc || '', file, agent));
+      const subj = esc(fillEmailVars(e.subject || '', file, agent));
+      const body = esc(fillEmailVars(e.body || '', file, agent));
+      const eid = esc(e.id);
+      return '<div class="tpb-vfe'+(sent?' sent':'')+'" data-vfe="'+eid+'">' +
+        '<div class="tpb-vfe-top"><span class="tpb-vfe-name">'+esc(e.label)+'</span>' +
+          (sent ? '<span class="tpb-vfe-badge sent">&check; Sent</span>' : '<span class="tpb-vfe-badge">Send</span>') +
+        '</div>' +
+        '<div class="tpb-vfe-row"><span class="tpb-vfe-k">To</span><span class="tpb-vfe-v">'+to+'</span></div>' +
+        (cc ? '<div class="tpb-vfe-row"><span class="tpb-vfe-k">Cc</span><span class="tpb-vfe-v">'+cc+'</span></div>' : '') +
+        '<div class="tpb-vfe-row"><span class="tpb-vfe-k">Subject</span><span class="tpb-vfe-v">'+subj+'</span></div>' +
+        '<textarea class="tpb-vfe-body" readonly>'+body+'</textarea>' +
+        '<div class="tpb-vfe-actions"><button type="button" data-vfe-copy="'+eid+'">Copy email</button>' +
+          (sent ? '<button type="button" data-vfe-unmark="'+eid+'">Unmark sent</button>' : '<button type="button" data-vfe-mark="'+eid+'">Mark sent</button>') +
+        '</div>' +
+      '</div>';
+    }).join('');
+    host.appendChild(wrap);
+    const byId = {}; list.forEach(e => { byId[e.id] = e; });
+    wrap.querySelectorAll('[data-vfe-copy]').forEach(b => b.addEventListener('click', async () => {
+      const e = byId[b.getAttribute('data-vfe-copy')]; if(!e) return;
+      const txt = fillEmailVars(e.subject || '', file, agent) + '\n\n' + fillEmailVars(e.body || '', file, agent);
+      try { await navigator.clipboard.writeText(txt); const o = b.textContent; b.textContent = '✓ Copied'; setTimeout(() => { b.textContent = o; }, 1200); } catch(_){}
+    }));
+    wrap.querySelectorAll('[data-vfe-mark]').forEach(b => b.addEventListener('click', async () => {
+      await markEmailSent(file, stage, b.getAttribute('data-vfe-mark')); renderVerificationsForFile(file);
+    }));
+    wrap.querySelectorAll('[data-vfe-unmark]').forEach(b => b.addEventListener('click', async () => {
+      await unmarkEmailSent(file, b.getAttribute('data-vfe-unmark')); renderVerificationsForFile(file);
+    }));
   }
 
   async function setVerification(file, key, status, value){
@@ -3800,6 +3871,7 @@ Aari Transactions`,
     'rlhd_3x':        'Residential Lease (RLHD-3x)',
     'bbe_1':          'BBA Exclusive (BBE-1)',
     'bbe_2':          'BBA Non-Exclusive (BBE-2)',
+    'builder':        'Builder / New Construction',
   };
 
   // Default day counts per contract type (per the comparison HTML).
@@ -3819,6 +3891,10 @@ Aari Transactions`,
     'rlhd_3x':        { lease_term:365 },
     'bbe_1':          { bba_term:90, protection_period:90 },
     'bbe_2':          { bba_term:90, protection_period:90 },
+    // Builder / new construction · binder + financing commitment, NO standard
+    // inspection or loan-application periods. Estimated completion + closing are
+    // builder-set, so the TC overrides dates per file (editable deadlines).
+    'builder':        { dep:5, lcommit:30, title:10 },
   };
 
   // Per-contract deadline definitions. Each item:
@@ -4124,6 +4200,23 @@ Aari Transactions`,
       { key:'protection_end',   category:'Protection Period', name:'Protection Period Ends',
         compute:(E,C,c)=>addDays(addDays(E, c.bba_term), c.protection_period), bizDay:false,
         note:(c)=>c.protection_period + ' days after BBA term ends · non-exclusive · procuring cause must be documented.' },
+    ],
+    'builder': [
+      { key:'init_deposit',     category:'Deposits',   name:'Binder / Initial Deposit Due',
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
+        note:(c)=>c.dep + ' days after Effective Date · per builder addendum. Override if the builder sets a different date.' },
+      { key:'loan_approval',    category:'Financing',  name:'Financing Commitment Deadline',
+        compute:(E,C,c)=>addDays(E, c.lcommit), bizDay:true,
+        note:(c)=>c.lcommit + ' days after Effective Date · builder financing commitment. No standard loan-application period.' },
+      { key:'title_evidence',   category:'Title',      name:'Title Commitment Deadline',
+        compute:(E,C,c)=>addDays(C, -c.title), bizDay:true,
+        note:(c)=>c.title + ' days prior to Closing.' },
+      { key:'walk_through',     category:'Closing',    name:'Final Walk-Through / Orientation',
+        compute:(E,C,c)=>addDays(C, -1), bizDay:false,
+        note:()=>'Day prior to closing · builder orientation / blue-tape walk.' },
+      { key:'closing',          category:'Closing',    name:'Closing Date',
+        compute:(E,C,c)=>C, bizDay:false,
+        note:()=>'Builder closing · typically within days of CO. Override as the completion date firms up.' },
     ],
   };
 
