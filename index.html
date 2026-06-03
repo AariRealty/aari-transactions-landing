@@ -3256,6 +3256,116 @@
     .mr-stack-card:nth-child(1){ opacity:1; transform:none; }
     .mr-step-card:nth-child(1){ opacity:1; transform:none; }
   }
+
+  /* === AUTO-SAVE VISUAL STATES === */
+
+  .aari-field-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 16px;
+  }
+
+  .aari-field-wrap input.field-saved {
+    border: 1.5px solid #a8d5b5 !important;
+    border-radius: 10px;
+  }
+
+  .aari-field-wrap input.field-saving {
+    border: 1.5px solid #f0d89a !important;
+    border-radius: 10px;
+  }
+
+  .aari-field-wrap input.field-error {
+    border: 1.5px solid #f2a9a9 !important;
+    border-radius: 10px;
+  }
+
+  .field-status-saved {
+    font-size: 11px;
+    color: #5a9e72;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .field-status-saving {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 500;
+    background: #fdf3e0;
+    color: #c49a3c;
+    padding: 2px 8px;
+    border-radius: 20px;
+    align-self: flex-start;
+  }
+
+  .field-status-error {
+    font-size: 11px;
+    color: #c96b6b;
+  }
+
+  .contact-header-badge-saved {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 500;
+    background: #e8f5ed;
+    color: #5a9e72;
+    padding: 2px 8px;
+    border-radius: 20px;
+    margin-left: 8px;
+  }
+
+  .contact-header-badge-error {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 500;
+    background: #fdecea;
+    color: #c96b6b;
+    padding: 2px 8px;
+    border-radius: 20px;
+    margin-left: 8px;
+  }
+
+  .duplicate-banner {
+    background: #fdf6e3;
+    border: 0.5px solid #f0d89a;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #9a7c3a;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .duplicate-banner button {
+    background: none;
+    border: 0.5px solid #f0d89a;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: #9a7c3a;
+    cursor: pointer;
+  }
+
+  .btn-continue-locked {
+    background: #e8e6e1 !important;
+    color: #b0aca4 !important;
+    pointer-events: none !important;
+  }
+
+  .form-exit-note {
+    font-size: 11px;
+    color: #b0aca4;
+  }
 </style>
 </head>
 <body>
@@ -6204,6 +6314,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     <!-- FOOT: nav buttons -->
     <div class="modal-foot">
       <button type="button" class="btn-step back" id="intakeBack" hidden>← Back</button>
+      <span class="form-exit-note" style="margin-right:auto">Exit anytime · progress saved</span>
       <button type="button" class="btn-step next" id="intakeNext">Continue →</button>
       <button type="button" class="btn-step submit" id="intakeSubmit" hidden>Submit File →</button>
     </div>
@@ -10611,7 +10722,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         renderCombo('lender');
         initClientCombos(); // type-ahead saved-client dropdown built into the Full Name field
         initAgentCombos();  // same type-ahead for other-side agent + co-agent
-        initSaveButtons();  // "Save contact" button after each contact group's last field
+        // initSaveButtons() removed · auto-save replaces the Save/Update contact buttons.
+        // (Saved title/lender contact lists still update at submit via persistSavedContacts.)
         // Fix 4 · forceStep1 callers (Path B v2 fresh signup) skip applyPendingPrefill
         // AND explicitly clear all service-related state. Defense beyond Fix 3's
         // sessionStorage clear · covers any future prefill source (URL, localStorage, etc.).
@@ -11497,50 +11609,49 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
        Persists via AariDraft (js/draft-detection.js): localStorage always,
        Supabase `drafts` table when signed in. Close the form mid-way and the
        resume prompt restores everything on the next visit via applyDraft(). */
-    /* Per-field save states matching the approved mock:
-       editing → indicator hidden · saving → amber "Saving…" pill ·
-       saved → green field border (#1D9E75) + "✓ Saved" text below. */
+    /* Per-field save states · class-driven (CSS lives in the AUTO-SAVE VISUAL
+       STATES block in the main stylesheet, exact spec from Marlenyi):
+       typing → .field-saving + cream "Saving…" pill ·
+       saved  → .field-saved + sage "✓ Saved" text ·
+       error  → .field-error + rose message. */
     let autoSaveTimer = null;
     const fieldStatusEls = {};
     const dirtyFields = new Set();
-    /* Soft pastel palette (per Marlenyi) · nothing bold or saturated. */
-    const SAVED_BORDER = '#a8d5b5';   // soft pastel green
-    const SAVED_TEXT   = '#5a9e72';   // muted sage green
-    const SAVING_BG    = '#fdf3e0';   // soft warm cream
-    const SAVING_TEXT  = '#c49a3c';   // soft warm amber
-    const ERROR_TEXT   = '#c96b6b';   // muted rose
+    const FIELD_STATE_CLASSES = ['field-saved', 'field-saving', 'field-error'];
     function statusElFor(inp){
       let el = fieldStatusEls[inp.id];
       if(!el){
         el = document.createElement('div');
-        el.className = 'pa-save-status';
         el.setAttribute('aria-live', 'polite');
         el.style.display = 'none';
         inp.insertAdjacentElement('afterend', el);
         fieldStatusEls[inp.id] = el;
+        const wrap = inp.closest('.field');
+        if(wrap) wrap.classList.add('aari-field-wrap');
       }
       return el;
     }
+    function setFieldState(inp, cls, statusCls, text){
+      FIELD_STATE_CLASSES.forEach(function(c){ inp.classList.remove(c); });
+      if(cls) inp.classList.add(cls);
+      const el = statusElFor(inp);
+      if(statusCls){
+        el.className = statusCls;
+        el.style.display = '';
+        el.textContent = text;
+      } else {
+        el.className = '';
+        el.style.display = 'none';
+        el.textContent = '';
+      }
+    }
     function markEditing(inp){
       dirtyFields.add(inp.id);
-      inp.style.borderColor = '';
-      const el = statusElFor(inp);
-      el.style.display = 'none';
-      el.textContent = '';
+      setFieldState(inp, 'field-saving', 'field-status-saving', '⟳ Saving…');
     }
-    function paintSaving(){
-      dirtyFields.forEach(function(id){
-        const inp = document.getElementById(id); if(!inp) return;
-        const el = statusElFor(inp);
-        el.style.cssText = 'display:inline-block;font-size:12px;margin-top:6px;letter-spacing:.02em;background:' + SAVING_BG + ';color:' + SAVING_TEXT + ';border:none;border-radius:999px;padding:2px 10px';
-        el.textContent = '⟳ Saving…';
-      });
-    }
+    function paintSaving(){ /* the saving pill is already on screen while the timer runs */ }
     function paintSavedField(inp){
-      inp.style.borderColor = SAVED_BORDER;
-      const el = statusElFor(inp);
-      el.style.cssText = 'display:block;font-size:12px;margin-top:6px;letter-spacing:.02em;color:' + SAVED_TEXT + ';background:none;border:none;padding:0';
-      el.textContent = '✓ Saved';
+      setFieldState(inp, 'field-saved', 'field-status-saved', '✓ Saved');
     }
     function paintSaved(){
       dirtyFields.forEach(function(id){
@@ -11552,10 +11663,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     function paintSaveError(){
       dirtyFields.forEach(function(id){
         const inp = document.getElementById(id); if(!inp) return;
-        const el = statusElFor(inp);
-        el.style.cssText = 'display:block;font-size:12px;margin-top:6px;letter-spacing:.02em;color:' + ERROR_TEXT + ';background:none;border:none;padding:0';
-        el.textContent = 'Not saved — check connection';
+        setFieldState(inp, 'field-error', 'field-status-error', 'Not saved — check connection');
       });
+    }
+    function paintFieldError(inp, msg){
+      if(inp) setFieldState(inp, 'field-error', 'field-status-error', msg);
     }
     function scheduleAutoSave(inp){
       if(autoSaveTimer) clearTimeout(autoSaveTimer);
@@ -11862,9 +11974,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           const n = document.getElementById('paBuyerName').value.trim();
           const e = document.getElementById('paBuyerEmail').value.trim();
           const p = document.getElementById('paBuyerPhone').value.trim();
-          if(!n){ alert('Buyer name is required.'); return false; }
-          if(!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ alert('Valid buyer email is required.'); return false; }
-          if(!p){ alert('Buyer phone is required.'); return false; }
+          let buyerBad = false;
+          if(!n){ paintFieldError(document.getElementById('paBuyerName'), 'Add a name to continue'); buyerBad = true; }
+          if(!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ paintFieldError(document.getElementById('paBuyerEmail'), 'Add an email to continue'); buyerBad = true; }
+          if(!p){ paintFieldError(document.getElementById('paBuyerPhone'), 'Add a phone to continue'); buyerBad = true; }
+          if(buyerBad) return false;
           state.data.buyer_name = n;
           state.data.buyer_email = e;
           state.data.buyer_phone = p;
@@ -11874,9 +11988,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           const n = document.getElementById('paSellerName').value.trim();
           const e = document.getElementById('paSellerEmail').value.trim();
           const p = document.getElementById('paSellerPhone').value.trim();
-          if(!n){ alert('Seller name is required.'); return false; }
-          if(!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ alert('Valid seller email is required.'); return false; }
-          if(!p){ alert('Seller phone is required.'); return false; }
+          let sellerBad = false;
+          if(!n){ paintFieldError(document.getElementById('paSellerName'), 'Add a name to continue'); sellerBad = true; }
+          if(!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ paintFieldError(document.getElementById('paSellerEmail'), 'Add an email to continue'); sellerBad = true; }
+          if(!p){ paintFieldError(document.getElementById('paSellerPhone'), 'Add a phone to continue'); sellerBad = true; }
+          if(sellerBad) return false;
           state.data.seller_name = n;
           state.data.seller_email = e;
           state.data.seller_phone = p;
@@ -11913,11 +12029,13 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           var tN  = document.getElementById('paTitleContactName').value.trim();
           var tE  = document.getElementById('paTitleContactEmail').value.trim();
           var tP  = document.getElementById('paTitleContactPhone').value.trim();
-          if(!tC){ alert('Title company is required.'); return false; }
-          if(!tAddr){ alert('Title company address is required.'); return false; }
-          if(!tN){ alert('Closing contact name is required.'); return false; }
-          if(!tE || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(tE)){ alert('A valid closing contact email is required.'); return false; }
-          if(!tP){ alert('Closing contact phone is required.'); return false; }
+          let titleBad = false;
+          if(!tC){ paintFieldError(document.getElementById('paTitleCompany'), 'Add the title company to continue'); titleBad = true; }
+          if(!tAddr){ paintFieldError(document.getElementById('paTitleAddress'), 'Add the address to continue'); titleBad = true; }
+          if(!tN){ paintFieldError(document.getElementById('paTitleContactName'), 'Add a name to continue'); titleBad = true; }
+          if(!tE || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(tE)){ paintFieldError(document.getElementById('paTitleContactEmail'), 'Add an email to continue'); titleBad = true; }
+          if(!tP){ paintFieldError(document.getElementById('paTitleContactPhone'), 'Add a phone to continue'); titleBad = true; }
+          if(titleBad) return false;
           state.data.titleCompany       = tC;
           state.data.titleAddress       = tAddr;
           state.data.titleContactName   = tN;
