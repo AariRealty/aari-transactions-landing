@@ -11468,6 +11468,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(!inp) return;
       const write = function(){
         state.data[CONTACT_LIVE_BINDINGS[id]] = inp.value.trim();
+        markEditing(inp);      // visual reset while typing
         scheduleAutoSave(inp); // Step 2 · debounced draft save 2s after typing stops
       };
       inp.addEventListener('input', write);
@@ -11478,39 +11479,69 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
        Persists via AariDraft (js/draft-detection.js): localStorage always,
        Supabase `drafts` table when signed in. Close the form mid-way and the
        resume prompt restores everything on the next visit via applyDraft(). */
+    /* Per-field save states matching the approved mock:
+       editing → indicator hidden · saving → amber "Saving…" pill ·
+       saved → green field border (#1D9E75) + "✓ Saved" text below. */
     let autoSaveTimer = null;
-    let saveStatusEl = null;
-    let saveStatusHideTimer = null;
-    function saveStatus(afterInput, mode){
-      if(!saveStatusEl){
-        saveStatusEl = document.createElement('div');
-        saveStatusEl.id = 'paAutoSaveStatus';
-        saveStatusEl.setAttribute('aria-live', 'polite');
-        saveStatusEl.style.cssText = 'font-size:12px;margin-top:6px;letter-spacing:.02em;transition:opacity .3s';
+    const fieldStatusEls = {};
+    const dirtyFields = new Set();
+    /* Soft pastel palette (per Marlenyi) · nothing bold or saturated. */
+    const SAVED_BORDER = '#a8d5b5';   // soft pastel green
+    const SAVED_TEXT   = '#5a9e72';   // muted sage green
+    const SAVING_BG    = '#fdf3e0';   // soft warm cream
+    const SAVING_TEXT  = '#c49a3c';   // soft warm amber
+    const ERROR_TEXT   = '#c96b6b';   // muted rose
+    function statusElFor(inp){
+      let el = fieldStatusEls[inp.id];
+      if(!el){
+        el = document.createElement('div');
+        el.className = 'pa-save-status';
+        el.setAttribute('aria-live', 'polite');
+        el.style.display = 'none';
+        inp.insertAdjacentElement('afterend', el);
+        fieldStatusEls[inp.id] = el;
       }
-      if(afterInput && afterInput.parentNode && saveStatusEl.parentNode !== afterInput.parentNode){
-        afterInput.parentNode.appendChild(saveStatusEl);
-      }
-      if(saveStatusHideTimer){ clearTimeout(saveStatusHideTimer); saveStatusHideTimer = null; }
-      saveStatusEl.style.opacity = '1';
-      if(mode === 'saving'){
-        saveStatusEl.textContent = 'Saving…';
-        saveStatusEl.style.color = '#6b6b6b';
-      } else if(mode === 'saved'){
-        saveStatusEl.textContent = '✓ Saved';
-        saveStatusEl.style.color = '#1D9E75';
-        saveStatusHideTimer = setTimeout(function(){ saveStatusEl.style.opacity = '0'; }, 2500);
-      } else if(mode === 'error'){
-        saveStatusEl.textContent = 'Not saved — check connection';
-        saveStatusEl.style.color = '#A32D2D';
-      }
+      return el;
+    }
+    function markEditing(inp){
+      dirtyFields.add(inp.id);
+      inp.style.borderColor = '';
+      const el = statusElFor(inp);
+      el.style.display = 'none';
+      el.textContent = '';
+    }
+    function paintSaving(){
+      dirtyFields.forEach(function(id){
+        const inp = document.getElementById(id); if(!inp) return;
+        const el = statusElFor(inp);
+        el.style.cssText = 'display:inline-block;font-size:12px;margin-top:6px;letter-spacing:.02em;background:' + SAVING_BG + ';color:' + SAVING_TEXT + ';border:none;border-radius:999px;padding:2px 10px';
+        el.textContent = '⟳ Saving…';
+      });
+    }
+    function paintSaved(){
+      dirtyFields.forEach(function(id){
+        const inp = document.getElementById(id); if(!inp) return;
+        inp.style.borderColor = SAVED_BORDER;
+        const el = statusElFor(inp);
+        el.style.cssText = 'display:block;font-size:12px;margin-top:6px;letter-spacing:.02em;color:' + SAVED_TEXT + ';background:none;border:none;padding:0';
+        el.textContent = '✓ Saved';
+      });
+      dirtyFields.clear();
+    }
+    function paintSaveError(){
+      dirtyFields.forEach(function(id){
+        const inp = document.getElementById(id); if(!inp) return;
+        const el = statusElFor(inp);
+        el.style.cssText = 'display:block;font-size:12px;margin-top:6px;letter-spacing:.02em;color:' + ERROR_TEXT + ';background:none;border:none;padding:0';
+        el.textContent = 'Not saved — check connection';
+      });
     }
     function scheduleAutoSave(inp){
       if(autoSaveTimer) clearTimeout(autoSaveTimer);
       autoSaveTimer = setTimeout(async function(){
         autoSaveTimer = null;
         if(!window.AariDraft || typeof window.AariDraft.save !== 'function') return;
-        saveStatus(inp, 'saving');
+        paintSaving();
         try{
           await window.AariDraft.save({
             service_type: state.data.serviceId || state.data.serviceType || '',
@@ -11518,10 +11549,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             form_data: state.data,
             property_address: state.data.address || ''
           });
-          saveStatus(inp, 'saved');
+          paintSaved();
         }catch(e){
           console.warn('[path-a] auto-save failed', e);
-          saveStatus(inp, 'error');
+          paintSaveError();
         }
       }, 2000);
     }
