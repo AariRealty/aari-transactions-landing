@@ -5839,7 +5839,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             <input type="tel" id="paBuyerPhone" name="pa_buyer_phone" placeholder="239.555.1234" autocomplete="off" inputmode="tel">
           </div>
           <label style="display:flex;align-items:center;gap:8px;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:8px;padding:8px 12px;margin-top:14px;cursor:pointer;font-size:12px;color:#9a7c3a">
-            <input type="checkbox" id="paBuyerKeep" style="accent-color:#9a7c3a;margin:0"> Save this contact to my list for next time
+            <input type="checkbox" id="paBuyerKeep" style="accent-color:#9a7c3a;margin:0"> <span id="paBuyerKeepLbl">Save this contact to my list for next time</span>
           </label>
         </section>
         <!-- Clients step (seller side) · shown when representation = seller OR both_sides -->
@@ -5857,7 +5857,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             <input type="tel" id="paSellerPhone" name="pa_seller_phone" placeholder="239.555.5678" autocomplete="off" inputmode="tel">
           </div>
           <label style="display:flex;align-items:center;gap:8px;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:8px;padding:8px 12px;margin-top:14px;cursor:pointer;font-size:12px;color:#9a7c3a">
-            <input type="checkbox" id="paSellerKeep" style="accent-color:#9a7c3a;margin:0"> Save this contact to my list for next time
+            <input type="checkbox" id="paSellerKeep" style="accent-color:#9a7c3a;margin:0"> <span id="paSellerKeepLbl">Save this contact to my list for next time</span>
           </label>
         </section>
         <section class="pa-step" data-pa-step="4" hidden>
@@ -10783,7 +10783,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     function clearPathAInputs(){
       try { resetFieldVisuals(); } catch(_){} // no phantom "Saved" on blank reopened fields
       try { footerStatus(null); } catch(_){}  // footer back to "Exit anytime · progress saved"
-      ['paBuyerKeep','paSellerKeep'].forEach(id => { const cb = document.getElementById(id); if(cb) cb.checked = false; });
+      ['paBuyerKeep','paSellerKeep'].forEach(id => { const cb = document.getElementById(id); if(cb) cb.checked = false; try { keepBoxFeedback(id, false); } catch(_){} });
       ['paAddress','paEffectiveDate','paClosingDate',
        'paTitleCompany','paTitleAddress','paTitleContactName','paTitleContactEmail','paTitleContactPhone',
        'paLender','paLenderContactName','paLenderContactEmail','paLenderContactPhone',
@@ -11752,6 +11752,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             property_address: state.data.address || ''
           });
           paintSaved();
+          // Live-sync the kept contact while its box is checked.
+          try{
+            const kb = document.getElementById('paBuyerKeep'), ks = document.getElementById('paSellerKeep');
+            if((kb && kb.checked) || (ks && ks.checked)) persistKeptContactsNow();
+          }catch(_){}
         }catch(e){
           console.warn('[path-a] auto-save failed', e);
           paintSaveError();
@@ -11846,6 +11851,42 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         if(r && r.error) console.warn('[path-a] contact upsert failed ·', r.error.message || r.error);
       }
     }
+
+    /* Instant save · checking the box saves the contact RIGHT NOW (and edits
+       keep syncing while it stays checked). Submit-time save remains as backup. */
+    async function persistKeptContactsNow(){
+      try{
+        if(!window.AariAuth) return false;
+        const session = await window.AariAuth.getCurrentSession();
+        if(!session || !session.user) return false;
+        const client = await window.AariAuth.ensureClient();
+        await persistKeptContacts(client, session.user.id);
+        return true;
+      }catch(e){ console.warn('[path-a] instant contact save failed', e); return false; }
+    }
+    function keepBoxFeedback(cbId, saved){
+      const lbl = document.getElementById(cbId + 'Lbl');
+      if(!lbl) return;
+      if(saved){ lbl.textContent = '✓ Saved to your list — updates as you type'; lbl.style.color = '#5a9e72'; }
+      else { lbl.textContent = 'Save this contact to my list for next time'; lbl.style.color = ''; }
+    }
+    [['paBuyerKeep','paBuyerEmail','buyer_email'],['paSellerKeep','paSellerEmail','seller_email']].forEach(function(cfg){
+      const cb = document.getElementById(cfg[0]);
+      if(!cb) return;
+      cb.addEventListener('change', async function(){
+        if(!cb.checked){ keepBoxFeedback(cfg[0], false); return; }
+        const email = (state.data[cfg[2]] || '').trim();
+        if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+          cb.checked = false;
+          const emailInp = document.getElementById(cfg[1]);
+          if(emailInp) paintFieldError(emailInp, 'Add an email first — it files the contact');
+          return;
+        }
+        const ok = await persistKeptContactsNow();
+        keepBoxFeedback(cfg[0], ok);
+        if(!ok) cb.checked = false;
+      });
+    });
 
     /* Step 2 · restore a saved draft into the live form (called on resume). */
     function applyDraft(draft){
