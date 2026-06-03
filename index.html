@@ -5838,6 +5838,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             <label for="paBuyerPhone">Phone</label>
             <input type="tel" id="paBuyerPhone" name="pa_buyer_phone" placeholder="239.555.1234" autocomplete="off" inputmode="tel">
           </div>
+          <label style="display:flex;align-items:center;gap:8px;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:8px;padding:8px 12px;margin-top:14px;cursor:pointer;font-size:12px;color:#9a7c3a">
+            <input type="checkbox" id="paBuyerKeep" style="accent-color:#9a7c3a;margin:0"> Save this contact to my list for next time
+          </label>
         </section>
         <!-- Clients step (seller side) · shown when representation = seller OR both_sides -->
         <section class="pa-step" data-pa-step="clients-seller" hidden>
@@ -5853,6 +5856,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             <label for="paSellerPhone">Phone</label>
             <input type="tel" id="paSellerPhone" name="pa_seller_phone" placeholder="239.555.5678" autocomplete="off" inputmode="tel">
           </div>
+          <label style="display:flex;align-items:center;gap:8px;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:8px;padding:8px 12px;margin-top:14px;cursor:pointer;font-size:12px;color:#9a7c3a">
+            <input type="checkbox" id="paSellerKeep" style="accent-color:#9a7c3a;margin:0"> Save this contact to my list for next time
+          </label>
         </section>
         <section class="pa-step" data-pa-step="4" hidden>
           <div class="field">
@@ -10773,6 +10779,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     /* Reset all Path A per-file inputs so a re-open with a different agent starts clean. */
     function clearPathAInputs(){
       try { resetFieldVisuals(); } catch(_){} // no phantom "Saved" on blank reopened fields
+      try { footerStatus(null); } catch(_){}  // footer back to "Exit anytime · progress saved"
+      ['paBuyerKeep','paSellerKeep'].forEach(id => { const cb = document.getElementById(id); if(cb) cb.checked = false; });
       ['paAddress','paEffectiveDate','paClosingDate',
        'paTitleCompany','paTitleAddress','paTitleContactName','paTitleContactEmail','paTitleContactPhone',
        'paLender','paLenderContactName','paLenderContactEmail','paLenderContactPhone',
@@ -11667,16 +11675,26 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         el.textContent = '';
       }
     }
+    /* Option A (quiet draft) · per-field badges are gone. One calm status line
+       lives in the footer (the .form-exit-note span). Fields only get painted
+       for ERRORS (rose, on Continue) — never green. */
+    function footerStatus(mode){
+      const note = document.querySelector('#intake-modal .form-exit-note');
+      if(!note) return;
+      if(mode === 'saving'){ note.textContent = 'Saving…'; note.style.color = '#c49a3c'; }
+      else if(mode === 'saved'){ note.textContent = '✓ Draft saved · just now'; note.style.color = '#5a9e72'; }
+      else if(mode === 'error'){ note.textContent = "Couldn't save — check connection"; note.style.color = '#c96b6b'; }
+      else { note.textContent = 'Exit anytime · progress saved'; note.style.color = ''; }
+    }
     function markEditing(inp){
       dirtyFields.add(inp.id);
-      setFieldState(inp, 'field-saving', 'field-status-saving', '⟳ Saving…');
+      setFieldState(inp, null, null, ''); // typing clears any error on this field
+      footerStatus('saving');
     }
-    function paintSaving(){ /* the saving pill is already on screen while the timer runs */ }
+    function paintSaving(){ /* footer already shows Saving… */ }
     function paintSavedField(inp){
-      // An empty field is never "Saved" — clear its state instead. (Stale green
-      // borders on blank inputs were confusing after typing-then-clearing.)
-      if(!inp.value || !inp.value.trim()){ setFieldState(inp, null, null, ''); return; }
-      setFieldState(inp, 'field-saved', 'field-status-saved', '✓ Saved');
+      // Quiet draft · clearing the field's state IS the success treatment.
+      setFieldState(inp, null, null, '');
     }
     /* Wipe every save/error visual · used when the form resets so a fresh or
        reopened form never shows phantom "Saved" on blank fields. */
@@ -11708,17 +11726,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }catch(e){ console.warn('[path-a] flush save failed', e); }
     }
     function paintSaved(){
-      dirtyFields.forEach(function(id){
-        const inp = document.getElementById(id); if(!inp) return;
-        paintSavedField(inp);
-      });
       dirtyFields.clear();
+      footerStatus('saved');
     }
     function paintSaveError(){
-      dirtyFields.forEach(function(id){
-        const inp = document.getElementById(id); if(!inp) return;
-        setFieldState(inp, 'field-error', 'field-status-error', 'Not saved — check connection');
-      });
+      footerStatus('error');
     }
     function paintFieldError(inp, msg){
       if(inp) setFieldState(inp, 'field-error', 'field-status-error', msg);
@@ -11742,6 +11754,36 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           paintSaveError();
         }
       }, 2000);
+    }
+
+    /* Option C · opt-in contact book. Only contacts the agent EXPLICITLY checked
+       "Save this contact to my list" for are written to the contacts table —
+       upserted by (owner, email) so re-saving an incomplete contact heals the
+       existing record instead of duplicating it. Unchecked = the contact lives
+       only inside this file's submission. Requires the contacts table migration. */
+    async function persistKeptContacts(client, uid){
+      const jobs = [];
+      const keepB = document.getElementById('paBuyerKeep');
+      if(keepB && keepB.checked && (state.data.buyer_email || state.data.buyer_name)){
+        jobs.push({ owner_id: uid, role: 'buyer',
+          full_name: state.data.buyer_name || '',
+          email: (state.data.buyer_email || '').toLowerCase(),
+          phone: state.data.buyer_phone || '',
+          updated_at: new Date().toISOString() });
+      }
+      const keepS = document.getElementById('paSellerKeep');
+      if(keepS && keepS.checked && (state.data.seller_email || state.data.seller_name)){
+        jobs.push({ owner_id: uid, role: 'seller',
+          full_name: state.data.seller_name || '',
+          email: (state.data.seller_email || '').toLowerCase(),
+          phone: state.data.seller_phone || '',
+          updated_at: new Date().toISOString() });
+      }
+      for(const row of jobs){
+        if(!row.email) continue; // email is the dedupe key · skip if somehow empty
+        const r = await client.from('contacts').upsert(row, { onConflict: 'owner_id,email' });
+        if(r && r.error) console.warn('[path-a] contact upsert failed ·', r.error.message || r.error);
+      }
     }
 
     /* Step 2 · restore a saved draft into the live form (called on resume). */
@@ -12029,9 +12071,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           const e = document.getElementById('paBuyerEmail').value.trim();
           const p = document.getElementById('paBuyerPhone').value.trim();
           let buyerBad = false;
-          if(!n){ paintFieldError(document.getElementById('paBuyerName'), 'Add a name to continue'); buyerBad = true; }
-          if(!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ paintFieldError(document.getElementById('paBuyerEmail'), 'Add an email to continue'); buyerBad = true; }
-          if(!p){ paintFieldError(document.getElementById('paBuyerPhone'), 'Add a phone to continue'); buyerBad = true; }
+          if(!n){ paintFieldError(document.getElementById('paBuyerName'), 'Add a name to continue'); buyerBad = true; } else { paintSavedField(document.getElementById('paBuyerName')); }
+          if(!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ paintFieldError(document.getElementById('paBuyerEmail'), 'Add an email to continue'); buyerBad = true; } else { paintSavedField(document.getElementById('paBuyerEmail')); }
+          if(!p){ paintFieldError(document.getElementById('paBuyerPhone'), 'Add a phone to continue'); buyerBad = true; } else { paintSavedField(document.getElementById('paBuyerPhone')); }
           if(buyerBad) return false;
           state.data.buyer_name = n;
           state.data.buyer_email = e;
@@ -12043,9 +12085,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           const e = document.getElementById('paSellerEmail').value.trim();
           const p = document.getElementById('paSellerPhone').value.trim();
           let sellerBad = false;
-          if(!n){ paintFieldError(document.getElementById('paSellerName'), 'Add a name to continue'); sellerBad = true; }
-          if(!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ paintFieldError(document.getElementById('paSellerEmail'), 'Add an email to continue'); sellerBad = true; }
-          if(!p){ paintFieldError(document.getElementById('paSellerPhone'), 'Add a phone to continue'); sellerBad = true; }
+          if(!n){ paintFieldError(document.getElementById('paSellerName'), 'Add a name to continue'); sellerBad = true; } else { paintSavedField(document.getElementById('paSellerName')); }
+          if(!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)){ paintFieldError(document.getElementById('paSellerEmail'), 'Add an email to continue'); sellerBad = true; } else { paintSavedField(document.getElementById('paSellerEmail')); }
+          if(!p){ paintFieldError(document.getElementById('paSellerPhone'), 'Add a phone to continue'); sellerBad = true; } else { paintSavedField(document.getElementById('paSellerPhone')); }
           if(sellerBad) return false;
           state.data.seller_name = n;
           state.data.seller_email = e;
@@ -12084,11 +12126,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           var tE  = document.getElementById('paTitleContactEmail').value.trim();
           var tP  = document.getElementById('paTitleContactPhone').value.trim();
           let titleBad = false;
-          if(!tC){ paintFieldError(document.getElementById('paTitleCompany'), 'Add the title company to continue'); titleBad = true; }
-          if(!tAddr){ paintFieldError(document.getElementById('paTitleAddress'), 'Add the address to continue'); titleBad = true; }
-          if(!tN){ paintFieldError(document.getElementById('paTitleContactName'), 'Add a name to continue'); titleBad = true; }
-          if(!tE || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(tE)){ paintFieldError(document.getElementById('paTitleContactEmail'), 'Add an email to continue'); titleBad = true; }
-          if(!tP){ paintFieldError(document.getElementById('paTitleContactPhone'), 'Add a phone to continue'); titleBad = true; }
+          if(!tC){ paintFieldError(document.getElementById('paTitleCompany'), 'Add the title company to continue'); titleBad = true; } else { paintSavedField(document.getElementById('paTitleCompany')); }
+          if(!tAddr){ paintFieldError(document.getElementById('paTitleAddress'), 'Add the address to continue'); titleBad = true; } else { paintSavedField(document.getElementById('paTitleAddress')); }
+          if(!tN){ paintFieldError(document.getElementById('paTitleContactName'), 'Add a name to continue'); titleBad = true; } else { paintSavedField(document.getElementById('paTitleContactName')); }
+          if(!tE || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(tE)){ paintFieldError(document.getElementById('paTitleContactEmail'), 'Add an email to continue'); titleBad = true; } else { paintSavedField(document.getElementById('paTitleContactEmail')); }
+          if(!tP){ paintFieldError(document.getElementById('paTitleContactPhone'), 'Add a phone to continue'); titleBad = true; } else { paintSavedField(document.getElementById('paTitleContactPhone')); }
           if(titleBad) return false;
           state.data.titleCompany       = tC;
           state.data.titleAddress       = tAddr;
@@ -12186,6 +12228,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(window.__aariSubmitStatus) window.__aariSubmitStatus('Uploading your file…');
       // Persist saved title + lender to the agent's profile in the background.
       try { persistSavedContacts(); } catch(_){}
+      try { persistKeptContacts(supabase, uid); } catch(e){ console.warn('[path-a] kept-contacts save failed (non-fatal)', e); }
 
       // Resolve the Supabase client · ensureClient() creates it if it wasn't
       // already initialized (can happen inside the portal iframe).
