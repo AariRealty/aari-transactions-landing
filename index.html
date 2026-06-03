@@ -5905,10 +5905,22 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           </div>
         </section>
         <section class="pa-step" data-pa-step="done" hidden>
-          <div class="pa-confirmation">
+          <div class="pa-confirmation" id="paConfirmStandard">
             <p class="pa-confirmation-h">Got it. Your file is in.</p>
             <p class="pa-confirmation-sub">We will touch it today if you submitted before 2pm.</p>
             <p class="pa-confirmation-fineprint">Questions? Text us at <a href="sms:2396881770">239.688.1770</a>.</p>
+          </div>
+          <div class="pa-confirmation" id="paConfirmTc" hidden>
+            <p class="pa-confirmation-h">File submitted.</p>
+            <p class="pa-confirmation-sub">Send this payment link to your agent.</p>
+            <div id="paTcPayWrap" style="margin:16px 0">
+              <div id="paTcPayRow" style="display:flex;gap:8px;align-items:center">
+                <input type="text" id="paTcPayLink" readonly style="flex:1;min-width:0;font-size:13px;padding:10px 12px;border:1px solid #ddd;border-radius:8px;background:#fafafa;color:#0f0f0f">
+                <button type="button" id="paTcPayCopy" style="font-size:13px;padding:10px 16px;border-radius:8px;border:0;background:#0f0f0f;color:#fff;cursor:pointer;white-space:nowrap">Copy link</button>
+              </div>
+              <p id="paTcPayNote" style="font-size:12px;color:#888;margin:8px 2px 0"></p>
+            </div>
+            <button type="button" id="paTcBackPortal" style="font-size:13px;padding:11px 18px;border-radius:8px;border:1px solid #0f0f0f;background:#fff;color:#0f0f0f;cursor:pointer">Back to the board &rarr;</button>
           </div>
         </section>
       </div>
@@ -10517,6 +10529,42 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       return steps;
     }
 
+    // TC portal submission · set when "+ New file" is opened from the cockpit
+    // (/index.html?modal-only=1&from=tc#apply). Drives the TC done screen +
+    // submitted_by_tc flag + auto-assign to the submitting TC.
+    var _fromTc = /[?&]from=tc/.test(location.search);
+
+    // TC done screen · instead of the agent payment flow, show a copyable Stripe
+    // link (based on the chosen service) for the TC to forward to their agent.
+    function showTcDoneScreen(){
+      var std = document.getElementById('paConfirmStandard');
+      var tc  = document.getElementById('paConfirmTc');
+      if(std) std.hidden = true;
+      if(tc) tc.hidden = false;
+      var sid = state.data.servicePackage || state.data.serviceId || state.data.serviceType;
+      var svc = (window.SERVICE_BY_ID || {})[sid] || null;
+      var linkInput = document.getElementById('paTcPayLink');
+      var payRow = document.getElementById('paTcPayRow');
+      var note = document.getElementById('paTcPayNote');
+      var copyBtn = document.getElementById('paTcPayCopy');
+      var link = svc && svc.stripe ? svc.stripe : '';
+      if(link){
+        if(linkInput) linkInput.value = link;
+        if(payRow) payRow.style.display = 'flex';
+        if(note) note.textContent = (svc.name || 'Service') + (svc.tier ? ' · ' + svc.tier : '') + (svc.price ? ' · $' + svc.price : '');
+        if(copyBtn) copyBtn.onclick = function(){
+          try { navigator.clipboard.writeText(link); } catch(_){}
+          var o = copyBtn.textContent; copyBtn.textContent = '✓ Copied'; setTimeout(function(){ copyBtn.textContent = o; }, 1400);
+        };
+      } else {
+        // TC services (One Side / Both Sides) are billed at closing via CDA · no upfront link.
+        if(payRow) payRow.style.display = 'none';
+        if(note) note.textContent = svc ? ((svc.meta || 'Billed at closing via CDA') + ' — no upfront payment link for this service.') : 'No payment link for this service.';
+      }
+      var back = document.getElementById('paTcBackPortal');
+      if(back) back.onclick = function(){ window.location.href = '/files.html?v=' + Date.now(); };
+    }
+
     function init(profile, opts){
       opts = opts || {};
       state = { step: 1, data: {}, profile: profile || {}, active: true };
@@ -11929,6 +11977,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             commission_notes: state.data.commissionNotes || '', agent_notes: state.data.agentNotes || '',
             preferred_tc: state.data.preferredTcName || 'Auto-assign', preferred_tc_id: state.data.preferredTcId || 'auto', preferred_tc_email: state.data.preferredTcEmail || '', preferred_tc_phone: state.data.preferredTcPhone || '',
             pa_hoa: state.data.hoa || '',
+            submitted_by_tc: _fromTc,
             contract_url: contractUrl, contract_filename: safeContractName, additional_docs: additionalUrls, submission_id: submissionId
           };
           var fileRow = {
@@ -11945,7 +11994,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             closing_date:   state.data.closingDate   || null,
             lender_contact: lenderContactText || null,
             title_contact:  titleContactText  || null,
-            assigned_tc_id: null,
+            assigned_tc_id: (_fromTc && state.profile && String(state.profile.role || '').toLowerCase() === 'tc') ? uid : null,
             is_aari_engaged: true,
             service_agreement_signed: !!(state.profile && state.profile.agreement_signed),
             status: 'intake_received',
@@ -12041,6 +12090,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         try { window.dispatchEvent(new CustomEvent('aari:intake-submitted', { detail: { file_id: submissionId, agent_id: uid } })); } catch(_){}
         state.step = 'done';
         render();
+        // TC portal submission · show the payment-link screen, not the agent flow.
+        try { if(_fromTc) showTcDoneScreen(); } catch(_){}
       } catch(err){
         console.error('[path-a] file submission failed', err);
         if(window.__aariSubmitStatus) window.__aariSubmitStatus('Could not send your file · ' + (err.message || 'check your connection and try again.'), true);
