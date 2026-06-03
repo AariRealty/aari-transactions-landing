@@ -31,7 +31,7 @@
     { id:'compliance', label:'Defend the audit', href:'/files-compliance.html', icon:iconShield(), match:['/files-compliance'],          roles:['broker'] },
     // Agent-side hub · what an agent actually needs from a navigation rib.
     { id:'portal',   label:'My files',       href:'/portal.html',         icon:iconFolder(),match:['/portal'],                          roles:['agent'] },
-    { id:'submit',   label:'Submit a file',  href:'/agent-submit.html',   icon:iconUpload(),match:['/agent-submit','/index.html#services'], roles:['agent'] },
+    { id:'submit',   label:'Submit a file',  href:'/index.html?modal-only=1#apply',   icon:iconUpload(),match:['/agent-submit','/index.html#services'], roles:['agent'] },
     { id:'refer',    label:'Refer an agent', href:'/portal.html#refer',   icon:iconHandshake(), match:[],                              roles:['agent'] },
   ];
 
