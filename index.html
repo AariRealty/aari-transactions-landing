@@ -11533,7 +11533,12 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         return parts.join(' · ');
       }},
       { step: 8,  label: 'Commission notes',  get: (s) => s.data.commissionNotes || 'None' },
-      { step: 9,  label: 'Contract',          get: (s) => s.data.contract || '' },
+      { step: 9,  label: 'Contract',          get: (s) => {
+        const parts = [];
+        if(s.data.contract) parts.push(s.data.contract);
+        if(s.data.contractFormType) parts.push(s.data.contractFormType);
+        return parts.join(' · ');
+      }},
       { step: 10, label: 'Additional',        get: (s) => {
         const docs = s.data.additionalDocs && s.data.additionalDocs.length
                      ? s.data.additionalDocs.length + ' file' + (s.data.additionalDocs.length > 1 ? 's' : '')
@@ -11848,6 +11853,61 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(f.escrow_amount) state.data.contractEscrowAmount = f.escrow_amount;
       try { scheduleAutoSave(null); } catch(_){}
     }
+    /* Contract form-type confirmation · the reader detects the type; the agent
+       one-tap confirms (or corrects). Only when the PDF is unreadable do we ask
+       the full question. Never asks cold when we already know. */
+    const CONTRACT_FORM_TYPES = ['FAR/BAR AS-IS', 'FAR/BAR Standard', 'CRSP', 'New construction/builder', 'Other'];
+    function formTypeBox(){
+      let el = document.getElementById('paFormTypeConfirm');
+      if(!el){
+        const anchor = document.getElementById('paContract');
+        const section = anchor ? anchor.closest('.pa-step') : null;
+        if(!section) return null;
+        el = document.createElement('div');
+        el.id = 'paFormTypeConfirm';
+        el.style.cssText = 'margin-top:14px';
+        section.appendChild(el);
+      }
+      return el;
+    }
+    function renderFormTypeChips(box, note){
+      const chips = CONTRACT_FORM_TYPES.map(function(t){
+        return '<button type="button" data-ft-pick="' + escapeHtml(t) + '" style="border:0.5px solid rgba(15,15,15,0.3);background:#fff;border-radius:999px;padding:6px 14px;font-size:12px;cursor:pointer;margin:0 6px 6px 0">' + escapeHtml(t) + '</button>';
+      }).join('');
+      box.innerHTML = '<div style="font-size:12px;color:#5f5e5a;margin-bottom:8px">' + escapeHtml(note) + '</div>' + chips;
+      box.querySelectorAll('[data-ft-pick]').forEach(function(b){
+        b.addEventListener('click', function(){
+          state.data.contractFormType = b.getAttribute('data-ft-pick');
+          renderFormTypeConfirmed(box);
+          try { scheduleAutoSave(null); } catch(_){}
+        });
+      });
+    }
+    function renderFormTypeConfirmed(box){
+      box.innerHTML = '<div style="display:flex;align-items:center;gap:10px;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:8px;padding:8px 12px">' +
+        '<span style="font-size:12px;color:#9a7c3a">✓ ' + escapeHtml(state.data.contractFormType || '') + ' confirmed</span>' +
+        '<button type="button" id="paFtChange" style="background:none;border:0.5px solid #f0d89a;border-radius:6px;padding:2px 8px;font-size:11px;color:#9a7c3a;cursor:pointer">Change</button></div>';
+      const ch = box.querySelector('#paFtChange');
+      if(ch) ch.addEventListener('click', function(){ renderFormTypeChips(box, 'What contract form is this?'); });
+    }
+    function renderFormTypeConfirm(detected){
+      const box = formTypeBox();
+      if(!box) return;
+      if(detected && detected !== 'Unknown'){
+        box.innerHTML = '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:8px;padding:8px 12px">' +
+          '<span style="font-size:12px;color:#9a7c3a">Reads as <strong>' + escapeHtml(detected) + '</strong> — correct?</span>' +
+          '<button type="button" id="paFtYes" style="background:#2c2c2a;color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:11px;cursor:pointer">✓ Correct</button>' +
+          '<button type="button" id="paFtNo" style="background:none;border:0.5px solid #f0d89a;border-radius:6px;padding:4px 10px;font-size:11px;color:#9a7c3a;cursor:pointer">Change</button></div>';
+        box.querySelector('#paFtYes').addEventListener('click', function(){
+          state.data.contractFormType = detected;
+          renderFormTypeConfirmed(box);
+          try { scheduleAutoSave(null); } catch(_){}
+        });
+        box.querySelector('#paFtNo').addEventListener('click', function(){ renderFormTypeChips(box, 'What contract form is this?'); });
+      } else {
+        renderFormTypeChips(box, "We couldn't tell the form type from this copy — pick it:");
+      }
+    }
     (function(){
       const inp = document.getElementById('paContract');
       if(!inp) return;
@@ -11859,6 +11919,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           const text = await extractPdfText(file);
           if(!text || text.trim().length < 200){
             contractReadStatus("Couldn't read this copy (likely a scan) — fill the details manually.", '#c96b6b');
+            renderFormTypeConfirm(null);
             return;
           }
           const client = await window.AariAuth.ensureClient();
@@ -11866,14 +11927,16 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           const d = r && r.data;
           if(d && d.ok && d.fields){
             applyExtracted(d.fields);
-            const ft = (d.fields.form_type && d.fields.form_type !== 'Unknown') ? ('Reads as ' + d.fields.form_type + ' · ') : '';
-            contractReadStatus('✓ ' + ft + 'pre-filled what we found — confirm each step as you go.', '#5a9e72');
+            contractReadStatus('✓ Pre-filled what we found — confirm each step as you go.', '#5a9e72');
+            renderFormTypeConfirm(d.fields.form_type || null);
           } else {
             contractReadStatus("Couldn't extract the details — fill them in manually.", '#c96b6b');
+            renderFormTypeConfirm(null);
           }
         }catch(e){
           console.warn('[contract-read] failed', e);
           contractReadStatus("Couldn't extract the details — fill them in manually.", '#c96b6b');
+          renderFormTypeConfirm(null);
         }
       });
     })();
@@ -12590,7 +12653,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             pa_co_agent_name: state.data.coAgentName || '', pa_co_agent_company: state.data.coAgentCompany || '', pa_co_agent_email: state.data.coAgentEmail || '', pa_co_agent_phone: state.data.coAgentPhone || '',
             commission_notes: state.data.commissionNotes || '', agent_notes: state.data.agentNotes || '', pa_hoa: state.data.hoa || '',
             preferred_tc: state.data.preferredTcName || 'Auto-assign', preferred_tc_id: state.data.preferredTcId || 'auto', preferred_tc_email: state.data.preferredTcEmail || '',
-            contract_url: contractUrl, contract_filename: safeContractName, additional_docs: additionalUrls, submission_id: submissionId
+            contract_url: contractUrl, contract_filename: safeContractName, contract_form_type: state.data.contractFormType || '', additional_docs: additionalUrls, submission_id: submissionId
           };
           var fileRow = {
             id: submissionId,
