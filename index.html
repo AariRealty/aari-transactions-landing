@@ -11986,14 +11986,67 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       });
     })();
 
-    /* Property-address autocomplete · free Photon geocoder (OpenStreetMap data),
-       biased to Southwest Florida, no API key. Debounced 300ms; suggestions
-       render in the existing pa-combo dropdown styling. Picking one fills the
-       FULL address (street, city, state, zip) and auto-saves the draft. */
+    /* Property-address autocomplete · GOOGLE PLACES when a key is set below
+       (best Florida coverage, including new construction) · falls back to the
+       free OpenStreetMap geocoder when the key is empty, so nothing breaks
+       before the key lands. The key is a BROWSER key — restrict it in Google
+       Cloud to the aaritransactions.com domains + the Places/Maps JS APIs. */
+    const AARI_GMAPS_KEY = ''; // ← paste the Google Maps API key here
     (function(){
       const inp = document.getElementById('paAddress');
       const menu = document.getElementById('paAddressMenu');
       if(!inp || !menu) return;
+
+      if(AARI_GMAPS_KEY){
+        let loading = null;
+        const loadGoogle = function(){
+          if(loading) return loading;
+          loading = new Promise(function(resolve, reject){
+            window.__aariGmapsReady = function(){
+              try{
+                const st = document.createElement('style');
+                st.textContent = '.pac-container{z-index:100001 !important;font-family:inherit;border-radius:8px}';
+                document.head.appendChild(st);
+              }catch(_){}
+              resolve(window.google);
+            };
+            const s = document.createElement('script');
+            s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(AARI_GMAPS_KEY) + '&libraries=places&loading=async&callback=__aariGmapsReady';
+            s.onerror = reject;
+            document.head.appendChild(s);
+          });
+          return loading;
+        };
+        let wired = false;
+        inp.addEventListener('focus', async function(){
+          if(wired) return;
+          wired = true;
+          try{
+            const g = await loadGoogle();
+            const ac = new g.maps.places.Autocomplete(inp, {
+              types: ['address'],
+              componentRestrictions: { country: 'us' },
+              fields: ['formatted_address']
+            });
+            // Bias to Southwest Florida (Lee · Collier · Charlotte).
+            ac.setBounds(new g.maps.LatLngBounds(
+              new g.maps.LatLng(25.8, -82.4),
+              new g.maps.LatLng(27.1, -81.2)
+            ));
+            ac.addListener('place_changed', function(){
+              const p = ac.getPlace();
+              const addr = (p && p.formatted_address) ? p.formatted_address.replace(/, USA$/, '') : '';
+              if(addr){
+                inp.value = addr;
+                state.data.address = addr;
+                try { scheduleAutoSave(inp); } catch(_){}
+              }
+            });
+          }catch(e){ console.warn('[address] Google Places failed to load', e); wired = false; }
+        });
+        return; // Google path active · the OSM fallback below never wires
+      }
+
       let timer = null;
       let reqSeq = 0;
       function hideMenu(){ menu.hidden = true; menu.innerHTML = ''; }
