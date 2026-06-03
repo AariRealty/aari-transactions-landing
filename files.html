@@ -1687,6 +1687,45 @@ Aari Transactions`,
     for(const k in vars){
       out = out.split('{{' + k + '}}').join(vars[k]);
     }
+    // Only show information we actually have · drop empty/placeholder fields and
+    // any line or section header left with no real data. Single-line to/cc/subject
+    // (no newlines) are left untouched.
+    if(out.indexOf('\n') !== -1){
+      out = (function(text){
+        const isPlaceholder = (v) => !v || /^\[.*\]$/.test(String(v).trim());
+        let lines = text.split('\n').map((line) => {
+          if(line.indexOf('|') !== -1){
+            const ci = line.indexOf(':');
+            const prefix = ci !== -1 ? line.slice(0, ci + 1) : '';
+            const rest   = ci !== -1 ? line.slice(ci + 1) : line;
+            const segs = rest.split('|').map(s => s.trim()).filter(s => s && !isPlaceholder(s));
+            if(segs.length === 0) return null;               // no real data → drop line
+            return (prefix ? prefix + ' ' : '') + segs.join(' | ');
+          }
+          const m = line.match(/^(\s*-\s*[^:]+:)\s*(.*)$/);
+          if(m){
+            const core = m[2].replace(/\([^)]*\)\s*$/, '').trim();
+            if(isPlaceholder(core)) return null;             // "- Label: [x]" with no value → drop
+          }
+          return line;
+        }).filter(l => l !== null);
+        // Drop section headers left with no bullet items beneath them.
+        const keep = [];
+        for(let i = 0; i < lines.length; i++){
+          const line = lines[i];
+          if(/^(Important Deadlines|Financials|Contact Information)\s*$/.test(line.trim())){
+            let hasItems = false;
+            for(let j = i + 1; j < lines.length; j++){
+              if(lines[j].trim() === '') break;
+              if(/^\s*-/.test(lines[j])){ hasItems = true; break; }
+            }
+            if(!hasItems) continue;
+          }
+          keep.push(line);
+        }
+        return keep.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+      })(out);
+    }
     return out;
   }
 
