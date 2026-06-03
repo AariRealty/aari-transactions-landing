@@ -5059,6 +5059,67 @@ Aari Transactions`,
     }));
   }
 
+  // Upload controls · broker/TC attaches a contract or supporting doc from their
+  // computer. Fixes any file whose contract reference is missing (e.g. pre-tracker
+  // submissions) and works for replacing a doc going forward.
+  function wireDocUpload(file){
+    const wrap = document.getElementById('tpb-docs-upload');
+    if(!wrap) return;
+    const role = (_profile && _profile.role || '').toLowerCase();
+    if(role !== 'broker' && role !== 'tc'){ wrap.hidden = true; return; }
+    wrap.hidden = false;
+    const statusEl = document.getElementById('tpb-doc-up-status');
+    if(statusEl) statusEl.textContent = '';
+    const cBtn = document.getElementById('tpb-doc-up-btn');
+    const cIn  = document.getElementById('tpb-doc-file');
+    const aBtn = document.getElementById('tpb-doc-add-btn');
+    const aIn  = document.getElementById('tpb-doc-add-file');
+    if(cBtn && cIn){
+      cBtn.onclick = () => cIn.click();
+      cIn.onchange = () => { if(cIn.files && cIn.files[0]) uploadDocForFile(file, cIn.files[0], 'contract'); cIn.value = ''; };
+    }
+    if(aBtn && aIn){
+      aBtn.onclick = () => aIn.click();
+      aIn.onchange = () => { if(aIn.files && aIn.files[0]) uploadDocForFile(file, aIn.files[0], 'additional'); aIn.value = ''; };
+    }
+  }
+
+  async function uploadDocForFile(file, f, kind){
+    const statusEl = document.getElementById('tpb-doc-up-status');
+    const setS = (txt, color) => { if(statusEl){ statusEl.textContent = txt; statusEl.style.color = color || '#888'; } };
+    setS('Uploading ' + (f.name || 'file') + '…');
+    try {
+      const safeName = (f.name || (kind + '.pdf')).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const uploaderUid = file.agent_id || (_profile && _profile.id);
+      const sub = (file.raw_form_data && file.raw_form_data.submission_id) || file.id;
+      const base = uploaderUid + '/' + sub;
+      const path = kind === 'contract' ? (base + '/' + safeName) : (base + '/additional/' + safeName);
+      const { error: upErr } = await _client.storage.from('transaction-files')
+        .upload(path, f, { upsert: true, contentType: f.type || 'application/octet-stream' });
+      if(upErr) throw upErr;
+      const newRaw = Object.assign({}, file.raw_form_data || {});
+      newRaw.submission_id = sub;
+      if(kind === 'contract'){
+        newRaw.contract_filename = safeName;
+        newRaw.contract_path = path;
+      } else {
+        const list = Array.isArray(newRaw.additional_docs) ? newRaw.additional_docs.slice() : [];
+        list.push({ filename: safeName, path: path });
+        newRaw.additional_docs = list;
+      }
+      const { error: updErr } = await _client.from('files').update({ raw_form_data: newRaw }).eq('id', file.id);
+      if(updErr) throw updErr;
+      file.raw_form_data = newRaw;
+      const idx = _files.findIndex(x => x.id === file.id);
+      if(idx >= 0) _files[idx].raw_form_data = newRaw;
+      setS('✓ Uploaded', '#3b6d11');
+      renderDocsForFile(file);
+    } catch(err){
+      console.warn('[files] uploadDocForFile failed', err);
+      setS('Upload failed · ' + (err.message || 'try again'), '#a32d2d');
+    }
+  }
+
   // ============== ASSIGN TC (broker only) ==============
   // Lets the broker assign any file to a TC. Sets files.assigned_tc_id and fires
   // the existing acceptance SMS so the TC is notified to accept the file.
