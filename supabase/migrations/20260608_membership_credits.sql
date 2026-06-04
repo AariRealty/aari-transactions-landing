@@ -33,8 +33,8 @@ create policy credit_uses_insert on public.membership_credit_uses
   with check ( agent_id = auth.uid() or public.is_aari_team() );
 
 -- Members must be able to READ their own membership row for the credit check
--- (skip if an equivalent policy already exists).
+-- (owner column on memberships is agent_id).
 drop policy if exists memberships_own_select on public.memberships;
 create policy memberships_own_select on public.memberships
   for select to authenticated
-  using ( user_id = auth.uid() or public.is_aari_team() );
+  using ( agent_id = auth.uid() or public.is_aari_team() );
