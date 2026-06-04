@@ -5964,6 +5964,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             <label for="paTitleContactPhone">Contact phone <span class="req">*</span></label>
             <input type="tel" id="paTitleContactPhone" name="pa_title_contact_phone" placeholder="(239) 555-0100" autocomplete="off" inputmode="tel">
           </div>
+          <label style="display:flex;align-items:center;gap:8px;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:8px;padding:8px 12px;margin-top:14px;cursor:pointer;font-size:12px;color:#9a7c3a">
+            <input type="checkbox" id="paTitleKeep" style="accent-color:#9a7c3a;margin:0"> <span id="paTitleKeepLbl">Save this contact to my list for next time</span>
+          </label>
         </section>
         <section class="pa-step" data-pa-step="7" hidden>
           <div class="field">
@@ -5986,6 +5989,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             <label for="paLenderContactPhone">Contact phone <span class="opt">optional</span></label>
             <input type="tel" id="paLenderContactPhone" name="pa_lender_contact_phone" placeholder="(239) 555-0100" autocomplete="off" inputmode="tel">
           </div>
+          <label style="display:flex;align-items:center;gap:8px;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:8px;padding:8px 12px;margin-top:14px;cursor:pointer;font-size:12px;color:#9a7c3a">
+            <input type="checkbox" id="paLenderKeep" style="accent-color:#9a7c3a;margin:0"> <span id="paLenderKeepLbl">Save this contact to my list for next time</span>
+          </label>
         </section>
         <section class="pa-step" data-pa-step="8" hidden>
           <div class="field">
@@ -10861,7 +10867,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     function clearPathAInputs(){
       try { resetFieldVisuals(); } catch(_){} // no phantom "Saved" on blank reopened fields
       try { footerStatus(null); } catch(_){}  // footer back to "Exit anytime · progress saved"
-      ['paBuyerKeep','paSellerKeep','paBuyer2Keep','paSeller2Keep'].forEach(id => { const cb = document.getElementById(id); if(cb) cb.checked = false; try { keepBoxFeedback(id, false); } catch(_){} });
+      ['paBuyerKeep','paSellerKeep','paBuyer2Keep','paSeller2Keep','paTitleKeep','paLenderKeep'].forEach(id => { const cb = document.getElementById(id); if(cb) cb.checked = false; try { keepBoxFeedback(id, false); } catch(_){} });
       ['paAddress','paEffectiveDate','paClosingDate',
        'paTitleCompany','paTitleAddress','paTitleContactName','paTitleContactEmail','paTitleContactPhone',
        'paLender','paLenderContactName','paLenderContactEmail','paLenderContactPhone',
@@ -12285,14 +12291,32 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           phone: state.data.seller2_phone || '',
           updated_at: new Date().toISOString() });
       }
+      const keepT = document.getElementById('paTitleKeep');
+      if(keepT && keepT.checked && state.data.titleContactEmail){
+        jobs.push({ agent_id: uid, contact_type: 'title',
+          full_name: (state.data.titleContactName || '') + (state.data.titleCompany ? ' (' + state.data.titleCompany + ')' : ''),
+          email: (state.data.titleContactEmail || '').toLowerCase(),
+          phone: state.data.titleContactPhone || '',
+          updated_at: new Date().toISOString() });
+      }
+      const keepL = document.getElementById('paLenderKeep');
+      if(keepL && keepL.checked && state.data.lenderContactEmail){
+        jobs.push({ agent_id: uid, contact_type: 'lender',
+          full_name: (state.data.lenderContactName || '') + (state.data.lender ? ' (' + state.data.lender + ')' : ''),
+          email: (state.data.lenderContactEmail || '').toLowerCase(),
+          phone: state.data.lenderContactPhone || '',
+          updated_at: new Date().toISOString() });
+      }
       let failed = false;
       for(const row of jobs){
         if(!row.email) continue; // email is the dedupe key · skip if somehow empty
         const r = await client.from('agent_contacts').upsert(row, { onConflict: 'agent_id,email' });
         if(r && r.error){ failed = true; console.warn('[path-a] contact upsert failed ·', r.error.message || r.error); }
-        // Mirror into the local Saved buyers/sellers dropdown so it shows the
-        // full email + phone immediately (it reads aari_tc_clients).
-        try { saveClientRecord(row.full_name, row.email, row.phone); } catch(_){}
+        // Mirror buyers/sellers into the name dropdown (it reads aari_tc_clients);
+        // title/lender already mirror to their own saved lists via saveContactToLocal.
+        if(row.contact_type === 'buyer' || row.contact_type === 'seller'){
+          try { saveClientRecord(row.full_name, row.email, row.phone); } catch(_){}
+        }
       }
       return !failed;
     }
@@ -12375,7 +12399,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       else { lbl.textContent = 'Save this contact to my list for next time'; lbl.style.color = ''; }
     }
     [['paBuyerKeep','paBuyerEmail','buyer_email'],['paSellerKeep','paSellerEmail','seller_email'],
-     ['paBuyer2Keep','paBuyer2Email','buyer2_email'],['paSeller2Keep','paSeller2Email','seller2_email']].forEach(function(cfg){
+     ['paBuyer2Keep','paBuyer2Email','buyer2_email'],['paSeller2Keep','paSeller2Email','seller2_email'],
+     ['paTitleKeep','paTitleContactEmail','titleContactEmail'],['paLenderKeep','paLenderContactEmail','lenderContactEmail']].forEach(function(cfg){
       const cb = document.getElementById(cfg[0]);
       if(!cb) return;
       cb.addEventListener('change', async function(){
