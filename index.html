@@ -5888,11 +5888,6 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             </label>
             <div class="pa-keep-privacy" id="paBuyer2KeepPriv"><i class="ti ti-lock" aria-hidden="true"></i><span>Only you and the Aari Transactions team can see your saved contacts</span></div>
           </div>
-          <div class="field" id="paOtherPartyBWrap" style="margin-top:18px">
-            <label for="paOtherPartyB">Seller &middot; Full name <span class="opt">optional</span></label>
-            <input type="text" id="paOtherPartyB" name="pa_other_party_name" autocomplete="off">
-            <div class="help">The other party, exactly as written on the contract. Helps your TC label the file.</div>
-          </div>
         </section>
         <!-- Clients step (seller side) · shown when representation = seller OR both_sides -->
         <section class="pa-step" data-pa-step="clients-seller" hidden>
@@ -5931,10 +5926,13 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             </label>
             <div class="pa-keep-privacy" id="paSeller2KeepPriv"><i class="ti ti-lock" aria-hidden="true"></i><span>Only you and the Aari Transactions team can see your saved contacts</span></div>
           </div>
-          <div class="field" id="paOtherPartySWrap" style="margin-top:18px">
-            <label for="paOtherPartyS">Buyer &middot; Full name <span class="opt">optional</span></label>
-            <input type="text" id="paOtherPartyS" name="pa_other_party_name_s" autocomplete="off">
-            <div class="help">The other party, exactly as written on the contract. Helps your TC label the file.</div>
+        </section>
+        <!-- Other party (the side you DON'T represent) · own step · skipped on dual -->
+        <section class="pa-step" data-pa-step="other-party" hidden>
+          <div class="field">
+            <label for="paOtherParty"><span id="paOtherPartyLabel">Seller</span> &middot; Full name <span class="opt">optional</span></label>
+            <input type="text" id="paOtherParty" name="pa_other_party_name" autocomplete="off">
+            <div class="help">Exactly as written on the contract. Helps your TC label the file.</div>
           </div>
         </section>
         <section class="pa-step" data-pa-step="4" hidden>
@@ -10776,6 +10774,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       3:  { h:'Who are you <em>representing?</em>', s:'One pick.' },
       'clients-buyer':  { h:'Buyer <em>client?</em>',  s:'Name, email, phone · how we identify your buyer.' },
       'clients-seller': { h:'Seller <em>client?</em>', s:'Name, email, phone · how we identify your seller.' },
+      'other-party': { h:'The <em>other party?</em>', s:'The name on the other side of the contract. Optional.' },
       4:  { h:'<em>Property</em> address?',       s:'Start typing and pick the address.' },
       'effective': { h:'<em>Effective</em> date?', s:'When the contract was fully executed.' },
       5:  { h:'<em>Closing</em> date?',           s:'When does this deal close?' },
@@ -10797,7 +10796,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     // the contract is the source of truth, so it comes in first.
     // 'for-agent' (TC/broker only · filtered out for agents in activeSteps)
     // asks WHO the file belongs to, before anything else is captured.
-    const ALL_STEPS = [1,2,'for-agent','agent-info',9,3,'clients-buyer','clients-seller',4,'effective',5,'hoa',6,7,8,'co-agent',10,'tc','final','done'];
+    const ALL_STEPS = [1,2,'for-agent','agent-info',9,3,'clients-buyer','clients-seller','other-party',4,'effective',5,'hoa',6,7,8,'co-agent',10,'tc','final','done'];
 
     let state = { step: 1, data: {}, profile: null, active: false };
 
@@ -10817,10 +10816,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(submitterRole !== 'tc' && submitterRole !== 'broker'){
         steps = steps.filter(s => s !== 'for-agent');
       }
-      // Both-sides deals have no other-side agent — skip that step entirely.
+      // Both-sides deals have no other-side agent and no other party — skip both.
       const repNow = (pkg && pkg.representation) || state.data.representation;
       if(repNow === 'both_sides'){
-        steps = steps.filter(s => s !== 8);
+        steps = steps.filter(s => s !== 8 && s !== 'other-party');
       }
       if(pkg && pkg.representation){
         steps = steps.filter(s => s !== 3);
@@ -11602,13 +11601,22 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(state.step === 'for-agent') renderForAgent();
       if(state.step === 'agent-info') renderAgentInfo();
       if(state.step === 'effective') updateEffectiveHelp();
+      if(state.step === 'other-party'){
+        // Label flips to the side the agent does NOT represent.
+        const lbl = document.getElementById('paOtherPartyLabel');
+        if(lbl) lbl.textContent = state.data.representation === 'seller' ? 'Buyer' : 'Seller';
+      }
       if(state.step === 'clients-buyer' || state.step === 'clients-seller'){
-        // Other-party name only makes sense on single-side files.
-        const dual = state.data.representation === 'both_sides';
-        const w1 = document.getElementById('paOtherPartyBWrap');
-        const w2 = document.getElementById('paOtherPartySWrap');
-        if(w1) w1.hidden = dual;
-        if(w2) w2.hidden = dual;
+        // Second-person fields stay behind their toggle · re-collapse when empty
+        // so the step always opens as ONE question.
+        [['paBuyer2Toggle','paBuyer2Fields','+ Add a second buyer'],
+         ['paSeller2Toggle','paSeller2Fields','+ Add a second seller']].forEach(function(t){
+          const btn = document.getElementById(t[0]);
+          const wrap = document.getElementById(t[1]);
+          if(!btn || !wrap || wrap.hidden) return;
+          const hasData = Array.prototype.some.call(wrap.querySelectorAll('input:not([type="checkbox"])'), function(i){ return (i.value || '').trim() !== ''; });
+          if(!hasData){ wrap.hidden = true; btn.textContent = t[2]; }
+        });
       }
       gateStep();
       if(state.step === 8) renderOtherSideAgent();
@@ -11705,10 +11713,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         return parts.join(' · ');
       }},
       // Other party (from the contract) · only on single-side files.
-      { step: 'clients-buyer',  label: 'Seller (other side)',
-        get: (s) => s.data.representation === 'buyer' ? (s.data.otherPartyName || 'None') : '' },
-      { step: 'clients-seller', label: 'Buyer (other side)',
-        get: (s) => s.data.representation === 'seller' ? (s.data.otherPartyName || 'None') : '' },
+      { step: 'other-party',
+        label: (s) => s.data.representation === 'seller' ? 'Buyer (other side)' : 'Seller (other side)',
+        get: (s) => s.data.representation === 'both_sides' ? '' : (s.data.otherPartyName || 'None') },
       { step: 4,  label: 'Property address',  get: (s) => s.data.address || '' },
       { step: 'effective', label: 'Effective date', get: (s) => formatDate(s.data.effectiveDate) },
       { step: 5,  label: 'Closing date',      get: (s) => formatDate(s.data.closingDate) },
@@ -11861,7 +11868,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     const CONTACT_LIVE_BINDINGS = {
       paBuyerName: 'buyer_name',   paBuyerEmail: 'buyer_email',   paBuyerPhone: 'buyer_phone',
       paSellerName: 'seller_name', paSellerEmail: 'seller_email', paSellerPhone: 'seller_phone',
-      paOtherPartyB: 'otherPartyName', paOtherPartyS: 'otherPartyName',
+      paOtherParty: 'otherPartyName',
       paAgentSelfName: 'agentSelfName', paAgentSelfEmail: 'agentSelfEmail', paAgentSelfPhone: 'agentSelfPhone',
       paTitleCompany: 'titleCompany', paTitleAddress: 'titleAddress',
       paTitleContactName: 'titleContactName', paTitleContactEmail: 'titleContactEmail', paTitleContactPhone: 'titleContactPhone',
@@ -13336,6 +13343,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           state.data.listingAgentCompany  = v('paListingAgentCompany');
           state.data.listingAgentPhone    = v('paListingAgentPhone');
           state.data.listingAgentEmail    = v('paListingAgentEmail');
+          return true;
+        }
+        case 'other-party': {
+          const op = document.getElementById('paOtherParty');
+          state.data.otherPartyName = op ? op.value.trim() : '';
           return true;
         }
         case 'co-agent': {
