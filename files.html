@@ -414,6 +414,10 @@
   .ck-archive{margin:0 0 8px;border:0.5px solid #eceae5;border-radius:8px;padding:6px 10px;background:#fafaf9}
   .ck-archive summary{font-size:11px;font-weight:600;color:#8a877f;cursor:pointer;padding:3px 0}
   .ck-empty{font-size:11.5px;color:#9a9a9a;margin:4px 0}
+  /* Waiting for TC column + acceptance countdown */
+  .lane[data-stage="waiting_for_tc"]{border-left:3px solid #f0d89a}
+  .card-wtc{display:inline-block;font-size:10px;font-weight:600;border-radius:999px;padding:2px 8px;background:#fdf6e3;color:#9a7c3a;border:0.5px solid #f0d89a;margin-top:4px}
+  .card-wtc.overdue{background:#fdecea;color:#c96b6b;border-color:#f4c7c3}
   .ck-dl-btn{border:none;cursor:pointer;font-family:inherit}
   .ck-dl-wrap{display:inline-flex;align-items:center;gap:4px}
   .ck-dl-edited{font-size:9px;color:#9a7c3a;font-style:normal;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
@@ -722,14 +726,14 @@
 
   // ============== STAGE CONFIG (file-type aware) ==============
   const STAGES_BY_TYPE = {
-    sale:      ['new','under_contract','inspection','remedy','appraisal','ctc','closed'],
+    sale:      ['new','waiting_for_tc','under_contract','inspection','remedy','appraisal','ctc','closed'],
     listing:   ['new','active','pending','closed','cancelled'],
     lease:     ['new','active','signed','occupied','expired'],
     buyer_rep: ['signed','active','representing','expired'],
   };
   const STAGE_LABELS = {
     // Sale
-    'new':'New', 'under_contract':'Under contract', 'inspection':'Inspection',
+    'new':'New', 'waiting_for_tc':'Waiting for TC', 'under_contract':'Under contract', 'inspection':'Inspection',
     'remedy':'Remedy', 'appraisal':'Appraisal', 'ctc':'Clear to close', 'closed':'Closed',
     // Listing
     'active':'Active', 'pending':'Pending', 'cancelled':'Cancelled',
@@ -740,7 +744,7 @@
   };
   const STAGE_SUBS = {
     // Sale
-    'new':'awaiting TC', 'under_contract':'signed, set up', 'inspection':'scheduled / done',
+    'new':'awaiting TC', 'waiting_for_tc':'needs a coordinator', 'under_contract':'signed, set up', 'inspection':'scheduled / done',
     'remedy':'repairs / credits', 'appraisal':'ordered / in', 'ctc':'CD sent / walk',
     'closed':'funded, paid',
     // Listing
@@ -809,6 +813,55 @@ The minute your contract executes, I open the Master Coordination thread so titl
 
 Marlenyi
 Aari Transactions`,
+        },
+      ],
+      waiting_for_tc: [
+        {
+          id:'wtc_opening_all_parties',
+          thread:1,
+          label:'Opening email · all parties + full timeline',
+          to:'{{buyer_name}} <{{buyer_email}}>; {{seller_name}} <{{seller_email}}>; {{listing_agent_name}} <{{listing_agent_email}}>; {{title_closer_name}} <{{title_email}}>; {{lender_name}} <{{lender_email}}>',
+          cc:'{{agent_name}} <{{agent_email}}>',
+          subject:'Welcome to your transaction — {{address}}',
+          body:
+`Hi everyone,
+
+I will be coordinating this transaction on behalf of {{agent_name}}. I have reviewed the contract and want to share the key dates so everyone is on the same page from day one.
+
+Key dates for {{address}}
+- Effective Date: {{effective_date}}
+- Initial deposit due: {{dl_emd_initial}}
+- Loan application due: {{dl_loan_app}}
+- Inspection period ends: {{dl_inspection_end}}
+- Loan approval deadline: {{dl_loan_approval}}
+- Title commitment due: {{dl_title_commitment}}
+- Walk-through: {{dl_walkthrough}}
+- Closing: {{closing_date}}
+
+Please feel free to reach out to me directly at any time. I look forward to working with you.
+
+Aari Transactions · 239.688.1770`,
+        },
+        {
+          id:'wtc_escrow_opening',
+          thread:3,
+          label:'Escrow opening · instructions to title',
+          to:'{{title_closer_name}} <{{title_email}}>',
+          cc:'{{agent_name}} <{{agent_email}}>',
+          subject:'New escrow — {{address}}',
+          body:
+`Hi {{title_closer_first_name}},
+
+Please find attached the executed contract for {{address}}. We would like to open escrow.
+
+Buyer: {{buyer_name}}
+Seller: {{seller_name}}
+Initial deposit: {{earnest_money}} due by {{dl_emd_initial}}
+
+Please confirm receipt of these instructions and provide your escrow number.
+
+Thank you,
+Aari Transactions · 239.688.1770`,
         },
       ],
       under_contract: [
@@ -1583,6 +1636,15 @@ Aari Transactions`,
   // Variable interpolation. Pulls from file row + joined agent profile.
   // Missing values become bracketed placeholders so the TC sees what to fill.
   function fillEmailVars(template, file, agent){
+    // Deadline vars · {{dl_emd_initial}} {{dl_loan_app}} {{dl_emd_additional}}
+    // {{dl_inspection_end}} {{dl_loan_approval}} {{dl_title_commitment}}
+    // {{dl_estoppel}} {{dl_survey}} {{dl_walkthrough}} · from the deadline engine.
+    try {
+      const _dls = fileDeadlines(file || {});
+      Object.keys(_dls).forEach(k => {
+        template = template.split('{{dl_' + k + '}}').join(_dls[k].date.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }));
+      });
+    } catch(_){}
     const fmt = (iso) => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '[TBD]';
     const price = file.purchase_price_cents
       ? '$' + (file.purchase_price_cents/100).toLocaleString('en-US', {minimumFractionDigits:0, maximumFractionDigits:0})
@@ -4327,6 +4389,11 @@ Aari Transactions`,
       if(ft === 'buyer_rep') return 'expired';
       return 'closed';
     }
+    // Assigned but not yet accepted → Waiting for TC (sale lane owns a column for it).
+    if(ft === 'sale' && f.assigned_tc_id && !f.tc_accepted_at &&
+       (f.status === 'awaiting_tc_acceptance' || f.status === 'intake_received' || !f.status)){
+      return 'waiting_for_tc';
+    }
     if(f.status === 'intake_received' && !f.tc_accepted_at) return validStages[0];
     if(f.status === 'awaiting_tc_acceptance') return validStages[0];
     // Sale-side date-based derivation (only valid for sale lane structure)
@@ -4408,6 +4475,11 @@ Aari Transactions`,
       '</div></div>'
     ).join('');
   }
+
+  // Re-render every 60s while acceptance countdowns are on screen.
+  setInterval(() => {
+    try { if(document.querySelector('.lane[data-stage="waiting_for_tc"] .card')) renderKanban(); } catch(_){}
+  }, 60000);
 
   function renderKanbanShell(){
     const stages = getStages();
@@ -4548,9 +4620,18 @@ Aari Transactions`,
     const cashBadge = cash ? '<span class="card-tag-cash">Cash</span>' : '';
     const payBadge = f.payment_pending ? '<span class="card-tag-pay">Awaiting payment</span>' : '';
     const scoreBadge = '<span class="card-score score-' + cert.bucket + '" title="Closing Certainty">' + cert.score + '</span>';
+    // Acceptance countdown · anchored to created_at (same anchor the 30-min sweep uses).
+    let wtcPill = '';
+    if(stage === 'waiting_for_tc'){
+      const mins = 30 - Math.floor((Date.now() - new Date(f.created_at).getTime()) / 60000);
+      wtcPill = mins > 0
+        ? '<span class="card-wtc">' + mins + ' min remaining to accept</span>'
+        : '<span class="card-wtc overdue">Acceptance overdue</span>';
+    }
     return '<div class="card'+urgentCls+(cash?' cash':'')+'" draggable="true" data-file-id="'+esc(f.id)+'">' +
       '<div class="card-top"><p class="card-addr">'+esc(addr)+cashBadge+payBadge+'</p>'+scoreBadge+'</div>' +
       (meta ? '<p class="card-meta">'+esc(meta)+'</p>' : '') +
+      (wtcPill ? '<p style="margin:0">'+wtcPill+'</p>' : '') +
       (foot ? '<p class="card-foot'+footCls+'">'+esc(foot)+'</p>' : '') +
     '</div>';
   }
@@ -4798,6 +4879,14 @@ Aari Transactions`,
       const file = _files.find(f => f.id === fid);
       if(!file) return;
       if(file.transaction_stage === newStage) return; // no-op guard
+      // Stage-2 gate · opening email must be marked done before leaving Waiting for TC.
+      try {
+        const curStage = deriveStage(file);
+        const doneTasks = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+        if(curStage === 'waiting_for_tc' && newStage !== 'waiting_for_tc' && !doneTasks['wtc_opening_email']){
+          if(!confirm('Opening email not sent. Are you sure you want to move this file?')) return;
+        }
+      } catch(_){}
       const prevStage = file.transaction_stage;
       file.transaction_stage = newStage;
       renderKanban();
@@ -4946,6 +5035,23 @@ Aari Transactions`,
         { id:'new_closing_confirmed',   label:'Identify and confirm Closing Date from contract' },
         { id:'new_deadlines_calculated', label:'Calculate all deadlines from Effective Date', showAllDeadlines:true,
           sub:'Auto-calculated below from this file’s dates · Florida weekend/holiday rule applied.' },
+      ],
+      waiting_for_tc: [
+        { id:'wtc_contract_review',    label:'TC reviews full contract — all parties, dates, deadlines confirmed' },
+        { id:'wtc_deadlines_verified', label:'Verify all auto-calculated deadlines are correct',
+          sub:'Tap any date in the Stage 1 deadline table to enter the contract&rsquo;s actual date.' },
+        { id:'wtc_contacts_complete',  label:'Confirm all party contact information is complete',
+          sub:'Buyer · Seller · Listing agent · Selling agent · Title (name, contact, email, phone) · Lender (if financed). All shown in File Details above.' },
+        { id:'wtc_opening_email',      label:'Send opening email to all parties',
+          sub:'Template ready in &ldquo;What to send next&rdquo; below — auto-filled with this file&rsquo;s dates. Mark sent there, then check this off. Required before this file can leave the column.' },
+        { id:'wtc_escrow_agent',       label:'Confirm escrow agent name, address, phone, and email on file' },
+        { id:'wtc_escrow_instructions', label:'Send escrow opening instructions to title company',
+          sub:'Template ready in &ldquo;What to send next&rdquo; below.' },
+        { id:'wtc_hoa_initiated',      label:'HOA status confirmed — if yes, initiate HOA document request' },
+        { id:'wtc_survey_requested',   label:'Request existing survey from seller if available', dl:'survey',
+          sub:'Note: due within 5 days of Effective Date if in seller&rsquo;s possession.' },
+        { id:'wtc_title_policy_requested', label:'Request existing title insurance copy from seller if available',
+          sub:'Due within 5 days of Effective Date if available.' },
       ],
     },
   };
