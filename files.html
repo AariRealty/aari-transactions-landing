@@ -5461,6 +5461,35 @@ Aari Transactions`,
     }
   });
 
+  // HOA correction · TC flips the agent's answer · drives estoppel task,
+  // HOA checklist item, and the HOA email template everywhere.
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest && e.target.closest('[data-hoa-toggle]');
+    if(!btn || !_currentFile) return;
+    const raw = (_currentFile.raw_form_data && typeof _currentFile.raw_form_data === 'object') ? _currentFile.raw_form_data : {};
+    const next = (raw.pa_hoa === 'yes') ? 'no' : 'yes';
+    if(!confirm('Change HOA / condo on this file to "' + next.toUpperCase() + '"?')) return;
+    const newRaw = { ...raw, pa_hoa: next };
+    const prev = _currentFile.raw_form_data;
+    _currentFile.raw_form_data = newRaw;
+    renderPlaybook(_currentFile);
+    const r = await _client.from('files').update({ raw_form_data: newRaw }).eq('id', _currentFile.id);
+    if(r && r.error){
+      console.warn('[hoa] toggle failed', r.error.message);
+      _currentFile.raw_form_data = prev;
+      renderPlaybook(_currentFile);
+      alert('Could not save — try again.');
+      return;
+    }
+    try {
+      writeAuditLog('file_hoa_changed', _currentFile.id, {
+        from: raw.pa_hoa || null, to: next,
+        property_address: _currentFile.property_address || null,
+        changed_at: new Date().toISOString(),
+      });
+    } catch(_){}
+  });
+
   // Deadline overrides · tap a date -> date input · contract's real date wins.
   async function saveDeadlineOverride(key, val){
     if(!_currentFile) return;
@@ -5537,7 +5566,12 @@ Aari Transactions`,
       '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:6px 0;border-top:0.5px solid rgba(15,15,15,0.07)">' +
         '<span style="font-size:10.5px;color:#888;letter-spacing:.3px;text-transform:uppercase;font-weight:600;flex:none">' + esc(r[0]) + '</span>' +
         '<span style="font-size:12px;color:#0f0f0f;text-align:right;min-width:0;word-break:break-word">' + esc(r[1]) + '</span>' +
-      '</div>').join('');
+      '</div>').join('') +
+      '<div style="padding:8px 0 0;text-align:right">' +
+        '<button type="button" data-hoa-toggle style="border:none;background:#f3f3f1;color:#5f5e5a;font-family:inherit;font-size:10px;font-weight:600;border-radius:999px;padding:3px 10px;cursor:pointer" title="Flip if the agent got it wrong — updates the estoppel task + HOA email">' +
+          'HOA: ' + ((raw.pa_hoa === 'yes') ? 'Yes' : 'No') + ' · tap to change' +
+        '</button>' +
+      '</div>';
   }
   function closePlaybook(){ _currentFile = null; document.body.classList.remove('tpb-open'); }
 
