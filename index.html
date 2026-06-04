@@ -11974,6 +11974,18 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         renderFormTypeChips(box, "We couldn't tell the form type from this copy — pick it:");
       }
     }
+    /* Free local form-type detection · FL contract forms announce themselves in
+       their own text. No AI, nothing leaves the browser. Order matters: CRSP's
+       title is a re-ordering of FAR/BAR's, so the more specific checks go first. */
+    function detectFormTypeLocal(text){
+      const t = (text || '').replace(/\s+/g, ' ');
+      if(/AS[\s"“”'‘’-]{0,4}IS[\s"“”'‘’-]{0,4}Residential Contract/i.test(t)) return 'FAR/BAR AS-IS';
+      if(/Contract for Residential Sale and Purchase/i.test(t)) return 'CRSP';
+      if(/Residential Contract for Sale and Purchase/i.test(t)) return 'FAR/BAR Standard';
+      if(/new construction|to be constructed|home to be built/i.test(t)) return 'New construction/builder';
+      if(/Purchase and Sale Agreement/i.test(t)) return 'New construction/builder';
+      return null;
+    }
     (function(){
       const inp = document.getElementById('paContract');
       if(!inp) return;
@@ -11981,6 +11993,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         const file = inp.files && inp.files[0];
         if(!file) return;
         contractReadStatus('Reading the contract…', '#c49a3c');
+        let localType = null;
         try{
           const text = await extractPdfText(file);
           if(!text || text.trim().length < 200){
@@ -11988,21 +12001,30 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             renderFormTypeConfirm(null);
             return;
           }
-          const client = await window.AariAuth.ensureClient();
-          const r = await client.functions.invoke('extract-contract', { body: { text: text } });
-          const d = r && r.data;
-          if(d && d.ok && d.fields){
-            applyExtracted(d.fields);
+          localType = detectFormTypeLocal(text);
+          // Try the AI reader for full field extraction (works once the
+          // extract-contract function + API key are set up in Supabase).
+          let fields = null;
+          try{
+            const client = await window.AariAuth.ensureClient();
+            const r = await client.functions.invoke('extract-contract', { body: { text: text } });
+            if(r && r.data && r.data.ok && r.data.fields) fields = r.data.fields;
+          }catch(fnErr){ console.warn('[contract-read] reader add-on unavailable', fnErr); }
+          if(fields){
+            applyExtracted(fields);
             contractReadStatus('✓ Pre-filled what we found — confirm each step as you go.', '#5a9e72');
-            renderFormTypeConfirm(d.fields.form_type || null);
+            renderFormTypeConfirm((fields.form_type && fields.form_type !== 'Unknown') ? fields.form_type : localType);
+          } else if(localType){
+            contractReadStatus('✓ Contract read · auto-fill of names/dates needs the reader add-on.', '#5a9e72');
+            renderFormTypeConfirm(localType);
           } else {
-            contractReadStatus("Couldn't extract the details — fill them in manually.", '#c96b6b');
+            contractReadStatus("Couldn't tell the details from this copy — fill them in manually.", '#c96b6b');
             renderFormTypeConfirm(null);
           }
         }catch(e){
           console.warn('[contract-read] failed', e);
           contractReadStatus("Couldn't extract the details — fill them in manually.", '#c96b6b');
-          renderFormTypeConfirm(null);
+          renderFormTypeConfirm(localType);
         }
       });
     })();
