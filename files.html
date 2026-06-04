@@ -390,6 +390,31 @@
   .tpb-next-list{font-size:12px;color:#666;line-height:1.7;margin:0;padding-left:18px}
   .tpb-empty{padding:28px 6px;text-align:center;color:#888;font-size:12px}
 
+  /* Stage Checklist · per-kanban-column task lists (June 2026) */
+  .tpb-ck-section{background:#fff;border-top:0.5px solid rgba(15,15,15,0.08);padding:14px 22px}
+  .tpb-ck-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+  .tpb-ck-eb{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#666;font-weight:500;margin:0}
+  .tpb-ck-meta{font-size:10.5px;color:#888;margin:0}
+  .ck-task{display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-top:0.5px solid rgba(15,15,15,0.06);cursor:pointer}
+  .ck-task:first-of-type{border-top:none}
+  .ck-task input[type="checkbox"]{margin-top:2px;accent-color:#0f0f0f;flex:none;width:15px;height:15px;cursor:pointer}
+  .ck-body{flex:1;min-width:0}
+  .ck-label{display:block;font-size:12.5px;color:#0f0f0f;line-height:1.4}
+  .ck-done .ck-label{color:#9a9a9a;text-decoration:line-through}
+  .ck-sub{display:block;font-size:10.5px;color:#9a9a9a;margin-top:1px;line-height:1.4}
+  .ck-stamp{display:block;font-size:10px;color:#7aab80;margin-top:2px}
+  .ck-dl{flex:none;font-size:10px;font-weight:600;border-radius:999px;padding:2px 8px;white-space:nowrap;margin-top:2px}
+  .ck-dl-upcoming{background:#f3f3f1;color:#2c2c2a}
+  .ck-dl-today{background:#fdf6e3;color:#9a7c3a;border:0.5px solid #f0d89a}
+  .ck-dl-overdue{background:#fdecea;color:#c96b6b;border:0.5px solid #f4c7c3}
+  .ck-dl-table{margin-top:7px;border:0.5px solid #eceae5;border-radius:8px;padding:4px 10px;background:#fafaf9}
+  .ck-dl-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:4px 0;font-size:11px;color:#5f5e5a;border-top:0.5px solid rgba(15,15,15,0.04)}
+  .ck-dl-row:first-child{border-top:none}
+  .ck-dl-empty-note{font-size:11px;color:#9a9a9a;padding:8px 2px}
+  .ck-archive{margin:0 0 8px;border:0.5px solid #eceae5;border-radius:8px;padding:6px 10px;background:#fafaf9}
+  .ck-archive summary{font-size:11px;font-weight:600;color:#8a877f;cursor:pointer;padding:3px 0}
+  .ck-empty{font-size:11.5px;color:#9a9a9a;margin:4px 0}
+
   /* Contract Verification section · top-10 TC checklist with conditional rendering */
   .tpb-vf-section{padding:14px 22px 16px;background:#fff;border-top:0.5px solid rgba(15,15,15,0.08)}
   .tpb-vf-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px}
@@ -588,6 +613,13 @@
       <p class="tpb-lg-meta">from intake</p>
     </div>
     <div id="tpb-details"></div>
+  </div>
+  <div class="tpb-ck-section">
+    <div class="tpb-ck-head">
+      <p class="tpb-ck-eb">Stage checklist</p>
+      <p class="tpb-ck-meta" id="tpb-ck-meta"></p>
+    </div>
+    <div id="tpb-checklist"></div>
   </div>
   <div class="tpb-body">
     <p class="tpb-section-eb">What to send next</p>
@@ -4835,6 +4867,174 @@ Aari Transactions`,
     renderPlaybook(file);
   }
 
+  // ============== STAGE CHECKLISTS · TC (sale) files ==============
+  // Stage-specific task lists. Each task: id (globally unique · keys the
+  // stage_tasks jsonb), label, optional sub, optional dl (deadline key from
+  // fileDeadlines), optional email (EMAIL_PLAYBOOK id · wired from Stage 2 on).
+  // Built stage-by-stage with Marlenyi · Stage 1 (new) live.
+
+  // Federal holidays (observed) · 2026-2027 · extend yearly.
+  const FED_HOLIDAYS = new Set([
+    '2026-01-01','2026-01-19','2026-02-16','2026-05-25','2026-06-19','2026-07-03',
+    '2026-09-07','2026-10-12','2026-11-11','2026-11-26','2026-12-25',
+    '2027-01-01','2027-01-18','2027-02-15','2027-05-31','2027-06-18','2027-07-05',
+    '2027-09-06','2027-10-11','2027-11-11','2027-11-25','2027-12-24',
+  ]);
+  function ymd(d){ return d.toLocaleDateString('en-CA'); }
+  // Florida rule: deadline on Sat/Sun/federal holiday rolls to next business day.
+  function flBusinessDay(d){
+    const x = new Date(d.getTime());
+    for(let i = 0; i < 10; i++){
+      const day = x.getDay();
+      if(day !== 0 && day !== 6 && !FED_HOLIDAYS.has(ymd(x))) return x;
+      x.setDate(x.getDate() + 1);
+    }
+    return x;
+  }
+  function addDays(base, n){ const d = new Date(base.getTime()); d.setDate(d.getDate() + n); return d; }
+  function parseDate(s){ if(!s) return null; const d = new Date(s + 'T12:00:00'); return isNaN(d) ? null : d; }
+
+  const DEADLINE_DEFS = [
+    { key:'emd_initial',      label:'Initial deposit due',        from:'effective', offset:3 },
+    { key:'loan_app',         label:'Loan application due',       from:'effective', offset:5 },
+    { key:'emd_additional',   label:'Additional deposit due',     from:'effective', offset:10 },
+    { key:'inspection_end',   label:'Inspection period ends',     from:'effective', offset:15 },
+    { key:'loan_approval',    label:'Loan approval deadline',     from:'effective', offset:30 },
+    { key:'title_commitment', label:'Title commitment deadline',  from:'closing',   offset:-15 },
+    { key:'estoppel',         label:'Estoppel letter deadline',   from:'closing',   offset:-10 },
+    { key:'survey',           label:'Survey deadline',            from:'closing',   offset:-5 },
+    { key:'walkthrough',      label:'Walk-through',               from:'closing',   offset:-1 },
+  ];
+  // All FL-rolled deadlines for a file · {} when dates are missing.
+  function fileDeadlines(file){
+    const eff = parseDate(file.effective_date);
+    const close = parseDate(file.closing_date);
+    const out = {};
+    DEADLINE_DEFS.forEach(def => {
+      const base = def.from === 'effective' ? eff : close;
+      if(!base) return;
+      out[def.key] = { label: def.label, date: flBusinessDay(addDays(base, def.offset)) };
+    });
+    return out;
+  }
+  function dlState(date){
+    const today = new Date(); today.setHours(0,0,0,0);
+    const d = new Date(date.getTime()); d.setHours(0,0,0,0);
+    if(d < today) return 'overdue';
+    if(d.getTime() === today.getTime()) return 'today';
+    return 'upcoming';
+  }
+  function fmtDl(date){ return date.toLocaleDateString('en-US', { month:'short', day:'numeric' }); }
+
+  const STAGE_CHECKLISTS = {
+    sale: {
+      new: [
+        { id:'new_file_received',   label:'Confirm file received and all required documents uploaded' },
+        { id:'new_contract_attached', label:'Verify executed contract is attached' },
+        { id:'new_effective_confirmed', label:'Identify and confirm Effective Date from contract' },
+        { id:'new_closing_confirmed',   label:'Identify and confirm Closing Date from contract' },
+        { id:'new_deadlines_calculated', label:'Calculate all deadlines from Effective Date', showAllDeadlines:true,
+          sub:'Auto-calculated below from this file’s dates · Florida weekend/holiday rule applied.' },
+        { id:'new_tc_assigned',     label:'Confirm TC is assigned' },
+        { id:'new_side_confirmed',  label:'Confirm service type — buyer side / seller side / both sides' },
+      ],
+    },
+  };
+
+  let _ckSaving = false;
+  function ckTasksFor(file, stage){
+    const byType = STAGE_CHECKLISTS[(file.file_type || 'sale')] || {};
+    return byType[stage] || null;
+  }
+  function ckRow(file, t, dls, done){
+    const rec = done[t.id];
+    let dlChip = '';
+    if(t.dl && dls[t.dl]){
+      const st = dlState(dls[t.dl].date);
+      dlChip = '<span class="ck-dl ck-dl-' + st + '">' + (st === 'overdue' ? 'Overdue · ' : (st === 'today' ? 'Today · ' : 'Due ')) + fmtDl(dls[t.dl].date) + '</span>';
+    }
+    let allDl = '';
+    if(t.showAllDeadlines){
+      const rows = DEADLINE_DEFS
+        .filter(def => dls[def.key])
+        .map(def => {
+          const st = dlState(dls[def.key].date);
+          return '<div class="ck-dl-row"><span>' + esc(def.label) + '</span><span class="ck-dl ck-dl-' + st + '">' + fmtDl(dls[def.key].date) + '</span></div>';
+        }).join('');
+      allDl = rows
+        ? '<div class="ck-dl-table">' + rows + '</div>'
+        : '<div class="ck-dl-table ck-dl-empty-note">Add the Effective + Closing dates to this file to auto-calculate deadlines.</div>';
+    }
+    return '<label class="ck-task' + (rec ? ' ck-done' : '') + '">' +
+      '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + '>' +
+      '<span class="ck-body"><span class="ck-label">' + esc(t.label) + '</span>' +
+      (t.sub ? '<span class="ck-sub">' + t.sub + '</span>' : '') +
+      (rec && rec.at ? '<span class="ck-stamp">Done ' + new Date(rec.at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + new Date(rec.at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) + '</span>' : '') +
+      allDl +
+      '</span>' + dlChip + '</label>';
+  }
+  function renderStageChecklist(file){
+    const host = document.getElementById('tpb-checklist');
+    const head = document.getElementById('tpb-ck-meta');
+    if(!host) return;
+    if((file.file_type || 'sale') !== 'sale'){
+      host.parentElement.style.display = 'none';
+      return; // TC sale checklists only · other services get their own build
+    }
+    host.parentElement.style.display = '';
+    const stage = deriveStage(file);
+    const tasks = ckTasksFor(file, stage);
+    const done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    const dls = fileDeadlines(file);
+    const stages = STAGES_BY_TYPE.sale;
+    const curIdx = stages.indexOf(stage);
+
+    // Archive · prior stages with defined checklists, collapsed.
+    let archive = '';
+    stages.slice(0, Math.max(curIdx, 0)).forEach(s => {
+      const ts = ckTasksFor(file, s);
+      if(!ts) return;
+      const doneCount = ts.filter(t => done[t.id]).length;
+      archive += '<details class="ck-archive"><summary>' + esc(STAGE_LABELS[s] || s) + ' · ' + doneCount + ' of ' + ts.length + ' done</summary>' +
+        ts.map(t => ckRow(file, t, dls, done)).join('') + '</details>';
+    });
+
+    if(!tasks && !archive){
+      host.innerHTML = '<p class="ck-empty">Checklist for the ' + esc(STAGE_LABELS[stage] || stage) + ' stage is coming in this build · stages ship one at a time.</p>';
+      if(head) head.textContent = '';
+      return;
+    }
+    const doneCount = tasks ? tasks.filter(t => done[t.id]).length : 0;
+    if(head) head.textContent = tasks ? (doneCount + ' of ' + tasks.length + ' done') : '';
+    host.innerHTML = archive + (tasks
+      ? tasks.map(t => ckRow(file, t, dls, done)).join('')
+      : '<p class="ck-empty">Checklist for the ' + esc(STAGE_LABELS[stage] || stage) + ' stage ships next.</p>');
+  }
+  // Delegated check handler · optimistic, timestamped, persisted.
+  document.addEventListener('change', async (e) => {
+    const cb = e.target.closest && e.target.closest('[data-ck-task]');
+    if(!cb || !_currentFile || _ckSaving) return;
+    const taskId = cb.getAttribute('data-ck-task');
+    const cur = (_currentFile.stage_tasks && typeof _currentFile.stage_tasks === 'object') ? { ..._currentFile.stage_tasks } : {};
+    if(cb.checked){
+      cur[taskId] = { done: true, at: new Date().toISOString(), by: (_profile && (_profile.first_name || _profile.email)) || 'TC' };
+    } else {
+      delete cur[taskId];
+    }
+    _ckSaving = true;
+    const prev = _currentFile.stage_tasks;
+    _currentFile.stage_tasks = cur;
+    renderStageChecklist(_currentFile);
+    const r = await _client.from('files').update({ stage_tasks: cur }).eq('id', _currentFile.id);
+    _ckSaving = false;
+    if(r && r.error){
+      console.warn('[checklist] save failed', r.error.message);
+      _currentFile.stage_tasks = prev; // revert
+      renderStageChecklist(_currentFile);
+      alert('Could not save that checkbox — check your connection and try again.');
+    }
+  });
+
   // ============== FILE DETAILS · FROM INTAKE ==============
   // One compact block with every answer the agent gave at intake, including
   // the newer fields: HOA, other party, agent contact, listing/co-agent,
@@ -4892,6 +5092,9 @@ Aari Transactions`,
 
     // File Details · everything the agent answered at intake, in one block.
     renderFileDetails(file);
+
+    // Stage checklist · per-kanban-column tasks (TC sale files).
+    renderStageChecklist(file);
 
     // Closing Logistics · hydrate inputs from file.logistics jsonb, wire save.
     hydrateLogisticsBlock(file);
