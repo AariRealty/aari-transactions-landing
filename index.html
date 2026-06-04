@@ -11175,9 +11175,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       });
     }
     function initClientCombos(){
-      injectClientCombo('buyer');
-      injectClientCombo('seller');
-      bindClientCombos();
+      // Superseded by the live agent_contacts autocomplete (Part 2) on buyer/
+      // seller name fields. Kept callable but no-op so there's a single dropdown.
     }
 
     /* ============================================================
@@ -12511,6 +12510,80 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         try { window.__aariFileSubmitted = false; } catch(_){}
         state.step = 'final';
         render();
+      });
+    })();
+
+    /* Part 2 · live agent_contacts autocomplete on every Full Name field.
+       Queries Supabase directly (fresh, no cache), filtered to the CURRENT
+       agent — or, when a TC submits on behalf, to the CHOSEN agent (forAgentId).
+       Picking fills name + email + phone. Exact visual spec from Marlenyi. */
+    (function(){
+      const FIELDS = [
+        ['paBuyerName',         'paBuyerEmail',         'paBuyerPhone',         null],
+        ['paSellerName',        'paSellerEmail',        'paSellerPhone',        null],
+        ['paBuyer2Name',        'paBuyer2Email',        'paBuyer2Phone',        null],
+        ['paSeller2Name',       'paSeller2Email',       'paSeller2Phone',       null],
+        ['paTitleContactName',  'paTitleContactEmail',  'paTitleContactPhone',  'title'],
+        ['paLenderContactName', 'paLenderContactEmail', 'paLenderContactPhone', 'lender'],
+        ['paListingAgentName',  'paListingAgentEmail',  'paListingAgentPhone',  'agent'],
+        ['paCoAgentName',       'paCoAgentEmail',       'paCoAgentPhone',        'agent']
+      ];
+      function whichAgent(){ return (state.data && state.data.forAgentId) || (state.profile && state.profile.id) || null; }
+      FIELDS.forEach(function(cfg){
+        const nameId = cfg[0], emailId = cfg[1], phoneId = cfg[2], type = cfg[3];
+        const inp = document.getElementById(nameId);
+        if(!inp) return;
+        const menu = document.createElement('div');
+        menu.className = 'ac-menu';
+        menu.style.cssText = 'position:static;display:none;background:#ffffff;border:0.5px solid #e8e6e1;border-radius:10px;margin-top:6px;overflow:hidden;max-height:240px;overflow-y:auto';
+        inp.insertAdjacentElement('afterend', menu);
+        const hide = function(){ menu.style.display = 'none'; menu.innerHTML = ''; };
+        let timer = null, seq = 0;
+        inp.addEventListener('input', function(){
+          const q = inp.value.trim();
+          if(timer) clearTimeout(timer);
+          if(q.length < 2){ hide(); return; }
+          timer = setTimeout(async function(){
+            const my = ++seq;
+            const agentId = whichAgent();
+            if(!agentId){ hide(); return; }
+            try{
+              const client = await window.AariAuth.ensureClient();
+              let qb = client.from('agent_contacts')
+                .select('full_name, email, phone, contact_type')
+                .eq('agent_id', agentId)
+                .ilike('full_name', '%' + q + '%')
+                .limit(5);
+              if(type) qb = qb.eq('contact_type', type);
+              const r = await qb;
+              if(my !== seq) return;
+              const rows = (r && Array.isArray(r.data)) ? r.data : [];
+              if(!rows.length){ hide(); return; } // no matches · show nothing
+              menu.innerHTML = rows.map(function(c, i){
+                return '<div class="ac-item" data-i="' + i + '" style="padding:10px 14px;cursor:pointer">' +
+                       '<div style="font-size:13px;color:#2c2c2a;font-weight:500">' + escapeHtml(c.full_name || '') + '</div>' +
+                       (c.email ? '<div style="font-size:11px;color:#9a9a9a">' + escapeHtml(c.email) + '</div>' : '') +
+                       '</div>';
+              }).join('');
+              menu.style.display = 'block';
+              try { menu.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch(_){}
+              menu.querySelectorAll('.ac-item').forEach(function(it){
+                it.addEventListener('mouseenter', function(){ it.style.background = '#f3f3f1'; });
+                it.addEventListener('mouseleave', function(){ it.style.background = ''; });
+                it.addEventListener('click', function(){
+                  const c = rows[+it.getAttribute('data-i')];
+                  const set = function(id, v){ const e = document.getElementById(id); if(e){ e.value = v || ''; e.dispatchEvent(new Event('input', { bubbles: true })); } };
+                  set(nameId, c.full_name);
+                  set(emailId, c.email);
+                  set(phoneId, c.phone);
+                  hide();
+                });
+              });
+            }catch(e){ console.warn('[ac] lookup failed', e); if(my === seq) hide(); }
+          }, 250);
+        });
+        document.addEventListener('click', function(e){ if(e.target !== inp && !menu.contains(e.target)) hide(); });
+        inp.addEventListener('keydown', function(e){ if(e.key === 'Escape') hide(); });
       });
     })();
 
