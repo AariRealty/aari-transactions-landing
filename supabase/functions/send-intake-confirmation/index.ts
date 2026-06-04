@@ -35,11 +35,20 @@ Deno.serve(async (req) => {
   if (agentErr || !agent) return json({ ok: false, error: "agent_not_found" }, 404);
 
   // Load the full file row · select * so we surface every column the agent submitted
-  const { data: file } = await supabaseAdmin
-    .from("tc_files")
+  // V3 intake writes to `files` · legacy submissions live in `tc_files`.
+  let { data: file } = await supabaseAdmin
+    .from("files")
     .select("*")
     .eq("id", body.file_id)
-    .single();
+    .maybeSingle();
+  if (!file) {
+    const legacy = await supabaseAdmin
+      .from("tc_files")
+      .select("*")
+      .eq("id", body.file_id)
+      .maybeSingle();
+    file = legacy.data;
+  }
 
   // Load uploaded documents for this file
   const { data: docs } = await supabaseAdmin

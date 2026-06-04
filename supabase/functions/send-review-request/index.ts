@@ -27,12 +27,36 @@ Deno.serve(async (_req) => {
     .is("review_request_sent_at", null);
 
   if (error) return json({ ok: false, error: error.message }, 500);
-  if (!files?.length) return json({ ok: true, sent: 0, reason: "no_eligible_files" });
+
+  // V3 intake files live in `files` · same closing window, adapted columns.
+  const { data: v3files } = await supabaseAdmin
+    .from("files")
+    .select("id, agent_id, property_address, file_type, closed_at, review_token, client_email, client_name")
+    .eq("status", "closed")
+    .gte("closed_at", lower)
+    .lt("closed_at", upper)
+    .is("review_request_sent_at", null);
+
+  const all = [
+    ...(files ?? []).map((f) => ({ ...f, _src: "tc_files" })),
+    ...(v3files ?? []).map((f) => ({
+      ...f,
+      _src: "files",
+      transaction_type: (f as Record<string, unknown>).file_type,
+      client_first_name: String((f as Record<string, unknown>).client_name ?? "").split(" ")[0] || null,
+      agents: null, // joined below · files has no FK relationship to agents
+    })),
+  ];
+  if (!all.length) return json({ ok: true, sent: 0, reason: "no_eligible_files" });
 
   let sent = 0;
-  for (const f of files) {
+  for (const f of all) {
     // deno-lint-ignore no-explicit-any
-    const ag: any = f.agents;
+    let ag: any = f.agents;
+    if (!ag) {
+      const r = await supabaseAdmin.from("agents").select("first_name, review_preference").eq("id", f.agent_id).maybeSingle();
+      ag = r.data;
+    }
     if (!ag || ag.review_preference === "never") continue;
     if (!f.client_email) continue;
 
@@ -59,11 +83,11 @@ Deno.serve(async (_req) => {
 
     if (r.sent) {
       sent += 1;
-      await supabaseAdmin.from("tc_files").update({ review_request_sent_at: new Date().toISOString() }).eq("id", f.id);
+      await supabaseAdmin.from(f._src === "files" ? "files" : "tc_files").update({ review_request_sent_at: new Date().toISOString() }).eq("id", f.id);
     }
   }
 
-  return json({ ok: true, sent, scanned: files.length });
+  return json({ ok: true, sent, scanned: all.length });
 });
 
 function json(data: unknown, status = 200) {

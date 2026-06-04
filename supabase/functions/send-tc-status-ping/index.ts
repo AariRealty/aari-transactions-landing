@@ -14,11 +14,15 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
   if (!body.file_id || !body.new_status) return json({ ok: false, error: "missing_payload" }, 400);
 
-  const { data: file } = await supabaseAdmin
-    .from("tc_files")
+  let { data: file } = await supabaseAdmin
+    .from("files")
     .select("id, agent_id, tc_assigned_id, status_note, profiles:agent_id(id, first_name, email), tc:tc_assigned_id(first_name, last_name)")
     .eq("id", body.file_id)
-    .single();
+    .maybeSingle();
+  if (!file) {
+    const legacy = await supabaseAdmin.from("tc_files").select("*").eq("id", body.file_id).maybeSingle();
+    file = legacy.data;
+  }
   if (!file?.profiles) return json({ ok: false, error: "agent_not_found" }, 404);
 
   // deno-lint-ignore no-explicit-any
