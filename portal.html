@@ -505,6 +505,17 @@
     <a href="#" class="today-cta" id="today-cta" style="display:none">Open file →</a>
   </div>
 
+  <!-- MEMBERSHIP + CREDITS · visible only for active Starter/Producer members -->
+  <section id="memCreditCard" hidden style="background:#fff;border:0.5px solid #e8e6e1;border-radius:12px;padding:16px 18px;margin:0 0 18px">
+    <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <p style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#9a9a9a;margin:0">Your membership</p>
+      <p id="memTier" style="font-size:13px;font-weight:600;color:#0f0f0f;margin:0">—</p>
+    </div>
+    <p id="memCredits" style="font-size:13px;color:#2c2c2a;margin:10px 0 0">— credits left this month</p>
+    <p style="font-size:11px;color:#9a9a9a;margin:4px 0 0">Credits cover: Offer Prep · Basic, Listing Docs, File Organization</p>
+    <p id="memRenews" style="font-size:11px;color:#9a9a9a;margin:2px 0 0"></p>
+  </section>
+
   <!-- EARNINGS + PIPELINE · the daily-pull · agent's own business at a glance -->
   <section class="earn-section" id="earn-section">
     <div class="earn-head">
@@ -776,6 +787,34 @@
     // Mark that this person is signed in · the file-submission flow reads this so
     // it never re-prompts for login when opened from the portal.
     try { sessionStorage.setItem('aari_portal_authed', '1'); localStorage.setItem('aari_portal_authed', '1'); } catch(_){}
+    // Membership credits card (Part 3) · best-effort, never blocks the portal.
+    (async function(){
+      try{
+        const uid = session.user.id;
+        const mem = await _client.from('memberships')
+          .select('tier, status, next_renewal_at')
+          .eq('user_id', uid).eq('status', 'active')
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        if(!mem || !mem.data || !mem.data.tier) return;
+        const tier = String(mem.data.tier).toLowerCase();
+        const allowance = tier === 'producer' ? 4 : (tier === 'starter' ? 2 : 0);
+        if(!allowance) return;
+        const m0 = new Date(); m0.setDate(1); m0.setHours(0,0,0,0);
+        const used = await _client.from('membership_credit_uses')
+          .select('id', { count: 'exact', head: true })
+          .eq('agent_id', uid).gte('used_at', m0.toISOString());
+        const usedCount = (used && typeof used.count === 'number') ? used.count : 0;
+        const left = Math.max(0, allowance - usedCount);
+        const card = document.getElementById('memCreditCard');
+        const t = document.getElementById('memTier');
+        const c = document.getElementById('memCredits');
+        const r = document.getElementById('memRenews');
+        if(t) t.textContent = 'Aari ' + tier.charAt(0).toUpperCase() + tier.slice(1);
+        if(c) c.textContent = left + ' of ' + allowance + ' credits left this month';
+        if(r && mem.data.next_renewal_at) r.textContent = 'Renews ' + new Date(mem.data.next_renewal_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        if(card) card.hidden = false;
+      }catch(e){ console.warn('[portal] membership card failed', e); }
+    })();
     _profile = await window.AariAuth.getAgentProfile();
     if(!_profile){ return showGate('Profile missing','Contact hello@aaritransactions.com.',null); }
     document.getElementById('page-main').style.display = 'block';

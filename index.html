@@ -6228,6 +6228,14 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             <a href="/portal.html" style="display:inline-block;margin-top:18px;background:#2c2c2a;color:#fff;border-radius:10px;padding:11px 20px;font-size:13px;font-weight:500;text-decoration:none">Back to portal</a>
           </div>
         </section>
+        <section class="pa-step" data-pa-step="pay-credit" hidden>
+          <div style="text-align:center;padding:26px 10px">
+            <p id="paCreditHead" style="font-size:17px;font-weight:600;color:#0f0f0f;margin:0">&#10003; Covered by your Aari membership.</p>
+            <p id="paCreditSub" style="font-size:13px;color:#5f5e5a;margin:8px 0 0">1 credit used.</p>
+            <p style="font-size:12px;color:#9a9a9a;margin:6px 0 0">Your file has been submitted &mdash; no payment needed.</p>
+            <a href="/portal.html" style="display:inline-block;margin-top:18px;background:#2c2c2a;color:#fff;border-radius:10px;padding:11px 20px;font-size:13px;font-weight:500;text-decoration:none">Back to portal</a>
+          </div>
+        </section>
         <section class="pa-step" data-pa-step="pay-tclink" hidden>
           <div style="background:#fdfdfc;border:1px solid #e8e6e1;border-radius:10px;padding:18px">
             <p style="font-size:14px;font-weight:600;color:#0f0f0f;margin:0">&#10003; File submitted.</p>
@@ -7332,6 +7340,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       file_org:     { tier: 'Starter', monthly_cost: 79 }
       // op_complete ($149) and mls_setup ($149) intentionally omitted — not credit-covered.
     };
+    try { window.MEMBERSHIP_CREDIT_COVERAGE = MEMBERSHIP_CREDIT_COVERAGE; } catch(_){}
 
     function renderAddonUpsell(serviceId) {
       const banner = document.getElementById('addonUpsellBanner');
@@ -10904,6 +10913,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       'pay-summary': { h:'Order <em>summary.</em>', s:'Review and pay &mdash; your file sends the moment payment opens.' },
       'pay-wait':    { h:'Almost <em>done.</em>',    s:'Complete the payment in the Stripe tab that just opened.' },
       'pay-tclink':  { h:'File <em>submitted.</em>', s:'Send this payment link to your agent.' },
+      'pay-credit':  { h:'<em>Covered.</em>', s:'Your membership picked up this one.' },
       'final': { h:'Ready to <em>send.</em>',     s:'Review and submit.' },
       'done':  { h:'',                             s:'' }
     };
@@ -13748,6 +13758,23 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       // ===== PAYMENT GATE (upfront services only · TC lane bills at closing) =====
       const upfront = state.data.serviceType && state.data.serviceType !== 'tc';
       if(upfront && !window.__aariFixFileId){
+        // ===== MEMBERSHIP CREDITS · never double-charge a member =====
+        try {
+          const credit = await checkMembershipCredit();
+          if(credit && credit.covered){
+            window.__aariCreditCover = credit;
+            window.__aariPayFlow = true;
+            await actualSubmit();
+            window.__aariPayFlow = false;
+            const cfid = window.__aariLastSubmission && window.__aariLastSubmission.id;
+            if(window.__aariFileSubmitted && cfid){
+              await recordCreditUse(cfid, credit);
+              renderCreditDone(credit);
+            }
+            window.__aariCreditCover = null;
+            return;
+          }
+        } catch(e){ console.warn('[credits] check failed · falling through to payment gate', e); window.__aariCreditCover = null; }
         const staff = state.profile && (state.profile.role === 'tc' || state.profile.role === 'broker');
         if(staff){
           // TC/broker on behalf: file goes in now (payment_pending) · they get a copyable link.
@@ -13789,6 +13816,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           pa_listing_agent_name: state.data.listingAgentName || '', pa_listing_agent_company: state.data.listingAgentCompany || '', pa_listing_agent_email: state.data.listingAgentEmail || '', pa_listing_agent_phone: state.data.listingAgentPhone || '',
           pa_other_party_name: state.data.otherPartyName || '',
           pa_agent_name: state.data.agentSelfName || '', pa_agent_email: state.data.agentSelfEmail || '', pa_agent_phone: state.data.agentSelfPhone || '',
+          covered_by_membership: (window.__aariCreditCover && window.__aariCreditCover.tier) || '',
           pa_listing_date: state.data.listingDate || '', pa_listing_expiration: state.data.listingExp || '', pa_listing_price: state.data.listingPrice || '',
           pa_commission_listing_pct: state.data.commListPct || '', pa_commission_buying_pct: state.data.commBuyPct || '',
           pa_lead_source: state.data.leadSource || '', pa_signing_platform: state.data.signingPlatform || '',
@@ -13971,8 +13999,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           var fileRow = {
             id: submissionId,
             agent_id: state.data.forAgentId || uid, // on-behalf submissions credit the chosen agent
-            payment_pending:   state.data.serviceType !== 'tc', // upfront services wait for Stripe
-            payment_confirmed: state.data.serviceType === 'tc', // TC lane bills at closing via CDA
+            payment_pending:   state.data.serviceType !== 'tc' && !window.__aariCreditCover, // upfront waits for Stripe unless a membership credit covers it
+            payment_confirmed: state.data.serviceType === 'tc' || !!window.__aariCreditCover,
             service_type: state.data.serviceId || state.data.serviceType || 'tc_one_side',
             file_type: (state.data.serviceType === 'listing' ? 'listing' : 'sale'),
             client_type: repMap[state.data.representation] || null,
@@ -14128,6 +14156,64 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     // Expose state.profile so the signed-history modal can resolve the agent's email.
     function getProfile(){ return state.profile || {}; }
+
+    /* ===== MEMBERSHIP CREDITS (Part 3) =====
+       Starter = 2 credits/month · Producer = 4. Credits cover only the services
+       in MEMBERSHIP_CREDIT_COVERAGE (op_basic, listing_docs, file_org). The
+       check runs against the AGENT the file is for (on-behalf uses their
+       membership, never the TC's). Usage is a ledger table counted per month. */
+    const CREDIT_ALLOWANCE = { starter: 2, producer: 4 };
+    async function checkMembershipCredit(){
+      const cov = window.MEMBERSHIP_CREDIT_COVERAGE || {};
+      if(!cov[state.data.servicePackage]) return null; // service not credit-eligible
+      const owner = (state.data && state.data.forAgentId) || (state.profile && state.profile.id);
+      if(!owner) return null;
+      const client = await window.AariAuth.ensureClient();
+      const mem = await client.from('memberships')
+        .select('tier, status, next_renewal_at')
+        .eq('user_id', owner)
+        .eq('status', 'active')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if(!mem || !mem.data || !mem.data.tier) return null;
+      const tier = String(mem.data.tier).toLowerCase();
+      const allowance = CREDIT_ALLOWANCE[tier] || 0;
+      if(!allowance) return null;
+      const monthStart = new Date();
+      monthStart.setDate(1); monthStart.setHours(0,0,0,0);
+      const used = await client.from('membership_credit_uses')
+        .select('id', { count: 'exact', head: true })
+        .eq('agent_id', owner)
+        .gte('used_at', monthStart.toISOString());
+      const usedCount = (used && typeof used.count === 'number') ? used.count : 0;
+      return {
+        covered: usedCount < allowance,
+        tier: tier.charAt(0).toUpperCase() + tier.slice(1),
+        allowance: allowance,
+        remaining: Math.max(0, allowance - usedCount - 1),
+        renewal: mem.data.next_renewal_at || null,
+        owner: owner
+      };
+    }
+    async function recordCreditUse(fileId, credit){
+      try{
+        const client = await window.AariAuth.ensureClient();
+        const r = await client.from('membership_credit_uses').insert({
+          agent_id: credit.owner,
+          file_id: fileId,
+          service_id: state.data.servicePackage || ''
+        });
+        if(r && r.error) console.warn('[credits] ledger insert failed (file is confirmed regardless)', r.error.message);
+      }catch(e){ console.warn('[credits] ledger insert threw', e); }
+    }
+    function renderCreditDone(credit){
+      const head = document.getElementById('paCreditHead');
+      const sub = document.getElementById('paCreditSub');
+      if(head) head.innerHTML = '&#10003; Covered by your Aari ' + credit.tier + ' membership.';
+      if(sub) sub.textContent = '1 credit used · ' + credit.remaining + ' of ' + credit.allowance + ' left this month.';
+      state.step = 'pay-credit'; render();
+    }
 
     /* ===== PAYMENT GATE · upfront services (June 2026) =====
        Order summary -> Stripe payment link (new tab, client_reference_id = file id)
