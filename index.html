@@ -3369,7 +3369,8 @@
 
   /* Address suggestions · in-flow (not floating) so the modal body grows and
      scrolls instead of clipping the list at the footer. */
-  #aariPathA #paAddressMenu {
+  #aariPathA #paAddressMenu,
+  #aariPathA #paTitleAddressMenu {
     position: static;
     margin-top: 6px;
     box-shadow: none;
@@ -12136,45 +12137,62 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
       if(AARI_MAPBOX_TOKEN){
         // Mapbox Geocoding v6 · much better US address coverage than raw OSM,
-        // free tier, no card. Same dropdown UI as the fallback.
-        let timerM = null, seqM = 0;
-        const hideM = function(){ menu.hidden = true; menu.innerHTML = ''; };
-        inp.addEventListener('input', function(){
-          const q = inp.value.trim();
-          if(timerM) clearTimeout(timerM);
-          if(q.length < 4){ hideM(); return; }
-          timerM = setTimeout(async function(){
-            const my = ++seqM;
-            try{
-              const u = 'https://api.mapbox.com/search/geocode/v6/forward?q=' + encodeURIComponent(q) +
-                        '&autocomplete=true&country=us&types=address&limit=6&proximity=-81.87,26.64&access_token=' + encodeURIComponent(AARI_MAPBOX_TOKEN);
-              const r = await fetch(u);
-              const d = await r.json();
-              if(my !== seqM) return;
-              const seen = {};
-              const rows = ((d && d.features) || []).map(function(f){
-                const p = f.properties || {};
-                return (p.full_address || p.place_formatted || p.name || '').replace(/, United States$/, '');
-              }).filter(function(s){ if(!s || seen[s]) return false; seen[s] = true; return true; });
-              if(!rows.length){ hideM(); return; }
-              menu.innerHTML = rows.map(function(s){
-                return '<div class="pa-combo-item" data-addr-pick="' + escapeHtml(s) + '"><span class="pa-combo-name">' + escapeHtml(s) + '</span></div>';
-              }).join('');
-              menu.hidden = false;
-              try { menu.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch(_){}
-              menu.querySelectorAll('[data-addr-pick]').forEach(function(b){
-                b.addEventListener('click', function(){
-                  inp.value = b.getAttribute('data-addr-pick');
-                  state.data.address = inp.value;
-                  hideM();
-                  try { scheduleAutoSave(inp); } catch(_){}
+        // free tier, no card. Reusable — wired to the property address AND the
+        // title company address.
+        const wireMapbox = function(inp2, menu2, stateKey){
+          let timerM = null, seqM = 0;
+          const hideM = function(){ menu2.hidden = true; menu2.innerHTML = ''; };
+          inp2.addEventListener('input', function(){
+            const q = inp2.value.trim();
+            if(timerM) clearTimeout(timerM);
+            if(q.length < 4){ hideM(); return; }
+            timerM = setTimeout(async function(){
+              const my = ++seqM;
+              try{
+                const u = 'https://api.mapbox.com/search/geocode/v6/forward?q=' + encodeURIComponent(q) +
+                          '&autocomplete=true&country=us&types=address&limit=6&proximity=-81.87,26.64&access_token=' + encodeURIComponent(AARI_MAPBOX_TOKEN);
+                const r = await fetch(u);
+                const d = await r.json();
+                if(my !== seqM) return;
+                const seen = {};
+                const rows = ((d && d.features) || []).map(function(f){
+                  const p = f.properties || {};
+                  return (p.full_address || p.place_formatted || p.name || '').replace(/, United States$/, '');
+                }).filter(function(s){ if(!s || seen[s]) return false; seen[s] = true; return true; });
+                if(!rows.length){ hideM(); return; }
+                menu2.innerHTML = rows.map(function(s){
+                  return '<div class="pa-combo-item" data-addr-pick="' + escapeHtml(s) + '"><span class="pa-combo-name">' + escapeHtml(s) + '</span></div>';
+                }).join('');
+                menu2.hidden = false;
+                try { menu2.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch(_){}
+                menu2.querySelectorAll('[data-addr-pick]').forEach(function(b){
+                  b.addEventListener('click', function(){
+                    inp2.value = b.getAttribute('data-addr-pick');
+                    state.data[stateKey] = inp2.value;
+                    hideM();
+                    try { scheduleAutoSave(inp2); } catch(_){}
+                  });
                 });
-              });
-            }catch(_){ if(my === seqM) hideM(); }
-          }, 300);
-        });
-        document.addEventListener('click', function(e){ if(e.target !== inp && !menu.contains(e.target)) hideM(); });
-        inp.addEventListener('keydown', function(e){ if(e.key === 'Escape') hideM(); });
+              }catch(_){ if(my === seqM) hideM(); }
+            }, 300);
+          });
+          document.addEventListener('click', function(e){ if(e.target !== inp2 && !menu2.contains(e.target)) hideM(); });
+          inp2.addEventListener('keydown', function(e){ if(e.key === 'Escape') hideM(); });
+        };
+        wireMapbox(inp, menu, 'address');
+        // Title company address · menu created on the fly so no markup change.
+        const tInp = document.getElementById('paTitleAddress');
+        if(tInp){
+          let tMenu = document.getElementById('paTitleAddressMenu');
+          if(!tMenu){
+            tMenu = document.createElement('div');
+            tMenu.className = 'pa-combo-menu';
+            tMenu.id = 'paTitleAddressMenu';
+            tMenu.hidden = true;
+            tInp.insertAdjacentElement('afterend', tMenu);
+          }
+          wireMapbox(tInp, tMenu, 'titleAddress');
+        }
         return; // Mapbox path active · OSM fallback below never wires
       }
 
