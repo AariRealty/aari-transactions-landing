@@ -11998,7 +11998,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
        free OpenStreetMap geocoder when the key is empty, so nothing breaks
        before the key lands. The key is a BROWSER key — restrict it in Google
        Cloud to the aaritransactions.com domains + the Places/Maps JS APIs. */
-    const AARI_GMAPS_KEY = ''; // ← paste the Google Maps API key here
+    const AARI_GMAPS_KEY = '';   // ← Google Maps key (needs card · skipped)
+    const AARI_MAPBOX_TOKEN = ''; // ← paste the Mapbox public token here (pk.…) · free, no card
     (function(){
       const inp = document.getElementById('paAddress');
       const menu = document.getElementById('paAddressMenu');
@@ -12052,6 +12053,49 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           }catch(e){ console.warn('[address] Google Places failed to load', e); wired = false; }
         });
         return; // Google path active · the OSM fallback below never wires
+      }
+
+      if(AARI_MAPBOX_TOKEN){
+        // Mapbox Geocoding v6 · much better US address coverage than raw OSM,
+        // free tier, no card. Same dropdown UI as the fallback.
+        let timerM = null, seqM = 0;
+        const hideM = function(){ menu.hidden = true; menu.innerHTML = ''; };
+        inp.addEventListener('input', function(){
+          const q = inp.value.trim();
+          if(timerM) clearTimeout(timerM);
+          if(q.length < 4){ hideM(); return; }
+          timerM = setTimeout(async function(){
+            const my = ++seqM;
+            try{
+              const u = 'https://api.mapbox.com/search/geocode/v6/forward?q=' + encodeURIComponent(q) +
+                        '&autocomplete=true&country=us&types=address&limit=6&proximity=-81.87,26.64&access_token=' + encodeURIComponent(AARI_MAPBOX_TOKEN);
+              const r = await fetch(u);
+              const d = await r.json();
+              if(my !== seqM) return;
+              const seen = {};
+              const rows = ((d && d.features) || []).map(function(f){
+                const p = f.properties || {};
+                return (p.full_address || p.place_formatted || p.name || '').replace(/, United States$/, '');
+              }).filter(function(s){ if(!s || seen[s]) return false; seen[s] = true; return true; });
+              if(!rows.length){ hideM(); return; }
+              menu.innerHTML = rows.map(function(s){
+                return '<div class="pa-combo-item" data-addr-pick="' + escapeHtml(s) + '"><span class="pa-combo-name">' + escapeHtml(s) + '</span></div>';
+              }).join('');
+              menu.hidden = false;
+              menu.querySelectorAll('[data-addr-pick]').forEach(function(b){
+                b.addEventListener('click', function(){
+                  inp.value = b.getAttribute('data-addr-pick');
+                  state.data.address = inp.value;
+                  hideM();
+                  try { scheduleAutoSave(inp); } catch(_){}
+                });
+              });
+            }catch(_){ if(my === seqM) hideM(); }
+          }, 300);
+        });
+        document.addEventListener('click', function(e){ if(e.target !== inp && !menu.contains(e.target)) hideM(); });
+        inp.addEventListener('keydown', function(e){ if(e.key === 'Escape') hideM(); });
+        return; // Mapbox path active · OSM fallback below never wires
       }
 
       let timer = null;
