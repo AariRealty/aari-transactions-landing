@@ -6077,6 +6077,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             <p class="pa-confirmation-h">Got it. Your file is in.</p>
             <p class="pa-confirmation-sub">We will touch it today if you submitted before 2pm.</p>
             <p class="pa-confirmation-fineprint">Questions? Text us at <a href="sms:2396881770">239.688.1770</a>.</p>
+            <button type="button" id="paFixFile" hidden style="margin-top:18px;background:none;border:0.5px solid #e8e6e1;border-radius:999px;padding:10px 18px;font-size:13px;color:#5f5e5a;cursor:pointer;font-family:inherit">Made a mistake? Fix the file info &middot; available 30 min</button>
           </div>
         </section>
       </div>
@@ -11496,6 +11497,14 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         const a = document.getElementById('paAddress');
         if(a && !a.value && state.data.address) a.value = state.data.address;
       }
+      // Done screen · show the 30-minute "fix the file" option while the window is open.
+      if(state.step === 'done'){
+        const fb = document.getElementById('paFixFile');
+        if(fb){
+          const ls = window.__aariLastSubmission;
+          fb.hidden = !(ls && (Date.now() - ls.at) < 30 * 60 * 1000);
+        }
+      }
       if(state.step === 'tc') renderTcPicker();
     }
 
@@ -12392,6 +12401,25 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     wireToggleGroup('paSeller2Toggle', 'paSeller2Fields', '+ Add a second seller', '− Remove second seller');
     wireToggleGroup('paCoAgentToggle', 'paCoAgentFields', '+ Add a co-agent (your side)', '− Remove co-agent');
 
+    /* 30-minute fix button on the done screen · jumps back to the review with
+       everything still filled, edit what's wrong, "Update My File →". */
+    (function(){
+      const fb = document.getElementById('paFixFile');
+      if(!fb) return;
+      fb.addEventListener('click', function(){
+        const ls = window.__aariLastSubmission;
+        if(!ls || (Date.now() - ls.at) >= 30 * 60 * 1000){
+          alert("The 30-minute fix window has passed — text your TC at 239.688.1770 and they'll correct it.");
+          fb.hidden = true;
+          return;
+        }
+        window.__aariFixFileId = ls.id;
+        try { window.__aariFileSubmitted = false; } catch(_){}
+        state.step = 'final';
+        render();
+      });
+    })();
+
     /* Start over · self-serve reset for "I typed the wrong client info."
        Wipes THIS file's progress — fields, draft, step position, contract
        picks — after one confirm. The saved contacts list is NOT touched. */
@@ -12530,7 +12558,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
       if(state.step === 'final'){
         back.hidden = false; next.hidden = true; submit.hidden = false;
-        submit.textContent = 'Send My File →';
+        submit.textContent = window.__aariFixFileId ? 'Update My File →' : 'Send My File →';
         return;
       }
       back.hidden = (state.step === 1);
@@ -12874,11 +12902,63 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       actualSubmit();
     }
 
+    /* 30-minute self-fix · updates the SAME file row with corrected data.
+       No new uploads, no new payment, no duplicate file. Contract stays as
+       submitted. Adds corrected_at so the TC sees the file was amended. */
+    async function applyFileFix(){
+      const fid = window.__aariFixFileId;
+      const submitBtn = document.getElementById('intakeSubmit');
+      try{
+        if(submitBtn){ submitBtn.disabled = true; submitBtn.innerHTML = 'Updating file&hellip;'; }
+        const supabase = await window.AariAuth.ensureClient();
+        const cur = await supabase.from('files').select('raw_form_data').eq('id', fid).single();
+        const base = (cur && cur.data && cur.data.raw_form_data) || {};
+        const merged = Object.assign({}, base, {
+          pa_buyer2_name: state.data.buyer2_name || '', pa_buyer2_email: state.data.buyer2_email || '', pa_buyer2_phone: state.data.buyer2_phone || '',
+          pa_seller2_name: state.data.seller2_name || '', pa_seller2_email: state.data.seller2_email || '', pa_seller2_phone: state.data.seller2_phone || '',
+          pa_title_company: state.data.titleCompany || '', pa_title_address: state.data.titleAddress || '',
+          pa_title_contact_name: state.data.titleContactName || '', pa_title_contact_email: state.data.titleContactEmail || '', pa_title_contact_phone: state.data.titleContactPhone || '',
+          pa_lender: state.data.lender || '',
+          pa_lender_contact_name: state.data.lenderContactName || '', pa_lender_contact_email: state.data.lenderContactEmail || '', pa_lender_contact_phone: state.data.lenderContactPhone || '',
+          pa_listing_agent_name: state.data.listingAgentName || '', pa_listing_agent_company: state.data.listingAgentCompany || '', pa_listing_agent_email: state.data.listingAgentEmail || '', pa_listing_agent_phone: state.data.listingAgentPhone || '',
+          pa_co_agent_name: state.data.coAgentName || '', pa_co_agent_company: state.data.coAgentCompany || '', pa_co_agent_email: state.data.coAgentEmail || '', pa_co_agent_phone: state.data.coAgentPhone || '',
+          commission_notes: state.data.commissionNotes || '', agent_notes: state.data.agentNotes || '', pa_hoa: state.data.hoa || '',
+          corrected_at: new Date().toISOString()
+        });
+        const fixRepMap = { buyer: 'Buyer', seller: 'Seller', both_sides: 'Both' };
+        const upd = {
+          client_type: fixRepMap[state.data.representation] || null,
+          client_name:  state.data.buyer_name  || state.data.seller_name  || '',
+          client_email: state.data.buyer_email || state.data.seller_email || '',
+          client_phone: state.data.buyer_phone || state.data.seller_phone || '',
+          property_address: state.data.address || '',
+          effective_date: state.data.effectiveDate || null,
+          closing_date:   state.data.closingDate   || null,
+          raw_form_data: merged
+        };
+        const r = await supabase.from('files').update(upd).eq('id', fid);
+        if(r && r.error) throw r.error;
+        window.__aariFixFileId = null;
+        try { window.__aariFileSubmitted = true; } catch(_){}
+        const h = document.querySelector('.pa-confirmation-h');
+        if(h) h.textContent = 'Fixed. Your file is updated.';
+        state.step = 'done';
+        render();
+      }catch(e){
+        console.warn('[path-a] file fix failed', e);
+        alert('Could not update the file — try again, or text your TC at 239.688.1770.');
+      }finally{
+        if(submitBtn){ submitBtn.disabled = false; submitBtn.innerHTML = 'Send My File &rarr;'; }
+      }
+    }
+
     async function actualSubmit(){
+      // 30-minute self-fix path · update the existing file instead of creating a new one.
+      if(window.__aariFixFileId){ return applyFileFix(); }
       if(window.__aariSubmitStatus) window.__aariSubmitStatus('Uploading your file…');
       // Persist saved title + lender to the agent's profile in the background.
       try { persistSavedContacts(); } catch(_){}
-      try { persistKeptContacts(supabase, uid); } catch(e){ console.warn('[path-a] kept-contacts save failed (non-fatal)', e); }
+      try { persistKeptContactsNow(); } catch(e){ console.warn('[path-a] kept-contacts save failed (non-fatal)', e); }
 
       // Resolve the Supabase client · ensureClient() creates it if it wasn't
       // already initialized (can happen inside the portal iframe).
@@ -13101,6 +13181,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         console.log('[path-a] file submission complete · contract + ' + additionalUrls.length + ' addl docs in Supabase · submission_id=' + submissionId);
         var sb = document.getElementById('aariSubmitStatus'); if(sb) sb.style.display = 'none';
         try { window.__aariFileSubmitted = true; } catch(_){} // success screen · X closes to portal, no discard prompt
+        try { window.__aariLastSubmission = { id: submissionId, at: Date.now() }; } catch(_){} // 30-min self-fix window
         try { if(window.AariDraft && window.AariDraft.clear) window.AariDraft.clear(); } catch(_){} // Step 2 · submitted = draft no longer needed
         state.step = 'done';
         render();
