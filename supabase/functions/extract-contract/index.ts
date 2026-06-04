@@ -32,7 +32,7 @@ Rules:
 - Return ONLY a JSON object, no prose.
 - Use "" (empty string) or [] when a value is not clearly present. NEVER guess.
 - Dates must be ISO format YYYY-MM-DD.
-- form_type must be one of: "FAR/BAR AS-IS", "FAR/BAR Standard", "CRSP", "New construction/builder", "Unknown".
+- form_type must be one of: "FAR/BAR AS-IS", "FAR/BAR Standard", "CRSP", "Vacant Land Contract", "Vacant Land Listing", "Listing Agreement", "Residential Lease", "New construction/builder", "Unknown".
 - For effective_date: FAR/BAR defines it as the date the last party signed or initialed AND delivered the final offer/counter. Only return it if the contract states it or it is unambiguous.
 
 JSON shape:
