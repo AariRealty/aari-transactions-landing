@@ -6052,6 +6052,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             </div>
           </div>
         </section>
+        <section class="pa-step" data-pa-step="for-agent" hidden>
+          <div class="field">
+            <div class="pa-chip-stack" id="paForAgent"></div>
+          </div>
+        </section>
         <section class="pa-step" data-pa-step="9" hidden>
           <div class="field">
             <label for="paContract">Executed contract</label>
@@ -10728,6 +10733,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       'effective': { h:'<em>Effective</em> date?', s:'When the contract was fully executed.' },
       5:  { h:'<em>Closing</em> date?',           s:'When does this deal close?' },
       'hoa': { h:'<em>HOA</em> or condo?',         s:'Is the property in an association?' },
+      'for-agent': { h:'Submitting <em>for?</em>', s:'Pick the agent this file belongs to.' },
       6:  { h:'<em>Title</em> company?',          s:'From your profile. Update if different.' },
       7:  { h:'<em>Lender?</em>',                 s:'Optional. Cash deal? Skip.' },
       8:  { h:'Commission <em>notes?</em>',       s:'Optional. Referral fees, splits, concessions.' },
@@ -10740,7 +10746,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
 
     // Step 9 (contract + addenda) moved to right after service selection ·
     // the contract is the source of truth, so it comes in first.
-    const ALL_STEPS = [1,2,9,3,'clients-buyer','clients-seller',4,'effective',5,'hoa',6,7,8,10,'tc','final','done'];
+    // 'for-agent' (TC/broker only · filtered out for agents in activeSteps)
+    // asks WHO the file belongs to, before anything else is captured.
+    const ALL_STEPS = [1,2,'for-agent',9,3,'clients-buyer','clients-seller',4,'effective',5,'hoa',6,7,8,10,'tc','final','done'];
 
     let state = { step: 1, data: {}, profile: null, active: false };
 
@@ -10755,6 +10763,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const list = PACKAGES[state.data.serviceType] || [];
       const pkg = list.find(p => p.id === state.data.servicePackage);
       let steps = ALL_STEPS.slice();
+      // 'for-agent' is staff-only (TC/broker submitting on behalf) · agents never see it.
+      const submitterRole = state.profile && state.profile.role;
+      if(submitterRole !== 'tc' && submitterRole !== 'broker'){
+        steps = steps.filter(s => s !== 'for-agent');
+      }
       if(pkg && pkg.representation){
         steps = steps.filter(s => s !== 3);
       }
@@ -11522,6 +11535,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(state.step === 2) renderPackages();
       if(state.step === 3) renderRepresentation();
       if(state.step === 'hoa') renderHoa();
+      if(state.step === 'for-agent') renderForAgent();
       if(state.step === 8) renderOtherSideAgent();
       // Safety net · if the contract reader captured the address but the input
       // missed it (timing), refill when the address step shows.
@@ -11619,6 +11633,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       { step: 'effective', label: 'Effective date', get: (s) => formatDate(s.data.effectiveDate) },
       { step: 5,  label: 'Closing date',      get: (s) => formatDate(s.data.closingDate) },
       { step: 'hoa', label: 'HOA / condo',    get: (s) => (s.data.hoa === 'yes' ? 'Yes' : (s.data.hoa === 'no' ? 'No' : '')) },
+      { step: 'for-agent', label: 'For agent', get: (s) => s.data.forAgentName || '' },
       { step: 6,  label: 'Title company',     get: (s) => s.data.titleCompany || '' },
       { step: 6,  label: 'Title contact',     get: (s) => {
         if(!s.data.titleContactName) return '';
@@ -12260,10 +12275,12 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
        existing record instead of duplicating it. Unchecked = the contact lives
        only inside this file's submission. Requires the contacts table migration. */
     async function persistKeptContacts(client, uid){
+      // On-behalf submissions file the contacts into the AGENT's address book.
+      const owner = (state.data && state.data.forAgentId) || uid;
       const jobs = [];
       const keepB = document.getElementById('paBuyerKeep');
       if(keepB && keepB.checked && (state.data.buyer_email || state.data.buyer_name)){
-        jobs.push({ agent_id: uid, contact_type: 'buyer',
+        jobs.push({ agent_id: owner, contact_type: 'buyer',
           full_name: state.data.buyer_name || '',
           email: (state.data.buyer_email || '').toLowerCase(),
           phone: state.data.buyer_phone || '',
@@ -12271,7 +12288,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
       const keepS = document.getElementById('paSellerKeep');
       if(keepS && keepS.checked && (state.data.seller_email || state.data.seller_name)){
-        jobs.push({ agent_id: uid, contact_type: 'seller',
+        jobs.push({ agent_id: owner, contact_type: 'seller',
           full_name: state.data.seller_name || '',
           email: (state.data.seller_email || '').toLowerCase(),
           phone: state.data.seller_phone || '',
@@ -12279,7 +12296,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
       const keepB2 = document.getElementById('paBuyer2Keep');
       if(keepB2 && keepB2.checked && (state.data.buyer2_email || state.data.buyer2_name)){
-        jobs.push({ agent_id: uid, contact_type: 'buyer',
+        jobs.push({ agent_id: owner, contact_type: 'buyer',
           full_name: state.data.buyer2_name || '',
           email: (state.data.buyer2_email || '').toLowerCase(),
           phone: state.data.buyer2_phone || '',
@@ -12287,7 +12304,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
       const keepS2 = document.getElementById('paSeller2Keep');
       if(keepS2 && keepS2.checked && (state.data.seller2_email || state.data.seller2_name)){
-        jobs.push({ agent_id: uid, contact_type: 'seller',
+        jobs.push({ agent_id: owner, contact_type: 'seller',
           full_name: state.data.seller2_name || '',
           email: (state.data.seller2_email || '').toLowerCase(),
           phone: state.data.seller2_phone || '',
@@ -12295,7 +12312,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
       const keepT = document.getElementById('paTitleKeep');
       if(keepT && keepT.checked && state.data.titleContactEmail){
-        jobs.push({ agent_id: uid, contact_type: 'title',
+        jobs.push({ agent_id: owner, contact_type: 'title',
           full_name: (state.data.titleContactName || '') + (state.data.titleCompany ? ' (' + state.data.titleCompany + ')' : ''),
           email: (state.data.titleContactEmail || '').toLowerCase(),
           phone: state.data.titleContactPhone || '',
@@ -12303,7 +12320,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
       const keepL = document.getElementById('paLenderKeep');
       if(keepL && keepL.checked && state.data.lenderContactEmail){
-        jobs.push({ agent_id: uid, contact_type: 'lender',
+        jobs.push({ agent_id: owner, contact_type: 'lender',
           full_name: (state.data.lenderContactName || '') + (state.data.lender ? ' (' + state.data.lender + ')' : ''),
           email: (state.data.lenderContactEmail || '').toLowerCase(),
           phone: state.data.lenderContactPhone || '',
@@ -12745,6 +12762,54 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       });
     }
 
+    /* "Submitting for?" · staff-only agent picker. Files + saved contacts get
+       attributed to the CHOSEN agent, with submitted_by audit fields. */
+    let forAgentList = null;
+    async function loadForAgentList(){
+      if(forAgentList) return forAgentList;
+      try{
+        const client = await window.AariAuth.ensureClient();
+        const r = await client.from('agents').select('id, first_name, last_name, name, email, role').order('first_name', { ascending: true });
+        forAgentList = (r && Array.isArray(r.data) ? r.data : []).filter(function(a){ return (a.role || 'agent') === 'agent'; });
+      }catch(e){ console.warn('[for-agent] agent list failed', e); forAgentList = []; }
+      return forAgentList;
+    }
+    function agentDisplay(a){
+      return a.name || ((a.first_name || '') + ' ' + (a.last_name || '')).trim() || a.email || 'Agent';
+    }
+    async function renderForAgent(){
+      const wrap = document.getElementById('paForAgent');
+      if(!wrap) return;
+      wrap.classList.add('pa-chip-stack--centered');
+      wrap.innerHTML = '<div class="pa-combo-empty">Loading your agents&hellip;</div>';
+      const list = await loadForAgentList();
+      if(state.step !== 'for-agent') return; // user moved on while we fetched
+      const sel = state.data.forAgentId || '';
+      const meId = (state.profile && state.profile.id) || '';
+      const meName = (state.profile && (state.profile.name || ((state.profile.first_name || '') + ' ' + (state.profile.last_name || '')).trim())) || 'Myself';
+      const opt = function(id, label, checked){
+        return '<label class="pa-chip-option pa-chip-option--cream-pill">'
+             +   '<input type="radio" name="pa_for_agent" value="' + escapeHtml(id) + '" data-name="' + escapeHtml(label) + '"' + (checked ? ' checked' : '') + '>'
+             +   '<p class="pa-chip-opt-name">' + escapeHtml(label) + '</p>'
+             + '</label>';
+      };
+      let html = opt(meId, 'Myself (' + meName + ')', sel === meId);
+      list.forEach(function(a){ if(a.id !== meId) html += opt(a.id, agentDisplay(a), sel === a.id); });
+      if(!list.length) html += '<div class="pa-combo-empty">No agents found yet &middot; pick Myself.</div>';
+      wrap.innerHTML = html;
+      wrap.querySelectorAll('label.pa-chip-option').forEach(function(label){
+        label.addEventListener('click', function(e){
+          const input = label.querySelector('input[type="radio"]');
+          if(!input) return;
+          input.checked = true;
+          state.data.forAgentId = input.value;
+          state.data.forAgentName = input.getAttribute('data-name') || '';
+          e.preventDefault();
+          advance();
+        });
+      });
+    }
+
     function renderHoa(){
       const wrap = document.getElementById('paHoa');
       if(!wrap) return;
@@ -12867,6 +12932,13 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           const v = document.querySelector('input[name="pa_hoa"]:checked');
           if(!v){ alert('Let us know if there is an HOA or condo association.'); return false; }
           state.data.hoa = v.value;
+          return true;
+        }
+        case 'for-agent': {
+          const v = document.querySelector('input[name="pa_for_agent"]:checked');
+          if(!v){ alert('Pick who this file belongs to.'); return false; }
+          state.data.forAgentId = v.value;
+          state.data.forAgentName = v.getAttribute('data-name') || '';
           return true;
         }
         case 6: {
@@ -13137,6 +13209,10 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           var titleContactText  = [state.data.titleCompany, state.data.titleAddress, state.data.titleContactName, state.data.titleContactEmail, state.data.titleContactPhone].filter(Boolean).join(' · ');
           var lenderContactText = [state.data.lender, state.data.lenderContactName, state.data.lenderContactEmail, state.data.lenderContactPhone].filter(Boolean).join(' · ');
           var rawForm = {
+            submitted_by_tc: !!(state.data.forAgentId && state.data.forAgentId !== uid),
+            submitted_by: uid,
+            submitted_by_name: (state.profile && (state.profile.name || ((state.profile.first_name || '') + ' ' + (state.profile.last_name || '')).trim())) || '',
+            for_agent_name: state.data.forAgentName || '',
             pa_buyer2_name: state.data.buyer2_name || '', pa_buyer2_email: state.data.buyer2_email || '', pa_buyer2_phone: state.data.buyer2_phone || '',
             pa_seller2_name: state.data.seller2_name || '', pa_seller2_email: state.data.seller2_email || '', pa_seller2_phone: state.data.seller2_phone || '',
             pa_title_company: state.data.titleCompany || '', pa_title_address: state.data.titleAddress || '',
@@ -13151,7 +13227,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           };
           var fileRow = {
             id: submissionId,
-            agent_id: uid,
+            agent_id: state.data.forAgentId || uid, // on-behalf submissions credit the chosen agent
             service_type: state.data.serviceId || state.data.serviceType || 'tc_one_side',
             file_type: (state.data.serviceType === 'listing' ? 'listing' : 'sale'),
             client_type: repMap[state.data.representation] || null,
