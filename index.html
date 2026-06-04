@@ -12013,11 +12013,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             property_address: state.data.address || ''
           });
           paintSaved();
-          // Live-sync the kept contact while its box is checked.
-          try{
-            const kb = document.getElementById('paBuyerKeep'), ks = document.getElementById('paSellerKeep');
-            if((kb && kb.checked) || (ks && ks.checked)) persistKeptContactsNow();
-          }catch(_){}
+          // NO keystroke-saves to the address book — partial names like "marle"
+          // were being written mid-typing. Contacts write ONLY at Continue/submit.
           // Persist title/lender saved-contact edits too (no-op when company empty),
           // so fixing a missed address sticks without needing Continue.
           try { saveContactToLocal('title'); saveContactToLocal('lender'); } catch(_){}
@@ -12571,9 +12568,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           if(emailInp) paintFieldError(emailInp, 'Add an email first — it files the contact');
           return;
         }
-        const ok = await persistKeptContactsNow();
-        keepBoxFeedback(cfg[0], ok ? true : 'error');
-        if(!ok) cb.checked = false;
+        // Checking = INTENT only. The actual write happens at Continue, with the
+        // step complete — so a box checked mid-typing can never save a partial name.
+        keepBoxFeedback(cfg[0], true);
       });
     });
 
@@ -13397,8 +13394,26 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       }
     }
 
-    function advance(){
+    async function advance(){
       if(!validate()) return;
+      // Contacts write HERE — once, with the step complete and validated.
+      const KEEP_BY_STEP = {
+        'clients-buyer': ['paBuyerKeep','paBuyer2Keep'],
+        'clients-seller': ['paSellerKeep','paSeller2Keep'],
+        6: ['paTitleKeep'], 7: ['paLenderKeep'],
+        8: ['paAgentKeep'], 'co-agent': ['paCoAgentKeep']
+      };
+      const keeps = (KEEP_BY_STEP[state.step] || []).filter(function(id){
+        const cb = document.getElementById(id); return cb && cb.checked;
+      });
+      if(keeps.length){
+        const ok = await persistKeptContactsNow();
+        if(!ok){
+          keeps.forEach(function(id){ try { keepBoxFeedback(id, 'error'); } catch(_){} });
+          return; // stay on the step · the contact did NOT save
+        }
+        keeps.forEach(function(id){ try { keepBoxFeedback(id, true); } catch(_){} });
+      }
       try { scheduleAutoSave(null); } catch(_){} // Step 2 · keep the draft's step position fresh
       // Editing a single field from review · go straight back to review, not through every later step.
       if(state.editingReturn){
