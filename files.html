@@ -414,6 +414,11 @@
   .ck-archive{margin:0 0 8px;border:0.5px solid #eceae5;border-radius:8px;padding:6px 10px;background:#fafaf9}
   .ck-archive summary{font-size:11px;font-weight:600;color:#8a877f;cursor:pointer;padding:3px 0}
   .ck-empty{font-size:11.5px;color:#9a9a9a;margin:4px 0}
+  .ck-dl-btn{border:none;cursor:pointer;font-family:inherit}
+  .ck-dl-wrap{display:inline-flex;align-items:center;gap:4px}
+  .ck-dl-edited{font-size:9px;color:#9a7c3a;font-style:normal;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+  .ck-dl-reset{border:none;background:none;color:#b0aca4;font-size:13px;cursor:pointer;padding:0 2px}
+  .ck-dl-reset:hover{color:#0f0f0f}
 
   /* Contract Verification section · top-10 TC checklist with conditional rendering */
   .tpb-vf-section{padding:14px 22px 16px;background:#fff;border-top:0.5px solid rgba(15,15,15,0.08)}
@@ -4909,8 +4914,14 @@ Aari Transactions`,
   function fileDeadlines(file){
     const eff = parseDate(file.effective_date);
     const close = parseDate(file.closing_date);
+    const ov = (file.deadline_overrides && typeof file.deadline_overrides === 'object') ? file.deadline_overrides : {};
     const out = {};
     DEADLINE_DEFS.forEach(def => {
+      // Manual override wins · the TC entered the contract's actual date.
+      if(ov[def.key]){
+        const od = parseDate(ov[def.key]);
+        if(od){ out[def.key] = { label: def.label, date: od, manual: true }; return; }
+      }
       const base = def.from === 'effective' ? eff : close;
       if(!base) return;
       out[def.key] = { label: def.label, date: flBusinessDay(addDays(base, def.offset)) };
@@ -4958,8 +4969,13 @@ Aari Transactions`,
       const rows = DEADLINE_DEFS
         .filter(def => dls[def.key])
         .map(def => {
-          const st = dlState(dls[def.key].date);
-          return '<div class="ck-dl-row"><span>' + esc(def.label) + '</span><span class="ck-dl ck-dl-' + st + '">' + fmtDl(dls[def.key].date) + '</span></div>';
+          const d = dls[def.key];
+          const st = dlState(d.date);
+          return '<div class="ck-dl-row"><span>' + esc(def.label) + (d.manual ? ' <em class="ck-dl-edited">edited</em>' : '') + '</span>' +
+            '<span class="ck-dl-wrap">' +
+              '<button type="button" class="ck-dl ck-dl-' + st + ' ck-dl-btn" data-dl-edit="' + def.key + '" title="Tap to enter the contract&#39;s actual date">' + fmtDl(d.date) + '</button>' +
+              (d.manual ? '<button type="button" class="ck-dl-reset" data-dl-reset="' + def.key + '" title="Back to auto-calculated">&#8634;</button>' : '') +
+            '</span></div>';
         }).join('');
       allDl = rows
         ? '<div class="ck-dl-table">' + rows + '</div>'
@@ -5033,6 +5049,42 @@ Aari Transactions`,
       renderStageChecklist(_currentFile);
       alert('Could not save that checkbox — check your connection and try again.');
     }
+  });
+
+  // Deadline overrides · tap a date -> date input · contract's real date wins.
+  async function saveDeadlineOverride(key, val){
+    if(!_currentFile) return;
+    const cur = (_currentFile.deadline_overrides && typeof _currentFile.deadline_overrides === 'object') ? { ..._currentFile.deadline_overrides } : {};
+    if(val) cur[key] = val; else delete cur[key];
+    const prev = _currentFile.deadline_overrides;
+    _currentFile.deadline_overrides = cur;
+    renderStageChecklist(_currentFile);
+    const r = await _client.from('files').update({ deadline_overrides: cur }).eq('id', _currentFile.id);
+    if(r && r.error){
+      console.warn('[deadlines] override save failed', r.error.message);
+      _currentFile.deadline_overrides = prev;
+      renderStageChecklist(_currentFile);
+      alert('Could not save that date — try again.');
+    }
+  }
+  document.addEventListener('click', (e) => {
+    const rs = e.target.closest && e.target.closest('[data-dl-reset]');
+    if(rs){ e.preventDefault(); saveDeadlineOverride(rs.getAttribute('data-dl-reset'), null); return; }
+    const ed = e.target.closest && e.target.closest('[data-dl-edit]');
+    if(!ed || ed._editing) return;
+    e.preventDefault();
+    ed._editing = true;
+    const key = ed.getAttribute('data-dl-edit');
+    const dls = fileDeadlines(_currentFile || {});
+    const cur = dls[key] ? dls[key].date.toLocaleDateString('en-CA') : '';
+    const inp = document.createElement('input');
+    inp.type = 'date';
+    inp.value = cur;
+    inp.style.cssText = 'font-family:inherit;font-size:11px;padding:2px 6px;border:1px solid #cfccc4;border-radius:6px';
+    ed.replaceWith(inp);
+    inp.focus();
+    inp.addEventListener('change', () => { const v = inp.value; if(v && v !== cur) saveDeadlineOverride(key, v); });
+    inp.addEventListener('blur', () => { setTimeout(() => renderStageChecklist(_currentFile), 150); });
   });
 
   // ============== FILE DETAILS · FROM INTAKE ==============
