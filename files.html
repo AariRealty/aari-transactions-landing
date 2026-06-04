@@ -638,7 +638,7 @@
   <div class="tpb-lg-section" id="tpb-details-section" style="margin-top:16px">
     <div class="tpb-lg-head">
       <p class="tpb-lg-eb">File Details</p>
-      <p class="tpb-lg-meta">from intake</p>
+      <button type="button" data-fd-edit style="border:none;background:#f3f3f1;color:#5f5e5a;font-family:inherit;font-size:10px;font-weight:600;border-radius:999px;padding:3px 12px;cursor:pointer">&#9998; Edit file details</button>
     </div>
     <div id="tpb-details"></div>
   </div>
@@ -5459,6 +5459,109 @@ Aari Transactions`,
       renderStageChecklist(_currentFile);
       alert('Could not save that checkbox — check your connection and try again.');
     }
+  });
+
+  // ============== FILE DETAILS · TC EDIT MODE ==============
+  // One edit surface for everything the agent typed. Saves merge into
+  // raw_form_data + mirror the structured columns (dates, address, client),
+  // re-render the whole drawer (deadline engine recomputes), audit-logged.
+  const FD_FIELDS = [
+    { group:'File',    key:'__property_address', label:'Property address', col:'property_address' },
+    { group:'File',    key:'__effective_date',   label:'Effective date',   col:'effective_date', type:'date' },
+    { group:'File',    key:'__closing_date',     label:'Closing date',     col:'closing_date',   type:'date' },
+    { group:'Buyer',   key:'pa_buyer_name',  label:'Buyer name' },
+    { group:'Buyer',   key:'pa_buyer_email', label:'Buyer email' },
+    { group:'Buyer',   key:'pa_buyer_phone', label:'Buyer phone' },
+    { group:'Seller',  key:'pa_seller_name',  label:'Seller name' },
+    { group:'Seller',  key:'pa_seller_email', label:'Seller email' },
+    { group:'Seller',  key:'pa_seller_phone', label:'Seller phone' },
+    { group:'Title',   key:'pa_title_company',       label:'Title company' },
+    { group:'Title',   key:'pa_title_address',       label:'Title address' },
+    { group:'Title',   key:'pa_title_contact_name',  label:'Title contact' },
+    { group:'Title',   key:'pa_title_contact_email', label:'Title email' },
+    { group:'Title',   key:'pa_title_contact_phone', label:'Title phone' },
+    { group:'Lender',  key:'pa_lender',               label:'Lender company' },
+    { group:'Lender',  key:'pa_lender_contact_name',  label:'Lender contact' },
+    { group:'Lender',  key:'pa_lender_contact_email', label:'Lender email' },
+    { group:'Lender',  key:'pa_lender_contact_phone', label:'Lender phone' },
+    { group:'Other agent', key:'pa_listing_agent_name',    label:'Other-side agent' },
+    { group:'Other agent', key:'pa_listing_agent_company', label:'Their brokerage' },
+    { group:'Other agent', key:'pa_listing_agent_email',   label:'Their email' },
+    { group:'Other agent', key:'pa_listing_agent_phone',   label:'Their phone' },
+    { group:'Agent',   key:'pa_agent_name',  label:'Agent name' },
+    { group:'Agent',   key:'pa_agent_email', label:'Agent email' },
+    { group:'Agent',   key:'pa_agent_phone', label:'Agent phone' },
+    { group:'Notes',   key:'pa_commission_notes', label:'Commission notes' },
+  ];
+  function renderFileDetailsEdit(file){
+    const el = document.getElementById('tpb-details');
+    if(!el) return;
+    const raw = file.raw_form_data || {};
+    const val = (f) => f.col ? (file[f.col] || '') : (raw[f.key] || '');
+    let html = '', lastGroup = '';
+    FD_FIELDS.forEach(f => {
+      if(f.group !== lastGroup){
+        html += '<p style="font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#b0aca4;margin:10px 0 4px">' + esc(f.group) + '</p>';
+        lastGroup = f.group;
+      }
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:3px 0">' +
+        '<label style="font-size:10.5px;color:#888;flex:0 0 110px">' + esc(f.label) + '</label>' +
+        '<input type="' + (f.type || 'text') + '" data-fd-key="' + esc(f.key) + '" value="' + esc(val(f)) + '" ' +
+          'style="flex:1;font-family:inherit;font-size:12px;padding:6px 9px;border:1px solid #e0ddd6;border-radius:7px;min-width:0">' +
+      '</div>';
+    });
+    html += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">' +
+      '<button type="button" data-fd-cancel style="border:1px solid #e0ddd6;background:#fff;color:#5f5e5a;font-family:inherit;font-size:11.5px;border-radius:7px;padding:7px 14px;cursor:pointer">Cancel</button>' +
+      '<button type="button" data-fd-save style="border:none;background:#0f0f0f;color:#fff;font-family:inherit;font-size:11.5px;border-radius:7px;padding:7px 16px;cursor:pointer">Save changes</button>' +
+    '</div>';
+    el.innerHTML = html;
+  }
+  document.addEventListener('click', async (e) => {
+    const editBtn = e.target.closest && e.target.closest('[data-fd-edit]');
+    if(editBtn && _currentFile){ renderFileDetailsEdit(_currentFile); return; }
+    const cancelBtn = e.target.closest && e.target.closest('[data-fd-cancel]');
+    if(cancelBtn && _currentFile){ renderFileDetails(_currentFile); return; }
+    const saveBtn = e.target.closest && e.target.closest('[data-fd-save]');
+    if(!saveBtn || !_currentFile) return;
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    const raw = (_currentFile.raw_form_data && typeof _currentFile.raw_form_data === 'object') ? { ..._currentFile.raw_form_data } : {};
+    const colPatch = {};
+    const changes = {};
+    document.querySelectorAll('[data-fd-key]').forEach(inp => {
+      const key = inp.getAttribute('data-fd-key');
+      const def = FD_FIELDS.find(f => f.key === key);
+      const v = inp.value.trim();
+      if(def && def.col){
+        const before = _currentFile[def.col] || '';
+        if(String(before) !== v){ colPatch[def.col] = v || null; changes[def.col] = { from: before || null, to: v || null }; }
+      } else {
+        const before = raw[key] || '';
+        if(String(before) !== v){ raw[key] = v; changes[key] = { from: before || null, to: v || null }; }
+      }
+    });
+    if(!Object.keys(changes).length){ renderFileDetails(_currentFile); return; }
+    // Keep the kanban card columns in sync when the client identity changed.
+    if(changes['pa_buyer_name'] && _currentFile.client_type === 'buyer'){ colPatch.client_name = raw.pa_buyer_name; colPatch.client_email = raw.pa_buyer_email || _currentFile.client_email; colPatch.client_phone = raw.pa_buyer_phone || _currentFile.client_phone; }
+    if(changes['pa_seller_name'] && _currentFile.client_type === 'seller'){ colPatch.client_name = raw.pa_seller_name; colPatch.client_email = raw.pa_seller_email || _currentFile.client_email; colPatch.client_phone = raw.pa_seller_phone || _currentFile.client_phone; }
+    const upd = { ...colPatch, raw_form_data: raw };
+    const r = await _client.from('files').update(upd).eq('id', _currentFile.id);
+    if(r && r.error){
+      console.warn('[fd-edit] save failed', r.error.message);
+      saveBtn.disabled = false; saveBtn.textContent = 'Save changes';
+      alert('Could not save — try again.');
+      return;
+    }
+    Object.assign(_currentFile, colPatch);
+    _currentFile.raw_form_data = raw;
+    try {
+      writeAuditLog('file_details_edited', _currentFile.id, {
+        fields_changed: Object.keys(changes), changes: changes,
+        property_address: _currentFile.property_address || null,
+        changed_at: new Date().toISOString(),
+      });
+    } catch(_){}
+    renderPlaybook(_currentFile); // deadline engine + checklist + emails all recompute
+    renderKanban();
   });
 
   // HOA correction · TC flips the agent's answer · drives estoppel task,
