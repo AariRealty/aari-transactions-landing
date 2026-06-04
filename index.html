@@ -6093,6 +6093,21 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             <div class="pa-chip-stack" id="paForAgent"></div>
           </div>
         </section>
+        <section class="pa-step" data-pa-step="agent-info" hidden>
+          <div class="field">
+            <label for="paAgentSelfName">Full name</label>
+            <input type="text" id="paAgentSelfName" name="pa_agent_self_name" autocomplete="off">
+          </div>
+          <div class="field" style="margin-top:14px">
+            <label for="paAgentSelfEmail">Email</label>
+            <input type="email" id="paAgentSelfEmail" name="pa_agent_self_email" autocomplete="off" inputmode="email" spellcheck="false">
+          </div>
+          <div class="field" style="margin-top:14px">
+            <label for="paAgentSelfPhone">Phone</label>
+            <input type="tel" id="paAgentSelfPhone" name="pa_agent_self_phone" autocomplete="off" inputmode="tel">
+            <div class="help">Where your TC texts deadline updates.</div>
+          </div>
+        </section>
         <section class="pa-step" data-pa-step="9" hidden>
           <div class="field">
             <label for="paContract">Executed contract</label>
@@ -10771,6 +10786,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       5:  { h:'<em>Closing</em> date?',           s:'When does this deal close?' },
       'hoa': { h:'<em>HOA</em> or condo?',         s:'Is the property in an association?' },
       'for-agent': { h:'Submitting <em>for?</em>', s:'Pick the agent this file belongs to.' },
+      'agent-info': { h:'Agent <em>info.</em>', s:'Pulled from the account &mdash; confirm it&rsquo;s current. Your TC uses it for updates.' },
       6:  { h:'<em>Title</em> company?',          s:'From your profile. Update if different.' },
       7:  { h:'<em>Lender?</em>',                 s:'Optional. Cash deal? Skip.' },
       8:  { h:'Commission <em>notes?</em>',       s:'Optional. Referral fees, splits, concessions.' },
@@ -10785,7 +10801,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     // the contract is the source of truth, so it comes in first.
     // 'for-agent' (TC/broker only · filtered out for agents in activeSteps)
     // asks WHO the file belongs to, before anything else is captured.
-    const ALL_STEPS = [1,2,'for-agent',9,3,'clients-buyer','clients-seller',4,'effective',5,'hoa',6,7,8,10,'tc','final','done'];
+    const ALL_STEPS = [1,2,'for-agent','agent-info',9,3,'clients-buyer','clients-seller',4,'effective',5,'hoa',6,7,8,10,'tc','final','done'];
 
     let state = { step: 1, data: {}, profile: null, active: false };
 
@@ -11583,6 +11599,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(state.step === 3) renderRepresentation();
       if(state.step === 'hoa') renderHoa();
       if(state.step === 'for-agent') renderForAgent();
+      if(state.step === 'agent-info') renderAgentInfo();
       if(state.step === 'effective') updateEffectiveHelp();
       if(state.step === 'clients-buyer' || state.step === 'clients-seller'){
         // Other-party name only makes sense on single-side files.
@@ -11696,6 +11713,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       { step: 5,  label: 'Closing date',      get: (s) => formatDate(s.data.closingDate) },
       { step: 'hoa', label: 'HOA / condo',    get: (s) => (s.data.hoa === 'yes' ? 'Yes' : (s.data.hoa === 'no' ? 'No' : '')) },
       { step: 'for-agent', label: 'For agent', get: (s) => s.data.forAgentName || '' },
+      { step: 'agent-info', label: (s) => s.data.forAgentId ? 'Agent contact' : 'Your contact',
+        get: (s) => [s.data.agentSelfName, s.data.agentSelfEmail, s.data.agentSelfPhone].filter(Boolean).join(' · ') },
       { step: 6,  label: 'Title company',     get: (s) => s.data.titleCompany || '' },
       { step: 6,  label: 'Title contact',     get: (s) => {
         if(!s.data.titleContactName) return '';
@@ -11842,6 +11861,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       paBuyerName: 'buyer_name',   paBuyerEmail: 'buyer_email',   paBuyerPhone: 'buyer_phone',
       paSellerName: 'seller_name', paSellerEmail: 'seller_email', paSellerPhone: 'seller_phone',
       paOtherPartyB: 'otherPartyName', paOtherPartyS: 'otherPartyName',
+      paAgentSelfName: 'agentSelfName', paAgentSelfEmail: 'agentSelfEmail', paAgentSelfPhone: 'agentSelfPhone',
       paTitleCompany: 'titleCompany', paTitleAddress: 'titleAddress',
       paTitleContactName: 'titleContactName', paTitleContactEmail: 'titleContactEmail', paTitleContactPhone: 'titleContactPhone',
       paLender: 'lender',
@@ -13013,6 +13033,32 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     function agentDisplay(a){
       return a.name || ((a.first_name || '') + ' ' + (a.last_name || '')).trim() || a.email || 'Agent';
     }
+    /* Agent info confirm · prefilled from the account (or the chosen agent's
+       account on on-behalf submissions). Never overwrites typed values. */
+    async function renderAgentInfo(){
+      const nm = document.getElementById('paAgentSelfName');
+      const em = document.getElementById('paAgentSelfEmail');
+      const ph = document.getElementById('paAgentSelfPhone');
+      if(!nm || !em || !ph) return;
+      if(nm.value.trim() || em.value.trim() || ph.value.trim()) return; // already confirmed/typed
+      let src = state.profile || {};
+      const forId = state.data.forAgentId;
+      if(forId && forId !== (state.profile && state.profile.id)){
+        try{
+          const client = await window.AariAuth.ensureClient();
+          const r = await client.from('agents').select('*').eq('id', forId).maybeSingle();
+          if(r && r.data) src = r.data;
+        }catch(e){ console.warn('[agent-info] lookup failed', e); }
+        if(state.step !== 'agent-info') return; // they moved on while we fetched
+      }
+      const fill = function(inp, v, key){
+        if(v && !inp.value.trim()){ inp.value = v; state.data[key] = v; }
+      };
+      fill(nm, agentDisplay(src) === 'Agent' ? '' : agentDisplay(src), 'agentSelfName');
+      fill(em, src.email || '', 'agentSelfEmail');
+      fill(ph, src.phone || src.phone_number || src.mobile || '', 'agentSelfPhone');
+      try { gateStep(); } catch(_){}
+    }
     async function renderForAgent(){
       const wrap = document.getElementById('paForAgent');
       if(!wrap) return;
@@ -13059,6 +13105,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       const REQ = {
         'clients-buyer':  ['paBuyerName','paBuyerEmail','paBuyerPhone'],
         'clients-seller': ['paSellerName','paSellerEmail','paSellerPhone'],
+        'agent-info':     ['paAgentSelfName','paAgentSelfEmail','paAgentSelfPhone'],
         6: ['paTitleCompany','paTitleAddress','paTitleContactName','paTitleContactEmail','paTitleContactPhone']
       };
       const unlock = function(){ next.classList.remove('btn-continue-locked'); next.disabled = false; if(hint) hint.textContent = ''; };
@@ -13234,6 +13281,20 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           state.data.forAgentName = v.getAttribute('data-name') || '';
           return true;
         }
+        case 'agent-info': {
+          const aN = document.getElementById('paAgentSelfName');
+          const aE = document.getElementById('paAgentSelfEmail');
+          const aP = document.getElementById('paAgentSelfPhone');
+          let aOk = true;
+          if(!aN.value.trim()){ paintFieldError(aN, 'Add the agent name'); aOk = false; }
+          if(!aE.value.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(aE.value.trim())){ paintFieldError(aE, 'Add a valid email'); aOk = false; }
+          if(!aP.value.trim()){ paintFieldError(aP, 'Add a phone — your TC texts updates'); aOk = false; }
+          if(!aOk) return false;
+          state.data.agentSelfName  = aN.value.trim();
+          state.data.agentSelfEmail = aE.value.trim();
+          state.data.agentSelfPhone = aP.value.trim();
+          return true;
+        }
         case 6: {
           // Title company + address + closing contact · REQUIRED.
           var tC  = document.getElementById('paTitleCompany').value.trim();
@@ -13360,6 +13421,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           pa_lender_contact_name: state.data.lenderContactName || '', pa_lender_contact_email: state.data.lenderContactEmail || '', pa_lender_contact_phone: state.data.lenderContactPhone || '',
           pa_listing_agent_name: state.data.listingAgentName || '', pa_listing_agent_company: state.data.listingAgentCompany || '', pa_listing_agent_email: state.data.listingAgentEmail || '', pa_listing_agent_phone: state.data.listingAgentPhone || '',
           pa_other_party_name: state.data.otherPartyName || '',
+          pa_agent_name: state.data.agentSelfName || '', pa_agent_email: state.data.agentSelfEmail || '', pa_agent_phone: state.data.agentSelfPhone || '',
           pa_co_agent_name: state.data.coAgentName || '', pa_co_agent_company: state.data.coAgentCompany || '', pa_co_agent_email: state.data.coAgentEmail || '', pa_co_agent_phone: state.data.coAgentPhone || '',
           commission_notes: state.data.commissionNotes || '', agent_notes: state.data.agentNotes || '', pa_hoa: state.data.hoa || '',
           corrected_at: new Date().toISOString()
@@ -13515,6 +13577,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             pa_lender_contact_name: state.data.lenderContactName || '', pa_lender_contact_email: state.data.lenderContactEmail || '', pa_lender_contact_phone: state.data.lenderContactPhone || '',
             pa_listing_agent_name: state.data.listingAgentName || '', pa_listing_agent_company: state.data.listingAgentCompany || '', pa_listing_agent_email: state.data.listingAgentEmail || '', pa_listing_agent_phone: state.data.listingAgentPhone || '',
           pa_other_party_name: state.data.otherPartyName || '',
+          pa_agent_name: state.data.agentSelfName || '', pa_agent_email: state.data.agentSelfEmail || '', pa_agent_phone: state.data.agentSelfPhone || '',
             pa_co_agent_name: state.data.coAgentName || '', pa_co_agent_company: state.data.coAgentCompany || '', pa_co_agent_email: state.data.coAgentEmail || '', pa_co_agent_phone: state.data.coAgentPhone || '',
             commission_notes: state.data.commissionNotes || '', agent_notes: state.data.agentNotes || '', pa_hoa: state.data.hoa || '',
             preferred_tc: state.data.preferredTcName || 'Auto-assign', preferred_tc_id: state.data.preferredTcId || 'auto', preferred_tc_email: state.data.preferredTcEmail || '',
