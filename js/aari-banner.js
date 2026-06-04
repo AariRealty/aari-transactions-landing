@@ -32,6 +32,7 @@
     // Agent-side hub · what an agent actually needs from a navigation rib.
     { id:'portal',   label:'My files',       href:'/portal.html',         icon:iconFolder(),match:['/portal'],                          roles:['agent'] },
     { id:'submit',   label:'Submit a file',  href:'/index.html?modal-only=1#apply',   icon:iconUpload(),match:['/agent-submit','/index.html#services'], roles:['agent'] },
+    { id:'contacts', label:'My contacts',    href:'/my-contacts.html',    icon:iconBook(),  match:['/my-contacts'],                    roles:['agent'] },
     { id:'refer',    label:'Refer an agent', href:'/portal.html#refer',   icon:iconHandshake(), match:[],                              roles:['agent'] },
   ];
 

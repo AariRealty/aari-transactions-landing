@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>My Contacts · Aari Transactions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#f3f3f1;font-family:'Inter',system-ui,-apple-system,sans-serif;color:#2c2c2a;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto;padding:40px 20px 80px}
+  h1{font-size:24px;font-weight:600;letter-spacing:-0.02em}
+  .sub{color:#8a877f;font-size:13px;margin-top:4px}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+  .back{font-size:13px;color:#5f5e5a;text-decoration:none;border:1px solid #e8e6e1;background:#fff;border-radius:999px;padding:8px 16px}
+  .privacy{display:flex;align-items:center;gap:10px;background:#fdf6e3;border:1px solid #f0d89a;border-radius:10px;padding:12px 16px;font-size:13px;color:#9a7c3a;margin-bottom:22px}
+  .privacy .lock{font-size:16px;flex:none}
+  .card{background:#fff;border:1px solid #e8e6e1;border-radius:12px;padding:16px 18px;margin-bottom:12px}
+  .row{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  .type{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#8a877f;background:#f3f3f1;border-radius:6px;padding:3px 8px;margin-bottom:6px}
+  .name{font-size:16px;font-weight:600}
+  .meta{font-size:13px;color:#5f5e5a;margin-top:2px;word-break:break-word}
+  .added{font-size:11px;color:#b0aca4;margin-top:6px}
+  .actions{display:flex;gap:8px;flex:none;margin-top:2px}
+  button{font-family:inherit;cursor:pointer;font-size:12px;border-radius:8px;padding:8px 14px;border:none}
+  .btn-edit{background:#2c2c2a;color:#fff}
+  .btn-del{background:#fff;color:#c96b6b;border:1px solid #e8e6e1}
+  .btn-save{background:#2c2c2a;color:#fff}
+  .btn-cancel{background:#fff;color:#5f5e5a;border:1px solid #e8e6e1}
+  .edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .edit-grid .full{grid-column:1 / -1}
+  label{display:block;font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#8a877f;margin-bottom:4px}
+  input,select{width:100%;font-family:inherit;font-size:14px;padding:10px 12px;border:1px solid #e8e6e1;border-radius:8px;background:#fff;color:#2c2c2a}
+  input:focus,select:focus{outline:none;border-color:#b0aca4}
+  .empty{background:#fff;border:1px dashed #e8e6e1;border-radius:12px;padding:34px 20px;text-align:center;color:#8a877f;font-size:14px}
+  .state{font-size:12px;color:#5a9e72;min-height:16px;margin-top:8px}
+  .state.err{color:#c96b6b}
+  .count{font-size:12px;color:#8a877f}
+  @media (max-width:520px){ .edit-grid{grid-template-columns:1fr} .actions{width:100%;justify-content:flex-end} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div>
+      <h1>My Contacts</h1>
+      <div class="sub" id="countLine">Loading your address book…</div>
+    </div>
+    <a class="back" href="/portal.html">← Back to portal</a>
+  </div>
+
+  <div class="privacy">
+    <span class="lock">🔒</span>
+    <span>Your address book is private. Only you and the Aari Transactions team can view your saved contacts.</span>
+  </div>
+
+  <div id="list"></div>
+</div>
+
+<script src="/js/supabase-config.js" defer></script>
+<script src="/js/auth.js" defer></script>
+<script defer>
+(function(){
+  let client = null;
+  let uid = null;
+  let contacts = [];
+
+  const TYPES = ['buyer','seller','title','lender','agent'];
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmtDate = (iso) => {
+    try { return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }); }
+    catch(_){ return ''; }
+  };
+
+  function render(){
+    const list = document.getElementById('list');
+    const count = document.getElementById('countLine');
+    count.textContent = contacts.length
+      ? contacts.length + ' saved contact' + (contacts.length === 1 ? '' : 's')
+      : '';
+    if(!contacts.length){
+      list.innerHTML = '<div class="empty">No saved contacts yet.<br>Check &ldquo;Save this contact to my list&rdquo; on a file submission and they\'ll appear here.</div>';
+      return;
+    }
+    list.innerHTML = contacts.map(c => `
+      <div class="card" data-id="${esc(c.id)}">
+        <div class="row">
+          <div style="min-width:0">
+            <span class="type">${esc(c.contact_type || 'contact')}</span>
+            <div class="name">${esc(c.full_name || '(no name)')}</div>
+            <div class="meta">${esc(c.email || '')}${c.email && c.phone ? ' · ' : ''}${esc(c.phone || '')}</div>
+            <div class="added">Added ${fmtDate(c.created_at)}</div>
+          </div>
+          <div class="actions">
+            <button type="button" class="btn-edit" data-edit="${esc(c.id)}">Edit</button>
+            <button type="button" class="btn-del" data-del="${esc(c.id)}">Delete</button>
+          </div>
+        </div>
+        <div class="state" data-state="${esc(c.id)}"></div>
+      </div>`).join('');
+  }
+
+  function renderEdit(id){
+    const c = contacts.find(x => x.id === id);
+    const card = document.querySelector('.card[data-id="' + CSS.escape(id) + '"]');
+    if(!c || !card) return;
+    card.innerHTML = `
+      <div class="edit-grid">
+        <div class="full">
+          <label>Full name</label>
+          <input type="text" data-f="full_name" value="${esc(c.full_name)}">
+        </div>
+        <div>
+          <label>Email</label>
+          <input type="email" data-f="email" value="${esc(c.email)}">
+        </div>
+        <div>
+          <label>Phone</label>
+          <input type="tel" data-f="phone" value="${esc(c.phone)}">
+        </div>
+        <div>
+          <label>Type</label>
+          <select data-f="contact_type">${TYPES.map(t => `<option value="${t}"${c.contact_type === t ? ' selected' : ''}>${t.charAt(0).toUpperCase() + t.slice(1)}</option>`).join('')}</select>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px;justify-content:flex-end">
+          <button type="button" class="btn-cancel" data-cancel="${esc(id)}">Cancel</button>
+          <button type="button" class="btn-save" data-save="${esc(id)}">Save</button>
+        </div>
+      </div>
+      <div class="state" data-state="${esc(id)}"></div>`;
+  }
+
+  function setState(id, msg, isErr){
+    const el = document.querySelector('.state[data-state="' + CSS.escape(id) + '"]');
+    if(el){ el.textContent = msg || ''; el.className = 'state' + (isErr ? ' err' : ''); }
+  }
+
+  async function saveEdit(id){
+    const card = document.querySelector('.card[data-id="' + CSS.escape(id) + '"]');
+    if(!card) return;
+    const get = (f) => { const el = card.querySelector('[data-f="' + f + '"]'); return el ? el.value.trim() : ''; };
+    const upd = {
+      full_name: get('full_name'),
+      email: get('email').toLowerCase(),
+      phone: get('phone'),
+      contact_type: get('contact_type'),
+      updated_at: new Date().toISOString()
+    };
+    if(!upd.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(upd.email)){
+      setState(id, 'A valid email is required — it keeps duplicates out.', true);
+      return;
+    }
+    setState(id, 'Saving…');
+    const r = await client.from('agent_contacts').update(upd).eq('id', id);
+    if(r && r.error){
+      const dupe = /duplicate|unique/i.test(r.error.message || '');
+      setState(id, dupe ? 'You already have a contact with that email.' : 'Could not save — try again.', true);
+      return;
+    }
+    const i = contacts.findIndex(x => x.id === id);
+    if(i >= 0) contacts[i] = Object.assign({}, contacts[i], upd);
+    render();
+    setState(id, '✓ Saved');
+  }
+
+  async function removeContact(id){
+    const c = contacts.find(x => x.id === id);
+    if(!c) return;
+    if(!window.confirm('Delete ' + (c.full_name || 'this contact') + ' from your address book? This can\'t be undone.')) return;
+    const r = await client.from('agent_contacts').delete().eq('id', id);
+    if(r && r.error){ setState(id, 'Could not delete — try again.', true); return; }
+    contacts = contacts.filter(x => x.id !== id);
+    render();
+  }
+
+  document.addEventListener('click', (e) => {
+    const ed = e.target.closest('[data-edit]');
+    if(ed){ renderEdit(ed.getAttribute('data-edit')); return; }
+    const sv = e.target.closest('[data-save]');
+    if(sv){ saveEdit(sv.getAttribute('data-save')); return; }
+    const ca = e.target.closest('[data-cancel]');
+    if(ca){ render(); return; }
+    const dl = e.target.closest('[data-del]');
+    if(dl){ removeContact(dl.getAttribute('data-del')); return; }
+  });
+
+  async function init(){
+    try{
+      const session = await window.AariAuth.getCurrentSession();
+      if(!session || !session.user){
+        window.location.href = '/login.html?next=' + encodeURIComponent('/my-contacts.html');
+        return;
+      }
+      uid = session.user.id;
+      client = await window.AariAuth.ensureClient();
+      const r = await client.from('agent_contacts')
+        .select('id, contact_type, full_name, email, phone, created_at')
+        .eq('agent_id', uid)
+        .order('created_at', { ascending: false });
+      if(r && r.error){
+        document.getElementById('list').innerHTML = '<div class="empty">Could not load your contacts. Refresh to try again.</div>';
+        console.warn('[my-contacts] load failed', r.error);
+        return;
+      }
+      contacts = r.data || [];
+      render();
+    }catch(err){
+      console.error('[my-contacts] init failed', err);
+      document.getElementById('list').innerHTML = '<div class="empty">Something went wrong loading the page. Refresh to try again.</div>';
+    }
+  }
+
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
+</body>
+</html>
