@@ -12510,6 +12510,50 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       });
     })();
 
+    /* Step 4 · duplicate contact banner. When the typed buyer/seller name OR
+       email matches a saved contact, offer "use existing" before a near-dupe is
+       created. The unique (agent_id,email) constraint already blocks true dupes
+       at the database; this catches the human case (same person, slightly
+       different spelling) at the keyboard. Pastel .duplicate-banner style. */
+    ['buyer','seller'].forEach(function(role){
+      const ids = CLIENT_IDS[role];
+      const nameInp = document.getElementById(ids.name);
+      const emailInp = document.getElementById(ids.email);
+      if(!nameInp || !emailInp) return;
+      const phoneField = (document.getElementById(ids.phone) || emailInp).closest('.field') || emailInp.parentNode;
+      const banner = document.createElement('div');
+      banner.className = 'duplicate-banner';
+      banner.style.display = 'none';
+      phoneField.insertAdjacentElement('afterend', banner);
+      const norm = s => (s || '').trim().toLowerCase();
+      let dismissedKey = null;
+      function findMatch(){
+        const n = norm(nameInp.value), e = norm(emailInp.value);
+        if(!n && !e) return null;
+        return loadClients().find(c => (n && norm(c.name) === n) || (e && norm(c.email) === e)) || null;
+      }
+      function update(){
+        const m = findMatch();
+        if(!m){ banner.style.display = 'none'; return; }
+        const already = norm(m.name) === norm(nameInp.value) && norm(m.email) === norm(emailInp.value);
+        const key = norm(m.email || m.name);
+        if(already || dismissedKey === key){ banner.style.display = 'none'; return; }
+        banner.innerHTML = '<span style="flex:1"><strong>' + escapeHtml(m.name || m.email) + '</strong> already exists</span>'
+          + '<button type="button" data-dup-use>Use existing</button>'
+          + '<button type="button" data-dup-new>Create new anyway</button>';
+        banner.style.display = 'flex';
+        banner.querySelector('[data-dup-use]').onclick = function(){
+          fillClientByName(role, m.name);
+          banner.style.display = 'none';
+        };
+        banner.querySelector('[data-dup-new]').onclick = function(){ dismissedKey = key; banner.style.display = 'none'; };
+      }
+      let t = null;
+      const sched = function(){ if(t) clearTimeout(t); t = setTimeout(update, 400); };
+      nameInp.addEventListener('input', sched);
+      emailInp.addEventListener('input', sched);
+    });
+
     /* Start over · self-serve reset for "I typed the wrong client info."
        Wipes THIS file's progress — fields, draft, step position, contract
        picks — after one confirm. The saved contacts list is NOT touched. */
