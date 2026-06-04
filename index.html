@@ -5863,6 +5863,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
               <label for="paBuyer2Phone">Second buyer &middot; Phone <span class="opt">optional</span></label>
               <input type="tel" id="paBuyer2Phone" name="pa_buyer2_phone" autocomplete="off" inputmode="tel">
             </div>
+            <label style="display:flex;align-items:center;gap:8px;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:8px;padding:8px 12px;margin-top:14px;cursor:pointer;font-size:12px;color:#9a7c3a">
+              <input type="checkbox" id="paBuyer2Keep" style="accent-color:#9a7c3a;margin:0"> <span id="paBuyer2KeepLbl">Save this contact to my list for next time</span>
+            </label>
           </div>
         </section>
         <!-- Clients step (seller side) · shown when representation = seller OR both_sides -->
@@ -5896,6 +5899,9 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
               <label for="paSeller2Phone">Second seller &middot; Phone <span class="opt">optional</span></label>
               <input type="tel" id="paSeller2Phone" name="pa_seller2_phone" autocomplete="off" inputmode="tel">
             </div>
+            <label style="display:flex;align-items:center;gap:8px;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:8px;padding:8px 12px;margin-top:14px;cursor:pointer;font-size:12px;color:#9a7c3a">
+              <input type="checkbox" id="paSeller2Keep" style="accent-color:#9a7c3a;margin:0"> <span id="paSeller2KeepLbl">Save this contact to my list for next time</span>
+            </label>
           </div>
         </section>
         <section class="pa-step" data-pa-step="4" hidden>
@@ -10831,7 +10837,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     function clearPathAInputs(){
       try { resetFieldVisuals(); } catch(_){} // no phantom "Saved" on blank reopened fields
       try { footerStatus(null); } catch(_){}  // footer back to "Exit anytime · progress saved"
-      ['paBuyerKeep','paSellerKeep'].forEach(id => { const cb = document.getElementById(id); if(cb) cb.checked = false; try { keepBoxFeedback(id, false); } catch(_){} });
+      ['paBuyerKeep','paSellerKeep','paBuyer2Keep','paSeller2Keep'].forEach(id => { const cb = document.getElementById(id); if(cb) cb.checked = false; try { keepBoxFeedback(id, false); } catch(_){} });
       ['paAddress','paEffectiveDate','paClosingDate',
        'paTitleCompany','paTitleAddress','paTitleContactName','paTitleContactEmail','paTitleContactPhone',
        'paLender','paLenderContactName','paLenderContactEmail','paLenderContactPhone',
@@ -12180,6 +12186,22 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           phone: state.data.seller_phone || '',
           updated_at: new Date().toISOString() });
       }
+      const keepB2 = document.getElementById('paBuyer2Keep');
+      if(keepB2 && keepB2.checked && (state.data.buyer2_email || state.data.buyer2_name)){
+        jobs.push({ agent_id: uid, contact_type: 'buyer',
+          full_name: state.data.buyer2_name || '',
+          email: (state.data.buyer2_email || '').toLowerCase(),
+          phone: state.data.buyer2_phone || '',
+          updated_at: new Date().toISOString() });
+      }
+      const keepS2 = document.getElementById('paSeller2Keep');
+      if(keepS2 && keepS2.checked && (state.data.seller2_email || state.data.seller2_name)){
+        jobs.push({ agent_id: uid, contact_type: 'seller',
+          full_name: state.data.seller2_name || '',
+          email: (state.data.seller2_email || '').toLowerCase(),
+          phone: state.data.seller2_phone || '',
+          updated_at: new Date().toISOString() });
+      }
       let failed = false;
       for(const row of jobs){
         if(!row.email) continue; // email is the dedupe key · skip if somehow empty
@@ -12187,9 +12209,23 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         if(r && r.error){ failed = true; console.warn('[path-a] contact upsert failed ·', r.error.message || r.error); }
         // Mirror into the local Saved buyers/sellers dropdown so it shows the
         // full email + phone immediately (it reads aari_tc_clients).
-        try { saveClientCurrent(row.contact_type === 'seller' ? 'seller' : 'buyer'); } catch(_){}
+        try { saveClientRecord(row.full_name, row.email, row.phone); } catch(_){}
       }
       return !failed;
+    }
+    /* Merge one record into the local Saved buyers/sellers list (fill-not-wipe). */
+    function saveClientRecord(name, email, phone){
+      if(!name) return;
+      var list = loadClients();
+      var norm = function(s){ return (s || '').trim().toLowerCase(); };
+      var i = list.findIndex(function(e){ return norm(e.name) === norm(name); });
+      if(i >= 0){
+        var ex = list[i];
+        list[i] = { name: name, email: (email || ex.email || ''), phone: (phone || ex.phone || ''), last_used_at: new Date().toISOString() };
+      } else {
+        list.unshift({ name: name, email: email || '', phone: phone || '', last_used_at: new Date().toISOString() });
+      }
+      writeClients(list.slice(0, 40));
     }
 
     /* Pull the Supabase contacts table into the local Saved buyers/sellers
@@ -12255,7 +12291,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       else if(saved){ lbl.textContent = '✓ Saved to your list — updates as you type'; lbl.style.color = '#5a9e72'; }
       else { lbl.textContent = 'Save this contact to my list for next time'; lbl.style.color = ''; }
     }
-    [['paBuyerKeep','paBuyerEmail','buyer_email'],['paSellerKeep','paSellerEmail','seller_email']].forEach(function(cfg){
+    [['paBuyerKeep','paBuyerEmail','buyer_email'],['paSellerKeep','paSellerEmail','seller_email'],
+     ['paBuyer2Keep','paBuyer2Email','buyer2_email'],['paSeller2Keep','paSeller2Email','seller2_email']].forEach(function(cfg){
       const cb = document.getElementById(cfg[0]);
       if(!cb) return;
       cb.addEventListener('change', async function(){
