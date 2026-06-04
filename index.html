@@ -12678,8 +12678,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         menu.style.cssText = 'position:static;display:none;background:#ffffff;border:0.5px solid #e8e6e1;border-radius:10px;margin-top:6px;overflow:hidden;max-height:240px;overflow-y:auto';
         inp.insertAdjacentElement('afterend', menu);
         const hide = function(){ menu.style.display = 'none'; menu.innerHTML = ''; };
-        let timer = null, seq = 0;
+        let timer = null, seq = 0, suppress = false;
         inp.addEventListener('input', function(){
+          // A pick programmatically refills the fields, which re-fires this
+          // handler — without this guard the menu pops right back open.
+          if(suppress){ if(timer) clearTimeout(timer); hide(); return; }
           const q = inp.value.trim();
           if(timer) clearTimeout(timer);
           if(q.length < 2){ hide(); return; }
@@ -12693,10 +12696,13 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             if(!agentId){ hide(); return; }
             try{
               const client = await window.AariAuth.ensureClient();
+              // Word-start matching: "ky" finds "Kylon Palma" and "pa" finds
+              // "Kylon Palma" (last name), but "lo" does NOT match mid-word.
+              const safe = q.replace(/[,()%]/g, ' ').trim();
               let qb = client.from('agent_contacts')
                 .select('full_name, email, phone, contact_type')
                 .eq('agent_id', agentId)
-                .ilike('full_name', '%' + q + '%')
+                .or('full_name.ilike.' + safe + '%,full_name.ilike.% ' + safe + '%')
                 .limit(5);
               if(type) qb = qb.eq('contact_type', type);
               const r = await qb;
@@ -12718,9 +12724,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
                 it.addEventListener('click', function(){
                   const c = rows[+it.getAttribute('data-i')];
                   const set = function(id, v){ const e = document.getElementById(id); if(e){ e.value = v || ''; e.dispatchEvent(new Event('input', { bubbles: true })); } };
+                  suppress = true;
                   set(nameId, c.full_name);
                   set(emailId, c.email);
                   set(phoneId, c.phone);
+                  suppress = false;
                   // Already a saved contact → pre-check the save box (Mockup 2).
                   try {
                     const kb = document.getElementById(keepId);
