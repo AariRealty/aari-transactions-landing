@@ -1753,6 +1753,72 @@ Aari Transactions`,
       ],
       closed: [
         {
+          id:'closed_title_confirm',
+          thread:3,
+          label:'Closing confirmation request · title (funds + deed)',
+          to:'{{title_closer_name}} <{{title_email}}>',
+          cc:'{{agent_name}} <{{agent_email}}>',
+          subject:'Closing confirmation request — {{address}}',
+          body:
+`Hi {{title_closer_name}},
+
+Can you please confirm that closing has been completed for {{address}}, all funds have been collected, and the deed has been recorded? Please provide confirmation in writing for our records.
+
+Thank you.
+
+Aari Transactions · 239.688.1770`,
+        },
+        {
+          id:'closed_congrats_agent',
+          thread:1,
+          label:'Closing congratulations · agent',
+          to:'{{agent_name}} <{{agent_email}}>',
+          cc:'',
+          subject:'\u{1F389} Closed — {{address}}',
+          body:
+`Hi {{agent_first_name}},
+
+Congratulations — {{address}} has officially closed! It was a pleasure coordinating this transaction for you. Your clients are now officially in their new home.
+
+Please don't hesitate to reach out for your next file — we are always here to help.
+
+Aari Transactions · 239.688.1770 · hello@aaritransactions.com`,
+        },
+        {
+          id:'closed_confirm_parties',
+          thread:1,
+          label:'Transaction closed · all parties',
+          to:'{{listing_agent_name}} <{{listing_agent_email}}>; {{title_closer_name}} <{{title_email}}>; {{lender_name}} <{{lender_email}}>',
+          cc:'{{agent_name}} <{{agent_email}}>',
+          subject:'Transaction closed — {{address}}',
+          body:
+`Hi everyone,
+
+We are pleased to confirm that the transaction for {{address}} has officially closed.
+
+Thank you all for your cooperation and professionalism throughout this process. It was a pleasure working with each of you.
+
+Aari Transactions · 239.688.1770`,
+        },
+        {
+          id:'closed_google_review',
+          thread:1,
+          label:'Google review request · agent (separate email)',
+          to:'{{agent_name}} <{{agent_email}}>',
+          cc:'',
+          subject:'One quick favor — {{agent_first_name}}',
+          body:
+`Hi {{agent_first_name}},
+
+Thank you for trusting Aari Transactions with your file. If you had a great experience working with us we would love a Google review — it only takes 2 minutes and means the world to our small team.
+
+Here is the link: [Google review link]
+
+Thank you so much.
+
+Aari Transactions · 239.688.1770`,
+        },
+        {
           id:'sale_closed_master_done',
           thread:1,
           label:'Closing confirmation · Master',
@@ -5168,7 +5234,7 @@ Aari Transactions`,
       return;
     }
     // Filter empty state for active search query
-    const filtered = _files.filter(f => (f.file_type || 'sale') === _fileTypeFilter).filter(matchesSearch);
+    const filtered = _files.filter(f => (f.file_type || 'sale') === _fileTypeFilter).filter(f => f.status !== 'archived' || _searchQuery).filter(matchesSearch);
     if(filtered.length === 0 && _searchQuery){
       const k = document.getElementById('kanban');
       if(k){
@@ -5575,7 +5641,23 @@ Aari Transactions`,
       file.transaction_stage = newStage;
       renderKanban();
       try {
-        await _client.from('files').update({ transaction_stage: newStage }).eq('id', fid);
+        // Landing in Closed: also flip status → the DB trigger stamps closed_at
+        // and the 24h review-request cron picks the file up. Auto-check the two
+        // "automatic" Stage-8 rows so the checklist reflects reality.
+        const upd = { transaction_stage: newStage };
+        if(newStage === 'closed' && file.status !== 'closed' && file.status !== 'archived'){
+          upd.status = 'closed';
+          const dt0 = (file.stage_tasks && typeof file.stage_tasks === 'object') ? { ...file.stage_tasks } : {};
+          const by = (_profile && (_profile.first_name || _profile.email)) || 'tc';
+          const nowIso = new Date().toISOString();
+          if(!dt0['cl_closed_stamp']) dt0['cl_closed_stamp'] = { done:true, at:nowIso, by:by };
+          if(!dt0['cl_review_24h'])   dt0['cl_review_24h']   = { done:true, at:nowIso, by:by };
+          upd.stage_tasks = dt0;
+          file.status = 'closed';
+          file.stage_tasks = dt0;
+          file.closed_at = file.closed_at || nowIso;
+        }
+        await _client.from('files').update(upd).eq('id', fid);
         // Audit log · stage change. Append-only, FREC-defensible.
         writeAuditLog('file_stage_changed', fid, {
           from_stage: prevStage || null,
@@ -5727,6 +5809,7 @@ Aari Transactions`,
     }
   }
   document.addEventListener('click', (e) => {
+    if(_currentFile && _currentFile.status === 'archived' && e.target.closest && e.target.closest('[data-emd-cycle],[data-appr-result],[data-loan-badge]')) return; // read-only
     const cyc = e.target.closest && e.target.closest('[data-emd-cycle]');
     if(cyc && _currentFile){
       const which = cyc.getAttribute('data-emd-cycle');
@@ -6069,6 +6152,28 @@ Aari Transactions`,
         { id:'ctc_weekly_update',  label:'Send weekly update email to agent — every Friday',
           sub:'Template in &ldquo;What to send next&rdquo;.' },
       ],
+      closed: [
+        { id:'cl_funds_recorded',    label:'Confirm all closing funds collected and deed recorded — written confirmation from title',
+          sub:'Template in &ldquo;What to send next&rdquo;. Must be in writing for the file.' },
+        { id:'cl_keys',              label:'Confirm keys delivered to buyer',
+          sub:'Confirm with the selling agent that keys, garage door openers, access devices, and all codes were delivered to the buyer at closing per the contract.' },
+        { id:'cl_personal_property', label:'Confirm all personal property per contract on premises — seller removed all trash and personal items',
+          sub:'If anything was left behind, document it immediately and notify both agents in writing.' },
+        { id:'cl_docs_filed',        label:'Confirm closing documents received and filed — executed deed, settlement statement, all addenda',
+          sub:'All closing documents should be uploaded to the file before archiving.' },
+        { id:'cl_congrats_agent',    label:'Send closing congratulations email to agent',
+          sub:'Template in &ldquo;What to send next&rdquo;.' },
+        { id:'cl_confirm_parties',   label:'Send closing confirmation to all parties',
+          sub:'Template in &ldquo;What to send next&rdquo; — buyer agent, listing agent, title, lender.' },
+        { id:'cl_google_review',     label:'Request Google review from agent — send review link',
+          sub:'Send as a SEPARATE email — never combined with the congratulations email. A standalone request gets a much higher response rate.' },
+        { id:'cl_closed_stamp',      label:'Closed date stamped on file — automatic',
+          sub:'closed_at is recorded the moment the file lands in Closed. Nothing for you to do — this row confirms it happened.' },
+        { id:'cl_review_24h',        label:'24-hour post-closing review request — automatic',
+          sub:'The system emails the agent a review request 24 hours after closing. This is in addition to your manual request above.' },
+        { id:'cl_archive',           label:'Archive file — mark as closed in system',
+          sub:'Locks the file read-only and moves it off the active board. Requires: funds/deed confirmed · documents filed · congratulations sent · Google review requested.' },
+      ],
     },
   };
 
@@ -6098,6 +6203,7 @@ Aari Transactions`,
   document.addEventListener('click', (e) => {
     const fl = e.target.closest && e.target.closest('[data-rem-flag]');
     if(!fl || !_currentFile) return;
+    if(_currentFile.status === 'archived') return; // read-only
     const key = fl.getAttribute('data-rem-flag');
     const cur = ((_currentFile.logistics || {})[key]) === 'yes' ? 'no' : 'yes';
     saveRemedyFlag(key, cur);
@@ -6147,7 +6253,7 @@ Aari Transactions`,
         : '<div class="ck-dl-table ck-dl-empty-note">Add the Effective + Closing dates to this file to auto-calculate deadlines.</div>';
     }
     return '<label class="ck-task' + (rec ? ' ck-done' : '') + '">' +
-      '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + '>' +
+      '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + (file.status === 'archived' ? ' disabled' : '') + '>' +
       '<span class="ck-body"><span class="ck-label">' + esc(t.label) + '</span>' +
       (t.sub ? '<span class="ck-sub">' + t.sub + '</span>' : '') +
       (rec && rec.at ? '<span class="ck-stamp">Done ' + new Date(rec.at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + new Date(rec.at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) + '</span>' : '') +
@@ -6193,7 +6299,10 @@ Aari Transactions`,
                  : (stage === 'remedy') ? renderRemedyFlags(file)
                  : (stage === 'appraisal') ? renderApprWidget(file)
                  : (stage === 'ctc') ? renderCtcFlags(file) : '';
-    host.innerHTML = widget + archive + (tasks
+    const roBanner = (file.status === 'archived')
+      ? '<div style="background:#f3f3f1;border:0.5px solid #e8e6e1;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:11px;color:#5f5e5a;font-weight:600">Archived \u00b7 read-only \u00b7 no further edits</div>'
+      : '';
+    host.innerHTML = roBanner + widget + archive + (tasks
       ? tasks.map(t => ckRow(file, t, dls, done)).join('')
       : '<p class="ck-empty">Checklist for the ' + esc(STAGE_LABELS[stage] || stage) + ' stage ships next.</p>');
   }
@@ -6202,6 +6311,49 @@ Aari Transactions`,
     const cb = e.target.closest && e.target.closest('[data-ck-task]');
     if(!cb || !_currentFile || _ckSaving) return;
     const taskId = cb.getAttribute('data-ck-task');
+    // Archived files are read-only · no checkbox changes.
+    if(_currentFile.status === 'archived'){ cb.checked = !cb.checked; return; }
+    // ===== STAGE 8 · ARCHIVE GATE =====
+    // Archiving requires the 4 protective tasks, a confirm, and flips the file
+    // to status=archived: off the active board, read-only, audit-logged.
+    if(taskId === 'cl_archive' && cb.checked){
+      const dt = (_currentFile.stage_tasks && typeof _currentFile.stage_tasks === 'object') ? _currentFile.stage_tasks : {};
+      const reqd = [
+        ['cl_funds_recorded', 'Closing funds confirmed and deed recorded'],
+        ['cl_docs_filed',     'Closing documents received and filed'],
+        ['cl_congrats_agent', 'Congratulations email sent to agent'],
+        ['cl_google_review',  'Google review request sent'],
+      ];
+      const missing = reqd.filter(r => !dt[r[0]]).map(r => r[1]);
+      if(missing.length){
+        cb.checked = false;
+        alert('This file cannot be archived yet. Still unchecked:\n\n\u00b7 ' + missing.join('\n\u00b7 '));
+        return;
+      }
+      if(!confirm('Archive this file? It becomes read-only and leaves the active board. This cannot be undone from the board.')){
+        cb.checked = false;
+        return;
+      }
+      _ckSaving = true;
+      const cur2 = { ...dt, cl_archive: { done:true, at:new Date().toISOString(), by:(_profile && (_profile.first_name || _profile.email)) || 'TC' } };
+      const r2 = await _client.from('files').update({ stage_tasks: cur2, status: 'archived' }).eq('id', _currentFile.id);
+      _ckSaving = false;
+      if(r2 && r2.error){
+        cb.checked = false;
+        alert('Archive failed — check your connection and try again.');
+        return;
+      }
+      _currentFile.stage_tasks = cur2;
+      _currentFile.status = 'archived';
+      writeAuditLog('file_archived', _currentFile.id, {
+        property_address: _currentFile.property_address || null,
+        archived_at: new Date().toISOString(),
+      });
+      renderStageChecklist(_currentFile);
+      renderKanban();
+      alert('File archived. It now lives in search only — read-only.');
+      return;
+    }
     const cur = (_currentFile.stage_tasks && typeof _currentFile.stage_tasks === 'object') ? { ..._currentFile.stage_tasks } : {};
     if(cb.checked){
       cur[taskId] = { done: true, at: new Date().toISOString(), by: (_profile && (_profile.first_name || _profile.email)) || 'TC' };
@@ -6279,7 +6431,10 @@ Aari Transactions`,
   }
   document.addEventListener('click', async (e) => {
     const editBtn = e.target.closest && e.target.closest('[data-fd-edit]');
-    if(editBtn && _currentFile){ renderFileDetailsEdit(_currentFile); return; }
+    if(editBtn && _currentFile){
+      if(_currentFile.status === 'archived'){ alert('This file is archived \u2014 read-only.'); return; }
+      renderFileDetailsEdit(_currentFile); return;
+    }
     const cancelBtn = e.target.closest && e.target.closest('[data-fd-cancel]');
     if(cancelBtn && _currentFile){ renderFileDetails(_currentFile); return; }
     const saveBtn = e.target.closest && e.target.closest('[data-fd-save]');
@@ -6371,6 +6526,7 @@ Aari Transactions`,
     }
   }
   document.addEventListener('click', (e) => {
+    if(_currentFile && _currentFile.status === 'archived') return; // read-only
     const rs = e.target.closest && e.target.closest('[data-dl-reset]');
     if(rs){ e.preventDefault(); saveDeadlineOverride(rs.getAttribute('data-dl-reset'), null); return; }
     const ed = e.target.closest && e.target.closest('[data-dl-edit]');
