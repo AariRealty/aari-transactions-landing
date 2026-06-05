@@ -154,6 +154,20 @@
   @media (max-width: 640px) { .dot-legend { gap:8px 14px; font-size:10px; padding:4px 0 12px; } }
 
   /* ===== KANBAN · CSS GRID with 6 columns · belt-and-suspenders ===== */
+  /* ===== MY FILES · agent-facing TC-work summary (Item 2 · June 2026) ===== */
+  .myfiles-section { margin-bottom: 28px; }
+  .mf-card { background:#fff; border:0.5px solid var(--line); border-radius:10px; padding:0; margin-bottom:14px; overflow:hidden; }
+  .mf-head { padding:14px 18px 12px; }
+  .mf-addr { font-size:13.5px; font-weight:600; color:var(--ink); }
+  .mf-meta { font-size:11px; color:var(--muted); margin-top:3px; }
+  .mf-row { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; padding:12px 18px 14px; border-top:0.5px solid var(--line); background:#fdfdfc; }
+  .mf-cell .mf-lbl { font-size:10px; color:#9a9a9a; letter-spacing:0.4px; margin-bottom:4px; }
+  .mf-cell .mf-val { font-size:12.5px; color:var(--ink); }
+  .mf-badge { display:inline-block; font-size:11px; font-weight:600; border-radius:999px; padding:3px 10px; }
+  .mf-tc { display:flex; align-items:center; gap:7px; }
+  .mf-ava { width:20px; height:20px; border-radius:50%; background:#0f0f0f; color:#fff; font-size:9px; font-weight:600; display:inline-flex; align-items:center; justify-content:center; flex:none; }
+  @media (max-width:700px){ .mf-row { grid-template-columns:repeat(2,1fr); row-gap:12px; } }
+
   .kanban-section { margin-bottom:32px; }
   .kanban {
     display: grid !important;
@@ -616,6 +630,16 @@
     </div>
   </div>
 
+  <!-- MY FILES · Item 2 (June 2026) · simplified TC-work summary per file.
+       Read-only · agents never see raw db keys or the full TC checklist. -->
+  <div class="myfiles-section" id="myfilesSection" hidden>
+    <div class="section-head">
+      <p class="section-eb">My files</p>
+      <span class="section-meta">What your TC is working on · updates as work happens</span>
+    </div>
+    <div id="myfilesList"></div>
+  </div>
+
   <!-- KANBAN -->
   <div class="kanban-section">
     <div class="section-head">
@@ -745,6 +769,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/js/supabase-config.js?v=27"></script>
 <script src="/js/auth.js?v=27"></script>
+<script src="/js/deadline-engine.js"></script>
 <script src="/js/login-modal.js?v=32" defer></script>
 <script src="/js/aari-header.js"></script>
 <script src="/js/aari-banner.js"></script>
@@ -1006,6 +1031,7 @@
     renderTodayLine();
     renderEarnings();
     renderTrustStrip();
+    renderMyFiles();
     renderKanban();
     renderClosed();
     renderTeam();
@@ -1257,6 +1283,94 @@
     '</div>';
   }
 
+  // ===== MY FILES · Item 2 · simplified TC-work summary (read-only) =====
+  // Next deadline comes from the SHARED deadline engine (/js/deadline-engine.js),
+  // EMD from the files.emd jsonb the TC widget writes, "this week" from the
+  // stage_tasks jsonb. Agents see plain English only — never db keys.
+  function mfWeekStart(){
+    const d = new Date(); d.setHours(0,0,0,0);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // Monday
+    return d;
+  }
+  function renderMyFiles(){
+    const sec = document.getElementById('myfilesSection');
+    const host = document.getElementById('myfilesList');
+    if(!sec || !host) return;
+    const eng = window.AariDeadlineEngine;
+    const active = _files.filter(f => !isClosed(f))
+      .sort((a,b) => (a.closing_date || '9999-12-31') < (b.closing_date || '9999-12-31') ? -1 : 1);
+    if(!active.length || !eng){ sec.hidden = true; return; }
+    sec.hidden = false;
+    const today = new Date(); today.setHours(0,0,0,0);
+    const ws = mfWeekStart();
+    host.innerHTML = active.map(f => {
+      const sale = (f.file_type || 'sale') === 'sale';
+      // — Next deadline (most urgent upcoming · overdue in red if nothing upcoming)
+      let dlHtml = '<span style="color:#9a9a9a">No dates on file yet</span>';
+      if(sale){
+        const dls = eng.fileDeadlines(f);
+        let next = null, lastPast = null;
+        Object.keys(dls).forEach(k => {
+          const e = dls[k];
+          const d = new Date(e.date.getTime()); d.setHours(0,0,0,0);
+          if(d >= today){ if(!next || d < next.d) next = { d, e }; }
+          else { if(!lastPast || d > lastPast.d) lastPast = { d, e }; }
+        });
+        if(next){
+          const days = Math.round((next.d - today) / 86400000);
+          const col = days <= 3 ? '#9a7c3a' : '#0f0f0f';
+          dlHtml = '<span style="color:' + col + ';font-weight:600">' + esc(next.e.label) + ' ' + eng.fmtDl(next.e.date) + '</span>';
+        } else if(lastPast){
+          dlHtml = '<span style="color:#c96b6b;font-weight:600">' + esc(lastPast.e.label) + ' ' + eng.fmtDl(lastPast.e.date) + '</span>';
+        }
+      }
+      // — EMD badge (pastel · matches the TC cockpit palette)
+      let emdHtml = '<span style="color:#9a9a9a">&mdash;</span>';
+      if(sale){
+        const emd = (f.emd && typeof f.emd === 'object') ? f.emd : {};
+        const st = emd.status || 'pending';
+        let bg = '#fdf6e3', fg = '#9a7c3a', txt = 'Pending';
+        if(st === 'confirmed'){ bg = '#e8f5ed'; fg = '#5a9e72'; txt = 'Confirmed \u2713'; }
+        else if(st === 'received'){ txt = 'Received'; }
+        else {
+          // pending past the initial-deposit deadline = overdue
+          const dls = eng.fileDeadlines(f);
+          if(dls.emd_initial){
+            const d = new Date(dls.emd_initial.date.getTime()); d.setHours(0,0,0,0);
+            if(d < today){ bg = '#fdecea'; fg = '#c96b6b'; txt = 'Overdue'; }
+          }
+        }
+        emdHtml = '<span class="mf-badge" style="background:' + bg + ';color:' + fg + '">' + txt + '</span>';
+      }
+      // — Your TC
+      const tc = f.assigned_tc_id ? _tcs[f.assigned_tc_id] : null;
+      const tcFirst = tc ? (tc.first_name || '') : '';
+      const tcLast = tc ? (tc.last_name || '') : '';
+      const tcName = tc ? (tcFirst + (tcLast ? ' ' + tcLast.charAt(0).toUpperCase() + '.' : '')) : 'Assigning\u2026';
+      const initials = tc ? ((tcFirst.charAt(0) + (tcLast.charAt(0) || '')).toUpperCase()) : '\u00b7';
+      const tcHtml = '<span class="mf-tc"><span class="mf-ava">' + esc(initials) + '</span>' + esc(tcName) + '</span>';
+      // — This week (stage_tasks jsonb · {taskId:{done,at,by}})
+      const dt = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
+      const allKeys = Object.keys(dt);
+      const n = allKeys.filter(k => { const r = dt[k]; return r && r.at && new Date(r.at) >= ws; }).length;
+      const weekHtml = allKeys.length === 0 ? 'Getting started' : (n + ' task' + (n === 1 ? '' : 's') + ' done');
+      // — Card
+      const side = f.client_type === 'buyer' ? 'Buyer side' : (f.client_type === 'seller' ? 'Seller side' : '');
+      const meta = [side, f.client_name].filter(Boolean).join(' \u00b7 ');
+      return '<div class="mf-card" data-file-id="' + esc(f.id) + '">' +
+        '<div class="mf-head">' +
+          '<div class="mf-addr">' + esc(f.property_address || 'Untitled file') + '</div>' +
+          (meta ? '<div class="mf-meta">' + esc(meta) + '</div>' : '') +
+        '</div>' +
+        '<div class="mf-row">' +
+          '<div class="mf-cell"><div class="mf-lbl">Next deadline</div><div class="mf-val">' + dlHtml + '</div></div>' +
+          '<div class="mf-cell"><div class="mf-lbl">EMD status</div><div class="mf-val">' + emdHtml + '</div></div>' +
+          '<div class="mf-cell"><div class="mf-lbl">Your TC</div><div class="mf-val">' + tcHtml + '</div></div>' +
+          '<div class="mf-cell"><div class="mf-lbl">This week</div><div class="mf-val">' + weekHtml + '</div></div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
   function renderKanban(){
     forceKanbanLayout(); // final safety net before render
     const active = _files.filter(f => !isClosed(f));
