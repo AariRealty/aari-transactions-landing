@@ -193,12 +193,23 @@
     <div id="risk-files"></div>
   </section>
 
+  <!-- Fix 3 · Phase 2 Reader 1 · TEMP side-by-side comparison · remove after confirm -->
+  <section class="section" id="dl-compare-section" style="display:none">
+    <div class="section-head">
+      <h2 class="section-title">Deadline engine comparison <span style="font-size:11px;font-weight:600;color:#9a7c3a;background:#fdf6e3;border-radius:999px;padding:2px 9px;vertical-align:2px">Phase 2 · temporary</span></h2>
+      <span class="section-meta" id="dl-compare-meta">&nbsp;</span>
+    </div>
+    <p style="font-size:12px;color:#777;margin:0 0 12px;max-width:760px">Each active file's stored <strong>Current system</strong> rows (<code>file_deadlines</code>) shown against the <strong>New engine</strong> computation. Matching is by deadline key — date and overdue flag must agree where both sources have the same key. The engine also surfaces deadlines the TC never touched (no stored row), which is expected.</p>
+    <div id="dl-compare-body"></div>
+  </section>
+
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/js/supabase-config.js"></script>
 <script src="/js/auth.js"></script>
 <script src="/js/aari-header.js"></script>
+<script src="/js/deadline-engine.js"></script>
 <script>
 (function(){
   'use strict';
@@ -281,6 +292,7 @@
     renderOverrideActivity();
     renderStageActivity();
     renderRiskFiles();
+    renderDeadlineComparison();
 
     const sub = document.getElementById('page-sub');
     if(sub){
@@ -548,6 +560,80 @@
         '<div class="risk-link"><a href="/files.html?open=' + esc(f.id) + '">Open file &rarr;</a></div>' +
       '</div>';
     }).join('');
+  }
+
+  // ============== RENDER · DEADLINE ENGINE COMPARISON (Phase 2 · temp) ==============
+  // Side-by-side: stored file_deadlines ("Current system") vs the shared engine
+  // ("New engine"). Match by deadline_key; flag where date or overdue disagree.
+  function renderDeadlineComparison(){
+    const section = document.getElementById('dl-compare-section');
+    const host = document.getElementById('dl-compare-body');
+    const meta = document.getElementById('dl-compare-meta');
+    if(!host || !window.AariDeadlineEngine) return;
+    section.style.display = 'block';
+    const ENG = window.AariDeadlineEngine;
+    const today = new Date(); today.setHours(0,0,0,0);
+    const iso = d => d ? d.toLocaleDateString('en-CA') : '—';
+    const fmt = s => { if(!s) return '—'; const d = new Date(String(s).slice(0,10)+'T00:00:00'); return isNaN(d)?'—':d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); };
+    const isOverdueOld = r => r.due_date && !r.completed_at && new Date(String(r.due_date).slice(0,10)+'T00:00:00') < today;
+    const isOverdueNew = d => d < today;
+    const TERMINAL = { sale:['closed'], listing:['closed','cancelled'], lease:['expired','cancelled'], buyer_rep:['expired','cancelled'] };
+    const isActive = f => { const t = (TERMINAL[f.file_type||'sale']||['closed']); return f.status!=='archived' && !t.includes(f.transaction_stage); };
+
+    const files = _files.filter(f => isActive(f) && f.contract_type && f.effective_date);
+    let totalKeysBoth = 0, dateMatch = 0, overdueMatch = 0, mism = 0;
+
+    const cards = files.map(f => {
+      const stored = _deadlines.filter(d => d.file_id === f.id);
+      const eng = ENG.contractDeadlines(f.contract_type, f.effective_date, f.closing_date, f.deadline_overrides || {});
+      const engByKey = {}; eng.forEach(e => engByKey[e.key] = e);
+      const storedByKey = {}; stored.forEach(s => storedByKey[s.deadline_key] = s);
+      const allKeys = Array.from(new Set([...eng.map(e=>e.key), ...stored.map(s=>s.deadline_key)]));
+
+      const rows = allKeys.map(k => {
+        const s = storedByKey[k]; const e = engByKey[k];
+        let cls = '', note = '';
+        if(s && e){
+          totalKeysBoth++;
+          const oldDate = iso(new Date(String(s.due_date||'').slice(0,10)+'T00:00:00'));
+          const newDate = iso(e.date);
+          const dOk = s.due_date ? (oldDate === newDate) : true;
+          const oOk = (!!isOverdueOld(s)) === (!!isOverdueNew(e.date));
+          if(s.due_date && dOk) dateMatch++;
+          if(oOk) overdueMatch++;
+          if((s.due_date && !dOk) || !oOk){ cls='mismatch'; mism++; note = (s.due_date && !dOk ? 'date' : '') + (!oOk ? (s.due_date && !dOk ? ' + overdue' : 'overdue') : ''); }
+          else cls='ok';
+        } else if(e && !s){ cls='engonly'; note='no stored row'; }
+        else { cls='storedonly'; note='engine has no key'; }
+        const oldCell = s ? (fmt(s.due_date) + (s.completed_at ? ' ✓' : (isOverdueOld(s) ? ' · overdue' : ''))) : '<span style="color:#bbb">—</span>';
+        const newCell = e ? (fmt(iso(e.date)) + (isOverdueNew(e.date) ? ' · overdue' : '')) : '<span style="color:#bbb">—</span>';
+        const bg = cls==='mismatch' ? '#fdecea' : cls==='ok' ? '#e8f5ed' : '#faf8f4';
+        const fg = cls==='mismatch' ? '#c96b6b' : cls==='ok' ? '#3e7d57' : '#999';
+        return '<tr style="background:'+bg+'">'+
+          '<td style="padding:4px 8px;font-size:11px">'+esc(k)+'</td>'+
+          '<td style="padding:4px 8px;font-size:11px">'+oldCell+'</td>'+
+          '<td style="padding:4px 8px;font-size:11px">'+newCell+'</td>'+
+          '<td style="padding:4px 8px;font-size:10px;color:'+fg+'">'+esc(note||cls)+'</td>'+
+        '</tr>';
+      }).join('');
+
+      return '<div style="border:1px solid #ece8e0;border-radius:10px;padding:12px 14px;margin-bottom:12px;background:#fff">'+
+        '<p style="margin:0 0 2px;font-weight:600;font-size:13px">'+esc((f.property_address||'Untitled').split(',')[0])+'</p>'+
+        '<p style="margin:0 0 8px;font-size:11px;color:#888">'+esc(ENG.contractLabel(f.contract_type))+' · Eff '+fmt(f.effective_date)+' · Close '+fmt(f.closing_date)+'</p>'+
+        '<table style="width:100%;border-collapse:collapse">'+
+          '<tr style="text-align:left;color:#666;font-size:10px;text-transform:uppercase;letter-spacing:.04em">'+
+            '<th style="padding:2px 8px">Deadline key</th><th style="padding:2px 8px">Current system</th><th style="padding:2px 8px">New engine</th><th style="padding:2px 8px">Check</th></tr>'+
+          rows +
+        '</table>'+
+      '</div>';
+    }).join('');
+
+    meta.textContent = files.length + ' active file' + (files.length===1?'':'s') + ' with contract type · ' +
+      dateMatch + ' dates matched · ' + overdueMatch + '/' + totalKeysBoth + ' overdue flags matched · ' + mism + ' mismatch' + (mism===1?'':'es');
+    host.innerHTML = files.length
+      ? '<div style="margin-bottom:10px;padding:8px 12px;border-radius:8px;background:'+(mism?'#fdecea':'#e8f5ed')+';color:'+(mism?'#c96b6b':'#3e7d57')+';font-size:13px;font-weight:600">'+
+          (mism ? '⚠ '+mism+' mismatch'+(mism===1?'':'es')+' found — review below' : '✓ All overlapping deadlines match between both systems')+'</div>' + cards
+      : '<div class="empty-state">No active files with a contract type + effective date to compare yet.</div>';
   }
 
   // ============== UTIL ==============
