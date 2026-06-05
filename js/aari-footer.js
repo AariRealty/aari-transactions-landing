@@ -151,7 +151,7 @@
     '',
     '  <div class="aari-foot-contact-row">',
     '    <a href="tel:2396881770" style="display:block;font-size:28px;letter-spacing:0.5px;margin-bottom:6px">239.688.1770</a>',
-    '    <a href="mailto:hello@aaritransactions.com">hello@aaritransactions.com</a>',
+    '    <a href="mailto:hello@aaritransactions.com" style="display:block;font-size:22px;letter-spacing:0.3px">hello@aaritransactions.com</a>',
     '  </div>',
     '  <div class="aari-foot-bottom">',
     '    <span>&copy; ' + year + ' Aari Transactions LLC &middot; All rights reserved &middot; Built in Florida &middot; <a href="/privacy.html">Privacy</a> &middot; <a href="/terms.html">Terms</a></span>',
