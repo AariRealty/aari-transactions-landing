@@ -9,7 +9,7 @@
      2. Upload the SignaturePad PNG to Storage at
         signatures/{agent_id}/{file_id}_v{version}.png   (RLS-protected)
      3. Insert into public.agreement_signatures (immutable evidence row),
-        then fire-and-forget invoke generate-signed-agreement-pdf so the
+        then fire-and-forget invoke aari-sa-pdf-email so the
         personalized signed PDF appears in the agent's dashboard within ~30s.
      4. Insert into public.files with M2 columns:
           status='intake_received'
@@ -357,6 +357,12 @@
       .single();
 
     if (insertErr) {
+      // Profile-level SA gate (DB trigger) · send them to sign, do not retry.
+      if (/SA_NOT_SIGNED/.test(insertErr.message || '')) {
+        alert('You need to sign the Service Agreement before submitting a file.');
+        window.location.href = '/index.html#onboarding';
+        return { ok: false, error: 'sa_not_signed' };
+      }
       // Hard fail: do NOT redirect.
       try {
         await client.from('audit_log').insert({
@@ -400,7 +406,7 @@
     // Routes through the record-signed-agreement edge function so the IP can be
     // captured from request headers and the timestamp is set server-side
     // (not by the browser clock). The edge function then fire-and-forgets the
-    // generate-signed-agreement-pdf invocation. Old client-side insert (which
+    // aari-sa-pdf-email invocation. Old client-side insert (which
     // hardcoded ip_address: null and used new Date().toISOString()) is gone.
     try {
       const { data: rec, error: recErr } = await client.functions.invoke('record-signed-agreement', {

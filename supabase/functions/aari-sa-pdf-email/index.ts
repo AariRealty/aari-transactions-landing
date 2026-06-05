@@ -579,19 +579,21 @@ async function sendEmail(
     "<p>Agreement version: <strong>v" +
     escapeHtml(p.agreement_version || "4.7") +
     "</strong></p>" +
+    "<p style=\"font-size:12px;color:#5f5e5a;border-left:3px solid #e6e2d8;padding-left:10px\">Agent: " +
+    escapeHtml(p.agent_name || "") + " \u00b7 Brokerage: " + escapeHtml(p.agent_brokerage || "n/a") +
+    " \u00b7 License: " + escapeHtml(p.agent_license || "n/a") +
+    " \u00b7 Signed: " + escapeHtml(p.signed_at_display || p.signed_at_iso || "") + "</p>" +
     "<p style=\"margin-top:24px\">Questions? Reply to this email or text 239.688.1770.</p>" +
     "<hr style=\"border:none;border-top:1px solid #e6e2d8;margin:20px 0\"/>" +
     "<p style=\"font-size:11px;color:#5f5e5a\">Aari Transactions LLC - Transaction Coordination - Fort Myers, FL</p>" +
     "</div>";
 
-  // TODO: Restore BCC to agreements@aaritransactions.com once aaritransactions.com
-  // is verified as a sending domain in Resend. Until then, Resend's sandbox sender
-  // (onboarding@resend.dev) blocks delivery to any address other than the Resend
-  // account holder's signup email — which causes the entire send to 403 if BCC is set.
-  // Restore by adding: bcc: ["agreements@aaritransactions.com"],
+  // Sender uses the verified Resend domain (same env as the rest of the email
+  // system). BCC gives Marlenyi a copy of every executed SA (June 2026 fix).
   const body = {
-    from: "Aari Transactions <onboarding@resend.dev>",
+    from: Deno.env.get("FROM_EMAIL") ?? "Aari Transactions <hello@aaritransactions.com>",
     to: [p.agent_email],
+    bcc: [Deno.env.get("AGREEMENTS_BCC") ?? "agreements@aaritransactions.com"],
     subject,
     html,
     attachments: [
@@ -706,6 +708,14 @@ Deno.serve(async (req) => {
           console.warn("[aari-sa-pdf-email] storage upload failed:", upErr);
         } else {
           signedAgreementPdfUrl = storagePath;
+          // Pointer on the agent row · powers the portal "My Agreement" card.
+          if (agentId) {
+            const { error: pathErr } = await supabaseAdmin
+              .from("agents")
+              .update({ agreement_pdf_path: storagePath })
+              .eq("id", agentId);
+            if (pathErr) console.warn("[aari-sa-pdf-email] agreement_pdf_path update failed:", pathErr);
+          }
         }
       } catch (storageErr) {
         console.warn("[aari-sa-pdf-email] storage upload threw:", storageErr);
