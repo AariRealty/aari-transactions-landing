@@ -7,9 +7,12 @@
 // America/New_York hour gate below only lets a run proceed at 8am ET —
 // DST-proof, same pattern as friday-summary.
 //
-// For every ACTIVE sale file in the Appraisal stage where loan approval is
-// NOT yet confirmed (logistics.loan_approval_status !== 'approved' AND
-// loan_approval_confirmed = false):
+// STAGE-AGNOSTIC (June 2026 advisor fix): the loan approval deadline doesn't
+// care which kanban column the card sits in — a TC who never drags the card
+// to Appraisal must still be pinged. For every ACTIVE FINANCED sale file
+// where loan approval is NOT yet confirmed (logistics.loan_approval_status
+// !== 'approved' AND loan_approval_confirmed = false; cash files excluded
+// via the same detection the cockpit uses):
 //   · exactly 5 days out  → "Push the lender daily."
 //   · exactly 3 days out  → "Escalate now."
 //   · 1 day out / due today → "Confirm written approval today."
@@ -65,18 +68,22 @@ function nyToday(): Date {
 const nyDayKey = () =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
 
-// ---- Appraisal-stage check · mirrors deriveStage in files.html ----
+// ---- Active financed sale file? · stage-agnostic ----
 // deno-lint-ignore no-explicit-any
-function isAppraisalStage(f: any, today: Date): boolean {
+function isActiveSaleFile(f: any): boolean {
   if ((f.file_type || "sale") !== "sale") return false;
   if (["closed", "cancelled", "archived"].includes(f.status)) return false;
-  if (f.transaction_stage) return f.transaction_stage === "appraisal";
-  if (!f.closing_date) return false;
-  const close = parseDate(String(f.closing_date).slice(0, 10));
-  if (!close) return false;
-  close.setHours(0, 0, 0, 0);
-  const days = Math.round((close.getTime() - today.getTime()) / 86400000);
-  return days > 5 && days <= 14; // date-derived appraisal window
+  if (f.transaction_stage === "closed") return false;
+  return true;
+}
+// Cash detection · mirrors isCashFile in files.html (keep in sync).
+// deno-lint-ignore no-explicit-any
+function isCashFile(f: any): boolean {
+  const raw = (f.raw_form_data && typeof f.raw_form_data === "object") ? f.raw_form_data : {};
+  if (raw.lender_is_cash === "1" || raw.lender_is_cash === 1 || raw.lender_is_cash === true) return true;
+  if (raw.financing_type === "cash" || raw.cash_offer === "yes") return true;
+  if (!f.lender_contact && !raw.lender_name && !raw.pa_lender) return true;
+  return false;
 }
 
 const fmtD = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -119,7 +126,7 @@ Deno.serve(async (req) => {
 
   const { data: files, error: fErr } = await supabaseAdmin
     .from("files")
-    .select("id, property_address, file_type, status, transaction_stage, effective_date, closing_date, deadline_overrides, logistics, loan_approval_confirmed, loan_ping_last_sent_at, assigned_tc_id")
+    .select("id, property_address, file_type, status, transaction_stage, effective_date, closing_date, deadline_overrides, logistics, loan_approval_confirmed, loan_ping_last_sent_at, assigned_tc_id, raw_form_data, lender_contact")
     .not("status", "in", '("closed","cancelled","archived")');
   if (fErr) return json({ ok: false, error: fErr.message }, 500);
 
@@ -133,7 +140,8 @@ Deno.serve(async (req) => {
   let sent = 0, failed = 0;
 
   for (const f of files ?? []) {
-    if (!isAppraisalStage(f, today)) continue;
+    if (!isActiveSaleFile(f)) continue;
+    if (isCashFile(f)) continue; // no loan, no ping
 
     // Approved? · the cockpit's loan widget writes logistics.loan_approval_status;
     // loan_approval_confirmed is the manual/SQL off-switch. Either silences pings.
