@@ -261,6 +261,9 @@
     if (!_root) return;
     _root.classList.remove('open');
     _root.setAttribute('aria-hidden', 'true');
+    // Pages can react to a dismissed (not completed) sign-in — e.g. the portal
+    // sends signed-out visitors back to the homepage.
+    try { document.dispatchEvent(new CustomEvent('aari:login-closed')); } catch (_) {}
   }
 
   // Auto-attach to [data-aari-login] elements
