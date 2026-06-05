@@ -76,7 +76,7 @@
     const seg = el('div', { style: 'display:flex;border:1px solid #e6e2d8;border-radius:10px;overflow:hidden;margin:0 0 22px' });
     seg.appendChild(el('button', { type: 'button', style: 'flex:1;padding:13px 0;border:0;background:#0f0f0f;color:#fff;font:700 12px Inter,sans-serif;letter-spacing:0.08em;text-transform:uppercase;cursor:default', html: 'Sign in' }));
     const segCreate = el('button', { type: 'button', style: 'flex:1;padding:13px 0;border:0;background:#faf9f6;color:#6b6b6b;font:700 12px Inter,sans-serif;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer', html: 'Create account' });
-    segCreate.addEventListener('click', function(){ window.location.href = '/register.html'; });
+    segCreate.addEventListener('click', function(){ openRegister(); });
     seg.appendChild(segCreate);
     wrap.appendChild(seg);
 
@@ -312,6 +312,39 @@
     try { document.dispatchEvent(new CustomEvent('aari:login-closed')); } catch (_) {}
   }
 
+  // ── Create-account overlay · register.html runs in an iframe so the
+  //    visitor never leaves the page they're on (her rule, June 2026). ──
+  let _regRoot = null;
+  function regMount() {
+    if (_regRoot) return _regRoot;
+    _regRoot = el('div', { class: 'aari-modal-overlay', 'aria-hidden': 'true' });
+    const card = el('div', { class: 'aari-modal-card', style: 'max-width:960px;width:100%;height:calc(100vh - 64px);padding:0;overflow:hidden' });
+    const closeBtn = el('button', { class: 'aari-modal-close', 'aria-label': 'Close', type: 'button', style: 'z-index:2;background:#fff' });
+    closeBtn.textContent = '\u00d7';
+    closeBtn.addEventListener('click', closeRegister);
+    card.appendChild(closeBtn);
+    card.appendChild(el('iframe', { src: '/register.html?embed=1', title: 'Create your account', style: 'border:0;width:100%;height:100%;display:block' }));
+    _regRoot.appendChild(card);
+    _regRoot.addEventListener('click', e => { if (e.target === _regRoot) closeRegister(); });
+    document.body.appendChild(_regRoot);
+    return _regRoot;
+  }
+  function openRegister() {
+    close();
+    regMount();
+    requestAnimationFrame(() => _regRoot.classList.add('open'));
+    _regRoot.setAttribute('aria-hidden', 'false');
+  }
+  function closeRegister() {
+    if (!_regRoot) return;
+    _regRoot.classList.remove('open');
+    _regRoot.setAttribute('aria-hidden', 'true');
+  }
+  // The embedded register page hands its "Sign in" links back to this popup.
+  window.addEventListener('message', function (e) {
+    if (e && e.data && e.data.aari === 'open-login') { closeRegister(); open(); }
+  });
+
   // Auto-attach to [data-aari-login] elements
   function attach() {
     document.querySelectorAll('[data-aari-login]').forEach(node => {
@@ -327,5 +360,5 @@
     attach();
   }
 
-  global.AariLogin = { open, close, attach };
+  global.AariLogin = { open, close, attach, openRegister, closeRegister };
 })(window);
