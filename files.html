@@ -240,9 +240,9 @@
   .cardv2-tc{display:inline-flex;align-items:center;gap:5px;font-size:10px;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cardv2-ava{width:16px;height:16px;border-radius:50%;background:#f5f0e8;color:#0f0f0f;font-size:7px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;flex:none}
   .cardv2-tasks{font-size:10px;color:rgba(255,255,255,0.7);font-weight:500;flex:none}
-  .cardv2-rail-green{border-left:3px solid #9ccbb0}
-  .cardv2-rail-amber{border-left:3px solid #e6c66b}
-  .cardv2-rail-rose{border-left:3px solid #d98e8e}
+  .card.cardv2-rail-green{border-left:3px solid #9ccbb0;border-radius:0 10px 10px 0}
+  .card.cardv2-rail-amber{border-left:3px solid #e6c66b;border-radius:0 10px 10px 0}
+  .card.cardv2-rail-rose{border-left:3px solid #d98e8e;border-radius:0 10px 10px 0}
   .cardv2-name{margin:2px 0 0;font-size:10px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cardv2-action{margin:7px 0 0;font-size:10.5px;font-weight:600;line-height:1.35}
   .cardv2-action.green{color:#3e7d57}
@@ -5655,19 +5655,36 @@ Aari Transactions`,
       reasons.push({ amt: -penalty, label: needsAction + ' verification' + (needsAction>1?'s':'') + ' need you' });
     }
 
-    // --- 2. Overdue deadlines (-10 each, max -50) ---
+    // --- 2. Overdue deadlines (-10 each, max -50) · computed from the shared
+    //        engine so the score matches the card's action line — NOT the
+    //        sparse file_deadlines table (which only has rows a TC touched).
+    //        A stored completed_at on that key clears it. ---
     const today = new Date(); today.setHours(0,0,0,0);
     let overdue = 0;
-    Object.values(dls).forEach(d => {
-      if(d.due_date && !d.completed_at){
-        const due = new Date(String(d.due_date).length===10 ? (d.due_date+'T00:00:00') : d.due_date);
-        if(due < today) overdue++;
-      }
-    });
+    if(ft === 'sale' && stage !== 'closed'){
+      try {
+        const eng = fileDeadlines(file);
+        Object.keys(eng).forEach(k => {
+          if(dls[k] && dls[k].completed_at) return; // TC marked it done
+          const dd = new Date(eng[k].date.getTime()); dd.setHours(0,0,0,0);
+          if(dd < today) overdue++;
+        });
+      } catch(_){}
+    }
     if(overdue > 0){
       const penalty = Math.min(overdue * 10, 50);
       score -= penalty;
       reasons.push({ amt: -penalty, label: overdue + ' deadline' + (overdue>1?'s':'') + ' overdue' });
+    }
+
+    // --- 2b. EMD / loan overdue (-15) · mirrors the card chip so a clearly
+    //         overdue deposit or loan can never read as a perfect 100. ---
+    if(ft === 'sale' && stage !== 'new' && stage !== 'waiting_for_tc' && stage !== 'closed'){
+      if(stage === 'appraisal' && !cash){
+        if(loanEffStatus(file) === 'overdue'){ score -= 15; reasons.push({ amt: -15, label: 'Loan approval overdue' }); }
+      } else if(emdEffStatus(file, 'initial') === 'overdue'){
+        score -= 15; reasons.push({ amt: -15, label: 'EMD overdue' });
+      }
     }
 
     // --- 3. CTC stage close to closing without wire-fraud warning sent ---
