@@ -66,8 +66,7 @@
     '      <a href="/index.html#pricing">Pricing</a>',
     '      <a href="/index.html#how">How it works</a>',
     '      <a href="/index.html#faq">FAQ</a>',
-    '      <a href="/portal" class="aari-nav-portal">Portal</a>',
-    '      <a href="/index.html#apply" class="aari-nav-cta">Submit<span class="aari-cta-extra"> a file</span> &rarr;</a>',
+    '      <a href="/portal" class="aari-nav-cta">Sign In<span class="aari-cta-extra"> / Sign Up</span></a>',
     '    </div>',
     '  </div>',
     '</nav>'
