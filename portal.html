@@ -648,6 +648,13 @@
     <div id="myfilesList"></div>
   </div>
 
+  <!-- WEEKLY SUMMARY · in-portal (June 2026 · her call: no email dependency).
+       Agents see their own week; brokers/TCs see every agent's week. -->
+  <div class="weekly-section" id="weeklySection" hidden style="margin:-10px 0 28px">
+    <button type="button" id="weeklyToggle" style="background:none;border:none;cursor:pointer;font-family:inherit;font-size:11.5px;font-weight:600;color:var(--ink);padding:0;border-bottom:1px dotted #c9c5bc">This week on your files \u25B8</button>
+    <div id="weeklyBody" hidden style="margin-top:12px"></div>
+  </div>
+
   <!-- MY AGREEMENT · Item 4 Fix 3 · read-only executed SA card -->
   <div class="myagreement-section" id="myAgreementSection" hidden style="margin:-14px 0 28px">
     <button type="button" id="myAgreementToggle" style="background:none;border:none;cursor:pointer;font-family:inherit;font-size:11.5px;font-weight:600;color:var(--ink);padding:0;border-bottom:1px dotted #c9c5bc">My Agreement \u2713</button>
@@ -793,6 +800,7 @@
 <script src="/js/supabase-config.js?v=27"></script>
 <script src="/js/auth.js?v=27"></script>
 <script src="/js/deadline-engine.js"></script>
+<script src="/js/task-labels.js"></script>
 <script src="/js/login-modal.js?v=32" defer></script>
 <script src="/js/aari-header.js"></script>
 <script src="/js/aari-banner.js"></script>
@@ -1033,6 +1041,88 @@
     }
     if(t.closest('[data-ob-done]')){ e.preventDefault(); obClose(); return; }
   });
+  // ===== WEEKLY SUMMARY · in-portal · mirrors the Friday email content =====
+  // Built from data already loaded (files + shared deadline engine + task
+  // labels). Agents: own files. Broker/TC: all visible files grouped by agent.
+  function wkRender(){
+    const sec = document.getElementById('weeklySection');
+    const body = document.getElementById('weeklyBody');
+    if(!sec || !body) return;
+    const eng = window.AariDeadlineEngine, labels = window.AariTaskLabels || {};
+    const active = _files.filter(f => !isClosed(f));
+    if(!active.length || !eng){ sec.hidden = true; return; }
+    sec.hidden = false;
+    if(body.hidden) return; // lazy · build on expand
+    const staff = _profile && (_profile.role === 'tc' || _profile.role === 'broker');
+    const ws = mfWeekStart();
+    const today = new Date(); today.setHours(0,0,0,0);
+    const wkRange = ws.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' \u2013 today';
+    const fileBlock = (f) => {
+      const stage = MF_STAGE_LABELS[mfStageOf(f)] || 'In progress';
+      let dtc = '';
+      if(f.closing_date){
+        const d = Math.round((new Date(f.closing_date + 'T00:00:00').setHours(0,0,0,0) - today.getTime()) / 86400000);
+        dtc = d <= 7 ? 'Closing this week' : d + ' days to close';
+      }
+      const dt = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
+      const done = Object.keys(dt)
+        .filter(k => dt[k] && dt[k].at && new Date(dt[k].at) >= ws && labels[k])
+        .map(k => labels[k]);
+      const doneHtml = done.length
+        ? '<ul style="margin:6px 0 0;padding-left:18px">' + done.map(l => '<li style="font-size:12px;color:#0f0f0f;margin:2px 0">' + esc(l) + '</li>').join('') + '</ul>'
+        : '<p style="font-size:12px;color:#6b6b6b;margin:6px 0 0">Your TC is working behind the scenes on your file.</p>';
+      const dls = eng.fileDeadlines(f);
+      const upcoming = Object.keys(dls).map(k => dls[k])
+        .filter(d => { const x = new Date(d.date.getTime()); x.setHours(0,0,0,0); return x >= today; })
+        .sort((a,b) => a.date - b.date).slice(0,2)
+        .map(d => {
+          const days = Math.round((new Date(d.date.getTime()).setHours(0,0,0,0) - today.getTime()) / 86400000);
+          const urgent = days <= 3;
+          return '<li style="font-size:12px;margin:2px 0;color:' + (urgent ? '#c96b6b' : '#0f0f0f') + (urgent ? ';font-weight:600' : '') + '">' + esc(d.label) + ' ' + eng.fmtDl(d.date) + (urgent ? ' \u00b7 urgent' : '') + '</li>';
+        }).join('');
+      return '<div style="border:0.5px solid #e8e4db;border-radius:10px;margin:0 0 12px;overflow:hidden;background:#fff">' +
+        '<div style="background:#0f0f0f;padding:10px 14px">' +
+          '<div style="font-size:12.5px;font-weight:600;color:#fff">' + esc(f.property_address || 'Your file') + '</div>' +
+          '<div style="font-size:10px;color:rgba(255,255,255,0.55);margin-top:2px">' + esc(stage) + (dtc ? ' \u00b7 ' + esc(dtc) : '') + '</div>' +
+        '</div>' +
+        '<div style="padding:10px 14px">' +
+          '<div style="font-size:10px;letter-spacing:0.5px;color:#888;text-transform:uppercase">Completed this week</div>' + doneHtml +
+          (upcoming ? '<div style="font-size:10px;letter-spacing:0.5px;color:#888;text-transform:uppercase;margin-top:10px">Coming up</div><ul style="margin:6px 0 0;padding-left:18px">' + upcoming + '</ul>' : '') +
+        '</div></div>';
+    };
+    let html = '<p style="font-size:11px;color:#888;margin:0 0 10px">Week of ' + esc(wkRange) + '</p>';
+    if(staff){
+      // Broker copy · group by agent (RLS already grants staff every file).
+      const byAgent = {};
+      active.forEach(f => { (byAgent[f.agent_id || 'unassigned'] = byAgent[f.agent_id || 'unassigned'] || []).push(f); });
+      Object.keys(byAgent).forEach(aid => {
+        const name = (_wkAgents[aid]) || 'Unassigned';
+        html += '<p style="font-size:11.5px;font-weight:600;color:var(--ink);margin:14px 0 8px">' + esc(name) + '</p>' + byAgent[aid].map(fileBlock).join('');
+      });
+    } else {
+      html += active.map(fileBlock).join('');
+    }
+    body.innerHTML = html;
+  }
+  let _wkAgents = {};
+  async function wkLoadAgents(){
+    if(!(_profile && (_profile.role === 'tc' || _profile.role === 'broker'))) return;
+    try {
+      const ids = Array.from(new Set(_files.map(f => f.agent_id).filter(Boolean)));
+      if(!ids.length) return;
+      const { data } = await _client.from('agents').select('id, first_name, last_name').in('id', ids);
+      (data || []).forEach(a => { _wkAgents[a.id] = ((a.first_name || '') + ' ' + (a.last_name || '')).trim(); });
+    } catch(_){}
+  }
+  document.addEventListener('click', async (e) => {
+    if(e.target && e.target.id === 'weeklyToggle'){
+      const body = document.getElementById('weeklyBody');
+      if(!body) return;
+      if(body.hidden){ await wkLoadAgents(); body.hidden = false; wkRender(); }
+      else { body.hidden = true; }
+    }
+  });
+
   // ===== ITEM 4 · FIX 3 · MY AGREEMENT card (read-only) =====
   function renderMyAgreement(){
     const sec = document.getElementById('myAgreementSection');
@@ -1257,6 +1347,7 @@
     renderEarnings();
     renderTrustStrip();
     renderMyFiles();
+    wkRender();
     renderKanban();
     renderClosed();
     renderTeam();
