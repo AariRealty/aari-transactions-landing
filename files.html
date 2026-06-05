@@ -222,19 +222,33 @@
   .lane-count.danger{color:#fff;background:#c44b3b}
   .lane-sub{font-size:10px;color:#888;margin:0;line-height:1.35;min-height:13px;font-style:italic}
   .lane-body{display:flex;flex-direction:column;gap:6px}
-  .card{background:#fff;border:0.5px solid rgba(15,15,15,0.12);border-radius:7px;padding:9px 10px;cursor:grab;transition:transform .12s,box-shadow .12s;user-select:none}
+  .card{background:#fdfcf8;border:0.5px solid #e8e4db;border-radius:9px;padding:0;overflow:hidden;cursor:grab;transition:transform .12s,box-shadow .12s;user-select:none}
   .card:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,0.05)}
-  .card.urgent{border-left:3px solid #c44b3b}
-  .card.cash{background:linear-gradient(180deg, #ffffff 0%, #fafaf7 100%)}
+  .card.urgent{border-color:#efd9d4}
+  .card.cash .cardv2-body{background:linear-gradient(180deg,#fdfcf8 0%,#faf8f0 100%)}
+  .cardv2-head{background:#0f0f0f;padding:8px 11px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+  .cardv2-addr{margin:0;font-size:12px;font-weight:600;color:#fff;line-height:1.3;min-width:0}
+  .cardv2-sub{margin:2px 0 0;font-size:9.5px;color:rgba(255,255,255,0.55);line-height:1.3}
+  .cardv2-ovd{font-size:9px;background:#fdecea;color:#c96b6b;border-radius:999px;padding:2px 7px;font-weight:600;flex:none}
+  .cardv2-body{padding:8px 11px;background:#fdfcf8}
+  .card.urgent .cardv2-body{background:#fdf8f6}
+  .cardv2-row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 6px}
+  .cardv2-row:last-child{margin-bottom:0}
+  .cardv2-dl{font-size:10.5px;color:#555;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cardv2-dl .soon{color:#9a7c3a;font-weight:600}
+  .cardv2-dl .late{color:#c96b6b;font-weight:600}
+  .cardv2-tc{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:#0f0f0f;min-width:0}
+  .cardv2-ava{width:17px;height:17px;border-radius:50%;background:#0f0f0f;color:#fff;font-size:7.5px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;flex:none}
+  .cardv2-tasks{font-size:10.5px;color:#555;font-weight:500;flex:none}
   .card-tag-cash{display:inline-block;font-size:8.5px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#5a4a1f;background:#f3e9c8;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle}
   .card-tag-pay{display:inline-block;margin-left:6px;font-size:10px;font-weight:600;letter-spacing:.04em;color:#9a7c3a;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:999px;padding:2px 7px;vertical-align:1px}
   .lane[data-stage="appraisal"] .card.cash{opacity:0.55;border-left:3px dashed #999}
   .card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:3px}
   .card-top .card-addr{margin:0;flex:1;min-width:0}
   .card-score{display:inline-flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:700;letter-spacing:.3px;color:#fff;padding:2px 7px;border-radius:10px;min-width:30px;text-align:center;flex-shrink:0;line-height:1.4}
-  .card-score.score-green{background:#2f855a}
-  .card-score.score-yellow{background:#b7791f}
-  .card-score.score-red{background:#c44b3b}
+  .card-score.score-green{background:#e8f5ed;color:#3e7d57}
+  .card-score.score-yellow{background:#fdf6e3;color:#9a7c3a}
+  .card-score.score-red{background:#fdecea;color:#c96b6b}
   /* Skeleton placeholders · shown during initial load */
   @keyframes sk-pulse{0%,100%{opacity:.55}50%{opacity:.85}}
   .sk-name{height:9px;width:60%;background:#ececec;border-radius:3px;animation:sk-pulse 1.2s ease-in-out infinite}
@@ -2591,11 +2605,12 @@ Aari Transactions`,
     }
     const { data: files } = await q;
     _files = files || [];
-    // Pull TCs for broker filter dropdown (cached after first call)
-    if(role === 'broker' && Object.keys(_tcsById).length === 0){
+    // Pull TCs once for everyone · cards show the assigned TC, brokers also
+    // get the filter dropdown.
+    if(Object.keys(_tcsById).length === 0){
       const { data: tcs } = await _client.from('agents').select('id, first_name, last_name').eq('role','tc');
       (tcs || []).forEach(t => { _tcsById[t.id] = t; });
-      renderTcFilter();
+      if(role === 'broker') renderTcFilter();
     }
     // Pull email sends for the visible files
     if(_files.length){
@@ -5293,65 +5308,84 @@ Aari Transactions`,
     return false;
   }
 
+  // Kanban card · Mockup 1 (approved June 2026): black header (address +
+  // stage + day count), cream body (next deadline, EMD/loan chip, TC, task
+  // progress). Urgency = soft-rose badge + blush body — pastels only, never
+  // saturated red. Drag attrs, wtc countdown, cash/pay badges all preserved.
+  function stageProgress(f){
+    try {
+      const stage = deriveStage(f);
+      const tasks = ((STAGE_CHECKLISTS[(f.file_type || 'sale')] || {})[stage] || [])
+        .filter(t => !t.showIf || t.showIf(f));
+      if(!tasks.length) return null;
+      const dt = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
+      return { done: tasks.filter(t => dt[t.id]).length, total: tasks.length };
+    } catch(_){ return null; }
+  }
   function cardHtml(f){
     const addr = f.property_address || 'Untitled file';
-    const side = f.client_type === 'buyer' ? 'Buy' : (f.client_type === 'seller' ? 'Sell' : '');
-    const meta = [side, f.client_name || ''].filter(Boolean).join(' · ');
     const d = daysToClose(f);
     const cash = isCashFile(f);
     const stage = deriveStage(f);
     const cert = computeClosingCertainty(f);
-    let foot = '', footCls = '';
-    if(d != null && d < 0){ foot = 'Overdue'; footCls = ' urgent'; }
-    else if(d === 0){ foot = 'Closing today'; footCls = ' urgent'; }
-    else if(d != null && d <= 2){ foot = d + ' day' + (d===1?'':'s') + ' · needs you'; footCls = ' urgent'; }
-    else if(cash && stage === 'appraisal'){ foot = 'Cash · skip to CTC'; footCls = ' urgent'; }
-    else if(d != null && d <= 14){ foot = 'Closes in ' + d + ' days'; }
-    else if(stage === 'closed' && f.closing_date){ foot = 'Closed ' + fmtDate(f.closing_date); }
-    const urgentCls = footCls ? ' urgent' : '';
-    const cashBadge = cash ? '<span class="card-tag-cash">Cash</span>' : '';
-    const payBadge = f.payment_pending ? '<span class="card-tag-pay">Awaiting payment</span>' : '';
-    const scoreBadge = '<span class="card-score score-' + cert.bucket + '" title="Closing Certainty">' + cert.score + '</span>';
-    // Under Contract · EMD status chip + next deadline strip.
-    let ucStrip = '';
-    if(stage === 'under_contract'){
-      const est = emdEffStatus(f, 'initial');
-      const eLabels = { pending:'EMD pending', received:'EMD received', confirmed:'EMD confirmed', overdue:'EMD overdue' };
-      const eCls = { pending:'emd-pending', received:'emd-received', confirmed:'emd-confirmed', overdue:'emd-overdue' };
-      ucStrip = '<span class="card-emd ' + eCls[est] + '">' + eLabels[est] + '</span>';
+    const stageLabel = (STAGE_LABELS && STAGE_LABELS[stage]) || stage.replace(/_/g, ' ');
+    const daysActive = f.created_at ? Math.max(0, Math.floor((Date.now() - new Date(f.created_at).getTime()) / 86400000)) : null;
+
+    // — Next deadline (all sale stages) · upcoming else most-recent overdue —
+    let dlHtml = '', dlOverdue = false;
+    if((f.file_type || 'sale') === 'sale' && stage !== 'closed'){
       try {
         const dls = fileDeadlines(f);
         const today = new Date(); today.setHours(0,0,0,0);
-        let next = null;
+        let next = null, lastPast = null;
         Object.keys(dls).forEach(k => {
           const dd = new Date(dls[k].date.getTime()); dd.setHours(0,0,0,0);
-          if(dd >= today && (!next || dd < next.d)) next = { d: dd, label: dls[k].label };
+          if(dd >= today){ if(!next || dd < next.d) next = { d: dd, label: dls[k].label }; }
+          else { if(!lastPast || dd > lastPast.d) lastPast = { d: dd, label: dls[k].label }; }
         });
         if(next){
           const days = Math.round((next.d - today) / 86400000);
-          ucStrip += '<span class="card-next-dl">' + esc(next.label) + ' · ' + (days === 0 ? 'today' : 'in ' + days + 'd') + '</span>';
+          const txt = days === 0 ? 'today' : 'in ' + days + 'd';
+          dlHtml = '<span class="cardv2-dl">' + esc(next.label) + ' \u00b7 <span class="' + (days <= 3 ? 'soon' : '') + '">' + txt + '</span></span>';
+        } else if(lastPast){
+          const late = Math.round((today - lastPast.d) / 86400000);
+          dlHtml = '<span class="cardv2-dl">' + esc(lastPast.label) + ' \u00b7 <span class="late">' + late + 'd late</span></span>';
+          dlOverdue = true;
         }
       } catch(_){}
     }
-    // Appraisal stage · loan approval status chip.
-    let apprPill = '';
-    if(stage === 'appraisal'){
-      const lst = loanEffStatus(f);
-      if(lst === 'overdue') apprPill = '<span class="card-emd emd-overdue">Loan Approval Overdue</span>';
-      else if(lst === 'approved') apprPill = '<span class="card-emd emd-confirmed">Loan approved ✓</span>';
-      else {
-        try {
-          const dls = fileDeadlines(f);
-          if(dls.loan_approval){
-            const today = new Date(); today.setHours(0,0,0,0);
-            const dd = new Date(dls.loan_approval.date.getTime()); dd.setHours(0,0,0,0);
-            const days = Math.round((dd - today) / 86400000);
-            apprPill = '<span class="card-emd ' + (days <= 5 ? 'emd-overdue' : 'emd-pending') + '">Loan approval in ' + days + 'd</span>';
-          }
-        } catch(_){}
+
+    // — Urgency (drives blush body + Overdue badge) —
+    let urgent = dlOverdue;
+    let ovdLabel = dlOverdue ? 'Overdue' : '';
+    if(d != null && d < 0 && stage !== 'closed'){ urgent = true; ovdLabel = 'Past closing'; }
+    else if(d === 0 && stage !== 'closed'){ urgent = true; ovdLabel = 'Closes today'; }
+
+    // — Stage chip · EMD everywhere on sale files, loan status in appraisal —
+    let chip = '';
+    if((f.file_type || 'sale') === 'sale' && stage !== 'new' && stage !== 'waiting_for_tc' && stage !== 'closed'){
+      if(stage === 'appraisal'){
+        const lst = loanEffStatus(f);
+        if(lst === 'overdue') chip = '<span class="card-emd emd-overdue">Loan overdue</span>';
+        else if(lst === 'approved') chip = '<span class="card-emd emd-confirmed">Loan \u2713</span>';
+        else chip = '<span class="card-emd emd-pending">Loan pending</span>';
+      } else {
+        const est = emdEffStatus(f, 'initial');
+        const eLabels = { pending:'EMD pending', received:'EMD received', confirmed:'EMD \u2713', overdue:'EMD overdue' };
+        const eCls = { pending:'emd-pending', received:'emd-received', confirmed:'emd-confirmed', overdue:'emd-overdue' };
+        chip = '<span class="card-emd ' + eCls[est] + '">' + eLabels[est] + '</span>';
+        if(est === 'overdue') urgent = true;
       }
     }
-    // Acceptance countdown · anchored to created_at (same anchor the 30-min sweep uses).
+
+    // — TC + progress —
+    const tc = f.assigned_tc_id ? _tcsById[f.assigned_tc_id] : null;
+    const tcName = tc ? ((tc.first_name || '') + (tc.last_name ? ' ' + tc.last_name.charAt(0).toUpperCase() + '.' : '')).trim() : 'Unassigned';
+    const tcInit = tc ? (((tc.first_name || '').charAt(0) + ((tc.last_name || '').charAt(0))).toUpperCase()) : '\u00b7';
+    const prog = stageProgress(f);
+    const progHtml = prog ? '<span class="cardv2-tasks">' + prog.done + ' of ' + prog.total + ' done</span>' : '';
+
+    // — Acceptance countdown · anchored to created_at (sweep anchor) —
     let wtcPill = '';
     if(stage === 'waiting_for_tc'){
       const mins = 30 - Math.floor((Date.now() - new Date(f.created_at).getTime()) / 60000);
@@ -5359,13 +5393,30 @@ Aari Transactions`,
         ? '<span class="card-wtc">' + mins + ' min remaining to accept</span>'
         : '<span class="card-wtc overdue">Acceptance overdue</span>';
     }
-    return '<div class="card'+urgentCls+(cash?' cash':'')+'" draggable="true" data-file-id="'+esc(f.id)+'">' +
-      '<div class="card-top"><p class="card-addr">'+esc(addr)+cashBadge+payBadge+'</p>'+scoreBadge+'</div>' +
-      (meta ? '<p class="card-meta">'+esc(meta)+'</p>' : '') +
-      (wtcPill ? '<p style="margin:0">'+wtcPill+'</p>' : '') +
-      (ucStrip ? '<p style="margin:0">'+ucStrip+'</p>' : '') +
-      (apprPill ? '<p style="margin:0">'+apprPill+'</p>' : '') +
-      (foot ? '<p class="card-foot'+footCls+'">'+esc(foot)+'</p>' : '') +
+
+    const cashBadge = cash ? '<span class="card-tag-cash">Cash</span>' : '';
+    const payBadge = f.payment_pending ? '<span class="card-tag-pay">Awaiting payment</span>' : '';
+    const scoreBadge = '<span class="card-score score-' + cert.bucket + '" title="Closing Certainty">' + cert.score + '</span>';
+    const subBits = [stageLabel];
+    if(daysActive != null) subBits.push('day ' + daysActive + ' on file');
+    if(d != null && d >= 0 && stage !== 'closed') subBits.push(d + 'd to close');
+    if(stage === 'closed' && f.closing_date) subBits.push('Closed ' + fmtDate(f.closing_date));
+
+    return '<div class="card' + (urgent ? ' urgent' : '') + (cash ? ' cash' : '') + '" draggable="true" data-file-id="' + esc(f.id) + '">' +
+      '<div class="cardv2-head">' +
+        '<div style="min-width:0">' +
+          '<p class="cardv2-addr">' + esc(addr) + cashBadge + payBadge + '</p>' +
+          '<p class="cardv2-sub">' + esc(subBits.join(' \u00b7 ')) + '</p>' +
+        '</div>' +
+        '<div style="display:flex;gap:5px;align-items:center;flex:none">' +
+          (ovdLabel ? '<span class="cardv2-ovd">' + esc(ovdLabel) + '</span>' : '') + scoreBadge +
+        '</div>' +
+      '</div>' +
+      '<div class="cardv2-body">' +
+        (wtcPill ? '<div class="cardv2-row">' + wtcPill + '</div>' : '') +
+        ((dlHtml || chip) ? '<div class="cardv2-row">' + (dlHtml || '<span></span>') + (chip || '') + '</div>' : '') +
+        '<div class="cardv2-row"><span class="cardv2-tc"><span class="cardv2-ava">' + esc(tcInit) + '</span>' + esc(tcName) + '</span>' + progHtml + '</div>' +
+      '</div>' +
     '</div>';
   }
 
