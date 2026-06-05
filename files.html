@@ -240,6 +240,14 @@
   .cardv2-tc{display:inline-flex;align-items:center;gap:5px;font-size:10px;color:#fff;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cardv2-ava{width:16px;height:16px;border-radius:50%;background:#f5f0e8;color:#0f0f0f;font-size:7px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;flex:none}
   .cardv2-tasks{font-size:10px;color:rgba(255,255,255,0.7);font-weight:500;flex:none}
+  .cardv2-rail-green{border-left:3px solid #9ccbb0}
+  .cardv2-rail-amber{border-left:3px solid #e6c66b}
+  .cardv2-rail-rose{border-left:3px solid #d98e8e}
+  .cardv2-name{margin:2px 0 0;font-size:10px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cardv2-action{margin:7px 0 0;font-size:10.5px;font-weight:600;line-height:1.35}
+  .cardv2-action.green{color:#3e7d57}
+  .cardv2-action.amber{color:#9a7c3a}
+  .cardv2-action.rose{color:#c96b6b}
   .card-tag-cash{display:inline-block;font-size:8.5px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#5a4a1f;background:#f3e9c8;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle}
   .card-tag-pay{display:inline-block;margin-left:6px;font-size:10px;font-weight:600;letter-spacing:.04em;color:#9a7c3a;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:999px;padding:2px 7px;vertical-align:1px}
   .lane[data-stage="appraisal"] .card.cash{opacity:0.55;border-left:3px dashed #999}
@@ -5531,101 +5539,80 @@ Aari Transactions`,
       return { done: tasks.filter(t => dt[t.id]).length, total: tasks.length };
     } catch(_){ return null; }
   }
+  // ===== Card action line (Mockup 1 - June 2026) =====
+  // ONE imperative line per card telling the TC what to do next + why. Reuses
+  // fileTriage (same engine the morning briefing uses) so card and briefing
+  // never disagree, then escalates by Closing Certainty bucket and folds the
+  // top score deficit into a verb when no deadline is the headline.
+  function cardActionPhrase(dlText){
+    var a = dlText || '';
+    var m = a.match(/^(.*?) · (\d+)d late$/);
+    if(m) return 'Chase ' + m[1].toLowerCase().replace(/\bdue\b/g,'').replace(/\bdeadline\b/g,'').replace(/\s+/g,' ').trim() + ' · ' + m[2] + 'd late';
+    if(/min to accept/.test(a)) return 'Accept file · ' + a.replace(' to accept','');
+    if(/Acceptance overdue/.test(a)) return 'Accept file · past 30-min window';
+    return a;
+  }
+  function topReasonPhrase(reasons){
+    if(!reasons || !reasons.length) return '';
+    var r = reasons.slice().sort(function(a,b){ return a.amt - b.amt; })[0];
+    var L = r.label;
+    if(/verification/.test(L)) return 'Review ' + L.replace(/ need.*/,'').trim() + ' verification' + (/^1 /.test(L) ? '' : 's');
+    if(/Wire fraud warning/.test(L)){ var m1 = L.match(/closing in (\d+)d/); return 'Send wire warning' + (m1 ? ' · closes in ' + m1[1] + 'd' : ''); }
+    if(/missing lender/.test(L)) return 'Add lender contact';
+    if(/Contract type not picked/.test(L)) return 'Pick contract type';
+    if(/Effective date/.test(L)) return 'Add effective date';
+    if(/Closing date not captured/.test(L)) return 'Add closing date';
+    if(/verifications < 60%/.test(L)){ var m2 = L.match(/Closing in (\d+)d/); return 'Verify docs' + (m2 ? ' · closes in ' + m2[1] + 'd' : ''); }
+    return L;
+  }
+  function cardAction(f){
+    var stage = deriveStage(f);
+    if(stage === 'closed') return { text: f.closing_date ? 'Closed ' + fmtDate(f.closing_date) : 'Closed', tone: 'green' };
+    var tri = fileTriage(f);
+    var cert = computeClosingCertainty(f);
+    var tier = tri.tier;
+    if(cert.bucket === 'red') tier = 'today';
+    else if(cert.bucket === 'yellow' && tier === 'ontrack') tier = 'week';
+    var text;
+    if(tri.tier !== 'ontrack' && tri.dlText) text = cardActionPhrase(tri.dlText);
+    else if(cert.reasons && cert.reasons.length) text = topReasonPhrase(cert.reasons);
+    else if(tri.dlText) text = 'On track · ' + tri.dlText;
+    else text = 'On track';
+    var tone = tier === 'today' ? 'rose' : (tier === 'week' ? 'amber' : 'green');
+    return { text: text, tone: tone, tier: tier };
+  }
+
   function cardHtml(f){
-    const addr = f.property_address || 'Untitled file';
-    const d = daysToClose(f);
-    const cash = isCashFile(f);
-    const stage = deriveStage(f);
-    const cert = computeClosingCertainty(f);
-    const stageLabel = (STAGE_LABELS && STAGE_LABELS[stage]) || stage.replace(/_/g, ' ');
-    const daysActive = f.created_at ? Math.max(0, Math.floor((Date.now() - new Date(f.created_at).getTime()) / 86400000)) : null;
+    var addr = f.property_address || 'Untitled file';
+    var cash = isCashFile(f);
+    var cert = computeClosingCertainty(f);
+    var act = cardAction(f);
+    var urgent = act.tone === 'rose';
 
-    // — Next deadline (all sale stages) · upcoming else most-recent overdue —
-    let dlHtml = '', dlOverdue = false;
-    if((f.file_type || 'sale') === 'sale' && stage !== 'closed'){
-      try {
-        const dls = fileDeadlines(f);
-        const today = new Date(); today.setHours(0,0,0,0);
-        let next = null, lastPast = null;
-        Object.keys(dls).forEach(k => {
-          const dd = new Date(dls[k].date.getTime()); dd.setHours(0,0,0,0);
-          if(dd >= today){ if(!next || dd < next.d) next = { d: dd, label: dls[k].label }; }
-          else { if(!lastPast || dd > lastPast.d) lastPast = { d: dd, label: dls[k].label }; }
-        });
-        if(next){
-          const days = Math.round((next.d - today) / 86400000);
-          const txt = days === 0 ? 'today' : 'in ' + days + 'd';
-          dlHtml = '<span class="cardv2-dl">' + esc(next.label) + ' \u00b7 <span class="' + (days <= 3 ? 'soon' : '') + '">' + txt + '</span></span>';
-        } else if(lastPast){
-          const late = Math.round((today - lastPast.d) / 86400000);
-          dlHtml = '<span class="cardv2-dl">' + esc(lastPast.label) + ' \u00b7 <span class="late">' + late + 'd late</span></span>';
-          dlOverdue = true;
-        }
-      } catch(_){}
-    }
+    var tc = f.assigned_tc_id ? _tcsById[f.assigned_tc_id] : null;
+    var tcName = tc ? ((tc.first_name || '') + (tc.last_name ? ' ' + tc.last_name.charAt(0).toUpperCase() + '.' : '')).trim() : 'No TC';
+    var tcInit = tc ? (((tc.first_name || '').charAt(0) + ((tc.last_name || '').charAt(0))).toUpperCase()) : '·';
+    var prog = stageProgress(f);
+    var progHtml2 = prog ? '<span class="cardv2-tasks">' + prog.done + '/' + prog.total + ' done</span>' : '<span class="cardv2-tasks"></span>';
 
-    // — Urgency (drives blush body + Overdue badge) —
-    let urgent = dlOverdue;
-    let ovdLabel = dlOverdue ? 'Overdue' : '';
-    if(d != null && d < 0 && stage !== 'closed'){ urgent = true; ovdLabel = 'Past closing'; }
-    else if(d === 0 && stage !== 'closed'){ urgent = true; ovdLabel = 'Closes today'; }
+    var cashBadge = cash ? '<span class="card-tag-cash">Cash</span>' : '';
+    var payBadge = f.payment_pending ? '<span class="card-tag-pay">Awaiting payment</span>' : '';
+    var scoreBadge = '<span class="card-score score-' + cert.bucket + '" title="Closing Certainty">' + cert.score + '</span>';
 
-    // — Stage chip · EMD everywhere on sale files, loan status in appraisal —
-    let chip = '';
-    if((f.file_type || 'sale') === 'sale' && stage !== 'new' && stage !== 'waiting_for_tc' && stage !== 'closed'){
-      if(stage === 'appraisal'){
-        const lst = loanEffStatus(f);
-        if(lst === 'overdue') chip = '<span class="card-emd emd-overdue">Loan overdue</span>';
-        else if(lst === 'approved') chip = '<span class="card-emd emd-confirmed">Loan \u2713</span>';
-        else chip = '<span class="card-emd emd-pending">Loan pending</span>';
-      } else {
-        const est = emdEffStatus(f, 'initial');
-        const eLabels = { pending:'EMD pending', received:'EMD received', confirmed:'EMD \u2713', overdue:'EMD overdue' };
-        const eCls = { pending:'emd-pending', received:'emd-received', confirmed:'emd-confirmed', overdue:'emd-overdue' };
-        chip = '<span class="card-emd ' + eCls[est] + '">' + eLabels[est] + '</span>';
-        if(est === 'overdue') urgent = true;
-      }
-    }
+    var raw = f.raw_form_data || {};
+    var clientName = f.client_name || raw.buyer_name || raw.seller_name || '';
+    var nameLine = clientName
+      ? '<p class="cardv2-name" title="' + esc(clientName) + '">' + esc(clientName) + '</p>'
+      : '<p class="cardv2-name" style="color:#bbb">Client not set</p>';
 
-    // — TC + progress —
-    const tc = f.assigned_tc_id ? _tcsById[f.assigned_tc_id] : null;
-    const tcName = tc ? ((tc.first_name || '') + (tc.last_name ? ' ' + tc.last_name.charAt(0).toUpperCase() + '.' : '')).trim() : 'No TC';
-    const tcInit = tc ? (((tc.first_name || '').charAt(0) + ((tc.last_name || '').charAt(0))).toUpperCase()) : '\u00b7';
-    const prog = stageProgress(f);
-    const progHtml = prog ? '<span class="cardv2-tasks">' + prog.done + ' of ' + prog.total + ' done</span>' : '';
-
-    // — Acceptance countdown · anchored to created_at (sweep anchor) —
-    let wtcPill = '';
-    if(stage === 'waiting_for_tc'){
-      const mins = 30 - Math.floor((Date.now() - new Date(f.last_assigned_at || f.created_at).getTime()) / 60000);
-      wtcPill = mins > 0
-        ? '<span class="card-wtc">' + mins + ' min remaining to accept</span>'
-        : '<span class="card-wtc overdue">Acceptance overdue</span>';
-    }
-
-    const cashBadge = cash ? '<span class="card-tag-cash">Cash</span>' : '';
-    const payBadge = f.payment_pending ? '<span class="card-tag-pay">Awaiting payment</span>' : '';
-    const scoreBadge = '<span class="card-score score-' + cert.bucket + '" title="Closing Certainty">' + cert.score + '</span>';
-    // Stage name lives in the column header — the sub-line stays short.
-    const subBits = [];
-    if(daysActive != null) subBits.push('Day ' + daysActive);
-    if(d != null && d >= 0 && stage !== 'closed') subBits.push(d + 'd to close');
-    if(stage === 'closed' && f.closing_date) subBits.push('Closed ' + fmtDate(f.closing_date));
-
-    const ovdChip = ovdLabel ? '<span class="cardv2-ovd">' + esc(ovdLabel) + '</span>' : '';
-    const chipsRow = (chip || ovdChip) ? '<div class="cardv2-chips">' + (chip || '') + ovdChip + '</div>' : '';
-    const progHtml2 = prog ? '<span class="cardv2-tasks">' + prog.done + '/' + prog.total + ' done</span>' : '<span class="cardv2-tasks"></span>';
-
-    return '<div class="card' + (urgent ? ' urgent' : '') + (cash ? ' cash' : '') + '" draggable="true" data-file-id="' + esc(f.id) + '">' +
+    return '<div class="card cardv2-rail-' + act.tone + (urgent ? ' urgent' : '') + (cash ? ' cash' : '') + '" draggable="true" data-file-id="' + esc(f.id) + '">' +
       '<div class="cardv2-face">' +
         '<div class="cardv2-top">' +
           '<p class="cardv2-addr" title="' + esc(addr) + '">' + esc(addr.split(',')[0]) + cashBadge + payBadge + '</p>' +
           scoreBadge +
         '</div>' +
-        '<p class="cardv2-sub">' + esc(subBits.join(' \u00b7 ')) + '</p>' +
-        (wtcPill ? '<p style="margin:8px 0 0">' + wtcPill + '</p>' : '') +
-        (dlHtml || '') +
-        chipsRow +
+        nameLine +
+        '<p class="cardv2-action ' + act.tone + '">' + esc(act.text) + '</p>' +
       '</div>' +
       '<div class="cardv2-foot">' +
         '<span class="cardv2-tc"><span class="cardv2-ava">' + esc(tcInit) + '</span>' + esc(tcName) + '</span>' +
