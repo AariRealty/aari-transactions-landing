@@ -136,7 +136,6 @@
     '    <div class="aari-foot-col">',
     '      <h5>For agents</h5>',
     '      <a href="/index.html#apply">Submit a file</a>',
-    '      <a href="/index.html#onboarding">Agent onboarding</a>',
     '      <a href="/pre-close-checklist.html">Pre-close checklist</a>',
     '      <a href="/tc-platforms.html">Compatible TC platforms</a>',
     '      <a href="/index.html#faq">FAQ</a>',
