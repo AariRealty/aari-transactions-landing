@@ -110,9 +110,9 @@
   var HTML = [
     '<footer class="aari-shared-footer">',
     '  <div class="aari-foot-hero">',
-    '    <span class="aari-foot-pill"><span class="dot"></span>Aari Blog &middot; Live &middot; 2&times; per month</span>',
+    '    <span class="aari-foot-pill"><span class="dot"></span>Aari Blog &middot; Live</span>',
     '    <h3 class="aari-foot-h">Join the Aari Blog.<br><em>Florida TC notes.</em></h3>',
-    '    <p class="aari-foot-sub">FR/Bar changes, compliance traps, operating notes. 2 emails a month. Built for agents who actually run files.</p>',
+    '    <p class="aari-foot-sub">FR/Bar changes, compliance traps, operating notes. Built for agents who actually run files.</p>',
     '    <form class="aari-foot-form" name="aari-newsletter" method="POST" enctype="multipart/form-data" data-netlify="true" netlify-honeypot="bot-field" action="/thank-you.html">',
     '      <input type="hidden" name="form-name" value="aari-newsletter">',
     '      <p hidden><label>Don\'t fill this out: <input name="bot-field"></label></p>',
