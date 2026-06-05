@@ -200,8 +200,35 @@
       if (consent) consent.style.display = 'none';
       return;
     }
-    form.addEventListener('submit', function () {
-      try { localStorage.setItem(KEY, '1'); } catch (e) {}
+    // Email-aware submit: check the subscriber table first. Already on the
+    // list → straight to the blog. New → capture via Netlify → thank-you.
+    // If the check is unreachable, fall back to the plain Netlify submit.
+    var SB_URL = 'https://fnlrgmuvtgwzjsihqxcn.supabase.co';
+    var SB_KEY = 'sb_publishable_OsZVC29HKhFAZRNVo3yKqQ_wM7r2ANd';
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var email = (form.querySelector('input[name="email"]') || {}).value || '';
+      var btn = form.querySelector('button[type="submit"]');
+      if (btn) { btn.disabled = true; btn.textContent = 'One sec…'; }
+      fetch(SB_URL + '/rest/v1/rpc/subscribe_blog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY },
+        body: JSON.stringify({ p_email: email })
+      })
+      .then(function (r) { if (!r.ok) throw new Error('rpc ' + r.status); return r.json(); })
+      .then(function (already) {
+        try { localStorage.setItem(KEY, '1'); } catch (e) {}
+        if (already === true) { window.location.href = '/blog/'; return; }
+        var params = new URLSearchParams();
+        new FormData(form).forEach(function (v, k) { params.append(k, v); });
+        return fetch('/', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: params.toString() })
+          .catch(function () {})
+          .then(function () { window.location.href = '/thank-you.html'; });
+      })
+      .catch(function () {
+        try { localStorage.setItem(KEY, '1'); } catch (e) {}
+        form.submit(); // native submit bypasses this handler → Netlify capture
+      });
     });
   })();
 })();
