@@ -901,7 +901,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 
     // Pull: agents (with brokerage), files (with price), pay requests, reviews, memberships
     const [agentsR, filesR, payR, reviewsR, memR] = await Promise.all([
-      client.from('agents').select('id, first_name, last_name, email, role, brokerage_name'),
+      client.from('agents').select('id, first_name, last_name, email, role, brokerage_name, license_number, broker_last_seen_at'),
       client.from('files').select('id, property_address, service_type, service_price_cents, agent_id, assigned_tc_id, status, tc_accepted_at, closing_date, created_at, delete_request'),
       client.from('pay_requests').select('id, status, total_pay, paid_at, submitted_at').order('submitted_at',{ascending:false}),
       client.from('client_reviews').select('id, tc_id, stars, status, submitted_at').then(r => r, err => ({ data:[], error:err })),
@@ -970,7 +970,12 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
   }
 
   // ============ SIGNED AGREEMENTS · broker audit trail ============
-  // Lists every signed SA with download link to the PDF in Supabase storage.
+  // Lists every signed SA: agent name · brokerage · FL license · signed date
+  // with time · View PDF (1-hr signed URL, new tab). Newest first. Amber
+  // "New" pill = signed after agents.broker_last_seen_at (server-side, so it
+  // works across devices — the old localStorage stamp didn't). The stamp is
+  // written AFTER pills are computed, so each pill shows exactly once;
+  // clicking View PDF also clears that row's pill immediately.
   // Powers the broker-side "I need a copy" requirement and FREC audit defense.
   async function loadAndRenderSignedAgreements(byId){
     const panel = document.getElementById('sa-panel');
@@ -979,15 +984,25 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     if(!panel || !list) return;
     try {
       const client = await window.AariAuth.ensureClient();
+      const { data: auth } = await client.auth.getUser();
+      const me = auth && auth.user && byId ? byId[auth.user.id] : null;
+      const lastSeen = me && me.broker_last_seen_at ? new Date(me.broker_last_seen_at) : null;
+
       const { data: sigs } = await client.from('agreement_signatures')
         .select('id, agent_id, agreement_version, signed_at, signed_agreement_pdf_url, typed_full_name')
         .eq('agreement_type','service_agreement')
         .order('signed_at', { ascending: false })
         .limit(20);
-      if(!sigs || !sigs.length){ panel.style.display = 'none'; return; }
-      panel.style.display = 'block';
 
-      // Pre-fetch signed URLs for each PDF (1hr expiry) so download click is one-shot
+      panel.style.display = 'block';
+      if(!sigs || !sigs.length){
+        if(meta) meta.textContent = '';
+        list.innerHTML = '<div style="color:#999;font-size:13px;padding:10px 2px">No agreements signed yet</div>';
+        stampBrokerVisit(client, auth);
+        return;
+      }
+
+      // Pre-fetch signed URLs for each PDF (1hr expiry) so the click is one-shot
       const enriched = await Promise.all(sigs.map(async (s) => {
         let downloadUrl = null;
         if(s.signed_agreement_pdf_url){
@@ -1007,23 +1022,42 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
         const a = byId && byId[s.agent_id];
         const name = (a ? ((a.first_name || '') + ' ' + (a.last_name || '')).trim() : null) || s.typed_full_name || 'Unknown agent';
         const email = (a && a.email) || '';
+        const brokerage = (a && a.brokerage_name) || '';
+        const license = (a && a.license_number) || '';
         const date = new Date(s.signed_at);
-        const dateLbl = date.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+        const dateLbl = date.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) +
+          ' at ' + date.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' }).toLowerCase().replace(/\s/g, '');
         const ver = (s.agreement_version || '').replace(/^v/, 'v');
-        const downloadBtn = s.downloadUrl
-          ? '<a href="' + s.downloadUrl + '" target="_blank" rel="noopener" download>Download PDF →</a>'
+        const isNew = lastSeen ? (date > lastSeen) : false;
+        const newPill = isNew
+          ? '<span class="sa-new-pill" style="display:inline-block;background:#fdf6e3;color:#9a7c3a;font-size:10px;font-weight:600;letter-spacing:.04em;border-radius:999px;padding:2px 8px;margin-left:8px;vertical-align:1px">New</span>'
+          : '';
+        const sub = [email, brokerage, license ? 'Lic. ' + license : ''].filter(Boolean).join(' · ');
+        const viewBtn = s.downloadUrl
+          ? '<a href="' + s.downloadUrl + '" target="_blank" rel="noopener" onclick="var p=this.closest(\'.sa-row\').querySelector(\'.sa-new-pill\');if(p)p.remove()">View PDF →</a>'
           : '<span style="color:#888;font-style:italic;font-size:11px">PDF not generated</span>';
         return '<div class="sa-row">' +
-          '<div><div class="sa-row-name">' + esc(name) + '</div><div class="sa-row-email">' + esc(email) + ' · ' + esc(dateLbl) + '</div></div>' +
-          '<div class="sa-row-email">' + esc(email) + '</div>' +
+          '<div><div class="sa-row-name">' + esc(name) + newPill + '</div><div class="sa-row-email">' + esc(sub) + '</div></div>' +
+          '<div class="sa-row-email">' + esc(dateLbl) + '</div>' +
           '<div class="sa-row-ver">' + esc(ver || 'v?') + '</div>' +
-          '<div class="sa-row-action">' + downloadBtn + '</div>' +
+          '<div class="sa-row-action">' + viewBtn + '</div>' +
         '</div>';
       }).join('');
+
+      // Stamp AFTER rendering — pills survive this load, clear on the next.
+      stampBrokerVisit(client, auth);
     } catch(err){
       console.warn('[broker-cockpit] signed agreements load failed', err);
       panel.style.display = 'none';
     }
+  }
+  // Server-side last-visit stamp (agents.broker_last_seen_at) · every load.
+  // Via scoped RPC — agents has no self-UPDATE policy (by design).
+  function stampBrokerVisit(client, auth){
+    try {
+      if(!auth || !auth.user) return;
+      client.rpc('touch_broker_last_seen').then(() => {}, () => {});
+    } catch(_){}
   }
 
   // ============ LAST 5 CLOSINGS · recent wins ============
