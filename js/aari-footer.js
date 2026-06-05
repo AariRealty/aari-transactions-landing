@@ -196,8 +196,8 @@
       d.innerHTML = '<p style="font-size:13.5px;color:#3a3a3a;margin:0 0 14px">&#10003; You&rsquo;re on the list.</p>' +
         '<a href="/blog/" class="aari-foot-btn" style="display:inline-block;text-decoration:none">Read the latest &rarr;</a>';
       form.parentNode.insertBefore(d, form);
-      form.hidden = true;
-      if (consent) consent.hidden = true;
+      form.style.display = 'none';
+      if (consent) consent.style.display = 'none';
       return;
     }
     form.addEventListener('submit', function () {
