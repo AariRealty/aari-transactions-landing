@@ -756,6 +756,9 @@
     <p class="tpb-next-eb" id="tpb-next-eb">Coming up next stage</p>
     <ul class="tpb-next-list" id="tpb-next-list"></ul>
   </div>
+
+  <!-- BROKER-ONLY · permanent file delete (test files / duplicates) -->
+  <div id="tpb-delete" style="padding:6px 22px 26px" hidden></div>
 </div>
 
 <!-- Scripts -->
@@ -5265,7 +5268,7 @@ Aari Transactions`,
       } catch(_){}
     }
     if(stage === 'waiting_for_tc'){
-      const mins = 30 - Math.floor((Date.now() - new Date(f.created_at).getTime()) / 60000);
+      const mins = 30 - Math.floor((Date.now() - new Date(f.last_assigned_at || f.created_at).getTime()) / 60000);
       tier = 'today'; dlTone = mins > 0 ? '#9a7c3a' : '#c96b6b';
       dlText = mins > 0 ? mins + ' min to accept' : 'Acceptance overdue';
       sortKey = -999;
@@ -5566,7 +5569,7 @@ Aari Transactions`,
     // — Acceptance countdown · anchored to created_at (sweep anchor) —
     let wtcPill = '';
     if(stage === 'waiting_for_tc'){
-      const mins = 30 - Math.floor((Date.now() - new Date(f.created_at).getTime()) / 60000);
+      const mins = 30 - Math.floor((Date.now() - new Date(f.last_assigned_at || f.created_at).getTime()) / 60000);
       wtcPill = mins > 0
         ? '<span class="card-wtc">' + mins + ' min remaining to accept</span>'
         : '<span class="card-wtc overdue">Acceptance overdue</span>';
@@ -5960,7 +5963,62 @@ Aari Transactions`,
     _currentFile = file;
     document.body.classList.add('tpb-open');
     renderPlaybook(file);
+    renderDeleteZone(file);
   }
+  // ===== BROKER-ONLY FILE DELETE · quiet text link, inline confirm =====
+  function renderDeleteZone(file){
+    const z = document.getElementById('tpb-delete');
+    if(!z) return;
+    if(!(_profile && _profile.role === 'broker')){ z.hidden = true; z.innerHTML = ''; return; }
+    z.hidden = false;
+    z.innerHTML = '<a href="#" data-del-link style="font-size:11px;color:#e0a8a8;text-decoration:underline;text-underline-offset:3px">Delete file</a>';
+  }
+  document.addEventListener('click', async (e) => {
+    const dl = e.target.closest && e.target.closest('[data-del-link]');
+    if(dl){
+      e.preventDefault();
+      const z = document.getElementById('tpb-delete');
+      if(!z || !_currentFile) return;
+      z.innerHTML = '<div style="background:#fdf6f4;border:0.5px solid #efd9d4;border-radius:8px;padding:12px 14px">' +
+        '<p style="font-size:11.5px;color:#0f0f0f;margin:0 0 10px">Are you sure? This permanently deletes the file and all associated data. This cannot be undone.</p>' +
+        '<div style="display:flex;gap:8px">' +
+          '<button type="button" data-del-confirm style="border:none;font-family:inherit;font-size:11px;font-weight:600;border-radius:7px;padding:7px 14px;cursor:pointer;background:#e8b8b0;color:#6b2f28">Yes, delete permanently</button>' +
+          '<button type="button" data-del-cancel style="border:0.5px solid #e8e0cd;font-family:inherit;font-size:11px;border-radius:7px;padding:7px 14px;cursor:pointer;background:#f5f0e8;color:#5f5e5a">Cancel</button>' +
+        '</div></div>';
+      return;
+    }
+    if(e.target.closest && e.target.closest('[data-del-cancel]')){
+      if(_currentFile) renderDeleteZone(_currentFile);
+      return;
+    }
+    const dc = e.target.closest && e.target.closest('[data-del-confirm]');
+    if(dc && _currentFile){
+      dc.disabled = true; dc.textContent = 'Deleting\u2026';
+      const fid = _currentFile.id;
+      // Storage cleanup · best-effort (contract + additional docs)
+      try {
+        const raw = _currentFile.raw_form_data || {};
+        if(raw.submitted_by){
+          for(const prefix of [raw.submitted_by + '/' + fid, raw.submitted_by + '/' + fid + '/additional']){
+            const { data: objs } = await _client.storage.from('transaction-files').list(prefix);
+            if(objs && objs.length){
+              await _client.storage.from('transaction-files')
+                .remove(objs.filter(o => o.id || o.name).map(o => prefix + '/' + o.name));
+            }
+          }
+        }
+      } catch(_){ /* storage cleanup is best-effort */ }
+      const { error } = await _client.rpc('broker_delete_file', { p_file_id: fid });
+      if(error){
+        dc.disabled = false; dc.textContent = 'Yes, delete permanently';
+        alert('Delete failed: ' + (error.message || 'unknown error'));
+        return;
+      }
+      _files = _files.filter(f => f.id !== fid);
+      closePlaybook();
+      renderKanban();
+    }
+  });
 
   // ============== EMD TRACKING WIDGET · Under Contract (Stage 3) ==============
   // Lives at the top of the Stage 3 checklist. Amount is tap-to-enter (the
