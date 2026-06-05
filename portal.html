@@ -860,6 +860,163 @@
     await loadAll();
     // Item 1 · live stage updates · agent sees TC moves without refreshing.
     mfInitRealtime(session.user.id);
+    // Item 4 · one-time onboarding · agents only, never staff, never twice.
+    if(_profile && _profile.role === 'agent' && _profile.onboarding_complete === false){ obOpen(); }
+  }
+
+  // ===== ITEM 4 · NEW-AGENT ONBOARDING (Mockup 1 · full-screen steps) =====
+  // Triggers ONCE when agents.onboarding_complete is false. Completion saves
+  // preferences + sends the welcome email (via send-agent-welcome). Skipping
+  // marks complete WITHOUT the welcome email. Either way it never re-shows.
+  const _ob = { step: 1, root: null, tcs: [],
+    data: { avg: '', platform: '', tc: '', method: 'both', digest: true, phone: '' } };
+  function obOpen(){
+    if(_ob.root) return;
+    _ob.data.phone = (_profile && _profile.phone) || '';
+    const d = document.createElement('div');
+    d.id = 'obOverlay';
+    d.style.cssText = 'position:fixed;inset:0;z-index:2000;background:#f5f0e8;display:flex;align-items:center;justify-content:center;padding:20px;overflow-y:auto';
+    document.body.appendChild(d);
+    _ob.root = d;
+    // TC options for the preferred-TC step · best-effort.
+    _client.from('agents').select('id, first_name, last_name').eq('role', 'tc')
+      .then(r => { _ob.tcs = (r && r.data) || []; if(_ob.step === 2) obRender(); });
+    obRender();
+  }
+  function obClose(){ if(_ob.root){ _ob.root.remove(); _ob.root = null; } }
+  function obDots(n){
+    let h = '<div style="text-align:center;margin-bottom:18px">';
+    for(let i = 1; i <= 4; i++){
+      h += '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin:0 4px;background:' + (i <= n ? (n === 4 ? '#f0d89a' : '#0f0f0f') : '#ddd6c8') + '"></span>';
+    }
+    return h + '</div>';
+  }
+  const obBtn = 'background:#0f0f0f;color:#fff;border:none;border-radius:8px;padding:14px 30px;font-family:Inter,sans-serif;font-size:12.5px;font-weight:600;letter-spacing:0.5px;cursor:pointer';
+  const obField = 'width:100%;border:0.5px solid #ddd6c8;border-radius:8px;padding:11px 12px;font-family:Inter,sans-serif;font-size:13px;color:#0f0f0f;background:#fff;box-sizing:border-box';
+  const obLbl = 'display:block;font-size:10px;color:#888;letter-spacing:1px;text-transform:uppercase;margin:0 0 5px;font-weight:600';
+  function obRender(){
+    if(!_ob.root) return;
+    const first = (_profile && _profile.first_name) || 'there';
+    const dark = _ob.step === 4;
+    let inner = '';
+    if(_ob.step === 1){
+      inner = obDots(1) +
+        '<h1 style="font-family:\'Playfair Display\',Georgia,serif;font-size:32px;font-weight:500;color:#0f0f0f;margin:0 0 10px">Welcome to Aari, ' + esc(first) + '.</h1>' +
+        '<p style="font-size:14px;color:#6b6b6b;margin:0 0 26px;line-height:1.6">You submit the file. We handle everything. You close.</p>' +
+        '<button type="button" data-ob-next style="' + obBtn + '">Let\u2019s get started \u2192</button>' +
+        '<p style="margin:16px 0 0"><a href="#" data-ob-skip style="font-size:11.5px;color:#999;text-decoration:underline;text-underline-offset:3px">Skip for now</a></p>';
+    } else if(_ob.step === 2){
+      const tcOpts = _ob.tcs.map(t =>
+        '<label style="display:block;font-size:13px;color:#0f0f0f;margin:0 0 8px;cursor:pointer"><input type="radio" name="obTc" value="' + esc(t.id) + '"' + (_ob.data.tc === t.id ? ' checked' : '') + ' style="margin-right:8px;accent-color:#0f0f0f">' + esc((t.first_name || '') + ' ' + (t.last_name || '')) + '</label>'
+      ).join('');
+      inner = obDots(2) +
+        '<h1 style="font-family:\'Playfair Display\',Georgia,serif;font-size:26px;font-weight:500;color:#0f0f0f;margin:0 0 18px">A few quick things.</h1>' +
+        '<div style="text-align:left">' +
+        '<label style="' + obLbl + '">Average transactions per month</label>' +
+        '<select data-ob-avg style="' + obField + ';margin-bottom:14px"><option value="">Select\u2026</option>' + ['1-2','3-5','6-10','10+'].map(v => '<option' + (_ob.data.avg === v ? ' selected' : '') + '>' + v + '</option>').join('') + '</select>' +
+        '<label style="' + obLbl + '">Signing platform</label>' +
+        '<select data-ob-platform style="' + obField + ';margin-bottom:14px"><option value="">Select\u2026</option>' + ['DocuSign','DotLoop','Authentisign','Other'].map(v => '<option' + (_ob.data.platform === v ? ' selected' : '') + '>' + v + '</option>').join('') + '</select>' +
+        '<label style="' + obLbl + '">Preferred TC</label>' + tcOpts +
+        '<label style="display:block;font-size:13px;color:#0f0f0f;margin:0 0 6px;cursor:pointer"><input type="radio" name="obTc" value=""' + (_ob.data.tc === '' ? ' checked' : '') + ' style="margin-right:8px;accent-color:#0f0f0f">No preference</label>' +
+        '</div>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px">' +
+        '<a href="#" data-ob-back style="font-size:12px;color:#999">\u2039 Back</a>' +
+        '<button type="button" data-ob-next style="' + obBtn + '">Continue \u2192</button></div>';
+    } else if(_ob.step === 3){
+      inner = obDots(3) +
+        '<h1 style="font-family:\'Playfair Display\',Georgia,serif;font-size:26px;font-weight:500;color:#0f0f0f;margin:0 0 18px">How should we reach you?</h1>' +
+        '<div style="text-align:left">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:0.5px solid #ddd6c8;border-radius:8px;padding:12px;margin-bottom:14px">' +
+          '<span style="font-size:13px;color:#0f0f0f">Send me a weekly file update every Friday</span>' +
+          '<button type="button" data-ob-digest aria-pressed="' + _ob.data.digest + '" style="width:38px;height:20px;border-radius:999px;border:none;cursor:pointer;position:relative;background:' + (_ob.data.digest ? '#0f0f0f' : '#ddd6c8') + '"><span style="position:absolute;top:2px;' + (_ob.data.digest ? 'right:2px' : 'left:2px') + ';width:16px;height:16px;border-radius:50%;background:#fff"></span></button>' +
+        '</div>' +
+        '<label style="' + obLbl + '">Preferred update method</label>' +
+        '<div style="display:flex;gap:8px;margin-bottom:14px">' +
+          ['email','text','both'].map(m => '<button type="button" data-ob-method="' + m + '" style="border-radius:999px;padding:7px 18px;font-family:Inter,sans-serif;font-size:12px;cursor:pointer;' + (_ob.data.method === m ? 'background:#0f0f0f;color:#fff;border:0.5px solid #0f0f0f;font-weight:600' : 'background:#fff;color:#888;border:0.5px solid #ddd6c8') + '">' + m.charAt(0).toUpperCase() + m.slice(1) + '</button>').join('') +
+        '</div>' +
+        '<label style="' + obLbl + '">Phone for text updates' + (_ob.data.phone ? '' : ' (optional)') + '</label>' +
+        '<input type="tel" data-ob-phone value="' + esc(_ob.data.phone) + '" placeholder="(239) 555-0100" style="' + obField + '">' +
+        '</div>' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px">' +
+        '<a href="#" data-ob-back style="font-size:12px;color:#999">\u2039 Back</a>' +
+        '<button type="button" data-ob-finish style="' + obBtn + '">Continue \u2192</button></div>';
+    } else {
+      inner = obDots(4) +
+        '<h1 style="font-family:\'Playfair Display\',Georgia,serif;font-size:32px;font-weight:500;color:#fff;margin:0 0 10px">You\u2019re all set, ' + esc(first) + '.</h1>' +
+        '<p style="font-size:14px;color:rgba(255,255,255,0.6);margin:0 0 26px;line-height:1.6">Submit your first file and your TC will be in touch the same day.</p>' +
+        '<a href="/?modal-only=1#apply" style="display:inline-block;background:#fff;color:#0f0f0f;border-radius:8px;padding:14px 30px;font-size:12.5px;font-weight:600;letter-spacing:0.5px;text-decoration:none">Submit my first file \u2192</a>' +
+        '<p style="margin:16px 0 0"><a href="#" data-ob-done style="font-size:11.5px;color:rgba(255,255,255,0.55);text-decoration:underline;text-underline-offset:3px">Go to my dashboard</a></p>';
+    }
+    _ob.root.innerHTML =
+      '<div style="position:relative;width:100%;max-width:480px;background:' + (dark ? '#0f0f0f' : '#fdfcf9') + ';border:0.5px solid ' + (dark ? '#0f0f0f' : '#e8e4db') + ';border-radius:14px;padding:38px 34px;text-align:center;box-shadow:0 24px 60px rgba(15,15,15,0.12)">' +
+      (dark ? '' : '<button type="button" data-ob-skip aria-label="Skip onboarding" style="position:absolute;top:12px;right:14px;border:none;background:transparent;color:#bbb;font-size:18px;cursor:pointer">\u00d7</button>') +
+      inner + '</div>';
+  }
+  async function obSavePrefs(){
+    const upd = {
+      avg_transactions_per_month: _ob.data.avg || null,
+      signing_platform: _ob.data.platform || null,
+      preferred_tc_id: _ob.data.tc || null,
+      update_method: _ob.data.method || 'both',
+      weekly_digest_opt_in: !!_ob.data.digest,
+      onboarding_complete: true,
+    };
+    if(_ob.data.phone && !(_profile && _profile.phone)) upd.phone = _ob.data.phone;
+    const r = await _client.from('agents').update(upd).eq('id', _profile.id);
+    if(!(r && r.error)) Object.assign(_profile, upd);
+    return !(r && r.error);
+  }
+  async function obNotify(skipped){
+    try {
+      const session = (await _client.auth.getSession()).data.session;
+      await fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/send-agent-welcome', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + ((session && session.access_token) || '') },
+        body: JSON.stringify({ skipped: !!skipped }),
+      });
+    } catch(_){ /* non-blocking */ }
+  }
+  document.addEventListener('click', async (e) => {
+    if(!_ob.root) return;
+    const t = e.target;
+    const within = t.closest && _ob.root.contains(t);
+    if(!within) return;
+    if(t.closest('[data-ob-skip]')){
+      e.preventDefault();
+      try { await _client.from('agents').update({ onboarding_complete: true }).eq('id', _profile.id); _profile.onboarding_complete = true; } catch(_){}
+      obNotify(true);
+      obClose();
+      return;
+    }
+    if(t.closest('[data-ob-back]')){ e.preventDefault(); _ob.step = Math.max(1, _ob.step - 1); obRender(); return; }
+    if(t.closest('[data-ob-digest]')){ _ob.data.digest = !_ob.data.digest; obRender(); return; }
+    const m = t.closest('[data-ob-method]');
+    if(m){ _ob.data.method = m.getAttribute('data-ob-method'); obRender(); return; }
+    if(t.closest('[data-ob-next]')){
+      if(_ob.step === 2) obCapture();
+      _ob.step += 1; obRender(); return;
+    }
+    if(t.closest('[data-ob-finish]')){
+      obCapture();
+      const btn = t.closest('[data-ob-finish]');
+      btn.disabled = true; btn.textContent = 'Saving\u2026';
+      const ok = await obSavePrefs();
+      if(!ok){ btn.disabled = false; btn.textContent = 'Continue \u2192'; alert('Could not save \u2014 try again.'); return; }
+      obNotify(false);
+      _ob.step = 4; obRender(); return;
+    }
+    if(t.closest('[data-ob-done]')){ e.preventDefault(); obClose(); return; }
+  });
+  function obCapture(){
+    if(!_ob.root) return;
+    const avg = _ob.root.querySelector('[data-ob-avg]');
+    const plat = _ob.root.querySelector('[data-ob-platform]');
+    const tcSel = _ob.root.querySelector('input[name="obTc"]:checked');
+    const ph = _ob.root.querySelector('[data-ob-phone]');
+    if(avg) _ob.data.avg = avg.value;
+    if(plat) _ob.data.platform = plat.value;
+    if(tcSel) _ob.data.tc = tcSel.value;
+    if(ph) _ob.data.phone = ph.value.trim();
   }
 
   // ===== REFER AN AGENT =====

@@ -12,6 +12,7 @@ alter table public.agents add column if not exists signing_platform text;
 alter table public.agents add column if not exists preferred_tc_id uuid references public.agents(id);
 alter table public.agents add column if not exists update_method text;
 alter table public.agents add column if not exists onboarding_complete boolean not null default false;
+alter table public.agents add column if not exists welcome_sent_at timestamptz;
 
 -- Existing agents never see the flow.
 update public.agents set onboarding_complete = true where onboarding_complete = false;
