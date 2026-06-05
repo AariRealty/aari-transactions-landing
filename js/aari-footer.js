@@ -178,4 +178,30 @@
       h.parentElement.classList.toggle('expanded');
     });
   });
+
+  // ── Subscriber memory ─────────────────────────────────────────────────
+  // After someone subscribes on this device, the capture form swaps to a
+  // "You're on the list → Read the latest" state. New visitors always see
+  // the email capture. Per-browser flag only — never blocks the capture.
+  (function () {
+    var KEY = 'aari_blog_subscribed';
+    var form = document.querySelector('.aari-foot-form');
+    if (!form) return;
+    var consent = document.querySelector('.aari-foot-consent');
+    var subscribed = false;
+    try { subscribed = !!localStorage.getItem(KEY); } catch (e) {}
+    if (subscribed) {
+      var d = document.createElement('div');
+      d.style.cssText = 'position:relative;z-index:2;margin-top:6px';
+      d.innerHTML = '<p style="font-size:13.5px;color:#3a3a3a;margin:0 0 14px">&#10003; You&rsquo;re on the list.</p>' +
+        '<a href="/blog/" class="aari-foot-btn" style="display:inline-block;text-decoration:none">Read the latest &rarr;</a>';
+      form.parentNode.insertBefore(d, form);
+      form.hidden = true;
+      if (consent) consent.hidden = true;
+      return;
+    }
+    form.addEventListener('submit', function () {
+      try { localStorage.setItem(KEY, '1'); } catch (e) {}
+    });
+  })();
 })();
