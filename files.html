@@ -5273,6 +5273,11 @@ Aari Transactions`,
       dlText = mins > 0 ? mins + ' min to accept' : 'Acceptance overdue';
       sortKey = -999;
     }
+    if(_profile && _profile.role === 'broker' && f.delete_request){
+      tier = 'today'; dlTone = '#9a7c3a';
+      dlText = 'Deletion requested by ' + ((f.delete_request.requested_by_name || 'a TC')) + ' \u2014 review';
+      sortKey = -500;
+    }
     const d = daysToClose(f);
     if(d != null && d <= 0 && stage !== 'closed'){ tier = 'today'; }
     return { tier, dlText, dlTone, sortKey };
@@ -5969,11 +5974,51 @@ Aari Transactions`,
   function renderDeleteZone(file){
     const z = document.getElementById('tpb-delete');
     if(!z) return;
-    if(!(_profile && _profile.role === 'broker')){ z.hidden = true; z.innerHTML = ''; return; }
-    z.hidden = false;
-    z.innerHTML = '<a href="#" data-del-link style="font-size:11px;color:#e0a8a8;text-decoration:underline;text-underline-offset:3px">Delete file</a>';
+    const req = (file.delete_request && typeof file.delete_request === 'object') ? file.delete_request : null;
+    if(_profile && _profile.role === 'broker'){
+      z.hidden = false;
+      const banner = req
+        ? '<div style="background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:8px;padding:9px 12px;margin-bottom:8px;font-size:11px;color:#9a7c3a">' +
+            '<strong>' + esc(req.requested_by_name || 'A TC') + '</strong> requested deletion' +
+            (req.reason ? ' \u00b7 \u201c' + esc(req.reason) + '\u201d' : '') +
+            (req.at ? ' \u00b7 ' + new Date(req.at).toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '') +
+            ' \u00b7 <a href="#" data-del-dismiss style="color:#9a7c3a">dismiss</a></div>'
+        : '';
+      z.innerHTML = banner + '<a href="#" data-del-link style="font-size:11px;color:#e0a8a8;text-decoration:underline;text-underline-offset:3px">Delete file</a>';
+      return;
+    }
+    if(_profile && _profile.role === 'tc'){
+      z.hidden = false;
+      z.innerHTML = req
+        ? '<span style="font-size:11px;color:#9a7c3a">Deletion requested \u00b7 waiting on Marlenyi</span>'
+        : '<a href="#" data-del-request style="font-size:11px;color:#b0aca4;text-decoration:underline;text-underline-offset:3px">Request deletion</a>';
+      return;
+    }
+    z.hidden = true; z.innerHTML = '';
   }
   document.addEventListener('click', async (e) => {
+    const dreq = e.target.closest && e.target.closest('[data-del-request]');
+    if(dreq && _currentFile){
+      e.preventDefault();
+      const reason = prompt('Why should this file be deleted? (optional)') || '';
+      const req = {
+        requested_by: _profile.id,
+        requested_by_name: ((_profile.first_name || '') + ' ' + (_profile.last_name || '')).trim(),
+        reason: reason.trim(),
+        at: new Date().toISOString(),
+      };
+      const r = await _client.from('files').update({ delete_request: req }).eq('id', _currentFile.id);
+      if(!(r && r.error)){ _currentFile.delete_request = req; renderDeleteZone(_currentFile); }
+      else alert('Could not send the request \u2014 try again.');
+      return;
+    }
+    const ddis = e.target.closest && e.target.closest('[data-del-dismiss]');
+    if(ddis && _currentFile){
+      e.preventDefault();
+      const r = await _client.from('files').update({ delete_request: null }).eq('id', _currentFile.id);
+      if(!(r && r.error)){ _currentFile.delete_request = null; renderDeleteZone(_currentFile); renderKanban(); }
+      return;
+    }
     const dl = e.target.closest && e.target.closest('[data-del-link]');
     if(dl){
       e.preventDefault();
