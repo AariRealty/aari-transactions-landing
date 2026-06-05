@@ -609,6 +609,14 @@
       <kbd>?</kbd>
     </button>
   </div>
+  <!-- VIEW TOGGLE · List (triage groups · default) | Board (drag & drop) -->
+  <div id="viewToggle" style="display:flex;justify-content:flex-end;margin:0 0 10px">
+    <span style="display:inline-flex;border:0.5px solid #e8e4db;border-radius:8px;overflow:hidden;background:#fff">
+      <button type="button" data-view="list" style="border:none;font-family:inherit;font-size:11px;font-weight:600;padding:6px 16px;cursor:pointer;background:#0f0f0f;color:#fff">List</button>
+      <button type="button" data-view="board" style="border:none;font-family:inherit;font-size:11px;font-weight:600;padding:6px 16px;cursor:pointer;background:#fff;color:#888">Board</button>
+    </span>
+  </div>
+  <div id="fileList"></div>
   <div class="kanban" id="kanban"></div>
 
 </main>
@@ -5183,10 +5191,138 @@ Aari Transactions`,
     ).join('');
   }
 
-  // Re-render every 60s while acceptance countdowns are on screen.
+  // Re-render every 60s while acceptance countdowns are on screen (both views).
   setInterval(() => {
-    try { if(document.querySelector('.lane[data-stage="waiting_for_tc"] .card')) renderKanban(); } catch(_){}
+    try {
+      if(document.querySelector('.lane[data-stage="waiting_for_tc"] .card')) renderKanban();
+      if(_view === 'list' && _files.some(f => deriveStage(f) === 'waiting_for_tc')) renderFileList();
+    } catch(_){}
   }, 60000);
+
+  // ============== LIST VIEW · Mockup C triage groups (June 2026) ==============
+  // Default view. The page IS the work order: Needs you today → This week →
+  // On track. Rows open the same drawer; the Board toggle keeps drag & drop.
+  let _view = 'list';
+  try { _view = localStorage.getItem('aari_files_view') || 'list'; } catch(_){}
+  function setView(v){
+    _view = v === 'board' ? 'board' : 'list';
+    try { localStorage.setItem('aari_files_view', _view); } catch(_){}
+    applyView();
+  }
+  function applyView(){
+    const k = document.getElementById('kanban');
+    const l = document.getElementById('fileList');
+    const t = document.getElementById('viewToggle');
+    if(!k || !l) return;
+    k.style.display = _view === 'board' ? '' : 'none';
+    l.style.display = _view === 'list' ? '' : 'none';
+    if(t){
+      t.querySelectorAll('[data-view]').forEach(b => {
+        const on = b.getAttribute('data-view') === _view;
+        b.style.background = on ? '#0f0f0f' : '#fff';
+        b.style.color = on ? '#fff' : '#888';
+      });
+    }
+    if(_view === 'list') renderFileList();
+  }
+  document.addEventListener('click', (e) => {
+    const vb = e.target.closest && e.target.closest('[data-view]');
+    if(vb){ setView(vb.getAttribute('data-view')); return; }
+    const row = e.target.closest && e.target.closest('.flist-row');
+    if(row){
+      const file = _files.find(f => f.id === row.getAttribute('data-file-id'));
+      if(file) openPlaybook(file);
+    }
+  });
+  function fileTriage(f){
+    // Returns { tier: 'today'|'week'|'ontrack', dlText, dlTone, sortKey }
+    const stage = deriveStage(f);
+    const today = new Date(); today.setHours(0,0,0,0);
+    let tier = 'ontrack', dlText = '', dlTone = '#555', sortKey = 9e15;
+    if((f.file_type || 'sale') === 'sale' && stage !== 'closed'){
+      try {
+        const dls = fileDeadlines(f);
+        let next = null, lastPast = null;
+        Object.keys(dls).forEach(k => {
+          const dd = new Date(dls[k].date.getTime()); dd.setHours(0,0,0,0);
+          if(dd >= today){ if(!next || dd < next.d) next = { d: dd, label: dls[k].label }; }
+          else { if(!lastPast || dd > lastPast.d) lastPast = { d: dd, label: dls[k].label }; }
+        });
+        if(lastPast){
+          const late = Math.round((today - lastPast.d) / 86400000);
+          tier = 'today'; dlTone = '#c96b6b';
+          dlText = lastPast.label + ' \u00b7 ' + late + 'd late';
+          sortKey = -late;
+        } else if(next){
+          const days = Math.round((next.d - today) / 86400000);
+          dlText = next.label + ' \u00b7 ' + (days === 0 ? 'today' : 'in ' + days + 'd');
+          sortKey = days;
+          if(days === 0){ tier = 'today'; dlTone = '#c96b6b'; }
+          else if(days <= 7){ tier = 'week'; dlTone = '#9a7c3a'; }
+        }
+        const est = emdEffStatus(f, 'initial');
+        if(est === 'overdue'){ tier = 'today'; dlTone = '#c96b6b'; dlText = (dlText ? dlText + ' \u00b7 ' : '') + 'EMD overdue'; }
+      } catch(_){}
+    }
+    if(stage === 'waiting_for_tc'){
+      const mins = 30 - Math.floor((Date.now() - new Date(f.created_at).getTime()) / 60000);
+      tier = 'today'; dlTone = mins > 0 ? '#9a7c3a' : '#c96b6b';
+      dlText = mins > 0 ? mins + ' min to accept' : 'Acceptance overdue';
+      sortKey = -999;
+    }
+    const d = daysToClose(f);
+    if(d != null && d <= 0 && stage !== 'closed'){ tier = 'today'; }
+    return { tier, dlText, dlTone, sortKey };
+  }
+  function renderFileList(){
+    const host = document.getElementById('fileList');
+    if(!host) return;
+    const visible = _files
+      .filter(f => (f.file_type || 'sale') === _fileTypeFilter)
+      .filter(f => f.status !== 'archived')
+      .filter(matchesSearch)
+      .filter(f => deriveStage(f) !== 'closed');
+    if(!visible.length){
+      host.innerHTML = '<div style="background:#fff;border:0.5px solid #e8e4db;border-radius:10px;padding:26px;text-align:center;font-size:12px;color:#888">No active files in this lane.</div>';
+      return;
+    }
+    const groups = { today: [], week: [], ontrack: [] };
+    visible.forEach(f => { const t = fileTriage(f); groups[t.tier].push({ f, t }); });
+    Object.keys(groups).forEach(k => groups[k].sort((a,b) => a.t.sortKey - b.t.sortKey));
+    const GROUPS = [
+      ['today',   'Needs you today', '#c96b6b', '#fdf6f4', '#f5e4e0'],
+      ['week',    'This week',       '#9a7c3a', '#fff',    '#f0ebe0'],
+      ['ontrack', 'On track',        '#3e7d57', '#fff',    '#f0ebe0'],
+    ];
+    let html = '<div style="background:#fff;border:0.5px solid #e8e4db;border-radius:10px;overflow:hidden">';
+    GROUPS.forEach(([key, label, color, rowBg, lineCol]) => {
+      const rows = groups[key];
+      if(!rows.length) return;
+      html += '<div style="padding:10px 14px 6px"><span style="font-size:10px;letter-spacing:0.8px;color:' + color + ';font-weight:700;text-transform:uppercase">' + label + ' \u00b7 ' + rows.length + '</span></div>';
+      rows.forEach(({ f, t }) => {
+        const stage = deriveStage(f);
+        const stageLabel = (STAGE_LABELS && STAGE_LABELS[stage]) || stage;
+        const tc = f.assigned_tc_id ? _tcsById[f.assigned_tc_id] : null;
+        const tcName = tc ? ((tc.first_name || '') + (tc.last_name ? ' ' + tc.last_name.charAt(0).toUpperCase() + '.' : '')).trim() : 'No TC';
+        const prog = stageProgress(f);
+        const cert = computeClosingCertainty(f);
+        const cash = isCashFile(f);
+        html += '<div class="flist-row" data-file-id="' + esc(f.id) + '" style="display:flex;align-items:center;gap:12px;padding:9px 14px;border-top:0.5px solid ' + lineCol + ';background:' + rowBg + ';cursor:pointer">' +
+          '<span style="flex:1.5;min-width:0">' +
+            '<span style="display:block;font-size:12.5px;font-weight:600;color:#0f0f0f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(f.property_address || '') + '">' + esc((f.property_address || 'Untitled file').split(',')[0]) + (cash ? ' <span class="card-tag-cash">Cash</span>' : '') + (f.payment_pending ? ' <span class="card-tag-pay">Awaiting payment</span>' : '') + '</span>' +
+            '<span style="font-size:9.5px;color:#888">' + esc(stageLabel) + ' \u00b7 ' + esc(tcName) + '</span>' +
+          '</span>' +
+          '<span style="flex:1.4;font-size:11px;color:' + t.dlTone + ';font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t.dlText || '\u2014') + '</span>' +
+          '<span style="flex:none;display:flex;gap:6px;align-items:center">' +
+            (prog ? '<span style="font-size:9.5px;background:#f0ebe0;color:#5f5e5a;border-radius:999px;padding:2px 8px">' + prog.done + '/' + prog.total + '</span>' : '') +
+            '<span class="card-score score-' + cert.bucket + '">' + cert.score + '</span>' +
+          '</span>' +
+        '</div>';
+      });
+    });
+    html += '</div>';
+    host.innerHTML = html;
+  }
 
   function renderKanbanShell(){
     const stages = getStages();
@@ -5294,6 +5430,8 @@ Aari Transactions`,
       laneEl.innerHTML = buckets[stage].map(cardHtml).join('');
     });
     wireKanbanDelegation();
+    // List view mirrors every kanban refresh · honors the saved toggle.
+    try { applyView(); } catch(_){}
   }
 
   function isCashFile(f){
