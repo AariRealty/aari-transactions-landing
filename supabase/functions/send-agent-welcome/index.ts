@@ -12,7 +12,7 @@
 // Idempotent: a welcome_sent_at stamp on the agent row blocks double-sends.
 
 import * as React from "react";
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 import { supabaseAdmin } from "../_shared/supabase.ts";
 import { sendEmail } from "../_shared/send-email.ts";
 import { SITE_URL } from "../_shared/resend.ts";
