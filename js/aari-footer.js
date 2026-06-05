@@ -110,7 +110,6 @@
   var HTML = [
     '<footer class="aari-shared-footer">',
     '  <div class="aari-foot-hero">',
-    '    <span class="aari-foot-pill"><span class="dot"></span>Aari Blog &middot; Live</span>',
     '    <h3 class="aari-foot-h">Join the Aari Blog.<br><em>Florida TC notes.</em></h3>',
     '    <p class="aari-foot-sub">FR/Bar changes, compliance traps, operating notes. Built for agents who actually run files.</p>',
     '    <form class="aari-foot-form" name="aari-newsletter" method="POST" enctype="multipart/form-data" data-netlify="true" netlify-honeypot="bot-field" action="/thank-you.html">',
@@ -192,12 +191,13 @@
     var subscribed = false;
     try { subscribed = !!localStorage.getItem(KEY); } catch (e) {}
     if (subscribed) {
-      // Known-subscriber hint ABOVE the form — the capture form always stays
-      // visible (shared/office devices must still collect emails).
+      // Known-subscriber hint BELOW the capture block — quiet status note,
+      // never interrupts the pitch → form flow. Form always stays visible
+      // (shared/office devices must still collect emails).
       var d = document.createElement('p');
-      d.style.cssText = 'position:relative;z-index:2;font-size:13px;color:#3a3a3a;margin:0 0 14px';
+      d.style.cssText = 'position:relative;z-index:2;font-size:12.5px;color:#6b6b6b;margin:18px 0 0';
       d.innerHTML = '&#10003; You&rsquo;re on the list. <a href="/blog/" style="color:#0a0a0a;font-weight:600;text-decoration:underline;text-underline-offset:3px">Read the latest &rarr;</a>';
-      form.parentNode.insertBefore(d, form);
+      (consent || form).insertAdjacentElement('afterend', d);
     }
     // Email-aware submit: check the subscriber table first. Already on the
     // list → straight to the blog. New → capture via Netlify → thank-you.
