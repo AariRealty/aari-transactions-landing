@@ -590,6 +590,9 @@ async function sendEmail(
 
   // Sender uses the verified Resend domain (same env as the rest of the email
   // system). BCC gives Marlenyi a copy of every executed SA (June 2026 fix).
+  // FAIL-SOFT: if the domain send is rejected (e.g. domain not yet verified
+  // in Resend), retry once with the legacy sandbox sender and no BCC — the
+  // send never gets WORSE than the old behavior.
   const body = {
     from: Deno.env.get("FROM_EMAIL") ?? "Aari Transactions <hello@aaritransactions.com>",
     to: [p.agent_email],
@@ -604,18 +607,27 @@ async function sendEmail(
     ],
   };
 
-  const resp = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: "Bearer " + apiKey,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  const send = (payload: Record<string, unknown>) =>
+    fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
 
+  let resp = await send(body);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    return { ok: false, error: "resend_failed_" + resp.status + ":" + text.slice(0, 200) };
+    console.warn("[aari-sa-pdf-email] domain send failed (" + resp.status + ") — retrying via sandbox sender:", text.slice(0, 200));
+    const fallback = { ...body, from: "Aari Transactions <onboarding@resend.dev>" } as Record<string, unknown>;
+    delete (fallback as { bcc?: unknown }).bcc;
+    resp = await send(fallback);
+    if (!resp.ok) {
+      const t2 = await resp.text().catch(() => "");
+      return { ok: false, error: "resend_failed_" + resp.status + ":" + t2.slice(0, 200) };
+    }
   }
   return { ok: true };
 }
