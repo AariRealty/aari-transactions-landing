@@ -318,7 +318,7 @@
   function regMount() {
     if (_regRoot) return _regRoot;
     _regRoot = el('div', { class: 'aari-modal-overlay', 'aria-hidden': 'true' });
-    const card = el('div', { class: 'aari-modal-card', style: 'max-width:960px;width:100%;height:calc(100vh - 64px);padding:0;overflow:hidden' });
+    const card = el('div', { class: 'aari-modal-card', style: 'max-width:620px;width:100%;height:min(740px, calc(100vh - 64px));padding:0;overflow:hidden' });
     const closeBtn = el('button', { class: 'aari-modal-close', 'aria-label': 'Close', type: 'button', style: 'z-index:2;background:#fff' });
     closeBtn.textContent = '\u00d7';
     closeBtn.addEventListener('click', closeRegister);
