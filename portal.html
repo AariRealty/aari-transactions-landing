@@ -452,6 +452,12 @@
 </head>
 <body>
 
+<!-- BOOT SCREEN · covers everything until the onboarding check resolves.
+     Plain cream + logo per spec · no spinner, no text. -->
+<div id="bootScreen" style="position:fixed;inset:0;background:#f5f0e8;z-index:1500;display:flex;align-items:center;justify-content:center">
+  <img src="/images/aari-a-logo.png" alt="Aari" style="height:64px;width:auto" onerror="this.remove()">
+</div>
+
 <!-- In-portal intake overlay · iframe loads the intake modal in modal-only mode -->
 <div class="intake-overlay" id="intakeOverlay" role="dialog" aria-modal="true" aria-label="Submit a file">
   <button type="button" class="intake-overlay-close" id="intakeOverlayClose" aria-label="Close">&times;</button>
@@ -873,8 +879,14 @@
     })();
     _profile = await window.AariAuth.getAgentProfile();
     if(!_profile){ return showGate('Profile missing','Contact hello@aaritransactions.com.',null); }
-    // Item 4 · onboarding overlay drops BEFORE the dashboard paints — no flash.
-    if(_profile.role === 'agent' && _profile.onboarding_complete === false){ obOpen(); }
+    // Item 4 · onboarding check gates EVERYTHING (her spec, June 2026):
+    // nothing renders and no data loads until onboarding completes or is
+    // skipped. The cream boot screen stays behind the overlay meanwhile.
+    if(_profile.role === 'agent' && _profile.onboarding_complete === false){
+      obOpen();
+      await new Promise(res => { _ob.onDone = res; });
+    }
+    bootHide();
     document.getElementById('page-main').style.display = 'block';
     if(_profile.first_name) document.getElementById('welcome-greet').textContent = 'Welcome back, ' + _profile.first_name;
     document.getElementById('welcome-sub').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
@@ -908,7 +920,10 @@
       .then(r => { _ob.tcs = (r && r.data) || []; if(_ob.step === 2) obRender(); });
     obRender();
   }
-  function obClose(){ if(_ob.root){ _ob.root.remove(); _ob.root = null; } }
+  function obClose(){
+    if(_ob.root){ _ob.root.remove(); _ob.root = null; }
+    if(_ob.onDone){ const f = _ob.onDone; _ob.onDone = null; f(); }
+  }
   function obDots(n){
     let h = '<div style="text-align:center;margin-bottom:18px">';
     for(let i = 1; i <= 4; i++){
@@ -1273,7 +1288,11 @@
     });
   }
 
+  function bootHide(){ const b = document.getElementById('bootScreen'); if(b) b.remove(); }
+  // Safety net · never leave the boot screen stuck if something throws.
+  setTimeout(bootHide, 15000);
   function showGate(t,m,h){
+    bootHide();
     const g = document.getElementById('gate');
     document.getElementById('gate-title').textContent = t;
     document.getElementById('gate-msg').textContent = m;
