@@ -156,11 +156,8 @@
   /* ===== KANBAN · CSS GRID with 6 columns · belt-and-suspenders ===== */
   /* ===== MY FILES · agent-facing TC-work summary (Item 2 · June 2026) ===== */
   .myfiles-section { margin-bottom: 28px; }
-  .mf-card { background:#fff; border:0.5px solid var(--line); border-radius:10px; padding:0; margin-bottom:14px; overflow:hidden; }
-  .mf-head { padding:14px 18px 12px; }
-  .mf-addr { font-size:13.5px; font-weight:600; color:var(--ink); }
-  .mf-meta { font-size:11px; color:var(--muted); margin-top:3px; }
-  .mf-row { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; padding:12px 18px 14px; border-top:0.5px solid var(--line); background:#fdfdfc; }
+  .mf-card { background:#fff; border:0.5px solid #e8e4db; border-radius:10px; padding:0; margin-bottom:8px; overflow:hidden; }
+  .mf-row { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; padding:8px 14px 12px; border-top:0.5px solid #f0ebe0; background:#fff; }
   .mf-cell .mf-lbl { font-size:10px; color:#9a9a9a; letter-spacing:0.4px; margin-bottom:4px; }
   .mf-cell .mf-val { font-size:12.5px; color:var(--ink); }
   .mf-badge { display:inline-block; font-size:11px; font-weight:600; border-radius:999px; padding:3px 10px; }
@@ -851,6 +848,8 @@
     wireGoalModal();
     forceKanbanLayout();
     await loadAll();
+    // Item 1 · live stage updates · agent sees TC moves without refreshing.
+    mfInitRealtime(session.user.id);
   }
 
   // ===== REFER AN AGENT =====
@@ -1287,6 +1286,55 @@
   // Next deadline comes from the SHARED deadline engine (/js/deadline-engine.js),
   // EMD from the files.emd jsonb the TC widget writes, "this week" from the
   // stage_tasks jsonb. Agents see plain English only — never db keys.
+  // Stage model · mirrors the TC cockpit's sale lane (plain-English labels only).
+  const MF_STAGES = ['new','waiting_for_tc','under_contract','inspection','remedy','appraisal','ctc','closed'];
+  const MF_STAGE_LABELS = { new:'New', waiting_for_tc:'Waiting for TC', under_contract:'Under Contract', inspection:'Inspection', remedy:'Remedy', appraisal:'Appraisal', ctc:'Clear to Close', closed:'Closed' };
+  function mfStageOf(f){
+    const s = (f.transaction_stage || '').toLowerCase();
+    if(MF_STAGES.indexOf(s) >= 0) return s;
+    if(f.status === 'closed' || f.status === 'archived') return 'closed';
+    if(f.assigned_tc_id && !f.tc_accepted_at && (f.status === 'awaiting_tc_acceptance' || f.status === 'intake_received' || !f.status)) return 'waiting_for_tc';
+    return 'new';
+  }
+  // "updated X ago" · never a raw timestamp.
+  function mfAgo(iso){
+    if(!iso) return '';
+    const then = new Date(iso);
+    const mins = Math.floor((Date.now() - then.getTime()) / 60000);
+    if(mins < 1) return 'updated just now';
+    if(mins < 60) return 'updated ' + mins + ' minute' + (mins === 1 ? '' : 's') + ' ago';
+    const hrs = Math.floor(mins / 60);
+    if(hrs < 24) return 'updated ' + hrs + ' hour' + (hrs === 1 ? '' : 's') + ' ago';
+    const today = new Date(); today.setHours(0,0,0,0);
+    const day = new Date(then.getTime()); day.setHours(0,0,0,0);
+    const days = Math.round((today - day) / 86400000);
+    if(days === 1) return 'updated yesterday';
+    return 'updated ' + then.toLocaleDateString('en-US', { weekday: 'long' });
+  }
+  // 30-second "Updated just now" window after a realtime event.
+  const _mfJustNow = {};
+  function mfInitRealtime(uid){
+    try {
+      _client.channel('agent-files-live')
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'files', filter: 'agent_id=eq.' + uid }, (payload) => {
+          const row = payload && payload.new;
+          if(!row || !row.id) return;
+          const i = _files.findIndex(x => x.id === row.id);
+          if(i < 0) return;
+          _files[i] = { ..._files[i], ...row };
+          _mfJustNow[row.id] = Date.now();
+          renderMyFiles();
+          renderKanban();
+          setTimeout(() => {
+            if(_mfJustNow[row.id] && Date.now() - _mfJustNow[row.id] >= 29500){
+              delete _mfJustNow[row.id];
+              renderMyFiles();
+            }
+          }, 30500);
+        })
+        .subscribe();
+    } catch(_){ /* realtime unavailable · cards still work on refresh */ }
+  }
   function mfWeekStart(){
     const d = new Date(); d.setHours(0,0,0,0);
     d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // Monday
@@ -1354,14 +1402,51 @@
       const allKeys = Object.keys(dt);
       const n = allKeys.filter(k => { const r = dt[k]; return r && r.at && new Date(r.at) >= ws; }).length;
       const weekHtml = allKeys.length === 0 ? 'Getting started' : (n + ' task' + (n === 1 ? '' : 's') + ' done');
-      // — Card
-      const side = f.client_type === 'buyer' ? 'Buyer side' : (f.client_type === 'seller' ? 'Seller side' : '');
-      const meta = [side, f.client_name].filter(Boolean).join(' \u00b7 ');
+      // — Black header (Item 1 · approved mockup)
+      const raw = f.raw_form_data || {};
+      const rep = raw.pa_representation || '';
+      const svc = sale ? (rep === 'both_sides' ? 'TC Both Sides' : 'TC One Side') : 'File';
+      const justNow = _mfJustNow[f.id] && (Date.now() - _mfJustNow[f.id] < 30000);
+      const ago = justNow ? 'Updated just now' : mfAgo(f.updated_at || f.created_at);
+      const subLine = [svc, tcName !== 'Assigning\u2026' ? tcName : null, ago].filter(Boolean).join(' \u00b7 ');
+      // Days to close · whole days · amber \u22647 · "Closed" past · "\u2014" missing
+      let dtcNum = '\u2014', dtcColor = '#fff', dtcLabel = 'days to close';
+      if(f.closing_date){
+        const cd = new Date(f.closing_date + 'T00:00:00'); cd.setHours(0,0,0,0);
+        const d = Math.round((cd - today) / 86400000);
+        if(d < 0){ dtcNum = 'Closed'; dtcLabel = ''; }
+        else { dtcNum = String(d); if(d <= 7) dtcColor = '#f0d89a'; }
+      }
+      // Progress bar · 8 segments (sale files only)
+      let barHtml = '';
+      if(sale){
+        const stage = mfStageOf(f);
+        const idx = Math.max(0, MF_STAGES.indexOf(stage));
+        const segs = MF_STAGES.map((k, i) => {
+          const bg = i < idx ? '#0f0f0f' : (i === idx ? '#f0d89a' : '#f0ebe0');
+          return '<span style="flex:1;height:4px;border-radius:2px;background:' + bg + '"></span>';
+        }).join('');
+        barHtml = '<div style="padding:12px 14px;background:#fff">' +
+          '<div style="display:flex;gap:3px">' + segs + '</div>' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:5px">' +
+            '<span style="font-size:8px;color:#888">New</span>' +
+            '<span style="font-size:8px;color:#0f0f0f;font-weight:500">' + esc(MF_STAGE_LABELS[stage] || stage) + ' \u2190</span>' +
+            '<span style="font-size:8px;color:#888">Closed</span>' +
+          '</div>' +
+        '</div>';
+      }
       return '<div class="mf-card" data-file-id="' + esc(f.id) + '">' +
-        '<div class="mf-head">' +
-          '<div class="mf-addr">' + esc(f.property_address || 'Untitled file') + '</div>' +
-          (meta ? '<div class="mf-meta">' + esc(meta) + '</div>' : '') +
+        '<div style="background:#0f0f0f;padding:12px 14px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px">' +
+          '<div style="min-width:0">' +
+            '<div style="font-size:13px;font-weight:500;color:#fff">' + esc(f.property_address || 'Untitled file') + '</div>' +
+            '<div style="font-size:10px;color:rgba(255,255,255,0.5);margin-top:3px">' + esc(subLine) + '</div>' +
+          '</div>' +
+          '<div style="text-align:right;flex:none">' +
+            '<div style="font-size:18px;font-weight:500;color:' + dtcColor + ';line-height:1">' + esc(dtcNum) + '</div>' +
+            (dtcLabel ? '<div style="font-size:10px;color:rgba(255,255,255,0.6);margin-top:2px">' + dtcLabel + '</div>' : '') +
+          '</div>' +
         '</div>' +
+        barHtml +
         '<div class="mf-row">' +
           '<div class="mf-cell"><div class="mf-lbl">Next deadline</div><div class="mf-val">' + dlHtml + '</div></div>' +
           '<div class="mf-cell"><div class="mf-lbl">EMD status</div><div class="mf-val">' + emdHtml + '</div></div>' +
