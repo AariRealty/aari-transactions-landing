@@ -192,14 +192,12 @@
     var subscribed = false;
     try { subscribed = !!localStorage.getItem(KEY); } catch (e) {}
     if (subscribed) {
-      var d = document.createElement('div');
-      d.style.cssText = 'position:relative;z-index:2;margin-top:6px';
-      d.innerHTML = '<p style="font-size:13.5px;color:#3a3a3a;margin:0 0 14px">&#10003; You&rsquo;re on the list.</p>' +
-        '<a href="/blog/" class="aari-foot-btn" style="display:inline-block;text-decoration:none">Read the latest &rarr;</a>';
+      // Known-subscriber hint ABOVE the form — the capture form always stays
+      // visible (shared/office devices must still collect emails).
+      var d = document.createElement('p');
+      d.style.cssText = 'position:relative;z-index:2;font-size:13px;color:#3a3a3a;margin:0 0 14px';
+      d.innerHTML = '&#10003; You&rsquo;re on the list. <a href="/blog/" style="color:#0a0a0a;font-weight:600;text-decoration:underline;text-underline-offset:3px">Read the latest &rarr;</a>';
       form.parentNode.insertBefore(d, form);
-      form.style.display = 'none';
-      if (consent) consent.style.display = 'none';
-      return;
     }
     // Email-aware submit: check the subscriber table first. Already on the
     // list → straight to the blog. New → capture via Netlify → thank-you.
