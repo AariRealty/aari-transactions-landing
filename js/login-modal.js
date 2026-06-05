@@ -20,7 +20,7 @@
   'use strict';
 
   let _root = null;
-  let _state = 'login'; // 'login' | 'reset' | 'reset-sent'
+  let _state = 'login'; // 'login' | 'reset' | 'reset-sent' | 'signed-in'
 
   function el(tag, attrs, children) {
     const node = document.createElement(tag);
@@ -61,6 +61,7 @@
     if (_state === 'login') card.appendChild(loginView());
     else if (_state === 'reset') card.appendChild(resetView());
     else if (_state === 'reset-sent') card.appendChild(resetSentView());
+    else if (_state === 'signed-in') card.appendChild(signedInView());
 
     _root.appendChild(card);
   }
@@ -237,6 +238,41 @@
     return wrap;
   }
 
+  // Shared role-based destination · mirrors the post-login routing below.
+  async function portalDestination() {
+    try {
+      const profile = await global.AariAuth.getAgentProfile();
+      if (profile && profile.role === 'tc' && String(profile.first_name || '').toLowerCase() === 'eileen') return '/eileen.html';
+      if (profile && (profile.role === 'tc' || profile.role === 'broker')) return '/aari-crm';
+    } catch (_) {}
+    return '/portal';
+  }
+
+  function signedInView() {
+    const wrap = el('div');
+    wrap.appendChild(el('h1', { style: "font-family:'Cormorant Garamond','Playfair Display',Georgia,serif;font-size:34px;font-weight:600;color:#0f0f0f;margin:0 0 6px;letter-spacing:-0.01em", html: 'You&rsquo;re signed in.' }));
+    wrap.appendChild(el('p', { style: 'font-size:14px;color:#6b6b6b;line-height:1.5;margin:0 0 22px', html: 'Pick up where you left off.' }));
+    const go = el('button', { type: 'button', style: 'width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:10px;padding:16px 0;font:700 13px Inter,sans-serif;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer', html: 'Go to my portal &rarr;' });
+    go.addEventListener('click', async function () {
+      go.disabled = true;
+      go.innerHTML = '<span class="aari-spinner"></span> Opening…';
+      window.location.href = await portalDestination();
+    });
+    wrap.appendChild(go);
+    const out = el('p', { style: 'text-align:center;margin:16px 0 0' });
+    const outLink = el('a', { href: '#', style: 'font-size:12.5px;color:#8a877f;text-decoration:underline;text-underline-offset:3px' });
+    outLink.textContent = 'Not you? Sign out';
+    outLink.addEventListener('click', async function (e) {
+      e.preventDefault();
+      try { await global.AariAuth.signOut(); } catch (_) {}
+      _state = 'login';
+      render();
+    });
+    out.appendChild(outLink);
+    wrap.appendChild(out);
+    return wrap;
+  }
+
   function showAlert(slot, kind, message) {
     slot.innerHTML = '';
     const a = el('div', { class: 'aari-alert ' + kind });
@@ -248,6 +284,16 @@
     mount();
     _state = 'login';
     render();
+    // Already signed in? Swap the form for the signed-in card — the visitor
+    // stays on this page until THEY choose to enter the portal.
+    (async function () {
+      try {
+        if (!global.AariAuth) return;
+        await global.AariAuth.ensureClient();
+        const s = await global.AariAuth.getCurrentSession();
+        if (s) { _state = 'signed-in'; render(); }
+      } catch (_) {}
+    })();
     requestAnimationFrame(() => _root.classList.add('open'));
     _root.setAttribute('aria-hidden', 'false');
     // focus the email field
