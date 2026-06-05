@@ -342,7 +342,13 @@
   }
   // The embedded register page hands its "Sign in" links back to this popup.
   window.addEventListener('message', function (e) {
-    if (e && e.data && e.data.aari === 'open-login') { closeRegister(); open(); }
+    if (!e || !e.data) return;
+    if (e.data.aari === 'open-login') { closeRegister(); open(); return; }
+    if (e.data.aari === 'embed-height' && _regRoot) {
+      // Fit the popup to the wizard step — no scrollbar inside the box.
+      var c = _regRoot.querySelector('.aari-modal-card');
+      if (c && e.data.h) c.style.height = Math.min(Math.ceil(e.data.h), window.innerHeight - 64) + 'px';
+    }
   });
 
   // Auto-attach to [data-aari-login] elements
