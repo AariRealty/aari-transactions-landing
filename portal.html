@@ -157,7 +157,17 @@
   /* ===== MY FILES · agent-facing TC-work summary (Item 2 · June 2026) ===== */
   .myfiles-section { margin-bottom: 28px; }
   .mf-card { background:#fff; border:0.5px solid #e8e4db; border-radius:10px; padding:0; margin-bottom:8px; overflow:hidden; }
-  .mf-row { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; padding:8px 14px 12px; border-top:0.5px solid #f0ebe0; background:#fff; }
+  .mf-row { display:grid; grid-template-columns:1.2fr 1fr 1fr 0.9fr auto; gap:14px; padding:8px 14px 12px; border-top:0.5px solid #f0ebe0; background:#fff; }
+  .mf-doc-chip { display:inline-flex; align-items:center; gap:4px; background:#faf8f4; border:0.5px solid #ece6d9; border-radius:999px; padding:4px 10px; font-size:11px; font-weight:500; color:var(--ink); cursor:pointer; font-family:inherit; }
+  .mf-doc-chip:hover { background:#f5f0e8; }
+  .mf-doc-chip i { font-size:12px; color:#888; }
+  .mf-docs { border-top:0.5px solid #f0ebe0; background:#faf8f4; padding:4px 14px; }
+  .mf-doc-row { display:flex; align-items:center; gap:9px; padding:8px 0; border-bottom:0.5px solid #f0ebe0; }
+  .mf-doc-row:last-child { border-bottom:none; }
+  .mf-doc-row:hover { background:#faf8f4; }
+  .mf-doc-name { flex:1; min-width:0; font-size:12px; font-weight:500; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mf-doc-sub { font-size:10px; color:#888; font-weight:400; }
+  .mf-doc-btn { border:none; font-family:inherit; font-size:10px; font-weight:500; border-radius:6px; padding:3px 8px; cursor:pointer; }
   .mf-cell .mf-lbl { font-size:10px; color:#9a9a9a; letter-spacing:0.4px; margin-bottom:4px; }
   .mf-cell .mf-val { font-size:12.5px; color:var(--ink); }
   .mf-badge { display:inline-block; font-size:11px; font-weight:600; border-radius:999px; padding:3px 10px; }
@@ -1335,6 +1345,113 @@
         .subscribe();
     } catch(_){ /* realtime unavailable · cards still work on refresh */ }
   }
+  // ===== ITEM 3 · DOCUMENT ACCESS (Mockup 5 · paperclip chip) =====
+  // Docs live in the PRIVATE transaction-files bucket. Metadata (names) comes
+  // from the file row already in memory — the chip count costs zero queries.
+  // Fresh signed URLs are generated per-document on tap (1-hour TTL), so
+  // nothing loads until the agent asks. Read-only: no upload/delete here.
+  function mfDocList(f){
+    const raw = f.raw_form_data || {};
+    const docs = [];
+    const upBy = raw.submitted_by_name || '';
+    const upShort = upBy ? (upBy.split(' ')[0] + (upBy.split(' ')[1] ? ' ' + upBy.split(' ')[1].charAt(0).toUpperCase() + '.' : '')) : 'Your TC';
+    const date = f.created_at ? new Date(f.created_at).toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '';
+    if(raw.contract_filename || raw.contract_url){
+      docs.push({ name: raw.contract_filename || 'Executed contract.pdf',
+        path: raw.submitted_by ? (raw.submitted_by + '/' + f.id + '/' + (raw.contract_filename || '')) : (raw.contract_path || ''),
+        url: raw.contract_url || '', date, by: upShort });
+    }
+    (Array.isArray(raw.additional_docs) ? raw.additional_docs : []).forEach(d => {
+      if(!d) return;
+      docs.push({ name: d.filename || 'Document.pdf',
+        path: d.path || (raw.submitted_by ? (raw.submitted_by + '/' + f.id + '/additional/' + (d.filename || '')) : ''),
+        url: d.url || '', date, by: upShort });
+    });
+    return docs;
+  }
+  function mfDocCount(f){ return mfDocList(f).length; }
+  async function mfDocUrl(doc, forDownload){
+    // Fresh signed URL first (works while RLS allows) · stored 7-day URL as
+    // fallback · null = unavailable.
+    if(doc.path){
+      try {
+        const opts = forDownload ? { download: doc.name } : undefined;
+        const { data, error } = await _client.storage.from('transaction-files').createSignedUrl(doc.path, 3600, opts);
+        if(!error && data && data.signedUrl) return data.signedUrl;
+      } catch(_){}
+    }
+    return doc.url || null;
+  }
+  function mfRenderDocPanel(f, panel){
+    const docs = mfDocList(f);
+    if(!docs.length){
+      panel.innerHTML = '<p style="font-size:11px;color:#888;margin:8px 0">No documents yet</p>';
+      return;
+    }
+    const cap = 20;
+    const shown = docs.slice(0, cap);
+    panel.innerHTML = shown.map((d, i) =>
+      '<div class="mf-doc-row">' +
+        '<i class="ti ti-file" style="font-size:14px;color:#888;flex:none" aria-hidden="true"></i>' +
+        '<span class="mf-doc-name">' + esc(d.name) + ' <span class="mf-doc-sub">' + esc(d.date) + (d.by ? ' \u00b7 ' + esc(d.by) : '') + '</span></span>' +
+        '<button type="button" class="mf-doc-btn" data-doc-view="' + i + '" style="background:#e6f1fb;color:#185FA5">View</button>' +
+        '<button type="button" class="mf-doc-btn" data-doc-dl="' + i + '" style="background:#f3f3f1;color:#888">Download</button>' +
+      '</div>'
+    ).join('') + (docs.length > cap ? '<p style="font-size:11px;color:#888;margin:8px 0"><a href="#" data-doc-all style="color:#0f0f0f">View all ' + docs.length + ' documents</a></p>' : '');
+    panel._docs = docs;
+  }
+  document.addEventListener('click', async (e) => {
+    const chip = e.target.closest && e.target.closest('[data-doc-chip]');
+    if(chip){
+      const fid = chip.getAttribute('data-doc-chip');
+      const panel = document.querySelector('[data-doc-panel="' + fid + '"]');
+      const f = _files.find(x => x.id === fid);
+      if(!panel || !f) return;
+      if(panel.hidden){ mfRenderDocPanel(f, panel); panel.hidden = false; }
+      else { panel.hidden = true; }
+      return;
+    }
+    const act = e.target.closest && (e.target.closest('[data-doc-view]') || e.target.closest('[data-doc-dl]'));
+    if(act){
+      const panel = act.closest('[data-doc-panel]');
+      const docs = panel && panel._docs;
+      if(!docs) return;
+      const isDl = act.hasAttribute('data-doc-dl');
+      const idx = parseInt(act.getAttribute(isDl ? 'data-doc-dl' : 'data-doc-view'), 10);
+      const doc = docs[idx];
+      if(!doc) return;
+      const prev = act.textContent;
+      act.disabled = true; act.textContent = '\u2026';
+      const url = await mfDocUrl(doc, isDl);
+      act.disabled = false; act.textContent = prev;
+      if(!url){
+        act.outerHTML = '<span style="font-size:10px;color:#e0a8a8;font-weight:500">Unavailable</span>';
+        return;
+      }
+      window.open(url, '_blank', 'noopener');
+      return;
+    }
+    const all = e.target.closest && e.target.closest('[data-doc-all]');
+    if(all){
+      e.preventDefault();
+      const panel = all.closest('[data-doc-panel]');
+      const fid = panel && panel.getAttribute('data-doc-panel');
+      const f = _files.find(x => x.id === fid);
+      if(panel && f){ panel._showAll = true;
+        const docs = panel._docs || [];
+        panel.innerHTML = docs.map((d, i) =>
+          '<div class="mf-doc-row">' +
+            '<i class="ti ti-file" style="font-size:14px;color:#888;flex:none" aria-hidden="true"></i>' +
+            '<span class="mf-doc-name">' + esc(d.name) + ' <span class="mf-doc-sub">' + esc(d.date) + (d.by ? ' \u00b7 ' + esc(d.by) : '') + '</span></span>' +
+            '<button type="button" class="mf-doc-btn" data-doc-view="' + i + '" style="background:#e6f1fb;color:#185FA5">View</button>' +
+            '<button type="button" class="mf-doc-btn" data-doc-dl="' + i + '" style="background:#f3f3f1;color:#888">Download</button>' +
+          '</div>'
+        ).join('');
+        panel._docs = docs;
+      }
+      return;
+    }
+  });
   function mfWeekStart(){
     const d = new Date(); d.setHours(0,0,0,0);
     d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // Monday
@@ -1452,7 +1569,9 @@
           '<div class="mf-cell"><div class="mf-lbl">EMD status</div><div class="mf-val">' + emdHtml + '</div></div>' +
           '<div class="mf-cell"><div class="mf-lbl">Your TC</div><div class="mf-val">' + tcHtml + '</div></div>' +
           '<div class="mf-cell"><div class="mf-lbl">This week</div><div class="mf-val">' + weekHtml + '</div></div>' +
+          '<div class="mf-cell" style="justify-self:end;align-self:center"><button type="button" class="mf-doc-chip" data-doc-chip="' + esc(f.id) + '" aria-label="Documents"><i class="ti ti-paperclip" aria-hidden="true"></i> ' + mfDocCount(f) + '</button></div>' +
         '</div>' +
+        '<div class="mf-docs" data-doc-panel="' + esc(f.id) + '" hidden></div>' +
       '</div>';
     }).join('');
   }
