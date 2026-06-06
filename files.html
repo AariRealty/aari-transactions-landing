@@ -5348,6 +5348,40 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       renderPlaybook(file);
     } catch(err){ console.warn('[files] contract terms save failed', err); }
   }
+  // Save one day-count override (e.g. inspection = 10 days) into
+  // file.deadline_overrides — the same store the deadline engine reads. Empty
+  // clears the override (back to the contract standard). Re-renders without
+  // closing the popup (renderPlaybook respects _openPopKey).
+  async function ctSaveDays(file, field, value){
+    try {
+      const ov = Object.assign({}, file.deadline_overrides || {});
+      if(value === '' || value == null){ delete ov[field]; }
+      else ov[field] = Number(value);
+      file.deadline_overrides = ov;
+      if(_currentFile && _currentFile.id === file.id) _currentFile.deadline_overrides = ov;
+      await _client.from('files').update({ deadline_overrides: ov }).eq('id', file.id);
+      writeAuditLog('contract_term_confirmed', file.id, { day_override: { field: field, value: (ov[field] != null ? ov[field] : null) } });
+      renderPlaybook(file);
+    } catch(err){ console.warn('[files] day override save failed', err); }
+  }
+  // Day-count fields a TC confirms off the executed contract, in display order.
+  //   f  · CONTRACT_DEFAULTS / deadline_overrides key
+  //   dk · engine deadline key whose computed date this field drives
+  const CT_DAY_FIELDS = [
+    { f:'dep',           label:'Initial deposit',          dk:'init_deposit' },
+    { f:'lapp',          label:'Loan application',         dk:'loan_app' },
+    { f:'lappr',         label:'Loan approval',            dk:'loan_approval' },
+    { f:'fin',           label:'Finance contingency',      dk:'finance_cont' },
+    { f:'insp',          label:'Inspection period',        dk:'inspection_end' },
+    { f:'feas',          label:'Feasibility period',       dk:'feasibility_end' },
+    { f:'sellerResp',    label:'Seller response window',   dk:'seller_response' },
+    { f:'hoa',           label:'HOA / condo doc review',   dk:'hoa_review' },
+    { f:'due_diligence', label:'Due diligence',            dk:'due_diligence' },
+    { f:'titleDays',     label:'Title policy delivery',    dk:'title_policy' },
+    { f:'surveyDays',    label:'Existing survey',          dk:'survey_existing' },
+    { f:'leaseDays',     label:'Written leases',           dk:'leases_provided' },
+    { f:'title',         label:'Title evidence (pre-close)', dk:'title_evidence' },
+  ];
   // Standard deadlines for a contract type · pulled from the shared engine's
   // own definitions (NOT from any third-party chart). A short family note
   // captures the behavioral difference TCs need at a glance.
@@ -5434,20 +5468,77 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const ctSelect = '<select id="ct-contract"><option value="">Pick from the contract</option>' +
       ctOpts.map(o => { const p = o.split('|'); return '<option value="' + p[0] + '"' + (ct === p[0] ? ' selected' : '') + '>' + esc(p[1]) + '</option>'; }).join('') + '</select>';
 
+    // Day-count rows · driven by the selected contract's standard fields.
+    const ENG = window.AariDeadlineEngine;
+    const stdCfg = (ENG && ENG.CONTRACT_DEFAULTS && ENG.CONTRACT_DEFAULTS[ct]) || {};
+    const ov = Object.assign({}, file.deadline_overrides || {});
+    if(ov.insp == null && lg.inspection_days != null && lg.inspection_days !== '') ov.insp = Number(lg.inspection_days);
+    const fmtMD = function(d){ return d ? d.toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '—'; };
+    let dateMap = {}, stdMap = {}, haveDates = !!(eff && cls && ct && ENG && ENG.CONTRACT_DEADLINES && ENG.CONTRACT_DEADLINES[ct]);
+    if(haveDates){
+      try {
+        ENG.contractDeadlines(ct, eff, cls, ov).forEach(function(d){ dateMap[d.key] = d.date; });
+        ENG.contractDeadlines(ct, eff, cls, {}).forEach(function(d){ stdMap[d.key] = d.date; });
+      } catch(_){ haveDates = false; }
+    }
+    const dayBox = function(id, val){
+      return '<input type="number" id="' + id + '" min="0" max="365" value="' + (val === '' || val == null ? '' : esc(val)) + '" ' +
+        'style="width:48px;height:38px;text-align:center;background:#0f0f0f;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;font-family:inherit;-moz-appearance:textfield">';
+    };
+    const dayRows = CT_DAY_FIELDS.filter(function(fd){ return stdCfg[fd.f] != null; }).map(function(fd){
+      const f = fd.f, isInsp = (f === 'insp');
+      const curVal = (ov[f] != null) ? ov[f] : stdCfg[f];
+      const stdVal = stdCfg[f];
+      const differs = (ov[f] != null && Number(ov[f]) !== Number(stdVal));
+      const dateStr = haveDates ? fmtMD(dateMap[fd.dk]) : '—';
+      const stdHint = differs
+        ? '<div style="font-size:10px;color:#c69a4a;margin-top:2px">standard ' + stdVal + (haveDates && stdMap[fd.dk] ? ' &middot; ' + fmtMD(stdMap[fd.dk]) : '') + '</div>'
+        : '';
+      let right;
+      if(isInsp && inspWaived){
+        right = '<span style="display:flex;align-items:center;gap:8px">' +
+          '<span style="font-size:11px;font-weight:600;color:#0f0f0f;background:#efece6;border-radius:7px;padding:6px 11px">Waived</span>' +
+          '<button type="button" id="ct-inspunwaive" style="background:none;border:none;color:#9a958c;font-size:11px;cursor:pointer;font-family:inherit;text-decoration:underline">undo</button>' +
+        '</span>';
+      } else {
+        right = '<span style="display:flex;align-items:center;gap:9px">' +
+          dayBox('ctd-' + f, curVal) +
+          '<span style="font-size:11px;color:#a39e95">days</span>' +
+          '<span style="font-size:14px;font-weight:600;color:#0f0f0f;min-width:52px;text-align:right">' + dateStr + '</span>' +
+          (isInsp ? '<button type="button" id="ct-inspwaive" title="Mark inspection waived" style="background:none;border:none;color:#c2bdb4;font-size:15px;line-height:1;cursor:pointer;font-family:inherit" aria-label="Waive inspection">&times;</button>' : '') +
+        '</span>';
+      }
+      return '<div style="display:flex;align-items:flex-start;justify-content:space-between;padding:11px 0;border-top:0.5px solid #f1ede6">' +
+        '<span style="font-size:13px;color:#0f0f0f;padding-top:8px">' + esc(fd.label) + stdHint + '</span>' + right + '</div>';
+    }).join('');
+    const grp = function(t){ return '<p style="font-size:10.5px;font-weight:600;letter-spacing:.07em;color:#b3aea5;text-transform:uppercase;margin:16px 0 2px">' + t + '</p>'; };
+    const dateCtl = function(id, val){
+      return '<input type="date" id="' + id + '" value="' + esc(val) + '" style="border:0.5px solid #dcdcdc;border-radius:8px;padding:6px 9px;font-size:13px;font-family:inherit;background:#fff">';
+    };
+
     host.innerHTML =
-      '<p style="font-size:11px;color:#8a877f;margin:0 0 4px">Open the executed contract and confirm each line against it. What you set here drives the deadlines, tasks, and emails.</p>' +
-      '<p class="ct-grouplabel">The contract</p>' +
-      '<div class="ct-row"><span class="ct-label">Contract type</span><span class="ct-ctl">' + ctSelect + '</span></div>' +
-      '<div class="ct-di">' + contractDeadlineInfoHtml(file) + '</div>' +
-      '<div class="ct-row"><span class="ct-label">Effective date' + (agentEff ? '<span class="ct-src">Agent entered ' + esc(agentEff) + '</span>' : '') + '</span><span class="ct-ctl"><input type="date" id="ct-eff" value="' + esc(eff) + '">' + (eff ? '<span class="ct-ok">&check;</span>' : '<span class="ct-warn">needed</span>') + '</span></div>' +
-      '<div class="ct-row"><span class="ct-label">Closing date' + (agentCls ? '<span class="ct-src">Agent entered ' + esc(agentCls) + '</span>' : '') + '</span><span class="ct-ctl"><input type="date" id="ct-cls" value="' + esc(cls) + '">' + (cls ? '<span class="ct-ok">&check;</span>' : '<span class="ct-warn">needed</span>') + '</span></div>' +
-      '<p class="ct-grouplabel">What applies</p>' +
-      '<div class="ct-row"><span class="ct-label">Financing</span><span class="ct-ctl">' + seg(fin, 'financed', 'Financed', 'cash', 'Cash', 'fin') + '</span></div>' +
-      '<div class="ct-row"><span class="ct-label">Inspection period</span><span class="ct-ctl">' +
-        (inspWaived ? '' : '<input type="number" id="ct-inspdays" min="0" max="60" value="' + esc(inspDays) + '" placeholder="days"> ') +
-        '<button type="button" class="ct-seg" id="ct-inspwaive" style="padding:5px 11px;background:' + (inspWaived ? '#0f0f0f' : '#fff') + ';color:' + (inspWaived ? '#fff' : '#5f5e5a') + ';border:0.5px solid #d9d4ca;border-radius:7px;cursor:pointer;font-size:11px;font-family:inherit">Waived</button>' +
-      '</span></div>' +
-      '<div class="ct-row"><span class="ct-label">HOA / condo</span><span class="ct-ctl">' + seg(hoa, 'yes', 'Yes', 'no', 'No', 'hoa') + '</span></div>';
+      '<p style="font-size:11px;color:#8a877f;margin:0 0 2px">Open the executed contract and confirm each line. What you set drives every deadline, task, and email.</p>' +
+      grp('Contract') +
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0">' +
+        '<span style="font-size:13px;color:#0f0f0f">Contract type</span><span>' + ctSelect + '</span></div>' +
+      grp('The two dates') +
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:0.5px solid #f1ede6">' +
+        '<span style="font-size:13px;color:#0f0f0f">Effective date' + (agentEff ? '<span style="display:block;font-size:10px;color:#b3aea5">agent entered ' + esc(agentEff) + '</span>' : '') + '</span>' +
+        '<span style="display:flex;align-items:center;gap:7px">' + dateCtl('ct-eff', eff) + (eff ? '' : '<span style="font-size:10px;color:#c69a4a">needed</span>') + '</span></div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:0.5px solid #f1ede6">' +
+        '<span style="font-size:13px;color:#0f0f0f">Closing date' + (agentCls ? '<span style="display:block;font-size:10px;color:#b3aea5">agent entered ' + esc(agentCls) + '</span>' : '') + '</span>' +
+        '<span style="display:flex;align-items:center;gap:7px">' + dateCtl('ct-cls', cls) + (cls ? '' : '<span style="font-size:10px;color:#c69a4a">needed</span>') + '</span></div>' +
+      (ct
+        ? (dayRows
+            ? grp('Type the days · from the contract') + dayRows +
+              (haveDates ? '' : '<p style="font-size:10.5px;color:#b3aea5;margin:8px 0 0">Set both dates above to see each deadline date.</p>')
+            : '')
+        : '<p style="font-size:11px;color:#b3aea5;margin:12px 0 0">Pick a contract type to load its deadlines.</p>') +
+      grp('What applies') +
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:0.5px solid #f1ede6">' +
+        '<span style="font-size:13px;color:#0f0f0f">Financing</span><span>' + seg(fin, 'financed', 'Financed', 'cash', 'Cash', 'fin') + '</span></div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:0.5px solid #f1ede6">' +
+        '<span style="font-size:13px;color:#0f0f0f">Property has HOA / condo</span><span>' + seg(hoa, 'yes', 'Yes', 'no', 'No', 'hoa') + '</span></div>';
 
     const done = termsConfirmed(file);
     if(meta) meta.textContent = done ? 'Set up · ready to work' : 'Confirm to unlock your work';
@@ -5461,10 +5552,14 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     if(clsI) clsI.addEventListener('change', () => ctSave(file, { closing_date: clsI.value || null }, null));
     host.querySelectorAll('[data-ct-fin]').forEach(b => b.addEventListener('click', () => ctSave(file, null, { financing_confirmed: b.getAttribute('data-ct-fin') })));
     host.querySelectorAll('[data-ct-hoa]').forEach(b => b.addEventListener('click', () => ctSave(file, null, { hoa_applies: b.getAttribute('data-ct-hoa') })));
-    const insD = document.getElementById('ct-inspdays');
-    if(insD) insD.addEventListener('change', () => ctSave(file, null, { inspection_days: insD.value === '' ? null : Number(insD.value), inspection_waived: false }));
+    CT_DAY_FIELDS.forEach(function(fd){
+      const el = document.getElementById('ctd-' + fd.f);
+      if(el) el.addEventListener('change', () => ctSaveDays(file, fd.f, el.value));
+    });
     const insW = document.getElementById('ct-inspwaive');
-    if(insW) insW.addEventListener('click', () => ctSave(file, null, { inspection_waived: !inspWaived }));
+    if(insW) insW.addEventListener('click', () => ctSave(file, null, { inspection_waived: true }));
+    const insU = document.getElementById('ct-inspunwaive');
+    if(insU) insU.addEventListener('click', () => ctSave(file, null, { inspection_waived: false }));
   }
 
   // Kanban card · Mockup 1 (approved June 2026): black header (address +
