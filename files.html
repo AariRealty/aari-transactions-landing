@@ -5539,8 +5539,32 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   // Step 1 · Contract terms · confirm dates + tailor what applies.
   // The executed contract is saved at intake INSIDE raw_form_data (the cockpit
   // 'files' row has no top-level contract_url column), so read both places.
-  function contractUrlOf(file){ return file.contract_url || (file.raw_form_data || {}).contract_url || ''; }
+  function contractUrlOf(file){ return file.contract_url || (file.raw_form_data || {}).contract_url || file._resolvedContract || ''; }
   function contractNameOf(file){ return file.contract_filename || (file.raw_form_data || {}).contract_filename || ''; }
+  // If no contract URL is saved on the row, the agent may still have uploaded
+  // the file at intake — go look for it in storage at {submitted_by}/{file.id}/
+  // and resolve a fresh signed URL. Cached per file (null = checked, none found).
+  async function resolveContractUrl(file){
+    if(file.contract_url || (file.raw_form_data || {}).contract_url) return;
+    if(file._resolvedContract !== undefined) return;
+    file._resolvedContract = null;
+    try {
+      const raw = file.raw_form_data || {};
+      const uid = raw.submitted_by;
+      if(!uid) return;
+      const prefix = uid + '/' + file.id;
+      const { data: objs } = await _client.storage.from('transaction-files').list(prefix);
+      if(objs && objs.length){
+        const want = (file.contract_filename || raw.contract_filename || '').replace(/[^a-zA-Z0-9._-]/g, '_');
+        const obj = objs.find(o => o.name === want)
+          || objs.find(o => o.name && o.name.toLowerCase().indexOf('additional') === -1 && /\.(pdf|jpe?g|png)$/i.test(o.name));
+        if(obj){
+          const { data } = await _client.storage.from('transaction-files').createSignedUrl(prefix + '/' + obj.name, 3600);
+          if(data && data.signedUrl){ file._resolvedContract = data.signedUrl; if(!file.contract_filename) file.contract_filename = obj.name; }
+        }
+      }
+    } catch(_){}
+  }
   // Open the executed contract PDF. Stored contract_url signed links expire, so
   // we regenerate a fresh one from the embedded storage path. Opens the tab
   // synchronously (within the click) to dodge popup blockers, then redirects it.
@@ -7511,7 +7535,10 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     wireLogisticsDelegation();
 
     // Step 1 · Contract terms · confirm dates + tailor what applies.
+    // First try to locate the agent's uploaded contract in storage if the row
+    // has no saved URL, then render (re-render once resolved so the button flips).
     renderContractTerms(file);
+    resolveContractUrl(file).then(function(){ if(_currentFile && _currentFile.id === file.id && file._resolvedContract) renderContractTerms(file); });
 
     // Stage checklist · per-kanban-column tasks (TC sale files) · now with each
     // task's email attached inline beneath it.
