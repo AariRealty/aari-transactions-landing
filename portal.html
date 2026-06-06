@@ -837,6 +837,20 @@
   let _verifs = [];
   let _deadlines = [];
   let _sends = [];
+  // Fix 3 Reader 3 · open deadlines for a file from the SHARED engine (dates),
+  // completion state still from file_deadlines (until Phase 3). Returns ALL
+  // upcoming deadlines — not just the sparse rows a TC happened to stamp.
+  function openDeadlinesForFile(f, now){
+    const eng = window.AariDeadlineEngine;
+    if(!eng) return [];
+    let dls = {};
+    try { dls = eng.fileDeadlines(f) || {}; } catch(_){ return []; }
+    const doneKeys = new Set(_deadlines.filter(d => d.file_id === f.id && d.completed_at).map(d => d.deadline_key));
+    return Object.keys(dls)
+      .filter(k => !doneKeys.has(k))
+      .map(k => ({ file_id: f.id, deadline_key: k, label: dls[k].label, date: dls[k].date, ms: dls[k].date.getTime() - now }))
+      .sort((a,b) => a.ms - b.ms);
+  }
   let _tcs = {};
   let _replyStats = { avgMinutes: null, onTimePct: null, sampleSize: 0 };
 
@@ -1967,10 +1981,9 @@
     const activeIds = new Set(active.map(f => f.id));
     const fileById = {}; active.forEach(f => { fileById[f.id] = f; });
     const now = Date.now();
-    const open = _deadlines
-      .filter(d => activeIds.has(d.file_id) && !d.completed_at && d.due_date)
-      .map(d => ({ ...d, ms: new Date(d.due_date+'T17:00:00').getTime() - now }))
-      .sort((a,b) => a.ms - b.ms);
+    let open = [];
+    active.forEach(f => { open = open.concat(openDeadlinesForFile(f, now)); });
+    open.sort((a,b) => a.ms - b.ms);
 
     if(!open.length){
       eb.textContent = 'Today';
@@ -1984,7 +1997,7 @@
     const top = open[0];
     const f = fileById[top.file_id];
     const addr = (f && f.property_address) || 'a file';
-    const lbl = String(top.deadline_key || 'Deadline').replace(/_/g,' ');
+    const lbl = top.label || 'Deadline';
     const hours = top.ms / 3600000;
     const days = top.ms / 86400000;
 
@@ -2170,15 +2183,11 @@
 
     // ===== UPCOMING DEADLINES · next 3 unfulfilled for this file =====
     const now = Date.now();
-    const fileDls = _deadlines
-      .filter(d => d.file_id === f.id && !d.completed_at && d.due_date)
-      .map(d => ({ ...d, ms: new Date(d.due_date+'T17:00:00').getTime() - now }))
-      .sort((a,b) => a.ms - b.ms)
-      .slice(0, 3);
+    const fileDls = openDeadlinesForFile(f, now).slice(0, 3);
     let upcoming = '';
     if(fileDls.length){
       const rows = fileDls.map(d => {
-        const lbl = String(d.deadline_key || 'Deadline').replace(/_/g,' ');
+        const lbl = d.label || 'Deadline';
         const hours = d.ms / 3600000;
         const days = d.ms / 86400000;
         let band = '', whenLbl = '';
@@ -2186,7 +2195,7 @@
         else if(hours <= 48){ band = 'urgent'; whenLbl = hours < 24 ? Math.round(hours)+'h' : Math.round(hours)+'h'; }
         else if(days <= 7){ band = 'warn'; whenLbl = Math.round(days)+'d'; }
         else { whenLbl = Math.round(days)+'d'; }
-        const dateLbl = new Date(d.due_date+'T17:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+        const dateLbl = d.date.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
         return '<div class="upc-row '+band+'"><div><div class="upc-label">'+esc(lbl)+'</div><div class="upc-date">'+esc(dateLbl)+'</div></div><div class="upc-when '+band+'">'+esc(whenLbl)+'</div></div>';
       }).join('');
       upcoming = '<div class="upc-box"><div class="upc-head"><span class="upc-eb">Coming up on this file</span></div>'+rows+'</div>';
