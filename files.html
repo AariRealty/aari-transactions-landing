@@ -878,26 +878,8 @@
       <div id="tpb-vf-body"></div>
     </div>
 
-    <!-- CLOSING LOGISTICS · fills the remaining {{placeholders}} in copied emails -->
-    <div class="tpb-pop" data-pop="lg" hidden>
-    <div class="tpb-lg-grid">
-      <div class="tpb-lg-cell"><label>Inspection date</label><input type="date" data-lg-key="inspection_date"></div>
-      <div class="tpb-lg-cell"><label>Inspection time</label><input type="text" placeholder="9:00 AM" data-lg-key="inspection_time"></div>
-      <div class="tpb-lg-cell"><label>Inspector name</label><input type="text" placeholder="Tom Inspector" data-lg-key="inspector_name"></div>
-      <div class="tpb-lg-cell"><label>Inspector company</label><input type="text" placeholder="ABC Inspections" data-lg-key="inspector_company"></div>
-      <div class="tpb-lg-cell"><label>Inspector phone</label><input type="text" placeholder="(239) 555-0100" data-lg-key="inspector_phone"></div>
-      <div class="tpb-lg-cell"><label>Walk through date</label><input type="date" data-lg-key="walkthrough_date"></div>
-      <div class="tpb-lg-cell"><label>Closing time</label><input type="text" placeholder="2:00 PM" data-lg-key="closing_time"></div>
-      <div class="tpb-lg-cell" style="grid-column:span 2"><label>Closing location</label><input type="text" placeholder="ABC Title · 123 Main St · Fort Myers, FL" data-lg-key="closing_location"></div>
-      <div class="tpb-lg-cell"><label>CD received date</label><input type="date" data-lg-key="cd_received_date"></div>
-      <div class="tpb-lg-cell" style="grid-column:span 4;border-top:0.5px dashed rgba(15,15,15,0.15);padding-top:8px;margin-top:4px"><label style="font-size:9px;color:#a08c4a;letter-spacing:.5px">HOA / Property Manager <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#888"> · fill when estoppel comes back</span></label></div>
-      <div class="tpb-lg-cell"><label>HOA manager name</label><input type="text" placeholder="Maria Garcia" data-lg-key="hoa_manager_name"></div>
-      <div class="tpb-lg-cell"><label>HOA management company</label><input type="text" placeholder="Sun Coast Property Mgmt" data-lg-key="hoa_company"></div>
-      <div class="tpb-lg-cell"><label>HOA manager email</label><input type="email" placeholder="maria@suncoast.com" data-lg-key="hoa_manager_email"></div>
-      <div class="tpb-lg-cell"><label>HOA manager phone</label><input type="text" placeholder="(239) 555-0100" data-lg-key="hoa_manager_phone"></div>
-    </div>
-    <div class="tpb-lg-actions"><button type="button" class="tpb-lg-save" id="tpb-lg-save">Save logistics</button><span class="tpb-lg-status" id="tpb-lg-status"></span></div>
-    </div>
+    <!-- Closing logistics no longer a standalone section — each field is asked
+         inline inside the task that needs it (see LOGISTICS_BY_TASK / ckRow). -->
 
     <!-- FILE DETAILS -->
     <div class="tpb-pop" data-pop="fd" hidden id="tpb-details-section">
@@ -5540,7 +5522,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     };
     const ftAllow = CT_FOR_FT[file.file_type || 'sale'] || null;
     const ctOpts = ftAllow ? ctOptsAll.filter(o => ftAllow.indexOf(o.split('|')[0]) !== -1) : ctOptsAll;
-    const ctSelect = '<select id="ct-contract"><option value="">Pick from the contract</option>' +
+    const ctSelect = '<select id="ct-contract" style="border:0.5px solid #d9d4ca;border-radius:8px;padding:7px 11px;font-size:12.5px;font-family:inherit;background:#fff;color:#0f0f0f;cursor:pointer"><option value="">Pick from the contract</option>' +
       ctOpts.map(o => { const p = o.split('|'); return '<option value="' + p[0] + '"' + (ct === p[0] ? ' selected' : '') + '>' + esc(p[1]) + '</option>'; }).join('') + '</select>';
 
     // Day-count rows · driven by the selected contract's standard fields.
@@ -6842,6 +6824,66 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const byType = STAGE_CHECKLISTS[(file.file_type || 'sale')] || {};
     return byType[stage] || null;
   }
+  // Logistics fields live INSIDE the task that needs them (ADHD: no separate
+  // form — ask in context). taskId -> fields; values save into file.logistics
+  // so the email templates auto-fill exactly as before.
+  const LOGISTICS_BY_TASK = {
+    insp_scheduled: [
+      { key:'inspection_date',   label:'Inspection date',     type:'date' },
+      { key:'inspection_time',   label:'Inspection time',     type:'text', ph:'9:00 AM' },
+      { key:'inspector_name',    label:'Inspector name',      type:'text', ph:'Tom Inspector' },
+      { key:'inspector_company', label:'Inspector company',   type:'text', ph:'ABC Inspections' },
+      { key:'inspector_phone',   label:'Inspector phone',     type:'text', ph:'(239) 555-0100' },
+    ],
+    ctc_closing_confirmed: [
+      { key:'closing_time',      label:'Closing time',        type:'text', ph:'2:00 PM' },
+      { key:'closing_location',  label:'Closing location',    type:'text', ph:'ABC Title · Fort Myers, FL' },
+    ],
+    ctc_walkthrough: [
+      { key:'walkthrough_date',  label:'Walk-through date',   type:'date' },
+    ],
+    ctc_cd_received: [
+      { key:'cd_received_date',  label:'CD received date',    type:'date' },
+    ],
+    uc_hoa_docs: [
+      { key:'hoa_manager_name',  label:'HOA manager name',    type:'text',  ph:'Maria Garcia' },
+      { key:'hoa_company',       label:'HOA management company', type:'text', ph:'Sun Coast Property Mgmt' },
+      { key:'hoa_manager_email', label:'HOA manager email',   type:'email', ph:'maria@suncoast.com' },
+      { key:'hoa_manager_phone', label:'HOA manager phone',   type:'text',  ph:'(239) 555-0100' },
+    ],
+  };
+  function logisticsFieldsHtml(file, taskId){
+    const fields = LOGISTICS_BY_TASK[taskId];
+    if(!fields) return '';
+    if(taskId === 'uc_hoa_docs' && !hoaApplies(file)) return '';
+    const lg = file.logistics || {};
+    return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 6px 28px">' + fields.map(function(f){
+      const v = (lg[f.key] != null) ? lg[f.key] : '';
+      return '<div style="display:flex;flex-direction:column;gap:3px">' +
+        '<label style="font-size:10px;color:#8a877f">' + esc(f.label) + '</label>' +
+        '<input type="' + f.type + '" data-cklg-key="' + f.key + '" placeholder="' + esc(f.ph || '') + '" value="' + esc(v) + '" style="border:0.5px solid #dcdcdc;border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit;background:#fff">' +
+      '</div>';
+    }).join('') + '</div>';
+  }
+  async function saveLogisticsField(file, key, value){
+    try {
+      const lg = Object.assign({}, file.logistics || {});
+      if(value === '' || value == null) delete lg[key]; else lg[key] = value;
+      file.logistics = lg;
+      if(_currentFile && _currentFile.id === file.id) _currentFile.logistics = lg;
+      const f = (_files || []).find(function(x){ return x.id === file.id; }); if(f) f.logistics = lg;
+      await _client.from('files').update({ logistics: lg }).eq('id', file.id);
+    } catch(err){ console.warn('[files] logistics field save failed', err); }
+  }
+  let _ckLgWired = false;
+  function wireLogisticsDelegation(){
+    if(_ckLgWired) return; _ckLgWired = true;
+    document.addEventListener('change', function(e){
+      const el = e.target.closest && e.target.closest('[data-cklg-key]');
+      if(!el || !_drawerFile) return;
+      saveLogisticsField(_drawerFile, el.getAttribute('data-cklg-key'), (el.value || '').trim());
+    });
+  }
   function ckRow(file, t, dls, done){
     const rec = done[t.id];
     let dlChip = '';
@@ -6882,6 +6924,9 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       }).join('') + '</div>';
     }
 
+    // Logistics fields this task needs — asked inline, no separate section.
+    const lgHtml = logisticsFieldsHtml(_drawerFile || file, t.id);
+
     return '<div class="ck-task-wrap">' +
       '<label class="ck-task' + (rec ? ' ck-done' : '') + '">' +
         '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + (file.status === 'archived' ? ' disabled' : '') + '>' +
@@ -6890,6 +6935,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         (rec && rec.at ? '<span class="ck-stamp">Done ' + new Date(rec.at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + new Date(rec.at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) + '</span>' : '') +
         allDl +
         '</span>' + dlChip + '</label>' +
+      lgHtml +
       emailHtml +
     '</div>';
   }
@@ -7267,6 +7313,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       else standaloneEmails.push(e);
     });
     wireEmailDelegation();
+    wireLogisticsDelegation();
 
     // Step 1 · Contract terms · confirm dates + tailor what applies.
     renderContractTerms(file);
@@ -7418,7 +7465,6 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       ref.innerHTML =
         '<button type="button" data-open-pop="dl">Deadlines' + (dlN != null ? ' ' + dlN : '') + '</button>' +
         '<button type="button" data-open-pop="vf">Verification' + (vfTxt ? ' ' + vfTxt : '') + '</button>' +
-        '<button type="button" data-open-pop="lg">Logistics</button>' +
         '<button type="button" data-open-pop="fd">File details</button>' +
         '<button type="button" data-open-pop="next">Coming up</button>';
     }
