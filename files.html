@@ -562,6 +562,21 @@
   .tpb-acc.open .tpb-acc-chev{transform:rotate(180deg)}
   .tpb-acc-body{display:none;padding:0 22px 16px}
   .tpb-acc.open .tpb-acc-body{display:block}
+  .ct-grouplabel{font-size:9px;letter-spacing:.5px;text-transform:uppercase;color:#a39e95;margin:12px 0 2px}
+  .ct-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:0.5px solid #eee}
+  .ct-row .ct-label{flex:0 0 40%;font-size:12px;color:#0f0f0f}
+  .ct-row .ct-label .ct-src{display:block;font-size:9.5px;color:#a39e95}
+  .ct-row .ct-ctl{flex:1;display:flex;align-items:center;gap:6px;justify-content:flex-end}
+  .ct-row input[type=date],.ct-row input[type=text],.ct-row input[type=number],.ct-row select{padding:5px 8px;border-radius:5px;border:0.5px solid rgba(15,15,15,0.22);background:#fff;font-size:11.5px;font-family:inherit}
+  .ct-row input[type=number]{width:64px}
+  .ct-seg{display:inline-flex;border:0.5px solid #d9d4ca;border-radius:7px;overflow:hidden}
+  .ct-seg button{border:0;background:#fff;color:#5f5e5a;font-size:11px;padding:5px 11px;cursor:pointer;font-family:inherit}
+  .ct-seg button.on{background:#0f0f0f;color:#fff}
+  .ct-ok{font-size:11px;color:#3e7d57}
+  .ct-warn{font-size:11px;color:#c96b6b}
+  .ct-status{font-size:10px;color:#a39e95;margin-left:6px}
+  .ct-locked{opacity:.55}
+  .ct-locknote{background:#fafaf8;border:0.5px solid #e8e4db;border-radius:8px;padding:9px 12px;font-size:11px;color:#5f5e5a;margin-bottom:10px}
   .ck-task-wrap{border-bottom:0.5px solid #eee}
   .ck-emails{margin:0 0 10px 27px}
   .ck-send{display:inline-block;margin:0 0 6px;font-size:10.5px;font-weight:500;border:0;background:#0f0f0f;color:#fff;border-radius:6px;padding:5px 11px;cursor:pointer;font-family:inherit}
@@ -718,8 +733,16 @@
   <!-- DO NEXT · single focus cue -->
   <div class="tpb-donext" id="tpb-donext"></div>
 
+  <!-- STEP 1 · CONTRACT TERMS (confirm + tailor) -->
+  <section class="tpb-acc open" data-acc="terms">
+    <button type="button" class="tpb-acc-head"><span class="tpb-acc-title">Step 1 · Contract terms</span><span class="tpb-acc-count" id="tpb-terms-meta"></span><span class="tpb-acc-chev" aria-hidden="true">&#9662;</span></button>
+    <div class="tpb-acc-body">
+      <div id="tpb-terms"></div>
+    </div>
+  </section>
+
   <!-- STAGE CHECKLIST -->
-  <section class="tpb-acc open" data-acc="ck">
+  <section class="tpb-acc" data-acc="ck">
     <button type="button" class="tpb-acc-head"><span class="tpb-acc-title">Your work · tasks + emails</span><span class="tpb-acc-count" id="tpb-ck-meta"></span><span class="tpb-acc-chev" aria-hidden="true">&#9662;</span></button>
     <div class="tpb-acc-body">
       <div id="tpb-checklist"></div>
@@ -5263,8 +5286,12 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   }
 
   function isCashFile(f){
-    // (1) explicit verification mark · (2) intake "Cash deal · no lender" checkbox ·
-    // (3) raw_form_data.financing_type · (4) no lender at all
+    // (0) TC's confirmed answer on Step 1 wins · (1) explicit verification mark ·
+    // (2) intake "Cash deal · no lender" checkbox · (3) raw financing_type ·
+    // (4) no lender at all
+    const lgf = (f.logistics || {}).financing_confirmed;
+    if(lgf === 'cash') return true;
+    if(lgf === 'financed') return false;
     const v = (_verifByFile[f.id] || {}).intake_financing_type;
     if(v && v.status === 'confirmed' && v.value === 'cash') return true;
     const raw = f.raw_form_data || {};
@@ -5272,6 +5299,85 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     if(raw.financing_type === 'cash' || raw.cash_offer === 'yes') return true;
     if(!f.lender_contact && !raw.lender_name && !raw.pa_lender) return true;
     return false;
+  }
+  // Step 1 conditionals · TC-confirmed contract terms tailor the file.
+  function inspectionWaived(f){ return !!((f.logistics || {}).inspection_waived); }
+  function hoaApplies(f){ const v = (f.logistics || {}).hoa_applies; return v === 'yes'; }
+  function termsConfirmed(f){
+    return !!(f.contract_type && f.effective_date && f.closing_date && ((f.logistics || {}).financing_confirmed));
+  }
+  // Save contract-term edits · file columns + logistics, then re-render.
+  async function ctSave(file, colPatch, lgPatch){
+    try {
+      const upd = Object.assign({}, colPatch || {});
+      if(lgPatch){ const lg = Object.assign({}, file.logistics || {}, lgPatch); upd.logistics = lg; file.logistics = lg; }
+      Object.keys(colPatch || {}).forEach(k => { file[k] = colPatch[k]; });
+      if(_currentFile && _currentFile.id === file.id) Object.assign(_currentFile, file);
+      await _client.from('files').update(upd).eq('id', file.id);
+      writeAuditLog('contract_term_confirmed', file.id, Object.assign({}, colPatch || {}, lgPatch || {}));
+      renderPlaybook(file);
+    } catch(err){ console.warn('[files] contract terms save failed', err); }
+  }
+  // Step 1 · Contract terms · confirm dates + tailor what applies.
+  function renderContractTerms(file){
+    const host = document.getElementById('tpb-terms');
+    const meta = document.getElementById('tpb-terms-meta');
+    if(!host) return;
+    if((file.file_type || 'sale') !== 'sale'){
+      host.innerHTML = '<p class="tpb-empty">Contract terms apply to sale files.</p>';
+      if(meta) meta.textContent = '';
+      return;
+    }
+    const lg = file.logistics || {};
+    const raw = file.raw_form_data || {};
+    const ct = file.contract_type || '';
+    const eff = file.effective_date || '';
+    const cls = file.closing_date || '';
+    const fin = lg.financing_confirmed || '';
+    const inspWaived = !!lg.inspection_waived;
+    const inspDays = (lg.inspection_days != null && lg.inspection_days !== '') ? lg.inspection_days : '';
+    const hoa = lg.hoa_applies || '';
+    const agentEff = raw.effective_date || raw.pa_effective_date || '';
+    const agentCls = raw.closing_date || raw.pa_closing_date || '';
+    const seg = (val, a, aLabel, b, bLabel, attr) =>
+      '<span class="ct-seg">' +
+        '<button type="button" data-ct-' + attr + '="' + a + '"' + (val === a ? ' class="on"' : '') + '>' + aLabel + '</button>' +
+        '<button type="button" data-ct-' + attr + '="' + b + '"' + (val === b ? ' class="on"' : '') + '>' + bLabel + '</button>' +
+      '</span>';
+    const ctOpts = ['frbar_asis|FR/BAR As-Is (7x)','frbar_standard|FR/BAR Standard (7x)','frbar_crsp|CRSP-17 (FR Residential)','nabor|NABOR Standard','nab089|NABOR As-Is (NAB089)','vac_15|FR/BAR Vacant Land (VAC-15)','nab088|NABOR Vacant Land (NAB088)','cc_6|Commercial (CC-6)','ers_21tn|Residential Listing (ERS-21TN)','vlla_6|Vacant Land Listing (VLLA-6)','cl_11|Contract to Lease (CL-11)','rlhd_3x|Residential Lease (RLHD-3x)','bbe_1|BBA Exclusive (BBE-1)','bbe_2|BBA Non-Exclusive (BBE-2)'];
+    const ctSelect = '<select id="ct-contract"><option value="">Pick from the contract</option>' +
+      ctOpts.map(o => { const p = o.split('|'); return '<option value="' + p[0] + '"' + (ct === p[0] ? ' selected' : '') + '>' + esc(p[1]) + '</option>'; }).join('') + '</select>';
+
+    host.innerHTML =
+      '<p style="font-size:11px;color:#8a877f;margin:0 0 4px">Open the executed contract and confirm each line against it. What you set here drives the deadlines, tasks, and emails.</p>' +
+      '<p class="ct-grouplabel">The contract</p>' +
+      '<div class="ct-row"><span class="ct-label">Contract type</span><span class="ct-ctl">' + ctSelect + '</span></div>' +
+      '<div class="ct-row"><span class="ct-label">Effective date' + (agentEff ? '<span class="ct-src">Agent entered ' + esc(agentEff) + '</span>' : '') + '</span><span class="ct-ctl"><input type="date" id="ct-eff" value="' + esc(eff) + '">' + (eff ? '<span class="ct-ok">&check;</span>' : '<span class="ct-warn">needed</span>') + '</span></div>' +
+      '<div class="ct-row"><span class="ct-label">Closing date' + (agentCls ? '<span class="ct-src">Agent entered ' + esc(agentCls) + '</span>' : '') + '</span><span class="ct-ctl"><input type="date" id="ct-cls" value="' + esc(cls) + '">' + (cls ? '<span class="ct-ok">&check;</span>' : '<span class="ct-warn">needed</span>') + '</span></div>' +
+      '<p class="ct-grouplabel">What applies</p>' +
+      '<div class="ct-row"><span class="ct-label">Financing</span><span class="ct-ctl">' + seg(fin, 'financed', 'Financed', 'cash', 'Cash', 'fin') + '</span></div>' +
+      '<div class="ct-row"><span class="ct-label">Inspection period</span><span class="ct-ctl">' +
+        (inspWaived ? '' : '<input type="number" id="ct-inspdays" min="0" max="60" value="' + esc(inspDays) + '" placeholder="days"> ') +
+        '<button type="button" class="ct-seg" id="ct-inspwaive" style="padding:5px 11px;background:' + (inspWaived ? '#0f0f0f' : '#fff') + ';color:' + (inspWaived ? '#fff' : '#5f5e5a') + ';border:0.5px solid #d9d4ca;border-radius:7px;cursor:pointer;font-size:11px;font-family:inherit">Waived</button>' +
+      '</span></div>' +
+      '<div class="ct-row"><span class="ct-label">HOA / condo</span><span class="ct-ctl">' + seg(hoa, 'yes', 'Yes', 'no', 'No', 'hoa') + '</span></div>';
+
+    const done = termsConfirmed(file);
+    if(meta) meta.textContent = done ? 'Set up · ready to work' : 'Confirm to unlock your work';
+
+    // ---- wiring ----
+    const ctc = document.getElementById('ct-contract');
+    if(ctc) ctc.addEventListener('change', () => ctSave(file, { contract_type: ctc.value || null }, null));
+    const effI = document.getElementById('ct-eff');
+    if(effI) effI.addEventListener('change', () => ctSave(file, { effective_date: effI.value || null }, null));
+    const clsI = document.getElementById('ct-cls');
+    if(clsI) clsI.addEventListener('change', () => ctSave(file, { closing_date: clsI.value || null }, null));
+    host.querySelectorAll('[data-ct-fin]').forEach(b => b.addEventListener('click', () => ctSave(file, null, { financing_confirmed: b.getAttribute('data-ct-fin') })));
+    host.querySelectorAll('[data-ct-hoa]').forEach(b => b.addEventListener('click', () => ctSave(file, null, { hoa_applies: b.getAttribute('data-ct-hoa') })));
+    const insD = document.getElementById('ct-inspdays');
+    if(insD) insD.addEventListener('change', () => ctSave(file, null, { inspection_days: insD.value === '' ? null : Number(insD.value), inspection_waived: false }));
+    const insW = document.getElementById('ct-inspwaive');
+    if(insW) insW.addEventListener('click', () => ctSave(file, null, { inspection_waived: !inspWaived }));
   }
 
   // Kanban card · Mockup 1 (approved June 2026): black header (address +
@@ -6543,7 +6649,10 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const archiveBlock = archive
       ? '<details class="ck-archive-wrap"><summary>Earlier stages</summary>' + archive + '</details>'
       : '';
-    host.innerHTML = roBanner + widget + (tasks
+    const gate = !termsConfirmed(file)
+      ? '<div class="ct-locknote">Confirm the contract terms in Step 1 first. The dates, tasks, and emails below tailor to what you set there.</div>'
+      : '';
+    host.innerHTML = roBanner + gate + widget + (tasks
       ? tasks.map(t => ckRow(file, t, dls, done)).join('')
       : '<p class="ck-empty">Checklist for the ' + esc(STAGE_LABELS[stage] || stage) + ' stage ships next.</p>') + archiveBlock;
   }
@@ -6870,6 +6979,9 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     });
     wireEmailDelegation();
 
+    // Step 1 · Contract terms · confirm dates + tailor what applies.
+    renderContractTerms(file);
+
     // Stage checklist · per-kanban-column tasks (TC sale files) · now with each
     // task's email attached inline beneath it.
     renderStageChecklist(file);
@@ -6946,10 +7058,12 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     }
     renderDoNext(file);
     initDrawerAccordion();
-    // Reset disclosure on every open · only the Stage checklist starts open.
+    // Reset disclosure on every open · Step 1 (Contract terms) starts open until
+    // it's confirmed, then the work list opens instead.
     document.querySelectorAll('#tpb-modal .tpb-acc.open').forEach(a => a.classList.remove('open'));
-    const ck = document.querySelector('#tpb-modal .tpb-acc[data-acc="ck"]');
-    if(ck) ck.classList.add('open');
+    const firstKey = (typeof termsConfirmed === 'function' && termsConfirmed(file)) ? 'ck' : 'terms';
+    const first = document.querySelector('#tpb-modal .tpb-acc[data-acc="' + firstKey + '"]');
+    if(first) first.classList.add('open');
   }
   function initDrawerAccordion(){
     document.querySelectorAll('#tpb-modal .tpb-acc-head').forEach(h => {
