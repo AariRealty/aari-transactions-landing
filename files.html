@@ -880,13 +880,16 @@
   // ============== EMAIL THREAD STRATEGY ==============
   // 5 threads per sale file. 6 if HOA. Mixing them is the #1 reason TC
   // inboxes turn into chaos.
+  // Each thread carries ONE subject (street only, no city/state/zip) so every
+  // email on the thread shares it and actually threads in the mailbox. The TC
+  // sets the subject once on the first send; replies keep the same line.
   const EMAIL_THREADS = {
-    1: { name:'Master Coordination', short:'Master',  color:'#2b6cb0' }, // blue
-    2: { name:'Agent Direct',        short:'Agent',   color:'#2f855a' }, // green
-    3: { name:'Title Direct',        short:'Title',   color:'#6b46c1' }, // purple
-    4: { name:'Lender Direct',       short:'Lender',  color:'#c05621' }, // orange
-    5: { name:'Client Coordination', short:'Client',  color:'#b7791f' }, // gold
-    6: { name:'HOA Direct',          short:'HOA',     color:'#2c7a7b' }, // teal
+    1: { name:'Master Coordination', short:'Master',  color:'#2b6cb0', subject:'Under contract · {{street}}' },        // blue · title + lender + listing agent
+    2: { name:'Agent Direct',        short:'Agent',   color:'#2f855a', subject:'{{street}} · updates' },               // green · our agent
+    3: { name:'Title Direct',        short:'Title',   color:'#6b46c1', subject:'{{street}} · title + escrow' },        // purple · title
+    4: { name:'Lender Direct',       short:'Lender',  color:'#c05621', subject:'{{street}} · financing' },             // orange · lender
+    5: { name:'Client Coordination', short:'Client',  color:'#b7791f', subject:'{{street}} · your closing' },          // gold · client
+    6: { name:'HOA Direct',          short:'HOA',     color:'#2c7a7b', subject:'{{street}} · HOA + estoppel' },        // teal · HOA
   };
 
   // ============== EMAIL PLAYBOOK · per file_type · per stage ==============
@@ -899,7 +902,16 @@
 
   // ===== Email content resolvers · static body/subject OR generated fn =====
   function rawEmailBody(e, file){ return (e && e.bodyFn) ? e.bodyFn(file || {}) : ((e && e.body) || ''); }
-  function rawEmailSubject(e, file){ return (e && e.subjectFn) ? e.subjectFn(file || {}) : ((e && e.subject) || ''); }
+  // Subject resolves: explicit subjectFn → explicit subject → the THREAD's
+  // shared subject (street only). Falling through to the thread means every
+  // email on a thread carries the same line, so they thread in the mailbox
+  // and the TC never re-types a subject for a follow-up.
+  function rawEmailSubject(e, file){
+    if(e && e.subjectFn) return e.subjectFn(file || {});
+    if(e && e.subject) return e.subject;
+    const th = (e && EMAIL_THREADS[e.thread]) || null;
+    return (th && th.subject) || '{{street}}';
+  }
 
   // ===== Confirm-dates variation engine =====
   // Never the same email twice. A pool of Cattoni hooks / intros / fixes /
@@ -986,7 +998,7 @@
           label:'Setup ask · missing info from agent',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Setting up your file at {{address}}. Here\'s what I need.',
+          subject:'Setting up your file at {{street}}. Here\'s what I need.',
           body:
 `Hey {{agent_first_name}},
 
@@ -1012,7 +1024,7 @@ The minute your contract executes, I open the Master Coordination thread so titl
           label:'Opening email · all parties + full timeline',
           to:'{{buyer_name}} <{{buyer_email}}>; {{seller_name}} <{{seller_email}}>; {{listing_agent_name}} <{{listing_agent_email}}>; {{title_closer_name}} <{{title_email}}>; {{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Welcome to your transaction — {{address}}',
+          subject:'Welcome to your transaction — {{street}}',
           body:
 `Hi everyone,
 
@@ -1038,7 +1050,7 @@ Aari Transactions · 239.688.1770`,
           label:'Escrow opening · instructions to title',
           to:'{{title_closer_name}} <{{title_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'New escrow — {{address}}',
+          subject:'New escrow — {{street}}',
           body:
 `Hi {{title_closer_first_name}},
 
@@ -1070,7 +1082,7 @@ Aari Transactions · 239.688.1770`,
           label:'EMD follow-up · confirm receipt with title',
           to:'{{title_closer_name}} <{{title_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'EMD follow-up — {{address}}',
+          subject:'EMD follow-up — {{street}}',
           body:
 `Hi {{title_closer_first_name}},
 
@@ -1088,7 +1100,7 @@ Aari Transactions · 239.688.1770`,
           showIf:(f)=>!!((f.emd||{}).additional_amount),
           to:'{{title_closer_name}} <{{title_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Additional deposit follow-up — {{address}}',
+          subject:'Additional deposit follow-up — {{street}}',
           body:
 `Hi {{title_closer_first_name}},
 
@@ -1105,7 +1117,7 @@ Aari Transactions · 239.688.1770`,
           label:'Loan application confirmation · lender',
           to:'{{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Loan application confirmation — {{address}}',
+          subject:'Loan application confirmation — {{street}}',
           body:
 `Hi {{lender_first_name}},
 
@@ -1122,7 +1134,7 @@ Aari Transactions · 239.688.1770`,
           label:'Loan status + appraisal ordered · lender',
           to:'{{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Transaction update request — {{address}}',
+          subject:'Transaction update request — {{street}}',
           body:
 `Hi {{lender_first_name}},
 
@@ -1140,7 +1152,7 @@ Aari Transactions · 239.688.1770`,
           showIf:(f)=>(((f.raw_form_data||{}).pa_hoa)==='yes'),
           to:'[HOA management contact]',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'HOA document request — {{address}}',
+          subject:'HOA document request — {{street}}',
           body:
 `Hi,
 
@@ -1157,7 +1169,7 @@ Aari Transactions · 239.688.1770`,
           label:'Weekly update · agent',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Weekly update — {{address}}',
+          subject:'Weekly update — {{street}}',
           body:
 `Hi {{agent_first_name}},
 
@@ -1179,7 +1191,7 @@ Aari Transactions · 239.688.1770`,
           label:'Executed · Confirm dates + roster',
           to:'{{title_closer_name}} <{{title_email}}>; {{lender_name}} <{{lender_email}}>; {{listing_agent_name}} <{{listing_agent_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>; {{co_agent_name}} <{{co_agent_email}}>',
-          subject:'Under contract — {{address}} · executed contract + key dates',
+          subject:'Under contract — {{street}} · executed contract + key dates',
           body:
 `Hello,
 
@@ -1214,7 +1226,7 @@ Contact Information
           label:'Master Coordination thread · NEW THREAD',
           to:'{{title_closer_name}} <{{title_email}}>; {{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Under contract at {{address}}. Closing {{closing_date}}.',
+          subject:'Under contract at {{street}}. Closing {{closing_date}}.',
           body:
 `Team,
 
@@ -1244,7 +1256,7 @@ Reply all here for milestone updates. Direct asks go to the party specific threa
           label:'Title open · NEW THREAD',
           to:'{{title_closer_name}} <{{title_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Title order at {{address}}. Closing {{closing_date}}.',
+          subject:'Title order at {{street}}. Closing {{closing_date}}.',
           body:
 `Hi {{title_closer_first_name}},
 
@@ -1265,7 +1277,7 @@ Reply with the file number and assigned closer once opened.
           label:'Lender open · NEW THREAD',
           to:'{{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Loan coordination for {{buyer_name}} at {{address}}',
+          subject:'Loan coordination for {{buyer_name}} at {{street}}',
           body:
 `Hi {{lender_first_name}},
 
@@ -1295,7 +1307,7 @@ Targeting a clean CTC at least 5 business days before close.
           label:'Inspection reminder · buyer&rsquo;s agent (24h before)',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Inspection reminder — {{address}}',
+          subject:'Inspection reminder — {{street}}',
           body:
 `Hi {{agent_first_name}},
 
@@ -1311,7 +1323,7 @@ Aari Transactions · 239.688.1770`,
           label:'Proceeding or canceling? · buyer&rsquo;s agent',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Inspection period expires {{dl_inspection_end}} — {{address}}',
+          subject:'Inspection period expires {{dl_inspection_end}} — {{street}}',
           body:
 `Hi {{agent_first_name}},
 
@@ -1327,7 +1339,7 @@ Aari Transactions · 239.688.1770`,
           label:'Loan status check · lender',
           to:'{{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Loan status update — {{address}}',
+          subject:'Loan status update — {{street}}',
           body:
 `Hi {{lender_first_name}},
 
@@ -1344,7 +1356,7 @@ Aari Transactions · 239.688.1770`,
           label:'Weekly update · agent',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Weekly update — {{address}}',
+          subject:'Weekly update — {{street}}',
           body:
 `Hi {{agent_first_name}},
 
@@ -1365,7 +1377,7 @@ Aari Transactions · 239.688.1770`,
           label:'Inspection scheduled · Master',
           to:'(reply on Master thread)',
           cc:'',
-          subject:'Inspection scheduled at {{address}} for {{inspection_date}}',
+          subject:'Inspection scheduled at {{street}} for {{inspection_date}}',
           body:
 `Team,
 
@@ -1406,7 +1418,7 @@ Reply with the call and I'll move the file accordingly.
           showIf:(f)=>(((f.logistics||{}).remedy_concession)==='yes'),
           to:'{{listing_agent_name}} <{{listing_agent_email}}>; {{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Addendum confirmation — {{address}}',
+          subject:'Addendum confirmation — {{street}}',
           body:
 `Hi {{listing_agent_first_name}} and {{agent_first_name}},
 
@@ -1424,7 +1436,7 @@ Aari Transactions · 239.688.1770`,
           showIf:(f)=>(((f.logistics||{}).remedy_permits)==='yes'),
           to:'{{listing_agent_name}} <{{listing_agent_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Open permit follow-up — {{address}}',
+          subject:'Open permit follow-up — {{street}}',
           body:
 `Hi {{listing_agent_first_name}},
 
@@ -1441,7 +1453,7 @@ Aari Transactions · 239.688.1770`,
           label:'Loan status update · lender',
           to:'{{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Loan status update — {{address}}',
+          subject:'Loan status update — {{street}}',
           body:
 `Hi {{lender_first_name}},
 
@@ -1458,7 +1470,7 @@ Aari Transactions · 239.688.1770`,
           label:'Title search status · title company',
           to:'{{title_closer_name}} <{{title_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Title search status — {{address}}',
+          subject:'Title search status — {{street}}',
           body:
 `Hi {{title_closer_first_name}},
 
@@ -1475,7 +1487,7 @@ Aari Transactions · 239.688.1770`,
           label:'Weekly update · agent',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Weekly update — {{address}}',
+          subject:'Weekly update — {{street}}',
           body:
 `Hi {{agent_first_name}},
 
@@ -1496,7 +1508,7 @@ Aari Transactions · 239.688.1770`,
           label:'Repair request sent · Master',
           to:'(reply on Master thread)',
           cc:'',
-          subject:'Repair request sent at {{address}}',
+          subject:'Repair request sent at {{street}}',
           body:
 `Team,
 
@@ -1514,7 +1526,7 @@ Once the seller responds, I'll circulate the executed addendum on this thread.
           label:'Appraisal ordered? · lender',
           to:'{{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Appraisal confirmation — {{address}}',
+          subject:'Appraisal confirmation — {{street}}',
           body:
 `Hi {{lender_first_name}},
 
@@ -1531,7 +1543,7 @@ Aari Transactions · 239.688.1770`,
           label:'Appraisal status · lender',
           to:'{{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Appraisal status follow-up — {{address}}',
+          subject:'Appraisal status follow-up — {{street}}',
           body:
 `Hi {{lender_first_name}},
 
@@ -1548,7 +1560,7 @@ Aari Transactions · 239.688.1770`,
           showIf:(f)=>(((f.logistics||{}).appraisal_result)==='at_above'),
           to:'{{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Loan approval follow-up — {{address}}',
+          subject:'Loan approval follow-up — {{street}}',
           body:
 `Hi {{lender_first_name}},
 
@@ -1566,7 +1578,7 @@ Aari Transactions · 239.688.1770`,
           showIf:(f)=>(((f.logistics||{}).appraisal_result)==='below'),
           to:'{{listing_agent_name}} <{{listing_agent_email}}>; {{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Appraisal result — {{address}}',
+          subject:'Appraisal result — {{street}}',
           body:
 `Hi {{listing_agent_first_name}} and {{agent_first_name}},
 
@@ -1586,7 +1598,7 @@ Aari Transactions · 239.688.1770`,
           label:'Written loan approval · request today',
           to:'{{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Loan approval confirmation request — {{address}}',
+          subject:'Loan approval confirmation request — {{street}}',
           body:
 `Hi {{lender_first_name}},
 
@@ -1604,7 +1616,7 @@ Aari Transactions · 239.688.1770`,
           showIf:(f)=>{ try { return loanEffStatus(f)==='overdue'; } catch(_){ return false; } },
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Loan approval deadline — action required — {{address}}',
+          subject:'Loan approval deadline — action required — {{street}}',
           body:
 `Hi {{agent_first_name}},
 
@@ -1621,7 +1633,7 @@ Aari Transactions · 239.688.1770`,
           label:'Title commitment on track · title',
           to:'{{title_closer_name}} <{{title_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Title commitment status — {{address}}',
+          subject:'Title commitment status — {{street}}',
           body:
 `Hi {{title_closer_first_name}},
 
@@ -1638,7 +1650,7 @@ Aari Transactions · 239.688.1770`,
           label:'Weekly update · agent',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Weekly update — {{address}}',
+          subject:'Weekly update — {{street}}',
           body:
 `Hi {{agent_first_name}},
 
@@ -1659,7 +1671,7 @@ Aari Transactions · 239.688.1770`,
           label:'Appraisal status check · Lender',
           to:'{{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Appraisal status on {{address}}. Closing {{closing_date}}.',
+          subject:'Appraisal status on {{street}}. Closing {{closing_date}}.',
           body:
 `Hi {{lender_first_name}},
 
@@ -1682,7 +1694,7 @@ If anything is off track for {{loan_approval_deadline}}, flag now so we can addr
           label:'Written loan approval · for the file',
           to:'{{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Written loan approval confirmation — {{address}}',
+          subject:'Written loan approval confirmation — {{street}}',
           body:
 `Hi {{lender_first_name}},
 
@@ -1697,7 +1709,7 @@ Aari Transactions · 239.688.1770`,
           label:'Title commitment follow-up · title',
           to:'{{title_closer_name}} <{{title_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Title commitment follow-up — {{address}}',
+          subject:'Title commitment follow-up — {{street}}',
           body:
 `Hi {{title_closer_first_name}},
 
@@ -1715,7 +1727,7 @@ Aari Transactions · 239.688.1770`,
           showIf:(f)=>(((f.logistics||{}).ctc_title_exceptions)==='yes'),
           to:'{{listing_agent_name}} <{{listing_agent_email}}>; {{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Title exception — action required — {{address}}',
+          subject:'Title exception — action required — {{street}}',
           body:
 `Hi {{listing_agent_first_name}} and {{agent_first_name}},
 
@@ -1732,7 +1744,7 @@ Aari Transactions · 239.688.1770`,
           label:'Closing disclosure · CFPB 3-day check',
           to:'{{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Closing disclosure confirmation — {{address}}',
+          subject:'Closing disclosure confirmation — {{street}}',
           body:
 `Hi {{lender_first_name}},
 
@@ -1747,7 +1759,7 @@ Aari Transactions · 239.688.1770`,
           label:'Closing confirmed · ALL parties (wire warning)',
           to:'{{buyer_name}} <{{buyer_email}}>; {{seller_name}} <{{seller_email}}>; {{listing_agent_name}} <{{listing_agent_email}}>; {{title_closer_name}} <{{title_email}}>; {{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Closing confirmed — {{address}}',
+          subject:'Closing confirmed — {{street}}',
           body:
 `Hi everyone,
 
@@ -1765,7 +1777,7 @@ Aari Transactions · 239.688.1770`,
           label:'Walk-through reminder · listing agent',
           to:'{{listing_agent_name}} <{{listing_agent_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Walk-through reminder — {{address}}',
+          subject:'Walk-through reminder — {{street}}',
           body:
 `Hi {{listing_agent_first_name}},
 
@@ -1783,7 +1795,7 @@ Aari Transactions · 239.688.1770`,
           showIf:(f)=>(((f.logistics||{}).ctc_tenant_occupied)==='yes'),
           to:'{{listing_agent_name}} <{{listing_agent_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Estoppel letter request — {{address}}',
+          subject:'Estoppel letter request — {{street}}',
           body:
 `Hi {{listing_agent_first_name}},
 
@@ -1799,7 +1811,7 @@ Aari Transactions · 239.688.1770`,
           showIf:(f)=>(((f.logistics||{}).ctc_entity_buyer)==='yes'),
           to:'{{title_closer_name}} <{{title_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'FinCEN report confirmation — {{address}}',
+          subject:'FinCEN report confirmation — {{street}}',
           body:
 `Hi {{title_closer_first_name}},
 
@@ -1815,7 +1827,7 @@ Aari Transactions · 239.688.1770`,
           showIf:(f)=>(((f.logistics||{}).ctc_foreign_seller)==='yes'),
           to:'{{listing_agent_name}} <{{listing_agent_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'FIRPTA certification — {{address}}',
+          subject:'FIRPTA certification — {{street}}',
           body:
 `Hi {{listing_agent_first_name}},
 
@@ -1832,7 +1844,7 @@ Aari Transactions · 239.688.1770`,
           label:'48-hour closing reminder · all parties (wire warning)',
           to:'{{buyer_name}} <{{buyer_email}}>; {{seller_name}} <{{seller_email}}>; {{listing_agent_name}} <{{listing_agent_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'48-hour closing reminder — {{address}}',
+          subject:'48-hour closing reminder — {{street}}',
           body:
 `Hi everyone,
 
@@ -1850,7 +1862,7 @@ Aari Transactions · 239.688.1770`,
           label:'Weekly update · agent',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Weekly update — {{address}}',
+          subject:'Weekly update — {{street}}',
           body:
 `Hi {{agent_first_name}},
 
@@ -1870,7 +1882,7 @@ Aari Transactions · 239.688.1770`,
           label:'Wire fraud warning · CRITICAL · Client',
           to:'{{buyer_name}} <{{buyer_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Read this BEFORE you send any funds for {{address}}',
+          subject:'Read this BEFORE you send any funds for {{street}}',
           body:
 `Hi {{buyer_first_name}},
 
@@ -1898,7 +1910,7 @@ See you at the table.
           label:'CTC + closing logistics · Master',
           to:'(reply on Master thread)',
           cc:'',
-          subject:'CTC at {{address}}. Closing {{closing_date}} at {{closing_time}}.',
+          subject:'CTC at {{street}}. Closing {{closing_date}} at {{closing_time}}.',
           body:
 `Team,
 
@@ -1921,7 +1933,7 @@ If anything moves between now and Friday, flag here immediately.
           label:'Closing confirmation request · title (funds + deed)',
           to:'{{title_closer_name}} <{{title_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Closing confirmation request — {{address}}',
+          subject:'Closing confirmation request — {{street}}',
           body:
 `Hi {{title_closer_name}},
 
@@ -1937,7 +1949,7 @@ Aari Transactions · 239.688.1770`,
           label:'Closing congratulations · agent',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'\u{1F389} Closed — {{address}}',
+          subject:'\u{1F389} Closed — {{street}}',
           body:
 `Hi {{agent_first_name}},
 
@@ -1953,7 +1965,7 @@ Aari Transactions · 239.688.1770 · hello@aaritransactions.com`,
           label:'Transaction closed · all parties',
           to:'{{listing_agent_name}} <{{listing_agent_email}}>; {{title_closer_name}} <{{title_email}}>; {{lender_name}} <{{lender_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Transaction closed — {{address}}',
+          subject:'Transaction closed — {{street}}',
           body:
 `Hi everyone,
 
@@ -1987,7 +1999,7 @@ Aari Transactions · 239.688.1770`,
           label:'Closing confirmation · Master',
           to:'(reply on Master thread)',
           cc:'',
-          subject:'Closed at {{address}}. Wrap up checklist below.',
+          subject:'Closed at {{street}}. Wrap up checklist below.',
           body:
 `Team,
 
@@ -2034,7 +2046,7 @@ Welcome home.
           label:'Listing welcome · Seller',
           to:'{{seller_name}} <{{seller_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Your listing at {{address}} is in motion.',
+          subject:'Your listing at {{street}} is in motion.',
           body:
 `Hi {{seller_first_name}},
 
@@ -2058,7 +2070,7 @@ Anything you need, copy {{agent_first_name}} and me. We're on it.
           label:'Weekly seller activity report',
           to:'{{seller_name}} <{{seller_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Week of {{week_of}} update on your listing at {{address}}',
+          subject:'Week of {{week_of}} update on your listing at {{street}}',
           body:
 `Hi {{seller_first_name}},
 
@@ -2082,7 +2094,7 @@ Reply if you want to talk strategy. Otherwise next report drops same time next w
           label:'Pending coordination · NEW THREAD',
           to:'{{title_closer_name}} <{{title_email}}>; {{buyer_tc_name}} <{{buyer_tc_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Pending at {{address}}. Closing {{closing_date}}.',
+          subject:'Pending at {{street}}. Closing {{closing_date}}.',
           body:
 `Team,
 
@@ -2106,7 +2118,7 @@ All co op deadlines now active on our side too. Will mirror buyer side TC on mil
           label:'Closing congrats · Seller · Day 7',
           to:'{{seller_name}} <{{seller_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'It\'s done. {{address}} closed.',
+          subject:'It\'s done. {{street}} closed.',
           body:
 `Hi {{seller_first_name}},
 
@@ -2131,7 +2143,7 @@ Onward.
           label:'Listing closeout · Seller',
           to:'{{seller_name}} <{{seller_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Closing out your listing at {{address}}',
+          subject:'Closing out your listing at {{street}}',
           body:
 `Hi {{seller_first_name}},
 
@@ -2156,7 +2168,7 @@ If your plans change and you decide to relist, {{agent_first_name}} and I are re
           label:'Lease intake ask · Agent',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
-          subject:'Lease file at {{address}}. Need a few items.',
+          subject:'Lease file at {{street}}. Need a few items.',
           body:
 `Hey {{agent_first_name}},
 
@@ -2180,7 +2192,7 @@ If HOA approval is required, that's our critical path. Faster you get me HOA con
           label:'HOA approval status · Property Manager',
           to:'{{hoa_manager_name}} <{{hoa_manager_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'HOA application status for {{tenant_name}} at {{address}}',
+          subject:'HOA application status for {{tenant_name}} at {{street}}',
           body:
 `Hi {{hoa_manager_first_name}},
 
@@ -2204,7 +2216,7 @@ Per the contract, HOA approval is required before the lease executes. Want to ma
           label:'Lease signed welcome · Tenant',
           to:'{{tenant_name}} <{{tenant_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Lease signed at {{address}}. Move in next.',
+          subject:'Lease signed at {{street}}. Move in next.',
           body:
 `Hi {{tenant_first_name}},
 
@@ -2230,7 +2242,7 @@ Florida Landlord Tenant Act (Chapter 83) is attached for your reference. Worth a
           label:'30 day check in · Tenant',
           to:'{{tenant_name}} <{{tenant_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'30 day check in at {{address}}',
+          subject:'30 day check in at {{street}}',
           body:
 `Hi {{tenant_first_name}},
 
@@ -2253,7 +2265,7 @@ Reply if anything is off. If everything is good, no reply needed.
           label:'Move out instructions · Tenant',
           to:'{{tenant_name}} <{{tenant_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Move out instructions for {{address}}',
+          subject:'Move out instructions for {{street}}',
           body:
 `Hi {{tenant_first_name}},
 
@@ -2331,7 +2343,7 @@ If anything looks worth a tour, reply and {{agent_first_name}} will set it up.
           label:'Under contract notice · Buyer',
           to:'{{buyer_name}} <{{buyer_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'You\'re under contract at {{address}}. Here\'s what happens now.',
+          subject:'You\'re under contract at {{street}}. Here\'s what happens now.',
           body:
 `Hi {{buyer_first_name}},
 
@@ -2518,6 +2530,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const weekOf = today.toLocaleDateString('en-US',{month:'long',day:'numeric'});
     const vars = {
       address: file.property_address || '[property address]',
+      street: (file.property_address || '[property address]').split(',')[0].trim(),
       client_side: side,
       buyer_name: buyerName, buyer_first_name: buyerFirst,
       buyer_email: isBuyerSide ? (file.client_email || '[buyer email]') : '[buyer email]',
