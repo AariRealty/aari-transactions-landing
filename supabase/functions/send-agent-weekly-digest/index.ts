@@ -1,6 +1,13 @@
 // ============================================================================
 // send-agent-weekly-digest · Edge Function
 // ============================================================================
+// ⚠ DEPRECATED (June 2026 · Fix 3 Reader 4) — SUPERSEDED BY `friday-summary`.
+// Not scheduled, not invoked anywhere. The LIVE weekly agent email is
+// `friday-summary`, which computes its "Coming up" deadlines from the shared
+// engine port (NOT file_deadlines.due_date). This legacy function still reads
+// file_deadlines.due_date for dates, which can go stale — do NOT deploy or
+// schedule it. Kept only for reference. Use friday-summary instead.
+//
 // Sends each active agent a Sunday-evening email summarizing what their TC is
 // watching for them this week. Pulls top 3 upcoming deadlines + recent risks
 // caught + TC SLA stats. CTA back to /portal.html.
