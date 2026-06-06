@@ -577,16 +577,25 @@
   .ct-status{font-size:10px;color:#a39e95;margin-left:6px}
   .ct-locked{opacity:.55}
   .ct-locknote{background:#fafaf8;border:0.5px solid #e8e4db;border-radius:8px;padding:9px 12px;font-size:11px;color:#5f5e5a;margin-bottom:10px}
-  .ct-info-btn{background:none;border:0;color:#a39e95;cursor:pointer;font-size:13px;padding:0 2px;vertical-align:1px;font-family:inherit}
-  .ct-info-btn:hover{color:#0f0f0f}
-  .ct-info{background:#fafaf8;border:0.5px solid #e8e4db;border-radius:8px;padding:10px 12px;margin:2px 0 4px}
-  .ct-info-h{margin:0 0 4px;font-size:10px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#0f0f0f}
-  .ct-info-note{margin:0 0 8px;font-size:11px;color:#5f5e5a;line-height:1.5}
-  .ct-info-row{display:flex;gap:10px;padding:4px 0;border-top:0.5px solid #efece6}
-  .ct-info-name{flex:0 0 42%;font-size:11px;color:#0f0f0f}
-  .ct-info-cite{flex:1;font-size:10.5px;color:#8a877f}
-  .ct-info-foot{margin:8px 0 0;font-size:10px;color:#a39e95;font-style:italic}
-  .ct-info-empty{margin:0;font-size:11px;color:#8a877f}
+  .ct-di{margin:2px 0 4px}
+  .ct-di-empty{margin:0;font-size:11px;color:#8a877f}
+  .ct-di-head{margin:0 0 8px;font-size:12px;font-weight:500;color:#9a7c3a}
+  .ct-di-ok{display:flex;align-items:center;gap:8px;background:#eef4ee;border-radius:8px;padding:9px 12px;font-size:12px;color:#0f0f0f}
+  .ct-di-ok::before{content:none}
+  .ct-di-diff{border:0.5px solid #f0e4c8;border-radius:8px;padding:8px 11px;margin-bottom:6px}
+  .ct-di-difftop{display:flex;justify-content:space-between;align-items:baseline}
+  .ct-di-name{font-size:12.5px;color:#0f0f0f}
+  .ct-di-bigdate{font-size:13px;color:#0f0f0f;font-weight:600}
+  .ct-di-reason{margin:2px 0 0;font-size:10.5px;color:#b3aea5}
+  .ct-di-fold{margin-top:9px}
+  .ct-di-fold>summary{font-size:11px;color:#a39e95;cursor:pointer;list-style:none;padding:2px 0}
+  .ct-di-fold>summary::-webkit-details-marker{display:none}
+  .ct-di-fold>summary::before{content:"\25B8 ";color:#a39e95}
+  .ct-di-fold[open]>summary::before{content:"\25BE ";color:#a39e95}
+  .ct-di-row{display:flex;justify-content:space-between;padding:4px 0;border-top:0.5px solid #efece6}
+  .ct-di-row span{font-size:11.5px;color:#0f0f0f}
+  .ct-di-date{color:#0f0f0f;font-weight:500}
+  .ct-di-foot{margin:9px 0 0;font-size:10px;color:#b3aea5;font-style:italic}
   .ck-task-wrap{border-bottom:0.5px solid #eee}
   .ck-emails{margin:0 0 10px 27px}
   .ck-send{display:inline-block;margin:0 0 6px;font-size:10.5px;font-weight:500;border:0;background:#0f0f0f;color:#fff;border-radius:6px;padding:5px 11px;cursor:pointer;font-family:inherit}
@@ -5341,22 +5350,48 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     nab088:'NABOR Vacant Land · feasibility study period. Time is of the essence for the Closing Date only.',
     cc_6:'Commercial · longer due-diligence period (Phase I ESA, estoppels, rent roll, financials). Title takes longer.',
   };
-  function contractInfoHtml(ct){
+  // Standard vs actual · surfaces ONLY the deadlines whose date differs from the
+  // contract standard (date big, reason underneath). The rest fold away. The
+  // file's confirmed terms (e.g. a non-standard inspection period) drive the
+  // "actual"; pure CONTRACT_DEFAULTS drive the "standard".
+  const CD_LEGEND = '<p class="ct-di-foot">cal = calendar days from Effective · rolls to next business day on weekends &amp; holidays</p>';
+  function _cdDayCount(cite){ const m = (cite || '').match(/(\d+)\s+days/); return m ? m[1] : null; }
+  function contractDeadlineInfoHtml(file){
     const ENG = window.AariDeadlineEngine;
-    if(!ct || !ENG || !ENG.CONTRACT_DEADLINES[ct]){
-      return '<p class="ct-info-empty">Pick a contract type to see its standard deadlines.</p>';
-    }
-    const defs = ENG.CONTRACT_DEADLINES[ct];
-    const cfg = Object.assign({}, ENG.CONTRACT_DEFAULTS[ct] || {});
-    const note = CONTRACT_FAMILY_NOTE[ct];
-    const rows = defs.map(function(it){
-      const cite = (typeof it.note === 'function') ? it.note(cfg) : (it.note || '');
-      return '<div class="ct-info-row"><span class="ct-info-name">' + esc(it.name) + '</span><span class="ct-info-cite">' + esc(cite) + '</span></div>';
+    const ct = file.contract_type;
+    if(!ct || !ENG || !ENG.CONTRACT_DEADLINES[ct]) return '<p class="ct-di-empty">Pick a contract type to see its standard deadlines.</p>';
+    if(!file.effective_date || !file.closing_date) return '<p class="ct-di-empty">Add the effective and closing dates to see the standard deadlines.</p>';
+    const lg = file.logistics || {};
+    const ovr = {};
+    if(lg.inspection_days != null && lg.inspection_days !== '') ovr.insp = Number(lg.inspection_days);
+    let std = [], act = [];
+    try {
+      std = ENG.contractDeadlines(ct, file.effective_date, file.closing_date, {});
+      act = ENG.contractDeadlines(ct, file.effective_date, file.closing_date, ovr);
+    } catch(_){ return '<p class="ct-di-empty">Could not compute deadlines.</p>'; }
+    const stdByKey = {}; std.forEach(function(d){ stdByKey[d.key] = d; });
+    const fmt = function(d){ return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); };
+    const diffs = [], same = [];
+    act.forEach(function(a){
+      const s = stdByKey[a.key];
+      if(s && a.date.getTime() !== s.date.getTime()) diffs.push({ a: a, s: s });
+      else same.push(a);
+    });
+    const sameRows = same.map(function(a){
+      return '<div class="ct-di-row"><span>' + esc(a.name) + '</span><span class="ct-di-date">' + fmt(a.date) + '</span></div>';
     }).join('');
-    return '<p class="ct-info-h">' + esc(ENG.contractLabel(ct)) + ' · standard deadlines</p>' +
-      (note ? '<p class="ct-info-note">' + esc(note) + '</p>' : '') +
-      rows +
-      '<p class="ct-info-foot">Standards. Always confirm against the executed contract and any addenda.</p>';
+    const sameFold = same.length
+      ? '<details class="ct-di-fold"><summary>' + same.length + ' standard deadline' + (same.length === 1 ? '' : 's') + '</summary>' + sameRows + '</details>'
+      : '';
+    if(!diffs.length){
+      return '<div class="ct-di-ok">&#10003; All ' + act.length + ' deadlines match the ' + esc(ENG.contractLabel(ct)) + ' standard.</div>' + sameFold + CD_LEGEND;
+    }
+    const cards = diffs.map(function(d){
+      const acn = _cdDayCount(d.a.citation), scn = _cdDayCount(d.s.citation);
+      const reason = (acn ? acn + ' cal days' : 'contract') + ' · standard ' + (scn ? scn + ' ' : '') + '(' + fmt(d.s.date) + ')';
+      return '<div class="ct-di-diff"><div class="ct-di-difftop"><span class="ct-di-name">' + esc(d.a.name) + '</span><span class="ct-di-bigdate">' + fmt(d.a.date) + '</span></div><p class="ct-di-reason">' + esc(reason) + '</p></div>';
+    }).join('');
+    return '<p class="ct-di-head">' + diffs.length + ' differ from the standard — confirm these.</p>' + cards + sameFold + CD_LEGEND;
   }
   // Step 1 · Contract terms · confirm dates + tailor what applies.
   function renderContractTerms(file){
@@ -5391,8 +5426,8 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     host.innerHTML =
       '<p style="font-size:11px;color:#8a877f;margin:0 0 4px">Open the executed contract and confirm each line against it. What you set here drives the deadlines, tasks, and emails.</p>' +
       '<p class="ct-grouplabel">The contract</p>' +
-      '<div class="ct-row"><span class="ct-label">Contract type <button type="button" class="ct-info-btn" id="ct-info-btn" title="Standard deadlines for this contract" aria-label="Standard deadlines">&#9432;</button></span><span class="ct-ctl">' + ctSelect + '</span></div>' +
-      '<div class="ct-info" id="ct-info" style="display:none">' + contractInfoHtml(ct) + '</div>' +
+      '<div class="ct-row"><span class="ct-label">Contract type</span><span class="ct-ctl">' + ctSelect + '</span></div>' +
+      '<div class="ct-di">' + contractDeadlineInfoHtml(file) + '</div>' +
       '<div class="ct-row"><span class="ct-label">Effective date' + (agentEff ? '<span class="ct-src">Agent entered ' + esc(agentEff) + '</span>' : '') + '</span><span class="ct-ctl"><input type="date" id="ct-eff" value="' + esc(eff) + '">' + (eff ? '<span class="ct-ok">&check;</span>' : '<span class="ct-warn">needed</span>') + '</span></div>' +
       '<div class="ct-row"><span class="ct-label">Closing date' + (agentCls ? '<span class="ct-src">Agent entered ' + esc(agentCls) + '</span>' : '') + '</span><span class="ct-ctl"><input type="date" id="ct-cls" value="' + esc(cls) + '">' + (cls ? '<span class="ct-ok">&check;</span>' : '<span class="ct-warn">needed</span>') + '</span></div>' +
       '<p class="ct-grouplabel">What applies</p>' +
@@ -5407,9 +5442,6 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     if(meta) meta.textContent = done ? 'Set up · ready to work' : 'Confirm to unlock your work';
 
     // ---- wiring ----
-    const infoBtn = document.getElementById('ct-info-btn');
-    const infoBox = document.getElementById('ct-info');
-    if(infoBtn && infoBox) infoBtn.addEventListener('click', () => { infoBox.style.display = (infoBox.style.display === 'none' || !infoBox.style.display) ? 'block' : 'none'; });
     const ctc = document.getElementById('ct-contract');
     if(ctc) ctc.addEventListener('change', () => ctSave(file, { contract_type: ctc.value || null }, null));
     const effI = document.getElementById('ct-eff');
