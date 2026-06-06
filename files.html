@@ -5349,13 +5349,29 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   }
   // Step 1 conditionals · TC-confirmed contract terms tailor the file.
   function inspectionWaived(f){ return !!((f.logistics || {}).inspection_waived); }
+  function assocType(f){ return (f.logistics || {}).assoc_type || ''; }
   function hoaApplies(f){
-    const v = (f.logistics || {}).hoa_applies;
+    const lg = f.logistics || {};
+    if(lg.assoc_type) return lg.assoc_type !== 'none';   // new property-type picker wins
+    const v = lg.hoa_applies;
     if(v === 'yes') return true;
     if(v === 'no') return false;
     // Fall back to the intake answer when Step 1 hasn't set it yet.
     return ((f.raw_form_data || {}).pa_hoa) === 'yes';
   }
+  // Statutory cancellation window pre-fill (TC confirms the actual number off
+  // the executed rider). HOA §720.401 = 3 cal days; condo/co-op resale = 7
+  // (2025 HB 913); new-construction condo/co-op = 15.
+  function defaultCancelDays(type, isNew){
+    if(isNew && (type === 'condo' || type === 'coop')) return 15;
+    if(type === 'condo' || type === 'coop') return 7;
+    if(type === 'hoa') return 3;
+    return 0;
+  }
+  const ASSOC_LABEL = { hoa:'HOA', condo:'Condominium', coop:'Co-op', none:'None' };
+  function _calAdd(iso, n){ if(!iso) return null; const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + Number(n||0)); return d; }
+  function _bizAdd(iso, n){ if(!iso) return null; const d = new Date(iso + 'T00:00:00'); let a = 0; while(a < Number(n||0)){ d.setDate(d.getDate()+1); const w = d.getDay(); if(w !== 0 && w !== 6) a++; } return d; }
+  function _fmtMDY(d){ return d ? d.toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '—'; }
   // Deadlines that actually apply to THIS file: a waived inspection drops the
   // inspection (and its seller-response) deadline; a non-HOA file drops HOA
   // doc review. Single source of truth used by the drawer + hub chip.
@@ -5485,13 +5501,17 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     return '<p class="ct-di-head">' + diffs.length + ' differ from the standard — confirm these.</p>' + cards + sameFold + CD_LEGEND;
   }
   // Step 1 · Contract terms · confirm dates + tailor what applies.
+  // The executed contract is saved at intake INSIDE raw_form_data (the cockpit
+  // 'files' row has no top-level contract_url column), so read both places.
+  function contractUrlOf(file){ return file.contract_url || (file.raw_form_data || {}).contract_url || ''; }
+  function contractNameOf(file){ return file.contract_filename || (file.raw_form_data || {}).contract_filename || ''; }
   // Open the executed contract PDF. Stored contract_url signed links expire, so
   // we regenerate a fresh one from the embedded storage path. Opens the tab
   // synchronously (within the click) to dodge popup blockers, then redirects it.
   function openContract(file){
     const w = window.open('about:blank', '_blank');
     (async function(){
-      let url = file.contract_url || '';
+      let url = contractUrlOf(file) || '';
       try {
         const m = url.match(/transaction-files\/([^?]+)/);
         if(m){
@@ -5710,8 +5730,9 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     };
     const confirmed = !!((file.logistics || {}).terms_confirmed_at) || termsConfirmed(file);
 
-    const viewBtn = file.contract_url
-      ? '<button type="button" id="ct-viewcontract" style="display:inline-flex;align-items:center;gap:6px;border:0.5px solid #d9d4ca;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;color:#0f0f0f;cursor:pointer;margin:2px 0 8px">&#128196; View contract' + (file.contract_filename ? ' <span style="color:#a39e95">&middot; ' + esc(file.contract_filename) + '</span>' : '') + '</button>'
+    const _ctUrl = contractUrlOf(file), _ctName = contractNameOf(file);
+    const viewBtn = _ctUrl
+      ? '<button type="button" id="ct-viewcontract" style="display:inline-flex;align-items:center;gap:6px;border:0.5px solid #d9d4ca;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;color:#0f0f0f;cursor:pointer;margin:2px 0 8px">&#128196; View contract' + (_ctName ? ' <span style="color:#a39e95">&middot; ' + esc(_ctName) + '</span>' : '') + '</button>'
       : '<button type="button" id="ct-attachcontract" style="display:inline-flex;align-items:center;gap:6px;border:0.5px dashed #c2bdb4;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;color:#5f5e5a;cursor:pointer;margin:2px 0 8px">&#128206; Attach contract</button>';
     host.innerHTML =
       '<p style="font-size:11px;color:#8a877f;margin:0 0 8px">Pre-filled from the agent’s submission. Glance, then confirm — tap the pen on anything that doesn’t match the contract.</p>' +
