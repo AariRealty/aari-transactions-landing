@@ -535,6 +535,25 @@
   .tpb-dl-edit-save:hover{background:#2a2a2a}
   .tpb-dl-edit-cancel{background:transparent;border:0.5px solid rgba(15,15,15,0.25);color:#0f0f0f;padding:5px 12px;border-radius:5px;font-size:11px;cursor:pointer;font-family:inherit}
   .tpb-dl-edit-cancel:hover{background:#f3f3f3}
+  /* Deadlines · Mockup A timeline (Fix 3 Reader 2) · brand black/white/cream */
+  .tpb-dlA-cites{display:flex;justify-content:flex-end;margin-bottom:4px}
+  .tpb-dlA-cites button{font-size:10px;color:#9a7c3a;background:none;border:0;text-decoration:underline;text-underline-offset:2px;cursor:pointer;padding:0;font-family:inherit}
+  .tpb-dlA-row{display:grid;grid-template-columns:auto auto 1fr auto;align-items:center;gap:10px;padding:8px 2px;border-top:0.5px solid #f1ede6}
+  .tpb-dlA-row.done{opacity:0.5}
+  .tpb-dlA-circle{background:none;border:0;cursor:pointer;font-size:13px;color:#c2bdb3;padding:0;line-height:1;font-family:inherit}
+  .tpb-dlA-row.done .tpb-dlA-circle{color:#0f0f0f}
+  .tpb-dlA-date{font-size:10px;font-weight:600;color:#0f0f0f;white-space:nowrap}
+  .tpb-dlA-name{font-size:12px;color:#0f0f0f;background:none;border:0;text-align:left;cursor:pointer;padding:0;font-family:inherit;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .tpb-dlA-row.done .tpb-dlA-name,.tpb-dlA-row.done .tpb-dlA-date{text-decoration:line-through}
+  .tpb-dlA-tag{font-size:9px;border-radius:999px;padding:2px 7px;font-weight:600;white-space:nowrap;background:#f5f0e8;color:#7a7468}
+  .tpb-dlA-tag.urgent{background:#fdf6e3;color:#9a7c3a}
+  .tpb-dlA-tag.past{background:#fdecea;color:#c96b6b}
+  .tpb-dlA-tag.done{background:#eef0ec;color:#7a7468}
+  .tpb-dlA-sub{grid-column:1 / -1;margin:1px 0 0 33px}
+  .tpb-dlA-cite{margin:0;font-size:10px;color:#b0aca4;line-height:1.4}
+  .tpb-dlA-ext{margin:2px 0 0;font-size:10px;color:#9a7c3a}
+  .tpb-dlA-ext .tpb-dl-reset{margin-left:6px;background:none;border:0;color:#888;text-decoration:underline;text-underline-offset:2px;cursor:pointer;font-size:10px;font-family:inherit}
+  .tpb-dlA-row .tpb-dl-edit-form{grid-column:1 / -1}
 </style>
 </head>
 <body>
@@ -2285,29 +2304,24 @@ Aari Transactions`,
     if(!file) return {};
     const ct = file.contract_type;
     if(!ct) return {};
-    const schedule = CONTRACT_DEADLINES[ct];
-    if(!schedule) return {};
     if(!file.effective_date || !file.closing_date) return {};
+    const ENG = window.AariDeadlineEngine;
+    const schedule = ENG.contractDeadlines(ct, file.effective_date, file.closing_date, file.deadline_overrides || {});
+    if(!schedule.length) return {};
     try {
-      const E = new Date(String(file.effective_date).length===10 ? (file.effective_date+'T00:00:00') : file.effective_date);
-      const C = new Date(String(file.closing_date).length===10 ? (file.closing_date+'T00:00:00') : file.closing_date);
-      const cfg = Object.assign({}, CONTRACT_DEFAULTS[ct] || {}, file.deadline_overrides || {});
       const overrides = (_deadlinesByFile[file.id] || {});
       const fmt = (d) => {
         if(!d || !(d instanceof Date) || isNaN(d.getTime())) return null;
         return d.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' });
       };
+      // Shared engine computes + FL-rolls every date; a stored manual override
+      // (with reason) still wins for email interpolation, same as the drawer.
       const byKey = {};
       schedule.forEach(it => {
-        let date;
         const rec = overrides[it.key];
-        if(rec && rec.due_date){
-          date = new Date(String(rec.due_date).length===10 ? (rec.due_date+'T00:00:00') : rec.due_date);
-        } else {
-          date = it.compute(E, C, cfg);
-          if(it.bizDay) date = nextBiz(date);
-        }
-        byKey[it.key] = date;
+        byKey[it.key] = (rec && rec.due_date)
+          ? new Date(String(rec.due_date).length===10 ? (rec.due_date+'T00:00:00') : rec.due_date)
+          : it.date;
       });
       // Map deadline keys → email variable names. Handles all 14 contract shapes:
       // FRBAR (As-Is/Standard/CRSP), NABOR (Standard/As-Is), Vacant Land,
@@ -4436,7 +4450,7 @@ Aari Transactions`,
       '</div>';
     }).join('') +
     (stageCtx.hasContractCheck && stageCtx.contractItemCount > 0
-      ? '<div class="tpb-vf-section-note">Includes ' + stageCtx.contractItemCount + ' contract-verification items for ' + esc(CONTRACT_LABELS[ct] || ct) + '.</div>'
+      ? '<div class="tpb-vf-section-note">Includes ' + stageCtx.contractItemCount + ' contract-verification items for ' + esc(window.AariDeadlineEngine.contractLabel(ct)) + '.</div>'
       : '<div class="tpb-vf-section-note">Showing only items required at the <strong>' + esc(stageLabel(stageCtx.file_type, stageCtx.stage)) + '</strong> stage. Advance the file on the kanban to load the next stage\'s requirements.</div>');
 
     // Wire interactions
@@ -4508,354 +4522,6 @@ Aari Transactions`,
     }
   }
 
-  // ============== DEADLINE TRACKER (per contract type) ==============
-  // Ported from /aari-contract-comparison.html · same default day counts,
-  // same paragraph references in the notes. UI is contract-driven: pick the
-  // contract on the file, enter Effective Date + Closing Date, and the
-  // engine computes every deadline + countdown + completion state.
-  //
-  // Adding a new contract = add a new entry to CONTRACT_DEADLINES below.
-  const CONTRACT_LABELS = {
-    'frbar_asis':     'FR/BAR As-Is (7x)',
-    'frbar_standard': 'FR/BAR Standard (7x)',
-    'frbar_crsp':     'CRSP-17 (FR Residential)',
-    'nabor':          'NABOR Standard',
-    'nab089':         'NABOR As-Is (NAB089)',
-    'vac_15':         'FR/BAR Vacant Land (VAC-15)',
-    'nab088':         'NABOR Vacant Land (NAB088)',
-    'cc_6':           'Commercial (CC-6)',
-    'ers_21tn':       'Residential Listing (ERS-21TN)',
-    'vlla_6':         'Vacant Land Listing (VLLA-6)',
-    'cl_11':          'Contract to Lease (CL-11)',
-    'rlhd_3x':        'Residential Lease (RLHD-3x)',
-    'bbe_1':          'BBA Exclusive (BBE-1)',
-    'bbe_2':          'BBA Non-Exclusive (BBE-2)',
-  };
-
-  // Default day counts per contract type (per the comparison HTML).
-  // Override per file via files.deadline_overrides JSONB.
-  const CONTRACT_DEFAULTS = {
-    'frbar_asis':     { dep:3, lapp:5, lappr:30, insp:15, title:15 },
-    'frbar_standard': { dep:3, lapp:5, lappr:30, insp:15, sellerResp:10, title:15 },
-    'frbar_crsp':     { dep:3, lapp:5, lappr:30, insp:15, hoa:3, title:15 },
-    'nabor':          { dep:3, lapp:5, fin:45, insp:15, titleDays:10, surveyDays:10, leaseDays:5 },
-    'nab089':         { dep:3, lapp:5, fin:45, insp:15, titleDays:10, surveyDays:10 },
-    'vac_15':         { dep:3, feas:30, title:15 },
-    'nab088':         { dep:3, feas:30, titleDays:10, surveyDays:10 },
-    'cc_6':           { dep:3, fin:45, insp:30, due_diligence:60, titleDays:30 },
-    'ers_21tn':       { listing_term:180, marketing_review:14 },
-    'vlla_6':         { listing_term:180, marketing_review:14 },
-    'cl_11':          { lease_exec:14, app_period:7, hoa_approval:30 },
-    'rlhd_3x':        { lease_term:365 },
-    'bbe_1':          { bba_term:90, protection_period:90 },
-    'bbe_2':          { bba_term:90, protection_period:90 },
-  };
-
-  // Per-contract deadline definitions. Each item:
-  //   key      · unique key (used in file_deadlines.deadline_key)
-  //   category · group header
-  //   name     · display label
-  //   compute  · function(E, C, cfg) → Date
-  //   bizDay   · push to next business day if it lands on weekend
-  //   note     · short paragraph reference
-  const CONTRACT_DEADLINES = {
-    'frbar_asis': [
-      { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep),
-        bizDay:false,
-        note:(c)=>c.dep + ' days after Effective Date · Paragraph 2(a).' },
-      { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
-        compute:(E,C,c)=>addDays(E, c.lapp), bizDay:true,
-        note:(c)=>c.lapp + ' days after Effective Date · Paragraph 8(b).' },
-      { key:'loan_approval',    category:'Financing',  name:'Loan Approval Period Expires',
-        compute:(E,C,c)=>addDays(E, c.lappr), bizDay:true,
-        note:(c)=>c.lappr + ' days after Effective Date · Paragraph 8(b). Failure to notify converts to cash.' },
-      { key:'inspection_end',   category:'Inspections', name:'Inspection Period Ends',
-        compute:(E,C,c)=>addDays(E, c.insp), bizDay:true,
-        note:(c)=>c.insp + ' days after Effective Date · Paragraph 12. Buyer may terminate for any reason.' },
-      { key:'survey_seller',    category:'Title',      name:'Seller Provides Existing Survey',
-        compute:(E,C,c)=>addDays(E, 5), bizDay:true,
-        note:()=>'5 days after Effective Date if in Seller possession.' },
-      { key:'title_evidence',   category:'Title',      name:'Title Evidence Deadline',
-        compute:(E,C,c)=>addDays(C, -c.title), bizDay:true,
-        note:(c)=>c.title + ' days prior to Closing · Paragraph 9(c).' },
-      { key:'walk_through',     category:'Closing',    name:'Walk-Through Inspection',
-        compute:(E,C,c)=>addDays(C, -1), bizDay:false,
-        note:()=>'Day prior to closing.' },
-      { key:'closing',          category:'Closing',    name:'Closing Date',
-        compute:(E,C,c)=>C, bizDay:false,
-        note:()=>'As set in contract. Time is of the essence.' },
-    ],
-    'frbar_standard': [
-      { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
-        note:(c)=>c.dep + ' days after Effective Date · Paragraph 2(a).' },
-      { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
-        compute:(E,C,c)=>addDays(E, c.lapp), bizDay:true,
-        note:(c)=>c.lapp + ' days after Effective Date · Paragraph 8(b).' },
-      { key:'loan_approval',    category:'Financing',  name:'Loan Approval Period Expires',
-        compute:(E,C,c)=>addDays(E, c.lappr), bizDay:true,
-        note:(c)=>c.lappr + ' days after Effective Date · Paragraph 8(b).' },
-      { key:'inspection_end',   category:'Inspections', name:'Inspection Period Ends',
-        compute:(E,C,c)=>addDays(E, c.insp), bizDay:true,
-        note:(c)=>c.insp + ' days after Effective Date · Paragraph 12. Written notice of defects required.' },
-      { key:'seller_response',  category:'Inspections', name:'Seller Response to Defects Deadline',
-        compute:(E,C,c)=>addDays(E, c.insp + c.sellerResp), bizDay:true,
-        note:(c)=>c.sellerResp + ' days after Buyer notice · Seller repairs or estimate.' },
-      { key:'survey_seller',    category:'Title',      name:'Seller Provides Existing Survey',
-        compute:(E,C,c)=>addDays(E, 5), bizDay:true,
-        note:()=>'5 days after Effective Date if in Seller possession.' },
-      { key:'title_evidence',   category:'Title',      name:'Title Evidence Deadline',
-        compute:(E,C,c)=>addDays(C, -c.title), bizDay:true,
-        note:(c)=>c.title + ' days prior to Closing · Paragraph 9(c).' },
-      { key:'walk_through',     category:'Closing',    name:'Walk-Through Inspection',
-        compute:(E,C,c)=>addDays(C, -1), bizDay:false,
-        note:()=>'Day prior to or day of closing.' },
-      { key:'closing',          category:'Closing',    name:'Closing Date',
-        compute:(E,C,c)=>C, bizDay:false,
-        note:()=>'As set in contract. Time is of the essence.' },
-    ],
-    'frbar_crsp': [
-      { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
-        note:(c)=>c.dep + ' days after Effective Date · Paragraph 2(a).' },
-      { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
-        compute:(E,C,c)=>addDays(E, c.lapp), bizDay:true,
-        note:(c)=>c.lapp + ' days after Effective Date · Paragraph 8(b).' },
-      { key:'loan_approval',    category:'Financing',  name:'Loan Approval Period Expires',
-        compute:(E,C,c)=>addDays(E, c.lappr), bizDay:true,
-        note:(c)=>c.lappr + ' days after Effective Date · Paragraph 8(b).' },
-      { key:'inspection_end',   category:'Inspections', name:'Inspection Period Ends',
-        compute:(E,C,c)=>addDays(E, c.insp), bizDay:true,
-        note:(c)=>c.insp + ' days after Effective Date · Paragraph 12.' },
-      { key:'hoa_review',       category:'HOA',        name:'HOA/Condo Doc Review Deadline',
-        compute:(E,C,c)=>addDays(E, c.hoa), bizDay:true,
-        note:(c)=>c.hoa + ' days after association docs · Rider A/B. Cannot be waived.' },
-      { key:'survey_seller',    category:'Title',      name:'Seller Provides Existing Survey',
-        compute:(E,C,c)=>addDays(E, 5), bizDay:true,
-        note:()=>'5 days after Effective Date if in Seller possession.' },
-      { key:'title_evidence',   category:'Title',      name:'Title Evidence Deadline',
-        compute:(E,C,c)=>addDays(C, -c.title), bizDay:true,
-        note:(c)=>c.title + ' days prior to Closing · Paragraph 9(c).' },
-      { key:'walk_through',     category:'Closing',    name:'Walk-Through Inspection',
-        compute:(E,C,c)=>addDays(C, -1), bizDay:false,
-        note:()=>'Day prior to closing.' },
-      { key:'closing',          category:'Closing',    name:'Closing Date',
-        compute:(E,C,c)=>C, bizDay:false,
-        note:()=>'As set in contract. Time is of the essence.' },
-    ],
-    'nabor': [
-      { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
-        note:(c)=>c.dep + ' days after Effective Date.' },
-      { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
-        compute:(E,C,c)=>addDays(E, c.lapp), bizDay:false,
-        note:(c)=>c.lapp + ' days after Effective Date · Section 4(b).' },
-      { key:'finance_cont',     category:'Financing',  name:'Finance Contingency Expires',
-        compute:(E,C,c)=>addDays(E, c.fin), bizDay:false,
-        note:(c)=>c.fin + ' days after Effective Date · Section 4(b).' },
-      { key:'title_policy',     category:'Title',      name:'Seller Provides Title Policy',
-        compute:(E,C,c)=>addDays(E, c.titleDays), bizDay:false,
-        note:(c)=>c.titleDays + ' days after Effective Date · Standard B.' },
-      { key:'survey_existing',  category:'Title',      name:'Seller Provides Existing Survey',
-        compute:(E,C,c)=>addDays(E, c.surveyDays), bizDay:false,
-        note:(c)=>c.surveyDays + ' days after Effective Date · Standard C.' },
-      { key:'buyer_title_rev',  category:'Title',      name:'Buyer Title Review Deadline',
-        compute:(E,C,c)=>addDays(E, 30), bizDay:false,
-        note:()=>'30 days after Effective Date · Standard B.' },
-      { key:'leases_provided',  category:'Leases',     name:'Seller Provides Written Leases',
-        compute:(E,C,c)=>addDays(E, c.leaseDays), bizDay:false,
-        note:(c)=>c.leaseDays + ' days after Effective Date · Lines 100-105.' },
-      { key:'lease_terminate',  category:'Leases',     name:'Buyer Lease Termination Deadline',
-        compute:(E,C,c)=>addDays(E, 10), bizDay:false,
-        note:()=>'10 days after Effective Date.' },
-      { key:'inspection_end',   category:'Inspections', name:'Inspection Period Ends',
-        compute:(E,C,c)=>addDays(E, c.insp), bizDay:false,
-        note:(c)=>c.insp + ' days after Effective Date · Section 6.' },
-      { key:'seller_response',  category:'Inspections', name:'Seller Response to Defects',
-        compute:(E,C,c)=>addDays(E, c.insp + 10), bizDay:false,
-        note:()=>'10 days after Buyer notice.' },
-      { key:'assignment_disc',  category:'Closing',    name:'Assignment Disclosure Deadline',
-        compute:(E,C,c)=>addDays(C, -15), bizDay:false,
-        note:()=>'15 days prior to closing · Standard A.' },
-      { key:'buyer_survey',     category:'Closing',    name:'Buyer Survey Deadline',
-        compute:(E,C,c)=>addDays(C, -5), bizDay:false,
-        note:()=>'5 days prior to closing.' },
-      { key:'walk_through',     category:'Closing',    name:'Walk-Through Inspection',
-        compute:(E,C,c)=>addDays(C, -1), bizDay:false,
-        note:()=>'Day prior to closing · Standard D.2.d.' },
-      { key:'closing',          category:'Closing',    name:'Closing Date',
-        compute:(E,C,c)=>C, bizDay:false,
-        note:()=>'Time is of the essence for Closing Date only.' },
-    ],
-    'nab089': [
-      { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
-        note:(c)=>c.dep + ' days after Effective Date · Paragraph 4(a).' },
-      { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
-        compute:(E,C,c)=>addDays(E, c.lapp), bizDay:false,
-        note:(c)=>c.lapp + ' days after Effective Date · Paragraph 6.' },
-      { key:'finance_cont',     category:'Financing',  name:'Finance Contingency Expires',
-        compute:(E,C,c)=>addDays(E, c.fin), bizDay:false,
-        note:(c)=>c.fin + ' days after Effective Date · Paragraph 6.' },
-      { key:'inspection_end',   category:'Inspections', name:'Inspection Period Ends',
-        compute:(E,C,c)=>addDays(E, c.insp), bizDay:false,
-        note:(c)=>c.insp + ' days after Effective Date · Section 6. Buyer may terminate.' },
-      { key:'title_policy',     category:'Title',      name:'Seller Provides Title Policy',
-        compute:(E,C,c)=>addDays(E, c.titleDays), bizDay:false,
-        note:(c)=>c.titleDays + ' days after Effective Date · Standard B.' },
-      { key:'survey_existing',  category:'Title',      name:'Seller Provides Existing Survey',
-        compute:(E,C,c)=>addDays(E, c.surveyDays), bizDay:false,
-        note:(c)=>c.surveyDays + ' days after Effective Date · Standard C.' },
-      { key:'buyer_title_rev',  category:'Title',      name:'Buyer Title Review Deadline',
-        compute:(E,C,c)=>addDays(E, 30), bizDay:false,
-        note:()=>'30 days after Effective Date · Standard B.' },
-      { key:'walk_through',     category:'Closing',    name:'Walk-Through Inspection',
-        compute:(E,C,c)=>addDays(C, -1), bizDay:false,
-        note:()=>'Day prior to closing.' },
-      { key:'closing',          category:'Closing',    name:'Closing Date',
-        compute:(E,C,c)=>C, bizDay:false,
-        note:()=>'Time is of the essence for Closing.' },
-    ],
-    'vac_15': [
-      { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
-        note:(c)=>c.dep + ' days after Effective Date · Paragraph 2(a).' },
-      { key:'feasibility_end',  category:'Feasibility', name:'Feasibility Study Period Ends',
-        compute:(E,C,c)=>addDays(E, c.feas), bizDay:true,
-        note:(c)=>c.feas + ' days after Effective Date · Paragraph 9. Buyer may terminate.' },
-      { key:'survey_seller',    category:'Title',      name:'Seller Provides Existing Survey',
-        compute:(E,C,c)=>addDays(E, 5), bizDay:true,
-        note:()=>'5 days after Effective Date if in Seller possession.' },
-      { key:'title_evidence',   category:'Title',      name:'Title Evidence Deadline',
-        compute:(E,C,c)=>addDays(C, -c.title), bizDay:true,
-        note:(c)=>c.title + ' days prior to Closing · Paragraph 10.' },
-      { key:'walk_through',     category:'Closing',    name:'Property Inspection / Walk',
-        compute:(E,C,c)=>addDays(C, -1), bizDay:false,
-        note:()=>'Day prior to closing.' },
-      { key:'closing',          category:'Closing',    name:'Closing Date',
-        compute:(E,C,c)=>C, bizDay:false,
-        note:()=>'Time is of the essence.' },
-    ],
-    'nab088': [
-      { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
-        note:(c)=>c.dep + ' days after Effective Date.' },
-      { key:'feasibility_end',  category:'Feasibility', name:'Feasibility Study Period Ends',
-        compute:(E,C,c)=>addDays(E, c.feas), bizDay:false,
-        note:(c)=>c.feas + ' days after Effective Date. Buyer may terminate.' },
-      { key:'title_policy',     category:'Title',      name:'Seller Provides Title Policy',
-        compute:(E,C,c)=>addDays(E, c.titleDays), bizDay:false,
-        note:(c)=>c.titleDays + ' days after Effective Date · Standard B.' },
-      { key:'survey_existing',  category:'Title',      name:'Seller Provides Existing Survey',
-        compute:(E,C,c)=>addDays(E, c.surveyDays), bizDay:false,
-        note:(c)=>c.surveyDays + ' days after Effective Date.' },
-      { key:'walk_through',     category:'Closing',    name:'Walk-Through Inspection',
-        compute:(E,C,c)=>addDays(C, -1), bizDay:false,
-        note:()=>'Day prior to closing.' },
-      { key:'closing',          category:'Closing',    name:'Closing Date',
-        compute:(E,C,c)=>C, bizDay:false,
-        note:()=>'Time is of the essence.' },
-    ],
-    'cc_6': [
-      { key:'init_deposit',     category:'Deposits',    name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
-        note:(c)=>c.dep + ' days after Effective Date · Paragraph 2.' },
-      { key:'finance_cont',     category:'Financing',   name:'Finance Contingency Expires',
-        compute:(E,C,c)=>addDays(E, c.fin), bizDay:false,
-        note:(c)=>c.fin + ' days after Effective Date.' },
-      { key:'inspection_end',   category:'Inspections', name:'Inspection Period Ends',
-        compute:(E,C,c)=>addDays(E, c.insp), bizDay:true,
-        note:(c)=>c.insp + ' days after Effective Date · Paragraph 8.' },
-      { key:'due_diligence_end', category:'Due Diligence', name:'Due Diligence Period Ends',
-        compute:(E,C,c)=>addDays(E, c.due_diligence), bizDay:false,
-        note:(c)=>c.due_diligence + ' days after Effective Date · includes Phase I ESA + estoppels + rent roll + financials.' },
-      { key:'title_evidence',   category:'Title',       name:'Title Evidence Deadline',
-        compute:(E,C,c)=>addDays(C, -c.titleDays), bizDay:true,
-        note:(c)=>c.titleDays + ' days prior to Closing · commercial title takes longer.' },
-      { key:'estoppels_due',    category:'Tenants',     name:'Tenant Estoppels Received',
-        compute:(E,C,c)=>addDays(C, -30), bizDay:false,
-        note:()=>'30 days prior to closing · operational continuity.' },
-      { key:'snda_received',    category:'Tenants',     name:'SNDA Agreements Received',
-        compute:(E,C,c)=>addDays(C, -30), bizDay:false,
-        note:()=>'30 days prior to closing · if lender requires.' },
-      { key:'walk_through',     category:'Closing',     name:'Walk-Through Inspection',
-        compute:(E,C,c)=>addDays(C, -1), bizDay:false,
-        note:()=>'Day prior to closing.' },
-      { key:'closing',          category:'Closing',     name:'Closing Date',
-        compute:(E,C,c)=>C, bizDay:false,
-        note:()=>'Time is of the essence.' },
-    ],
-    'ers_21tn': [
-      { key:'listing_start',    category:'Listing Term', name:'Listing Period Start',
-        compute:(E,C,c)=>E, bizDay:false,
-        note:()=>'Effective Date · Paragraph 1.' },
-      { key:'marketing_review', category:'Marketing',    name:'Initial Marketing Review',
-        compute:(E,C,c)=>addDays(E, c.marketing_review), bizDay:false,
-        note:(c)=>c.marketing_review + ' days after listing live · price + traffic check-in.' },
-      { key:'listing_expires',  category:'Listing Term', name:'Listing Period Expires',
-        compute:(E,C,c)=>addDays(E, c.listing_term), bizDay:false,
-        note:(c)=>c.listing_term + ' days from Effective Date · Paragraph 1. Re-list decision required.' },
-    ],
-    'vlla_6': [
-      { key:'listing_start',    category:'Listing Term', name:'Listing Period Start',
-        compute:(E,C,c)=>E, bizDay:false,
-        note:()=>'Effective Date.' },
-      { key:'marketing_review', category:'Marketing',    name:'Initial Marketing Review',
-        compute:(E,C,c)=>addDays(E, c.marketing_review), bizDay:false,
-        note:(c)=>c.marketing_review + ' days after listing live · zoning + use-case messaging review.' },
-      { key:'listing_expires',  category:'Listing Term', name:'Listing Period Expires',
-        compute:(E,C,c)=>addDays(E, c.listing_term), bizDay:false,
-        note:(c)=>c.listing_term + ' days from Effective Date. Re-list decision required.' },
-    ],
-    'cl_11': [
-      { key:'lease_exec',       category:'Execution',    name:'Lease Execution Deadline',
-        compute:(E,C,c)=>addDays(E, c.lease_exec), bizDay:false,
-        note:(c)=>c.lease_exec + ' days after Contract to Lease execution.' },
-      { key:'app_period',       category:'Application',  name:'Application Period Ends',
-        compute:(E,C,c)=>addDays(E, c.app_period), bizDay:false,
-        note:(c)=>c.app_period + ' days for Tenant application + background check.' },
-      { key:'hoa_approval_dl',  category:'HOA',          name:'HOA Approval Deadline',
-        compute:(E,C,c)=>addDays(E, c.hoa_approval), bizDay:false,
-        note:(c)=>c.hoa_approval + ' days for HOA approval · Paragraph 11. CRITICAL · cannot occupy without approval.' },
-      { key:'lease_start',      category:'Term',         name:'Lease Term Begins',
-        compute:(E,C,c)=>C, bizDay:false,
-        note:()=>'Target lease start date.' },
-    ],
-    'rlhd_3x': [
-      { key:'rent_due_start',   category:'Rent',         name:'First Rent Due',
-        compute:(E,C,c)=>E, bizDay:false,
-        note:()=>'Lease Effective Date.' },
-      { key:'lease_expires',    category:'Term',         name:'Lease Term Expires',
-        compute:(E,C,c)=>addDays(E, c.lease_term), bizDay:false,
-        note:(c)=>c.lease_term + ' days from Lease Effective Date · renewal decision triggers at 60 days out.' },
-      { key:'renewal_window',   category:'Term',         name:'Renewal Decision Window Opens',
-        compute:(E,C,c)=>addDays(addDays(E, c.lease_term), -60), bizDay:false,
-        note:()=>'60 days before lease expiration · LL and Tenant decide renew or end.' },
-    ],
-    'bbe_1': [
-      { key:'bba_start',        category:'BBA Term',     name:'BBA Term Begins',
-        compute:(E,C,c)=>E, bizDay:false,
-        note:()=>'Effective Date · Paragraph 1.' },
-      { key:'bba_term_end',     category:'BBA Term',     name:'BBA Term Ends',
-        compute:(E,C,c)=>addDays(E, c.bba_term), bizDay:false,
-        note:(c)=>c.bba_term + ' days from Effective Date · Paragraph 1. Decision to renew required.' },
-      { key:'protection_end',   category:'Protection Period', name:'Protection Period Ends',
-        compute:(E,C,c)=>addDays(addDays(E, c.bba_term), c.protection_period), bizDay:false,
-        note:(c)=>c.protection_period + ' days after BBA term ends · Paragraph 7. Compensation owed if Buyer purchases shown property in this window.' },
-    ],
-    'bbe_2': [
-      { key:'bba_start',        category:'BBA Term',     name:'BBA Term Begins',
-        compute:(E,C,c)=>E, bizDay:false,
-        note:()=>'Effective Date · Paragraph 1.' },
-      { key:'bba_term_end',     category:'BBA Term',     name:'BBA Term Ends',
-        compute:(E,C,c)=>addDays(E, c.bba_term), bizDay:false,
-        note:(c)=>c.bba_term + ' days from Effective Date.' },
-      { key:'protection_end',   category:'Protection Period', name:'Protection Period Ends',
-        compute:(E,C,c)=>addDays(addDays(E, c.bba_term), c.protection_period), bizDay:false,
-        note:(c)=>c.protection_period + ' days after BBA term ends · non-exclusive · procuring cause must be documented.' },
-    ],
-  };
 
   function addDays(date, days){ const d = new Date(date); d.setDate(d.getDate()+days); return d; }
   function nextBiz(date){ const d = new Date(date); while(d.getDay()===0||d.getDay()===6) d.setDate(d.getDate()+1); return d; }
@@ -4871,6 +4537,7 @@ Aari Transactions`,
 
   let _deadlinesByFile = {}; // { file_id: { deadline_key: { completed_at, notes } } }
   let _dlState = { contract:'', effective:'', closing:'' };
+  let _dlShowCites = false; // Mockup A · paragraph citations off by default
 
   async function loadDeadlineStatusForFile(fileId){
     if(_deadlinesByFile[fileId]) return _deadlinesByFile[fileId];
@@ -4900,82 +4567,60 @@ Aari Transactions`,
     }
     if(!effISO || !clsISO){
       hostEl.innerHTML = '<div class="tpb-dl-empty">Enter both Effective and Closing dates to compute deadlines.</div>';
-      if(metaEl) metaEl.textContent = CONTRACT_LABELS[ct] || ct;
+      if(metaEl) metaEl.textContent = window.AariDeadlineEngine.contractLabel(ct);
       return;
     }
-    const E = new Date(String(effISO).length===10 ? (effISO+'T00:00:00') : effISO);
-    const C = new Date(String(clsISO).length===10 ? (clsISO+'T00:00:00') : clsISO);
-    const defaults = CONTRACT_DEFAULTS[ct] || {};
-    const overrides = file.deadline_overrides || {};
-    const cfg = Object.assign({}, defaults, overrides);
     const status = _deadlinesByFile[file.id] || {};
-    const items = (CONTRACT_DEADLINES[ct] || []).map(it => {
-      let computed = it.compute(E, C, cfg);
-      if(it.bizDay) computed = nextBiz(computed);
-      // If the TC has overridden this deadline, use the override date
+    const ENG = window.AariDeadlineEngine;
+    const overridesJson = file.deadline_overrides || {};
+    const rows = ENG.contractDeadlines(ct, effISO, clsISO, overridesJson).map(function(it){
       const rec = status[it.key];
       const override = rec && rec.due_date && rec.original_due_date && rec.override_reason
         ? { date: new Date(String(rec.due_date).length===10 ? (rec.due_date+'T00:00:00') : rec.due_date),
             originalDate: new Date(String(rec.original_due_date).length===10 ? (rec.original_due_date+'T00:00:00') : rec.original_due_date),
             reason: rec.override_reason }
         : null;
-      return { ...it, date: override ? override.date : computed, computedDate: computed, override };
+      return { key: it.key, name: it.name, category: it.category, citation: it.citation,
+               date: override ? override.date : it.date, computedDate: it.date, override: override };
     });
-    if(metaEl) metaEl.textContent = CONTRACT_LABELS[ct] + ' · ' + items.length + ' deadlines';
+    rows.sort(function(a,b){ return a.date - b.date; }); // soonest first (Mockup A)
+    if(metaEl) metaEl.textContent = ENG.contractLabel(ct) + ' · ' + rows.length + ' deadline' + (rows.length===1?'':'s');
 
-    // Group by category in preserved order
-    const groups = []; const seen = {};
-    items.forEach(it => {
-      if(!seen[it.category]){ seen[it.category] = []; groups.push({ name: it.category, items: seen[it.category] }); }
-      seen[it.category].push(it);
-    });
+    const showCites = !!_dlShowCites;
+    const citesToggle = '<div class="tpb-dlA-cites"><button type="button" id="tpb-dl-cites">' +
+      (showCites ? 'Hide para refs' : 'Show para refs') + '</button></div>';
 
-    hostEl.innerHTML = groups.map(g => {
-      return '<div class="tpb-dl-group">' +
-        '<p class="tpb-dl-group-head">' + esc(g.name) + '</p>' +
-        g.items.map(it => {
-          const rec = status[it.key];
-          const done = rec && rec.completed_at;
-          const cd = dlCountdown(it.date);
-          let rowCls = 'tpb-dl-row';
-          if(done) rowCls += ' done';
-          else if(cd.cls === 'urgent') rowCls += ' urgent';
-          else if(cd.cls === 'past') rowCls += ' past';
-          const tagCls = done ? 'done' : cd.cls;
-          const tagText = done ? 'Done' : cd.tag;
-          const btnCls = done ? 'tpb-dl-check done' : 'tpb-dl-check';
-          const btnText = done ? '&check;' : 'Mark';
-          const noteText = typeof it.note === 'function' ? it.note(cfg) : (it.note || '');
-          const overrideStrip = it.override
-            ? '<span class="tpb-dl-extended">Extended from ' + esc(fmtFullDate(it.override.originalDate)) + ' · ' + esc(it.override.reason) +
-              ' <button type="button" class="tpb-dl-reset" data-dl-reset="' + esc(it.key) + '">Reset to default</button></span>'
-            : '';
-          return '<div class="' + rowCls + '">' +
-            '<div class="tpb-dl-left">' +
-              '<p class="tpb-dl-name">' + esc(it.name) + '</p>' +
-              (noteText ? '<p class="tpb-dl-note">' + esc(noteText) + '</p>' : '') +
-              overrideStrip +
-            '</div>' +
-            '<div class="tpb-dl-right">' +
-              '<span class="tpb-dl-date">' + esc(fmtFullDate(it.date)) + '</span>' +
-              '<div style="display:flex;align-items:center;gap:4px">' +
-                '<span class="tpb-dl-tag ' + tagCls + '">' + esc(tagText) + '</span>' +
-                '<button type="button" class="' + btnCls + '" data-dl-toggle="' + esc(it.key) + '" data-dl-date="' + it.date.toISOString().slice(0,10) + '">' + btnText + '</button>' +
-                '<button type="button" class="tpb-dl-edit" data-dl-edit="' + esc(it.key) + '" title="Edit date">&#9998;</button>' +
-              '</div>' +
-            '</div>' +
-            '<div class="tpb-dl-edit-form" id="dl-edit-form-' + esc(it.key) + '" style="display:none;grid-column:1 / -1">' +
-              '<label>New date:</label>' +
-              '<input type="date" data-edit-date="' + esc(it.key) + '" value="' + it.date.toISOString().slice(0,10) + '">' +
-              '<label>Reason:</label>' +
-              '<input type="text" data-edit-reason="' + esc(it.key) + '" placeholder="Addendum, mutual agreement, lender delay…" maxlength="200">' +
-              '<button type="button" class="tpb-dl-edit-save" data-dl-save="' + esc(it.key) + '" data-dl-original="' + it.computedDate.toISOString().slice(0,10) + '">Save</button>' +
-              '<button type="button" class="tpb-dl-edit-cancel" data-dl-cancel="' + esc(it.key) + '">Cancel</button>' +
-            '</div>' +
-          '</div>';
-        }).join('') +
+    hostEl.innerHTML = citesToggle + rows.map(function(it){
+      const rec = status[it.key];
+      const done = rec && rec.completed_at;
+      const cd = dlCountdown(it.date);
+      const tagCls = done ? 'done' : cd.cls;
+      const tagText = done ? 'done' : cd.tag;
+      const overrideStrip = it.override
+        ? '<p class="tpb-dlA-ext">Extended from ' + esc(fmtFullDate(it.override.originalDate)) + ' · ' + esc(it.override.reason) +
+          ' <button type="button" class="tpb-dl-reset" data-dl-reset="' + esc(it.key) + '">Reset to default</button></p>'
+        : '';
+      const citeLine = (showCites && it.citation) ? '<p class="tpb-dlA-cite">' + esc(it.citation) + '</p>' : '';
+      const sub = (citeLine || overrideStrip) ? '<div class="tpb-dlA-sub">' + citeLine + overrideStrip + '</div>' : '';
+      return '<div class="tpb-dlA-row' + (done ? ' done' : '') + '">' +
+        '<button type="button" class="tpb-dlA-circle" data-dl-toggle="' + esc(it.key) + '" data-dl-date="' + it.date.toISOString().slice(0,10) + '" aria-label="Mark done">' + (done ? '●' : '○') + '</button>' +
+        '<span class="tpb-dlA-date">' + esc(fmtDl(it.date)) + '</span>' +
+        '<button type="button" class="tpb-dlA-name" data-dl-edit="' + esc(it.key) + '" title="Edit date">' + esc(it.name) + '</button>' +
+        '<span class="tpb-dlA-tag ' + tagCls + '">' + esc(tagText) + '</span>' +
+        sub +
+        '<div class="tpb-dl-edit-form" id="dl-edit-form-' + esc(it.key) + '" style="display:none">' +
+          '<label>New date:</label>' +
+          '<input type="date" data-edit-date="' + esc(it.key) + '" value="' + it.date.toISOString().slice(0,10) + '">' +
+          '<label>Reason:</label>' +
+          '<input type="text" data-edit-reason="' + esc(it.key) + '" placeholder="Addendum, mutual agreement, lender delay…" maxlength="200">' +
+          '<button type="button" class="tpb-dl-edit-save" data-dl-save="' + esc(it.key) + '" data-dl-original="' + it.computedDate.toISOString().slice(0,10) + '">Save</button>' +
+          '<button type="button" class="tpb-dl-edit-cancel" data-dl-cancel="' + esc(it.key) + '">Cancel</button>' +
+        '</div>' +
       '</div>';
     }).join('');
+
+    const citesBtn = document.getElementById('tpb-dl-cites');
+    if(citesBtn) citesBtn.addEventListener('click', function(){ _dlShowCites = !_dlShowCites; renderDeadlinesForFile(file); });
 
     hostEl.querySelectorAll('[data-dl-toggle]').forEach(btn => btn.addEventListener('click', () => {
       const k = btn.getAttribute('data-dl-toggle');
