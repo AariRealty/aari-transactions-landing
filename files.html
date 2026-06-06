@@ -554,6 +554,12 @@
   .tpb-acc.open .tpb-acc-chev{transform:rotate(180deg)}
   .tpb-acc-body{display:none;padding:0 22px 16px}
   .tpb-acc.open .tpb-acc-body{display:block}
+  .ck-task-wrap{border-bottom:0.5px solid #eee}
+  .ck-emails{margin:0 0 10px 27px}
+  .ck-send{display:inline-block;margin:0 0 6px;font-size:10.5px;font-weight:500;border:0;background:#0f0f0f;color:#fff;border-radius:6px;padding:5px 11px;cursor:pointer;font-family:inherit}
+  .ck-send:hover{background:#2a2a2a}
+  .ck-send.sent{background:#fff;color:#5f5e5a;border:0.5px solid #d9d4ca}
+  .ck-email{margin:0 0 8px}
   /* Deadlines · Mockup A timeline (Fix 3 Reader 2) · brand black/white/cream */
   .tpb-dlA-cites{display:flex;justify-content:flex-end;margin-bottom:4px}
   .tpb-dlA-cites button{font-size:10px;color:#9a7c3a;background:none;border:0;text-decoration:underline;text-underline-offset:2px;cursor:pointer;padding:0;font-family:inherit}
@@ -703,7 +709,7 @@
 
   <!-- STAGE CHECKLIST -->
   <section class="tpb-acc open" data-acc="ck">
-    <button type="button" class="tpb-acc-head"><span class="tpb-acc-title">Stage checklist</span><span class="tpb-acc-count" id="tpb-ck-meta"></span><span class="tpb-acc-chev" aria-hidden="true">&#9662;</span></button>
+    <button type="button" class="tpb-acc-head"><span class="tpb-acc-title">Your work · tasks + emails</span><span class="tpb-acc-count" id="tpb-ck-meta"></span><span class="tpb-acc-chev" aria-hidden="true">&#9662;</span></button>
     <div class="tpb-acc-body">
       <div id="tpb-checklist"></div>
     </div>
@@ -711,7 +717,7 @@
 
   <!-- EMAILS TO SEND -->
   <section class="tpb-acc" data-acc="em">
-    <button type="button" class="tpb-acc-head"><span class="tpb-acc-title">Emails to send</span><span class="tpb-acc-count" id="acc-count-em"></span><span class="tpb-acc-chev" aria-hidden="true">&#9662;</span></button>
+    <button type="button" class="tpb-acc-head"><span class="tpb-acc-title">Other emails</span><span class="tpb-acc-count" id="acc-count-em"></span><span class="tpb-acc-chev" aria-hidden="true">&#9662;</span></button>
     <div class="tpb-acc-body">
       <div id="tpb-emails"></div>
     </div>
@@ -1424,6 +1430,7 @@ Aari Transactions`,
       appraisal: [
         {
           id:'app_ordered_confirm',
+          task:'app_ordered',
           thread:4,
           label:'Appraisal ordered? · lender',
           to:'{{lender_name}} <{{lender_email}}>',
@@ -1456,6 +1463,7 @@ Aari Transactions · 239.688.1770`,
         },
         {
           id:'app_final_approval',
+          task:'app_final_approval_followup',
           thread:4,
           label:'At/above value · final approval push',
           showIf:(f)=>(((f.logistics||{}).appraisal_result)==='at_above'),
@@ -1494,6 +1502,7 @@ Aari Transactions · 239.688.1770`,
         },
         {
           id:'app_approval_request',
+          task:'app_loan_approved',
           thread:4,
           label:'Written loan approval · request today',
           to:'{{lender_name}} <{{lender_email}}>',
@@ -5674,6 +5683,95 @@ Aari Transactions`,
     renderPlaybook(file);
     renderDeleteZone(file);
   }
+
+  // ===== Unified stage work · email-card builder + delegation (Mockup 1) =====
+  // Emails are grouped by the task they fulfil (email.task or matching id) and
+  // render inline under that task in the checklist; the rest fall to "Other
+  // emails". Copy / Mark-sent handlers are document-delegated so a card works
+  // wherever it lives (inline or standalone). State for them lives on these
+  // module vars, refreshed on every drawer open.
+  let _drawerFile = null, _drawerAgent = null, _emailStage = '', _emailTplById = {}, _emailByTask = {};
+  function buildEmailCardHtml(e, file, agent, sends){
+    sends = sends || {};
+    const sent = sends[e.id];
+    const tsStr = sent ? new Date(sent.sent_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
+    const thread = EMAIL_THREADS[e.thread] || EMAIL_THREADS[1];
+    const filledTo = fillEmailVars(e.to || '', file, agent);
+    const filledCc = fillEmailVars(e.cc || '', file, agent);
+    const filledSubject = fillEmailVars(e.subject || '', file, agent);
+    const filledBody = fillEmailVars(e.body || '', file, agent);
+    const eid = esc(e.id);
+    return '<div class="tpb-email'+(sent?' sent':'')+'" data-email-id="'+eid+'">' +
+      '<div class="tpb-email-head">' +
+        '<span class="tpb-thread-badge" style="background:'+thread.color+'">Thread ' + e.thread + ' · ' + esc(thread.name) + '</span>' +
+        '<p class="tpb-email-name">'+esc(e.label)+'</p>' +
+        (sent ? '<span class="tpb-sent-pill">&check; Sent '+esc(tsStr)+'</span>' : '') +
+      '</div>' +
+      '<div class="tpb-email-fields">' +
+        '<div class="tpb-ef-row"><span class="tpb-ef-key">TO</span><span class="tpb-ef-val" data-copy-field="to">'+esc(filledTo)+'</span><button class="tpb-ef-copy" data-copy-target="to" data-eid="'+eid+'">Copy</button></div>' +
+        (filledCc ? '<div class="tpb-ef-row"><span class="tpb-ef-key">CC</span><span class="tpb-ef-val" data-copy-field="cc">'+esc(filledCc)+'</span><button class="tpb-ef-copy" data-copy-target="cc" data-eid="'+eid+'">Copy</button></div>' : '') +
+        '<div class="tpb-ef-row"><span class="tpb-ef-key">SUBJECT</span><span class="tpb-ef-val" data-copy-field="subject">'+esc(filledSubject)+'</span><button class="tpb-ef-copy" data-copy-target="subject" data-eid="'+eid+'">Copy</button></div>' +
+        '<div class="tpb-ef-body"><textarea class="tpb-ef-textarea" readonly data-copy-field="body">'+esc(filledBody)+'</textarea></div>' +
+      '</div>' +
+      '<div class="tpb-email-actions">' +
+        '<button class="tpb-email-copy-all" data-copy-all="'+eid+'">Copy email (subject + body)</button>' +
+        (sent
+          ? '<button class="tpb-email-mark-sent" data-unmark="'+eid+'">Unmark sent</button>'
+          : '<button class="tpb-email-mark-sent" data-mark-sent="'+eid+'">Mark sent</button>') +
+      '</div>' +
+    '</div>';
+  }
+  function _flashCopied(btn){
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
+  }
+  async function _clip(text){
+    try { await navigator.clipboard.writeText(text); return true; }
+    catch(_){
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); document.body.removeChild(ta); return true; }
+      catch(__){ document.body.removeChild(ta); return false; }
+    }
+  }
+  let _emailDelegationWired = false;
+  function wireEmailDelegation(){
+    if(_emailDelegationWired) return; _emailDelegationWired = true;
+    document.addEventListener('click', async (ev) => {
+      const t = ev.target;
+      if(!t || !t.closest) return;
+      // Toggle an inline email card under a task
+      const opener = t.closest('[data-open-email]');
+      if(opener){
+        const card = document.getElementById('ck-email-' + opener.getAttribute('data-open-email'));
+        if(card) card.style.display = (card.style.display === 'none' || !card.style.display) ? 'block' : 'none';
+        return;
+      }
+      const copyOne = t.closest('[data-copy-target]');
+      if(copyOne){
+        const e = _emailTplById[copyOne.getAttribute('data-eid')]; if(!e) return;
+        const field = copyOne.getAttribute('data-copy-target');
+        let txt = '';
+        if(field === 'to') txt = fillEmailVars(e.to || '', _drawerFile, _drawerAgent);
+        else if(field === 'cc') txt = fillEmailVars(e.cc || '', _drawerFile, _drawerAgent);
+        else if(field === 'subject') txt = fillEmailVars(e.subject || '', _drawerFile, _drawerAgent);
+        if(await _clip(txt)) _flashCopied(copyOne);
+        return;
+      }
+      const copyAll = t.closest('[data-copy-all]');
+      if(copyAll){
+        const e = _emailTplById[copyAll.getAttribute('data-copy-all')]; if(!e) return;
+        const combined = fillEmailVars(e.subject || '', _drawerFile, _drawerAgent) + '\n\n' + fillEmailVars(e.body || '', _drawerFile, _drawerAgent);
+        if(await _clip(combined)) _flashCopied(copyAll);
+        return;
+      }
+      const mk = t.closest('[data-mark-sent]');
+      if(mk){ await markEmailSent(_drawerFile, _emailStage, mk.getAttribute('data-mark-sent')); renderPlaybook(_drawerFile); return; }
+      const un = t.closest('[data-unmark]');
+      if(un){ await unmarkEmailSent(_drawerFile, un.getAttribute('data-unmark')); renderPlaybook(_drawerFile); return; }
+    });
+  }
   // ===== BROKER-ONLY FILE DELETE · quiet text link, inline confirm =====
   function renderDeleteZone(file){
     const z = document.getElementById('tpb-delete');
@@ -6241,13 +6339,32 @@ Aari Transactions`,
         ? '<div class="ck-dl-table">' + rows + '</div>'
         : '<div class="ck-dl-table ck-dl-empty-note">Add the Effective + Closing dates to this file to auto-calculate deadlines.</div>';
     }
-    return '<label class="ck-task' + (rec ? ' ck-done' : '') + '">' +
-      '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + (file.status === 'archived' ? ' disabled' : '') + '>' +
-      '<span class="ck-body"><span class="ck-label">' + esc(t.label) + '</span>' +
-      (t.sub ? '<span class="ck-sub">' + t.sub + '</span>' : '') +
-      (rec && rec.at ? '<span class="ck-stamp">Done ' + new Date(rec.at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + new Date(rec.at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) + '</span>' : '') +
-      allDl +
-      '</span>' + dlChip + '</label>';
+    // Mockup 1 · emails that fulfil this task render inline beneath it.
+    let emailHtml = '';
+    const ems = (_emailByTask && _emailByTask[t.id]) || [];
+    if(ems.length){
+      const sends = _sendsByFile[(_drawerFile || {}).id] || {};
+      emailHtml = '<div class="ck-emails">' + ems.map(e => {
+        const sent = sends[e.id];
+        return '<button type="button" class="ck-send' + (sent ? ' sent' : '') + '" data-open-email="' + esc(e.id) + '">' +
+            (sent ? '&check; Sent · ' : 'Send · ') + esc(e.label) +
+          '</button>' +
+          '<div class="ck-email" id="ck-email-' + esc(e.id) + '" style="display:none">' +
+            buildEmailCardHtml(e, _drawerFile, _drawerAgent, sends) +
+          '</div>';
+      }).join('') + '</div>';
+    }
+
+    return '<div class="ck-task-wrap">' +
+      '<label class="ck-task' + (rec ? ' ck-done' : '') + '">' +
+        '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + (file.status === 'archived' ? ' disabled' : '') + '>' +
+        '<span class="ck-body"><span class="ck-label">' + esc(t.label) + '</span>' +
+        (t.sub ? '<span class="ck-sub">' + t.sub + '</span>' : '') +
+        (rec && rec.at ? '<span class="ck-stamp">Done ' + new Date(rec.at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + new Date(rec.at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) + '</span>' : '') +
+        allDl +
+        '</span>' + dlChip + '</label>' +
+      emailHtml +
+    '</div>';
   }
   function renderStageChecklist(file){
     const host = document.getElementById('tpb-checklist');
@@ -6598,7 +6715,28 @@ Aari Transactions`,
     // File Details · everything the agent answered at intake, in one block.
     renderFileDetails(file);
 
-    // Stage checklist · per-kanban-column tasks (TC sale files).
+    // ===== Email grouping FIRST · so matched emails render inline under their
+    // task in the checklist (Mockup 1 unified work list). =====
+    const sends = _sendsByFile[file.id] || {};
+    const ft = file.file_type || 'sale';
+    const ftPlaybook = EMAIL_PLAYBOOK[ft] || {};
+    let list = (ftPlaybook[stage] || []).filter(e => (typeof e.showIf === 'function' ? e.showIf(file) : true));
+    const agent = await loadAgentForFile(file.agent_id);
+    _drawerFile = file; _drawerAgent = agent; _emailStage = stage;
+    _emailTplById = {}; list.forEach(e => { _emailTplById[e.id] = e; });
+    const stageTaskIds = new Set((ckTasksFor(file, stage) || [])
+      .filter(t => !t.showIf || t.showIf(file)).map(t => t.id));
+    _emailByTask = {};
+    const standaloneEmails = [];
+    list.forEach(e => {
+      const key = e.task || e.id;
+      if(stageTaskIds.has(key)){ (_emailByTask[key] = _emailByTask[key] || []).push(e); }
+      else standaloneEmails.push(e);
+    });
+    wireEmailDelegation();
+
+    // Stage checklist · per-kanban-column tasks (TC sale files) · now with each
+    // task's email attached inline beneath it.
     renderStageChecklist(file);
 
     // Closing Logistics · hydrate inputs from file.logistics jsonb, wire save.
@@ -6621,101 +6759,14 @@ Aari Transactions`,
         reasonsHtml;
     }
 
-    // ============== EMAIL PLAYBOOK · copy-to-clipboard ==============
-    const sends = _sendsByFile[file.id] || {};
-    const ft = file.file_type || 'sale';
-    const ftPlaybook = EMAIL_PLAYBOOK[ft] || {};
-    let list = (ftPlaybook[stage] || []).filter(e => (typeof e.showIf === 'function' ? e.showIf(file) : true));
-    const agent = await loadAgentForFile(file.agent_id);
+    // ===== Standalone emails · those not tied to a visible task. Matched
+    // emails render inline under their task in the checklist above. =====
     const emailsEl = document.getElementById('tpb-emails');
-    if(!list.length){
-      emailsEl.innerHTML = '<div class="tpb-empty">No emails recommended at this stage.</div>';
-    } else {
-      emailsEl.innerHTML = list.map(e => {
-        const sent = sends[e.id];
-        const tsStr = sent ? new Date(sent.sent_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
-        const thread = EMAIL_THREADS[e.thread] || EMAIL_THREADS[1];
-        const filledTo = fillEmailVars(e.to || '', file, agent);
-        const filledCc = fillEmailVars(e.cc || '', file, agent);
-        const filledSubject = fillEmailVars(e.subject || '', file, agent);
-        const filledBody = fillEmailVars(e.body || '', file, agent);
-        const eid = esc(e.id);
-        return '<div class="tpb-email'+(sent?' sent':'')+'" data-email-id="'+eid+'">' +
-          '<div class="tpb-email-head">' +
-            '<span class="tpb-thread-badge" style="background:'+thread.color+'">Thread ' + e.thread + ' · ' + esc(thread.name) + '</span>' +
-            '<p class="tpb-email-name">'+esc(e.label)+'</p>' +
-            (sent ? '<span class="tpb-sent-pill">&check; Sent '+esc(tsStr)+'</span>' : '') +
-          '</div>' +
-          '<div class="tpb-email-fields">' +
-            '<div class="tpb-ef-row"><span class="tpb-ef-key">TO</span><span class="tpb-ef-val" data-copy-field="to">'+esc(filledTo)+'</span><button class="tpb-ef-copy" data-copy-target="to" data-eid="'+eid+'">Copy</button></div>' +
-            (filledCc ? '<div class="tpb-ef-row"><span class="tpb-ef-key">CC</span><span class="tpb-ef-val" data-copy-field="cc">'+esc(filledCc)+'</span><button class="tpb-ef-copy" data-copy-target="cc" data-eid="'+eid+'">Copy</button></div>' : '') +
-            '<div class="tpb-ef-row"><span class="tpb-ef-key">SUBJECT</span><span class="tpb-ef-val" data-copy-field="subject">'+esc(filledSubject)+'</span><button class="tpb-ef-copy" data-copy-target="subject" data-eid="'+eid+'">Copy</button></div>' +
-            '<div class="tpb-ef-body"><textarea class="tpb-ef-textarea" readonly data-copy-field="body">'+esc(filledBody)+'</textarea></div>' +
-          '</div>' +
-          '<div class="tpb-email-actions">' +
-            '<button class="tpb-email-copy-all" data-copy-all="'+eid+'">Copy email (subject + body)</button>' +
-            (sent
-              ? '<button class="tpb-email-mark-sent" data-unmark="'+eid+'">Unmark sent</button>'
-              : '<button class="tpb-email-mark-sent" data-mark-sent="'+eid+'">Mark sent</button>') +
-          '</div>' +
-        '</div>';
-      }).join('');
-
-      // ===== wire copy buttons =====
-      const tplById = {};
-      list.forEach(e => { tplById[e.id] = e; });
-
-      function findCard(eid){ return emailsEl.querySelector('[data-email-id="'+eid+'"]'); }
-      function flashCopied(btn){
-        const orig = btn.textContent;
-        btn.textContent = '✓ Copied';
-        btn.classList.add('copied');
-        setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
-      }
-      async function clip(text){
-        try { await navigator.clipboard.writeText(text); return true; }
-        catch(_){
-          // Fallback: temp textarea
-          const ta = document.createElement('textarea');
-          ta.value = text; document.body.appendChild(ta); ta.select();
-          try { document.execCommand('copy'); document.body.removeChild(ta); return true; }
-          catch(__){ document.body.removeChild(ta); return false; }
-        }
-      }
-
-      emailsEl.querySelectorAll('[data-copy-target]').forEach(btn => btn.addEventListener('click', async () => {
-        const eid = btn.getAttribute('data-eid');
-        const field = btn.getAttribute('data-copy-target');
-        const e = tplById[eid]; if(!e) return;
-        let txt = '';
-        if(field === 'to') txt = fillEmailVars(e.to || '', file, agent);
-        else if(field === 'cc') txt = fillEmailVars(e.cc || '', file, agent);
-        else if(field === 'subject') txt = fillEmailVars(e.subject || '', file, agent);
-        const ok = await clip(txt);
-        if(ok) flashCopied(btn);
-      }));
-
-      emailsEl.querySelectorAll('[data-copy-all]').forEach(btn => btn.addEventListener('click', async () => {
-        const eid = btn.getAttribute('data-copy-all');
-        const e = tplById[eid]; if(!e) return;
-        const subject = fillEmailVars(e.subject || '', file, agent);
-        const body = fillEmailVars(e.body || '', file, agent);
-        const combined = subject + '\n\n' + body;
-        const ok = await clip(combined);
-        if(ok) flashCopied(btn);
-      }));
-
-      emailsEl.querySelectorAll('[data-mark-sent]').forEach(btn => btn.addEventListener('click', async () => {
-        const eid = btn.getAttribute('data-mark-sent');
-        await markEmailSent(file, stage, eid);
-        renderPlaybook(file);
-      }));
-      emailsEl.querySelectorAll('[data-unmark]').forEach(btn => btn.addEventListener('click', async () => {
-        const eid = btn.getAttribute('data-unmark');
-        await unmarkEmailSent(file, eid);
-        renderPlaybook(file);
-      }));
-    }
+    emailsEl.innerHTML = standaloneEmails.length
+      ? standaloneEmails.map(e => buildEmailCardHtml(e, file, agent, sends)).join('')
+      : '<div class="tpb-empty">Every email for this stage is attached to a task above.</div>';
+    const _emCount = document.getElementById('acc-count-em');
+    if(_emCount) _emCount.textContent = standaloneEmails.length ? (standaloneEmails.length + ' not tied to a task') : 'all attached to tasks';
 
     // Deadlines section · seed config controls from the file row, then render
     const ctSel = document.getElementById('tpb-contract');
