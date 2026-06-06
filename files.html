@@ -5485,7 +5485,71 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     return '<p class="ct-di-head">' + diffs.length + ' differ from the standard — confirm these.</p>' + cards + sameFold + CD_LEGEND;
   }
   // Step 1 · Contract terms · confirm dates + tailor what applies.
-  let _ctEditingField = null; // which day-row is currently expanded for editing
+  // Open the executed contract PDF. Stored contract_url signed links expire, so
+  // we regenerate a fresh one from the embedded storage path. Opens the tab
+  // synchronously (within the click) to dodge popup blockers, then redirects it.
+  function openContract(file){
+    const w = window.open('about:blank', '_blank');
+    (async function(){
+      let url = file.contract_url || '';
+      try {
+        const m = url.match(/transaction-files\/([^?]+)/);
+        if(m){
+          const path = decodeURIComponent(m[1]);
+          const { data } = await _client.storage.from('transaction-files').createSignedUrl(path, 3600);
+          if(data && data.signedUrl) url = data.signedUrl;
+        }
+      } catch(_){}
+      if(w){ if(url){ w.location = url; } else { w.close(); alert('No contract is attached to this file yet.'); } }
+      else if(url){ window.open(url, '_blank'); }
+    })();
+  }
+  // Best-effort match the agent's free-text intake form label to an engine
+  // contract-type key. Pre-fills the line; the pen lets the TC correct a miss,
+  // and nothing drives deadlines until the TC confirms.
+  function mapContractForm(label){
+    if(!label) return '';
+    const s = String(label).toLowerCase();
+    if(s.indexOf('vac') !== -1 || s.indexOf('vacant') !== -1) return (s.indexOf('nabor') !== -1 || s.indexOf('088') !== -1) ? 'nab088' : 'vac_15';
+    if(s.indexOf('commercial') !== -1 || s.indexOf('cc-6') !== -1 || s.indexOf('cc6') !== -1) return 'cc_6';
+    if(s.indexOf('crsp') !== -1) return 'frbar_crsp';
+    if(s.indexOf('nabor') !== -1 || s.indexOf('nab089') !== -1 || s.indexOf('089') !== -1) return (s.indexOf('as-is') !== -1 || s.indexOf('as is') !== -1 || s.indexOf('089') !== -1) ? 'nab089' : 'nabor';
+    if(s.indexOf('vlla') !== -1) return 'vlla_6';
+    if(s.indexOf('ers') !== -1 || (s.indexOf('listing') !== -1 && s.indexOf('vacant') === -1)) return 'ers_21tn';
+    if(s.indexOf('cl-11') !== -1 || s.indexOf('contract to lease') !== -1) return 'cl_11';
+    if(s.indexOf('lease') !== -1) return 'rlhd_3x';
+    if(s.indexOf('bba') !== -1 || s.indexOf('buyer') !== -1) return (s.indexOf('non') !== -1) ? 'bbe_2' : 'bbe_1';
+    if(s.indexOf('standard') !== -1) return 'frbar_standard';
+    if(s.indexOf('fr/bar') !== -1 || s.indexOf('frbar') !== -1 || s.indexOf('far/bar') !== -1 || s.indexOf('as-is') !== -1 || s.indexOf('as is') !== -1) return 'frbar_asis';
+    return '';
+  }
+  // One Confirm tap: persist any agent-suggested values not yet on the file,
+  // stamp who/when, and log the agent-submitted vs TC-confirmed audit record.
+  async function ctConfirmTerms(file, shown){
+    try {
+      const ENG = window.AariDeadlineEngine;
+      const colPatch = {};
+      if(!file.contract_type && shown.ct) colPatch.contract_type = shown.ct;
+      if(!file.effective_date && shown.eff) colPatch.effective_date = shown.eff;
+      if(!file.closing_date && shown.cls) colPatch.closing_date = shown.cls;
+      const lg = Object.assign({}, file.logistics || {});
+      if(!lg.financing_confirmed && shown.fin) lg.financing_confirmed = shown.fin;
+      if(!lg.hoa_applies && shown.hoa) lg.hoa_applies = shown.hoa;
+      lg.terms_confirmed_at = new Date().toISOString();
+      const upd = Object.assign({}, colPatch, { logistics: lg });
+      Object.keys(colPatch).forEach(k => { file[k] = colPatch[k]; });
+      file.logistics = lg;
+      if(_currentFile && _currentFile.id === file.id) Object.assign(_currentFile, file);
+      await _client.from('files').update(upd).eq('id', file.id);
+      writeAuditLog('contract_terms_confirmed', file.id, {
+        agent_submitted: { contract_form_type: (file.contract_form_type || (file.raw_form_data||{}).contract_form_type || ''), effective: shown.agentEff, closing: shown.agentCls, hoa: (file.raw_form_data||{}).pa_hoa },
+        confirmed: { contract_type: file.contract_type, effective: file.effective_date, closing: file.closing_date, financing: lg.financing_confirmed, hoa: lg.hoa_applies },
+      });
+      _ctEditingField = null;
+      renderPlaybook(file);
+    } catch(err){ console.warn('[files] confirm terms failed', err); }
+  }
+  let _ctEditingField = null; // which line/row is currently expanded for editing
   function renderContractTerms(file){
     const host = document.getElementById('tpb-terms');
     const meta = document.getElementById('tpb-terms-meta');
@@ -5590,38 +5654,64 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     }).join('');
     const grp = function(t){ return '<p style="font-size:10.5px;font-weight:600;letter-spacing:.07em;color:#b3aea5;text-transform:uppercase;margin:16px 0 2px">' + t + '</p>'; };
     const dateCtl = function(id, val){
-      return '<input type="date" id="' + id + '" value="' + esc(val) + '" style="border:0.5px solid #dcdcdc;border-radius:8px;padding:6px 9px;font-size:13px;font-family:inherit;background:#fff">';
+      return '<input type="date" id="' + id + '" value="' + esc(val) + '" style="border:0.5px solid #d9d4ca;border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit;background:#fff;box-sizing:border-box;width:100%">';
     };
+    // Pre-fill the display from the agent's submission when the file has no value yet.
+    const agentForm = file.contract_form_type || raw.contract_form_type || '';
+    const shownCt  = ct  || mapContractForm(agentForm);
+    const shownEff = eff || agentEff;
+    const shownCls = cls || agentCls;
+    const shownFin = fin || '';
+    const shownHoa = hoa || ((raw.pa_hoa === 'yes') ? 'yes' : (raw.pa_hoa === 'no' ? 'no' : ''));
+    const fmtLineDate = function(s){ if(!s) return ''; try { return new Date(String(s).length === 10 ? s + 'T00:00:00' : s).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }); } catch(_){ return s; } };
+    const ctLabelFor = function(k){ try { return (ENG && ENG.contractLabel) ? ENG.contractLabel(k) : k; } catch(_){ return k; } };
+    // One field as a confirmed line (label + value + pen). Tapping the pen opens
+    // its editor in place in a cream box. Black / white / cream only.
+    const ctLine = function(key, label, displayVal, controlHtml, note){
+      if(_ctEditingField === key){
+        return '<div style="background:#f5f0e8;border:0.5px solid #e6ddc9;border-radius:10px;padding:11px 12px;margin:6px 0">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:9.5px;color:#6f6a61;text-transform:uppercase;letter-spacing:.04em">' + esc(label) + '</span>' +
+          '<button type="button" data-ctline-done="' + key + '" style="background:none;border:0;font-size:11px;color:#6f6a61;cursor:pointer;font-family:inherit">done</button></div>' +
+          '<div style="margin-top:8px">' + controlHtml + '</div>' +
+          (note ? '<p style="font-size:10px;color:#8a857c;margin:7px 0 0">' + esc(note) + '</p>' : '') +
+        '</div>';
+      }
+      return '<button type="button" data-ctline-edit="' + key + '" style="width:100%;display:flex;justify-content:space-between;align-items:center;padding:12px 2px;border:0;border-top:0.5px solid #f1ede6;background:none;cursor:pointer;font-family:inherit;text-align:left">' +
+        '<span><span style="display:block;font-size:9.5px;color:#a39e95;text-transform:uppercase;letter-spacing:.04em">' + esc(label) + '</span>' +
+        '<span style="font-size:13.5px;font-weight:600;color:' + (displayVal ? '#0f0f0f' : '#c2bdb4') + '">' + esc(displayVal || 'Not set') + '</span></span>' +
+        '<span style="color:#cbc6bc;font-size:15px">&#9998;</span>' +
+      '</button>';
+    };
+    const confirmed = !!((file.logistics || {}).terms_confirmed_at) || termsConfirmed(file);
 
+    const viewBtn = file.contract_url
+      ? '<button type="button" id="ct-viewcontract" style="display:inline-flex;align-items:center;gap:6px;border:0.5px solid #d9d4ca;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;color:#0f0f0f;cursor:pointer;margin:2px 0 8px">&#128196; View contract' + (file.contract_filename ? ' <span style="color:#a39e95">&middot; ' + esc(file.contract_filename) + '</span>' : '') + '</button>'
+      : '<p style="font-size:11px;color:#8a877f;margin:2px 0 8px">No contract attached to this file yet.</p>';
     host.innerHTML =
-      '<p style="font-size:11px;color:#8a877f;margin:0 0 2px">Open the executed contract and confirm each line. What you set drives every deadline, task, and email.</p>' +
-      grp('Contract') +
-      '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0">' +
-        '<span style="font-size:13px;color:#0f0f0f">Contract type</span><span>' + ctSelect + '</span></div>' +
-      grp('The two dates') +
-      '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:0.5px solid #f1ede6">' +
-        '<span style="font-size:13px;color:#0f0f0f">Effective date' + (agentEff ? '<span style="display:block;font-size:10px;color:#b3aea5">agent entered ' + esc(agentEff) + '</span>' : '') + '</span>' +
-        '<span style="display:flex;align-items:center;gap:7px">' + dateCtl('ct-eff', eff) + (eff ? '' : '<span style="font-size:10px;color:#c69a4a">needed</span>') + '</span></div>' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:0.5px solid #f1ede6">' +
-        '<span style="font-size:13px;color:#0f0f0f">Closing date' + (agentCls ? '<span style="display:block;font-size:10px;color:#b3aea5">agent entered ' + esc(agentCls) + '</span>' : '') + '</span>' +
-        '<span style="display:flex;align-items:center;gap:7px">' + dateCtl('ct-cls', cls) + (cls ? '' : '<span style="font-size:10px;color:#c69a4a">needed</span>') + '</span></div>' +
+      '<p style="font-size:11px;color:#8a877f;margin:0 0 8px">Pre-filled from the agent’s submission. Glance, then confirm — tap the pen on anything that doesn’t match the contract.</p>' +
+      viewBtn +
+      ctLine('contract', 'Contract type', (shownCt ? ctLabelFor(shownCt) : ''), ctSelect, agentForm ? ('Agent submitted: ' + agentForm) : '') +
+      ctLine('eff', 'Effective date', fmtLineDate(shownEff), dateCtl('ct-eff', shownEff), (agentEff && !eff) ? ('Agent entered ' + agentEff) : '') +
+      ctLine('cls', 'Closing date', fmtLineDate(shownCls), dateCtl('ct-cls', shownCls), (agentCls && !cls) ? ('Agent entered ' + agentCls) : '') +
+      ctLine('fin', 'Financing', (shownFin === 'financed' ? 'Financed' : (shownFin === 'cash' ? 'Cash' : '')), seg(shownFin, 'financed', 'Financed', 'cash', 'Cash', 'fin')) +
+      ctLine('hoa', 'Property has HOA / condo', (shownHoa === 'yes' ? 'Yes' : (shownHoa === 'no' ? 'No' : '')), seg(shownHoa, 'yes', 'Yes', 'no', 'No', 'hoa'), (raw.pa_hoa && !hoa) ? ('Agent said: ' + raw.pa_hoa) : '') +
+      (confirmed
+        ? '<p style="font-size:10.5px;color:#a39e95;margin:13px 2px 0">&#10003; Confirmed' + (((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '') + '</p>'
+        : '<button type="button" id="ct-confirm" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:12px;text-align:center;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;margin:14px 0 2px">&check; Confirm &amp; unlock my work</button>' +
+          '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Stamps it with your name + date and records agent-submitted vs confirmed</p>') +
       (ct
         ? (dayRows
             ? grp('Contingency days') +
               '<p style="font-size:11.5px;color:#5f5e5a;margin:0 0 4px">Standards are filled. Change only what your contract differs on.</p>' + dayRows +
               (haveDates ? '' : '<p style="font-size:10.5px;color:#b3aea5;margin:8px 0 0">Set both dates above to see each deadline date.</p>')
             : '')
-        : '<p style="font-size:11px;color:#b3aea5;margin:12px 0 0">Pick a contract type to load its deadlines.</p>') +
-      grp('What applies') +
-      '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:0.5px solid #f1ede6">' +
-        '<span style="font-size:13px;color:#0f0f0f">Financing</span><span>' + seg(fin, 'financed', 'Financed', 'cash', 'Cash', 'fin') + '</span></div>' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-top:0.5px solid #f1ede6">' +
-        '<span style="font-size:13px;color:#0f0f0f">Property has HOA / condo</span><span>' + seg(hoa, 'yes', 'Yes', 'no', 'No', 'hoa') + '</span></div>';
+        : '');
 
-    const done = termsConfirmed(file);
-    if(meta) meta.textContent = done ? 'Set up · ready to work' : 'Confirm to unlock your work';
+    if(meta) meta.textContent = confirmed ? 'Set up · ready to work' : 'Confirm to unlock your work';
 
     // ---- wiring ----
+    const vc = document.getElementById('ct-viewcontract');
+    if(vc) vc.addEventListener('click', () => openContract(file));
     const ctc = document.getElementById('ct-contract');
     if(ctc) ctc.addEventListener('change', () => ctSave(file, { contract_type: ctc.value || null }, null));
     const effI = document.getElementById('ct-eff');
@@ -5630,6 +5720,15 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     if(clsI) clsI.addEventListener('change', () => ctSave(file, { closing_date: clsI.value || null }, null));
     host.querySelectorAll('[data-ct-fin]').forEach(b => b.addEventListener('click', () => ctSave(file, null, { financing_confirmed: b.getAttribute('data-ct-fin') })));
     host.querySelectorAll('[data-ct-hoa]').forEach(b => b.addEventListener('click', () => ctSave(file, null, { hoa_applies: b.getAttribute('data-ct-hoa') })));
+    // Confirm-line pen: open / close a line's editor in place.
+    host.querySelectorAll('[data-ctline-edit]').forEach(function(b){
+      b.addEventListener('click', function(){ _ctEditingField = b.getAttribute('data-ctline-edit'); renderContractTerms(file); });
+    });
+    host.querySelectorAll('[data-ctline-done]').forEach(function(b){
+      b.addEventListener('click', function(){ _ctEditingField = null; renderContractTerms(file); });
+    });
+    const cf = document.getElementById('ct-confirm');
+    if(cf) cf.addEventListener('click', () => ctConfirmTerms(file, { ct: shownCt, eff: shownEff, cls: shownCls, fin: shownFin, hoa: shownHoa, agentEff: agentEff, agentCls: agentCls }));
     // Tap a compact row to expand its editor (single row at a time).
     host.querySelectorAll('[data-ctedit]').forEach(function(b){
       b.addEventListener('click', function(){
