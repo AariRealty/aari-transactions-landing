@@ -5549,6 +5549,32 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       renderPlaybook(file);
     } catch(err){ console.warn('[files] confirm terms failed', err); }
   }
+  // Attach a contract to a file that doesn't have one (e.g. older/seed files;
+  // real agent intakes attach it automatically). Uploads to the same storage
+  // bucket and saves contract_url + filename, then re-renders.
+  function attachContract(file){
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = '.pdf,application/pdf,image/*';
+    inp.addEventListener('change', async function(){
+      const f = inp.files && inp.files[0];
+      if(!f) return;
+      try {
+        const safe = f.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const path = file.id + '/contract-' + Date.now() + '-' + safe;
+        const up = await _client.storage.from('transaction-files').upload(path, f, { upsert:false, contentType: f.type || 'application/octet-stream' });
+        if(up.error) throw up.error;
+        const signed = await _client.storage.from('transaction-files').createSignedUrl(path, 604800);
+        const url = signed.data && signed.data.signedUrl;
+        await _client.from('files').update({ contract_url: url, contract_filename: f.name }).eq('id', file.id);
+        file.contract_url = url; file.contract_filename = f.name;
+        if(_currentFile && _currentFile.id === file.id){ _currentFile.contract_url = url; _currentFile.contract_filename = f.name; }
+        const ff = (_files || []).find(function(x){ return x.id === file.id; }); if(ff){ ff.contract_url = url; ff.contract_filename = f.name; }
+        renderPlaybook(file);
+      } catch(err){ console.warn('[files] attach contract failed', err); alert('Upload failed: ' + (err && err.message || 'unknown')); }
+    });
+    inp.click();
+  }
   let _ctEditingField = null; // which line/row is currently expanded for editing
   function renderContractTerms(file){
     const host = document.getElementById('tpb-terms');
@@ -5602,10 +5628,10 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         ENG.contractDeadlines(ct, eff, cls, {}).forEach(function(d){ stdMap[d.key] = d.date; });
       } catch(_){ haveDates = false; }
     }
-    // Small dark editor box — shown only for the ONE row being edited.
+    // Small white editor box — shown only for the ONE row being edited.
     const dayBox = function(id, val){
       return '<input type="number" id="' + id + '" min="0" max="365" value="' + (val === '' || val == null ? '' : esc(val)) + '" ' +
-        'style="width:44px;height:34px;text-align:center;background:#0f0f0f;color:#fff;border:none;border-radius:7px;font-size:14px;font-weight:600;font-family:inherit;-moz-appearance:textfield">';
+        'style="width:38px;height:28px;text-align:center;background:#fff;color:#0f0f0f;border:0.5px solid #d9d4ca;border-radius:6px;font-size:13px;font-weight:600;font-family:inherit;-moz-appearance:textfield">';
     };
     // Each row reads as a confirmed line (label · N days → date ✓). Tap it to
     // expand the editor; only the tapped row shows the dark box.
@@ -5686,7 +5712,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
 
     const viewBtn = file.contract_url
       ? '<button type="button" id="ct-viewcontract" style="display:inline-flex;align-items:center;gap:6px;border:0.5px solid #d9d4ca;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;color:#0f0f0f;cursor:pointer;margin:2px 0 8px">&#128196; View contract' + (file.contract_filename ? ' <span style="color:#a39e95">&middot; ' + esc(file.contract_filename) + '</span>' : '') + '</button>'
-      : '<p style="font-size:11px;color:#8a877f;margin:2px 0 8px">No contract attached to this file yet.</p>';
+      : '<button type="button" id="ct-attachcontract" style="display:inline-flex;align-items:center;gap:6px;border:0.5px dashed #c2bdb4;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;color:#5f5e5a;cursor:pointer;margin:2px 0 8px">&#128206; Attach contract</button>';
     host.innerHTML =
       '<p style="font-size:11px;color:#8a877f;margin:0 0 8px">Pre-filled from the agent’s submission. Glance, then confirm — tap the pen on anything that doesn’t match the contract.</p>' +
       viewBtn +
@@ -5712,6 +5738,8 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     // ---- wiring ----
     const vc = document.getElementById('ct-viewcontract');
     if(vc) vc.addEventListener('click', () => openContract(file));
+    const ac = document.getElementById('ct-attachcontract');
+    if(ac) ac.addEventListener('click', () => attachContract(file));
     const ctc = document.getElementById('ct-contract');
     if(ctc) ctc.addEventListener('change', () => ctSave(file, { contract_type: ctc.value || null }, null));
     const effI = document.getElementById('ct-eff');
