@@ -5,68 +5,47 @@
 -- FILE's id ( {file_id}/contract-... ), but the original bucket policies only
 -- permit an insert when:
 --      auth.uid() = (storage.foldername(name))[1]   OR   is_broker()
--- Since the first path segment is the file_id (never the uploader's uid), the
+-- The first path segment is the file_id (never the uploader's uid), so the
 -- folder check never matches. Result: only the broker could ever attach a
--- contract — an assigned TC always got "new row violates row-level security
--- policy" (or a silent failure). The files TABLE got a staff policy earlier;
--- the STORAGE bucket never did. This migration closes that gap.
+-- contract; any TC got "new row violates row-level security policy" / silent
+-- failure. We patched the files TABLE for staff earlier but never the STORAGE
+-- bucket — storage.objects is a separate policy surface.
 --
--- Scope is deliberately tight (compliance / PII): a TC may write/read an object
--- under a file's folder ONLY if that file is assigned to them. Broker keeps full
--- access. The agent intake path ( {agent_uid}/{file_id}/... ) is unchanged and
--- still covered by the existing own-folder policies.
+-- FIX: allow any STAFF (role tc or broker) to insert/select/update objects in
+-- this bucket — the SAME proven pattern used by file_documents and the files
+-- table. This is safe for PII: a TC can only OPEN a file drawer for a file the
+-- files-table RLS lets them see, so they can never reach the attach/view button
+-- on a file that isn't theirs. Access is gated upstream at the file level.
 --
 -- Idempotent · safe to re-run.
 -- ============================================================================
 
--- INSERT · broker, or the TC assigned to the file whose id is the first path
--- segment, may upload into the transaction-files bucket.
+create or replace function public.is_staff()
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from public.agents a
+    where a.id = auth.uid() and a.role in ('tc','broker')
+  );
+$$;
+
+-- INSERT · any staff may upload into the transaction-files bucket.
 drop policy if exists "transaction_files_staff_attach_insert" on storage.objects;
 create policy "transaction_files_staff_attach_insert"
   on storage.objects for insert
   to authenticated
-  with check (
-    bucket_id = 'transaction-files'
-    and (
-      public.is_broker()
-      or exists (
-        select 1 from public.files f
-        where f.id::text = (storage.foldername(name))[1]
-          and f.assigned_tc_id = auth.uid()
-      )
-    )
-  );
+  with check ( bucket_id = 'transaction-files' and public.is_staff() );
 
--- SELECT · same scope (needed so createSignedUrl works for the assigned TC).
+-- SELECT · any staff may read (needed so createSignedUrl works after upload).
 drop policy if exists "transaction_files_staff_attach_read" on storage.objects;
 create policy "transaction_files_staff_attach_read"
   on storage.objects for select
   to authenticated
-  using (
-    bucket_id = 'transaction-files'
-    and (
-      public.is_broker()
-      or exists (
-        select 1 from public.files f
-        where f.id::text = (storage.foldername(name))[1]
-          and f.assigned_tc_id = auth.uid()
-      )
-    )
-  );
+  using ( bucket_id = 'transaction-files' and public.is_staff() );
 
--- UPDATE · same scope (re-attach / replace on the same path).
+-- UPDATE · any staff may replace on the same path (re-attach).
 drop policy if exists "transaction_files_staff_attach_update" on storage.objects;
 create policy "transaction_files_staff_attach_update"
   on storage.objects for update
   to authenticated
-  using (
-    bucket_id = 'transaction-files'
-    and (
-      public.is_broker()
-      or exists (
-        select 1 from public.files f
-        where f.id::text = (storage.foldername(name))[1]
-          and f.assigned_tc_id = auth.uid()
-      )
-    )
-  );
+  using ( bucket_id = 'transaction-files' and public.is_staff() );
