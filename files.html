@@ -627,8 +627,12 @@
   /* Centered section popup over the drawer */
   .tpb-pop-backdrop{position:fixed;inset:0;background:rgba(15,15,15,0.45);z-index:9994;opacity:0;pointer-events:none;transition:opacity .15s ease}
   .tpb-pop-backdrop.show{opacity:1;pointer-events:auto}
-  .tpb-popmodal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:88vh;overflow-y:auto;background:#fff;border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,0.32);z-index:9995;font-family:'Inter',system-ui,sans-serif}
+  .tpb-popmodal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(560px,94vw);max-height:88vh;overflow-y:auto;background:#fff;border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,0.32);z-index:9995;font-family:'Inter',system-ui,sans-serif;transition:width .15s ease}
   @media (max-width:560px){ .tpb-popmodal{width:96vw;max-height:92vh} }
+  .tpb-popmodal.verify{width:min(960px,97vw)}
+  .ct-verify-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:16px;align-items:start}
+  .ct-verify-terms{min-width:0}
+  @media (max-width:760px){ .ct-verify-grid{grid-template-columns:1fr} .ct-verify-pdf iframe{height:340px!important} }
   .tpb-other-eb{font-size:11px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#a39e95}
   .ct-grouplabel{font-size:9px;letter-spacing:.5px;text-transform:uppercase;color:#a39e95;margin:12px 0 2px}
   .ct-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-top:0.5px solid #eee}
@@ -5567,6 +5571,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   // the file at intake — go look for it in storage at {submitted_by}/{file.id}/
   // and resolve a fresh signed URL. Cached per file (null = checked, none found).
   async function resolveContractUrl(file){
+    if((file.raw_form_data || {}).contract_removed){ file._resolvedContract = null; return; }
     if(file.contract_url || (file.raw_form_data || {}).contract_url) return;
     if(file._resolvedContract !== undefined) return;
     file._resolvedContract = null;
@@ -5678,6 +5683,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         // openContract() regenerates a fresh signed link from this path on view.
         const raw = Object.assign({}, file.raw_form_data || {});
         raw.contract_path = path; raw.contract_filename = f.name;
+        delete raw.contract_removed;
         // Best-effort immediate signed URL too — but a signing failure must NOT
         // sink the attach; we already have the path.
         try {
@@ -5696,6 +5702,37 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     inp.click();
   }
   let _ctEditingField = null; // which line/row is currently expanded for editing
+  let _ctVerifyMode = false;  // split view · contract PDF beside the term lines
+  // Resolve a FRESH signed URL for the attached contract (signed links expire,
+  // so always regenerate from the durable storage path).
+  async function ctResolveViewUrl(file){
+    const raw = file.raw_form_data || {};
+    let path = raw.contract_path || '';
+    if(!path){ const ex = contractUrlOf(file) || ''; const m = ex.match(/transaction-files\/([^?]+)/); if(m) path = decodeURIComponent(m[1]); }
+    if(!path){ try { await resolveContractUrl(file); } catch(_){} const ex2 = file._resolvedContract || ''; const m2 = ex2.match(/transaction-files\/([^?]+)/); if(m2) path = decodeURIComponent(m2[1]); else if(ex2) return ex2; }
+    if(path){ try { const { data, error } = await _client.storage.from('transaction-files').createSignedUrl(path, 3600); if(!error && data && data.signedUrl) return data.signedUrl; } catch(_){} }
+    return '';
+  }
+  // Remove the attached contract (e.g. wrong file uploaded). Unlinks the
+  // reference, sets a removed flag so the intake auto-resolver won't re-surface
+  // it, and best-effort deletes the storage object. Re-attach clears the flag.
+  async function removeContract(file){
+    if(!confirm('Remove the attached contract from this file? You can upload a different one afterward.')) return;
+    const raw = Object.assign({}, file.raw_form_data || {});
+    const path = raw.contract_path || '';
+    delete raw.contract_url; delete raw.contract_filename; delete raw.contract_path;
+    raw.contract_removed = true;
+    const { data, error } = await _client.from('files').update({ raw_form_data: raw }).eq('id', file.id).select('id');
+    if(error){ alert('Could not remove: ' + (error.message || 'unknown')); return; }
+    if(!data || data.length === 0){ alert('Could not remove — you may not have permission (RLS).'); return; }
+    if(path){ try { await _client.storage.from('transaction-files').remove([path]); } catch(_){} }
+    file.raw_form_data = raw; file.contract_filename = ''; file._resolvedContract = null;
+    if(_currentFile && _currentFile.id === file.id){ _currentFile.raw_form_data = raw; _currentFile.contract_filename = ''; _currentFile._resolvedContract = null; }
+    const ff = (_files || []).find(function(x){ return x.id === file.id; }); if(ff){ ff.raw_form_data = raw; ff.contract_filename = ''; }
+    _ctVerifyMode = false;
+    try { writeAuditLog('contract_removed', file.id, { path: path || null }); } catch(_){}
+    renderPlaybook(file);
+  }
   function renderContractTerms(file){
     const host = document.getElementById('tpb-terms');
     const meta = document.getElementById('tpb-terms-meta');
@@ -5836,12 +5873,21 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const ready = termsConfirmed(file);
 
     const _ctUrl = contractUrlOf(file), _ctName = contractNameOf(file);
-    const viewBtn = _ctUrl
-      ? '<button type="button" id="ct-viewcontract" style="display:inline-flex;align-items:center;gap:6px;border:0.5px solid #d9d4ca;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;color:#0f0f0f;cursor:pointer;margin:2px 0 8px">&#128196; View contract' + (_ctName ? ' <span style="color:#a39e95">&middot; ' + esc(_ctName) + '</span>' : '') + '</button>'
-      : '<button type="button" id="ct-attachcontract" style="display:inline-flex;align-items:center;gap:6px;border:0.5px dashed #c2bdb4;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;color:#5f5e5a;cursor:pointer;margin:2px 0 8px">&#128206; Attach contract</button>';
-    host.innerHTML =
-      '<p style="font-size:11px;color:#8a877f;margin:0 0 8px">Pre-filled from the agent’s submission. Glance, then confirm — tap the pen on anything that doesn’t match the contract.</p>' +
-      viewBtn +
+    const hasContract = !!_ctUrl;
+    // Top controls: View / Verify side-by-side / Replace / Remove when a contract
+    // is attached; a single Attach button when it isn't.
+    const controlsHtml = hasContract
+      ? '<div style="display:flex;gap:7px;flex-wrap:wrap;margin:2px 0 10px">' +
+          '<button type="button" id="ct-verify" style="display:inline-flex;align-items:center;gap:6px;border:0.5px solid #0f0f0f;background:#0f0f0f;color:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;cursor:pointer">&#9707; Verify against contract</button>' +
+          '<button type="button" id="ct-viewcontract" style="display:inline-flex;align-items:center;gap:6px;border:0.5px solid #d9d4ca;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;color:#0f0f0f;cursor:pointer">&#128196; Open' + (_ctName ? ' <span style="color:#a39e95">&middot; ' + esc(_ctName) + '</span>' : '') + '</button>' +
+          '<button type="button" id="ct-replace" style="display:inline-flex;align-items:center;gap:5px;border:0.5px solid #d9d4ca;background:#fff;border-radius:8px;padding:7px 11px;font-size:12px;font-family:inherit;color:#5f5e5a;cursor:pointer">&#8635; Replace</button>' +
+          '<button type="button" id="ct-remove" style="display:inline-flex;align-items:center;gap:5px;border:0.5px solid #e3ccc5;background:#fff;border-radius:8px;padding:7px 11px;font-size:12px;font-family:inherit;color:#a3402f;cursor:pointer">&#10005; Remove</button>' +
+        '</div>'
+      : '<button type="button" id="ct-attachcontract" style="display:inline-flex;align-items:center;gap:6px;border:0.5px dashed #c2bdb4;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;color:#5f5e5a;cursor:pointer;margin:2px 0 10px">&#128206; Attach contract</button>';
+    const introP = '<p style="font-size:11px;color:#8a877f;margin:0 0 8px">Pre-filled from the agent’s submission. Glance, then confirm — tap a line to change anything that doesn’t match the contract.</p>';
+    // The term lines + confirm + contingency days + association — shared by both
+    // the normal view and the right column of the split verify view.
+    const termsBody =
       ctLine('contract', 'Contract type', (shownCt ? ctLabelFor(shownCt) : ''), ctSelect, agentForm ? ('Agent submitted: ' + agentForm) : '') +
       ctLine('eff', 'Effective date', fmtLineDate(shownEff), dateCtl('ct-eff', shownEff), (agentEff && !eff) ? ('Agent entered ' + agentEff) : '') +
       ctLine('cls', 'Closing date', fmtLineDate(shownCls), dateCtl('ct-cls', shownCls), (agentCls && !cls) ? ('Agent entered ' + agentCls) : '') +
@@ -5863,6 +5909,32 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         : '') +
       associationSectionHtml(file);
 
+    const _ctModal = document.getElementById('tpb-popview');
+    if(_ctVerifyMode && hasContract){
+      if(_ctModal) _ctModal.classList.add('verify');
+      host.innerHTML =
+        '<div class="ct-verify-grid">' +
+          '<div class="ct-verify-pdf">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+              '<button type="button" id="ct-verify-back" style="display:inline-flex;align-items:center;gap:5px;border:0;background:none;color:#0f0f0f;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">&larr; Back to terms</button>' +
+              '<span style="display:flex;gap:12px">' +
+                '<button type="button" id="ct-viewcontract" style="border:0;background:none;color:#0f0f0f;font-size:11px;cursor:pointer;font-family:inherit">&#8599; Open in tab</button>' +
+                '<button type="button" id="ct-replace" style="border:0;background:none;color:#5f5e5a;font-size:11px;cursor:pointer;font-family:inherit">&#8635; Replace</button>' +
+                '<button type="button" id="ct-remove" style="border:0;background:none;color:#a3402f;font-size:11px;cursor:pointer;font-family:inherit">&#10005; Remove</button>' +
+              '</span>' +
+            '</div>' +
+            '<div style="font-size:10px;color:#8a857c;margin-bottom:6px">&#128196; ' + esc(_ctName || 'Contract') + '</div>' +
+            '<iframe id="ct-pdfframe" title="Executed contract" style="width:100%;height:560px;border:0.5px solid #e6ddc9;border-radius:8px;background:#faf7f1"></iframe>' +
+          '</div>' +
+          '<div class="ct-verify-terms">' + introP + termsBody + '</div>' +
+        '</div>';
+      (async function(){ const u = await ctResolveViewUrl(file); const fr = document.getElementById('ct-pdfframe'); if(fr){ if(u){ fr.src = u; } else { fr.outerHTML = '<div style="padding:16px;font-size:12px;color:#a3402f;border:0.5px solid #e6ddc9;border-radius:8px;background:#faf7f1">Could not load the contract preview. Use “Open in tab”.</div>'; } } })();
+    } else {
+      if(_ctVerifyMode && !hasContract) _ctVerifyMode = false;
+      if(_ctModal) _ctModal.classList.remove('verify');
+      host.innerHTML = introP + controlsHtml + termsBody;
+    }
+
     if(meta) meta.textContent = confirmed ? 'Set up · ready to work' : 'Confirm to unlock your work';
 
     // ---- wiring ----
@@ -5870,6 +5942,14 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     if(vc) vc.addEventListener('click', () => openContract(file));
     const ac = document.getElementById('ct-attachcontract');
     if(ac) ac.addEventListener('click', () => attachContract(file));
+    const vfy = document.getElementById('ct-verify');
+    if(vfy) vfy.addEventListener('click', () => { _ctVerifyMode = true; renderContractTerms(file); });
+    const vfBack = document.getElementById('ct-verify-back');
+    if(vfBack) vfBack.addEventListener('click', () => { _ctVerifyMode = false; renderContractTerms(file); });
+    const rep = document.getElementById('ct-replace');
+    if(rep) rep.addEventListener('click', () => attachContract(file));
+    const rem = document.getElementById('ct-remove');
+    if(rem) rem.addEventListener('click', () => removeContract(file));
     const ctc = document.getElementById('ct-contract');
     if(ctc) ctc.addEventListener('change', () => ctSave(file, { contract_type: ctc.value || null }, null));
     const effI = document.getElementById('ct-eff');
@@ -7784,6 +7864,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const pv = document.getElementById('tpb-popview'), bd = document.getElementById('tpb-pop-backdrop');
     if(!pv) return;
     _openPopKey = key;
+    if(key !== 'terms'){ _ctVerifyMode = false; pv.classList.remove('verify'); }
     pv.querySelectorAll('.tpb-pop').forEach(p => { p.hidden = (p.getAttribute('data-pop') !== key); });
     const tt = document.getElementById('tpb-poptitle'); if(tt) tt.textContent = _POP_TITLES[key] || '';
     pv.hidden = false; if(bd) bd.classList.add('show');
@@ -7791,7 +7872,8 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   function closeSectionPop(){
     const pv = document.getElementById('tpb-popview'), bd = document.getElementById('tpb-pop-backdrop');
     _openPopKey = null;
-    if(pv) pv.hidden = true; if(bd) bd.classList.remove('show');
+    _ctVerifyMode = false;
+    if(pv){ pv.hidden = true; pv.classList.remove('verify'); } if(bd) bd.classList.remove('show');
   }
   // Do-next strip · soonest deadline (engine) + nudge to unsent emails.
   function renderDoNext(file){
