@@ -2878,7 +2878,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       const daysToClose = f.closing_date ? Math.round((new Date(f.closing_date+'T00:00:00').getTime() - now) / 86400000) : null;
 
       // 1. Deadlines due soon for this file
-      const fileDls = (_deadlines || []).filter(d => d.file_id === f.id && !d.completed_at && d.due_date);
+      const fileDls = ((typeof _deadlines !== 'undefined' && _deadlines) ? _deadlines : []).filter(d => d.file_id === f.id && !d.completed_at && d.due_date);
       fileDls.forEach(d => {
         const ms = new Date(d.due_date+'T17:00:00').getTime() - now;
         const hours = ms / 3600000;
@@ -5561,7 +5561,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   // Step 1 · Contract terms · confirm dates + tailor what applies.
   // The executed contract is saved at intake INSIDE raw_form_data (the cockpit
   // 'files' row has no top-level contract_url column), so read both places.
-  function contractUrlOf(file){ return file.contract_url || (file.raw_form_data || {}).contract_url || file._resolvedContract || ''; }
+  function contractUrlOf(file){ return file.contract_url || (file.raw_form_data || {}).contract_url || (file.raw_form_data || {}).contract_path || file._resolvedContract || ''; }
   function contractNameOf(file){ return file.contract_filename || (file.raw_form_data || {}).contract_filename || ''; }
   // If no contract URL is saved on the row, the agent may still have uploaded
   // the file at intake — go look for it in storage at {submitted_by}/{file.id}/
@@ -5593,16 +5593,24 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   function openContract(file){
     const w = window.open('about:blank', '_blank');
     (async function(){
-      let url = contractUrlOf(file) || '';
-      try {
-        const m = url.match(/transaction-files\/([^?]+)/);
-        if(m){
-          const path = decodeURIComponent(m[1]);
-          const { data } = await _client.storage.from('transaction-files').createSignedUrl(path, 3600);
-          if(data && data.signedUrl) url = data.signedUrl;
-        }
-      } catch(_){}
-      if(w){ if(url){ w.location = url; } else { w.close(); alert('No contract is attached to this file yet.'); } }
+      const raw = file.raw_form_data || {};
+      let url = '';
+      // Prefer the durable storage PATH (signed links expire); fall back to
+      // extracting the path out of any stored signed URL.
+      let path = raw.contract_path || '';
+      if(!path){
+        const existing = contractUrlOf(file) || '';
+        const m = existing.match(/transaction-files\/([^?]+)/);
+        if(m) path = decodeURIComponent(m[1]);
+        else url = existing; // last resort: whatever URL we already hold
+      }
+      if(path){
+        try {
+          const { data, error } = await _client.storage.from('transaction-files').createSignedUrl(path, 3600);
+          if(!error && data && data.signedUrl) url = data.signedUrl;
+        } catch(_){}
+      }
+      if(w){ if(url){ w.location = url; } else { w.close(); alert('Could not open the contract. The file exists but this account may not have storage access (run the staff storage policy).'); } }
       else if(url){ window.open(url, '_blank'); }
     })();
   }
@@ -5666,17 +5674,21 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         const path = file.id + '/contract-' + Date.now() + '-' + safe;
         const up = await _client.storage.from('transaction-files').upload(path, f, { upsert:false, contentType: f.type || 'application/octet-stream' });
         if(up.error) throw up.error;
-        const signed = await _client.storage.from('transaction-files').createSignedUrl(path, 604800);
-        const url = signed.data && signed.data.signedUrl;
-        // The contract reference lives INSIDE raw_form_data (no top-level column),
-        // so merge it there — and verify the write actually landed.
+        // Store the durable PATH (signed URLs expire after 7 days and break).
+        // openContract() regenerates a fresh signed link from this path on view.
         const raw = Object.assign({}, file.raw_form_data || {});
-        raw.contract_url = url; raw.contract_filename = f.name;
+        raw.contract_path = path; raw.contract_filename = f.name;
+        // Best-effort immediate signed URL too — but a signing failure must NOT
+        // sink the attach; we already have the path.
+        try {
+          const signed = await _client.storage.from('transaction-files').createSignedUrl(path, 604800);
+          if(signed && !signed.error && signed.data && signed.data.signedUrl) raw.contract_url = signed.data.signedUrl;
+        } catch(_){}
         const { data, error } = await _client.from('files').update({ raw_form_data: raw }).eq('id', file.id).select('id');
         if(error) throw error;
         if(!data || data.length === 0){ alert('Uploaded, but could not link it to the file — you may not have permission (RLS).'); return; }
-        file.raw_form_data = raw; file.contract_filename = f.name; file._resolvedContract = url;
-        if(_currentFile && _currentFile.id === file.id){ _currentFile.raw_form_data = raw; _currentFile.contract_filename = f.name; _currentFile._resolvedContract = url; }
+        file.raw_form_data = raw; file.contract_filename = f.name; file._resolvedContract = undefined;
+        if(_currentFile && _currentFile.id === file.id){ _currentFile.raw_form_data = raw; _currentFile.contract_filename = f.name; _currentFile._resolvedContract = undefined; }
         const ff = (_files || []).find(function(x){ return x.id === file.id; }); if(ff){ ff.raw_form_data = raw; ff.contract_filename = f.name; }
         renderPlaybook(file);
       } catch(err){ console.warn('[files] attach contract failed', err); alert('Upload failed: ' + (err && err.message || 'unknown')); }
