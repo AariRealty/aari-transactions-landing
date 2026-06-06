@@ -379,6 +379,13 @@
   .tpb-email-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
   .tpb-thread-badge{display:inline-block;font-size:9.5px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#fff;padding:3px 8px;border-radius:3px;white-space:nowrap}
   .tpb-thread-hint{display:inline-block;font-size:9.5px;color:#8a877f;margin-left:8px}
+  .tpb-missing-pill{font-size:9.5px;font-weight:600;color:#9a7c3a;background:#fdf6e3;border-radius:999px;padding:2px 8px}
+  .tpb-ef-missing{background:#fafaf8;border:0.5px solid #e8e4db;border-radius:8px;padding:10px 12px;margin:8px 0}
+  .tpb-ef-missing-eb{margin:0 0 8px;font-size:10px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#0f0f0f}
+  .tpb-ef-mrow{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .tpb-ef-mrow label{flex:0 0 38%;font-size:11px;color:#5f5e5a;text-transform:capitalize}
+  .tpb-ef-mrow input{flex:1;padding:5px 8px;border-radius:5px;border:0.5px solid rgba(15,15,15,0.25);background:#fff;font-size:11.5px;font-family:inherit}
+  .tpb-ef-msave{margin-top:4px;background:#0f0f0f;color:#fff;border:0;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit}
   .tpb-sent-pill{font-size:10px;color:#2f855a;font-weight:500}
   .tpb-email-fields{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}
   .tpb-ef-row{display:flex;align-items:center;gap:8px;font-size:11.5px;line-height:1.4}
@@ -2621,6 +2628,11 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     if(lg.hoa_manager_email) vars.hoa_manager_email = lg.hoa_manager_email;
     if(lg.hoa_manager_phone) vars.hoa_manager_phone = lg.hoa_manager_phone;
     if(lg.hoa_company) vars.hoa_company = lg.hoa_company;
+    // Generic fill-back · anything the TC typed via the missing-field catcher
+    // is stored in logistics keyed by the var name; let it fill any placeholder.
+    Object.keys(lg).forEach(k => {
+      if(vars[k] === undefined || /^\[.*\]$/.test(String(vars[k]))) vars[k] = lg[k];
+    });
     let out = template;
     for(const k in vars){
       out = out.split('{{' + k + '}}').join(vars[k]);
@@ -5759,6 +5771,22 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     }
     return _threadByIdCache[id];
   }
+  // Missing-field catcher · scan the email's tokens and return the ones that
+  // still resolve to a [placeholder] so we can ask the TC to fill them.
+  function missingFieldsFor(e, file, agent){
+    const tpl = rawEmailSubject(e, file) + '\n' + rawEmailBody(e, file);
+    const keys = Array.from(new Set((tpl.match(/\{\{([a-z0-9_]+)\}\}/gi) || []).map(s => s.replace(/[{}]/g, ''))));
+    const out = [];
+    keys.forEach(k => {
+      if(/^dl_/.test(k)) return; // deadline tokens are computed, never "missing"
+      let v = '';
+      try { v = fillEmailVars('{{' + k + '}}', file, agent); } catch(_){ return; }
+      if(!v || /^\[.*\]$/.test(v.trim())){
+        out.push({ key: k, label: (v && v.trim() ? v.trim().replace(/^\[|\]$/g, '') : k.replace(/_/g, ' ')) });
+      }
+    });
+    return out;
+  }
   function buildEmailCardHtml(e, file, agent, sends){
     sends = sends || {};
     const sent = sends[e.id];
@@ -5775,13 +5803,26 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const filledSubject = fillEmailVars(rawEmailSubject(e, file), file, agent);
     const filledBody = fillEmailVars(rawEmailBody(e, file), file, agent);
     const eid = esc(e.id);
-    return '<div class="tpb-email'+(sent?' sent':'')+'" data-email-id="'+eid+'">' +
+    // Missing-field catcher · ask the TC for anything still blank before send.
+    const missing = missingFieldsFor(e, file, agent);
+    const missingBlock = missing.length
+      ? '<div class="tpb-ef-missing">' +
+          '<p class="tpb-ef-missing-eb">Fill these before you send</p>' +
+          missing.map(mf =>
+            '<div class="tpb-ef-mrow"><label>' + esc(mf.label) + '</label>' +
+            '<input type="text" data-mf-key="' + esc(mf.key) + '" placeholder="' + esc(mf.label) + '"></div>'
+          ).join('') +
+          '<button type="button" class="tpb-ef-msave" data-mf-save="' + eid + '">Save to file</button>' +
+        '</div>'
+      : '';
+    return '<div class="tpb-email'+(sent?' sent':'')+(missing.length?' has-missing':'')+'" data-email-id="'+eid+'">' +
       '<div class="tpb-email-head">' +
         '<span class="tpb-thread-badge" style="background:'+thread.color+'">Thread ' + e.thread + ' · ' + esc(thread.name) + '</span>' +
         '<span class="tpb-thread-hint">' + threadHint + '</span>' +
         '<p class="tpb-email-name">'+esc(e.label)+'</p>' +
-        (sent ? '<span class="tpb-sent-pill">&check; Sent '+esc(tsStr)+'</span>' : '') +
+        (sent ? '<span class="tpb-sent-pill">&check; Sent '+esc(tsStr)+'</span>' : (missing.length ? '<span class="tpb-missing-pill">' + missing.length + ' to fill</span>' : '')) +
       '</div>' +
+      missingBlock +
       '<div class="tpb-email-fields">' +
         '<div class="tpb-ef-row"><span class="tpb-ef-key">TO</span><span class="tpb-ef-val" data-copy-field="to">'+esc(filledTo)+'</span><button class="tpb-ef-copy" data-copy-target="to" data-eid="'+eid+'">Copy</button></div>' +
         (filledCc ? '<div class="tpb-ef-row"><span class="tpb-ef-key">CC</span><span class="tpb-ef-val" data-copy-field="cc">'+esc(filledCc)+'</span><button class="tpb-ef-copy" data-copy-target="cc" data-eid="'+eid+'">Copy</button></div>' : '') +
@@ -5839,6 +5880,22 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         const e = _emailTplById[copyAll.getAttribute('data-copy-all')]; if(!e) return;
         const combined = fillEmailVars(rawEmailSubject(e, _drawerFile), _drawerFile, _drawerAgent) + '\n\n' + fillEmailVars(rawEmailBody(e, _drawerFile), _drawerFile, _drawerAgent);
         if(await _clip(combined)) _flashCopied(copyAll);
+        return;
+      }
+      const mf = t.closest('[data-mf-save]');
+      if(mf){
+        const card = mf.closest('.tpb-email');
+        const patch = {};
+        if(card) card.querySelectorAll('[data-mf-key]').forEach(inp => { const v = inp.value.trim(); if(v) patch[inp.getAttribute('data-mf-key')] = v; });
+        if(Object.keys(patch).length && _drawerFile){
+          const lg = Object.assign({}, _drawerFile.logistics || {}, patch);
+          mf.textContent = 'Saving...';
+          try {
+            await _client.from('files').update({ logistics: lg }).eq('id', _drawerFile.id);
+            _drawerFile.logistics = lg; if(_currentFile && _currentFile.id === _drawerFile.id) _currentFile.logistics = lg;
+            renderPlaybook(_drawerFile);
+          } catch(err){ mf.textContent = 'Save failed'; console.warn('[files] missing-field save failed', err); }
+        }
         return;
       }
       const mk = t.closest('[data-mark-sent]');
