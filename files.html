@@ -894,6 +894,89 @@
   // {{placeholders}} interpolate from file row + joined agent profile.
   // showIf · optional · receives (file) → bool to gate per-file rendering
   // (e.g., lender-direct email only renders for loan files).
+  // bodyFn / subjectFn · optional · receives (file) → string · generated copy
+  // (used by the confirm-dates variation engine so no two files read alike).
+
+  // ===== Email content resolvers · static body/subject OR generated fn =====
+  function rawEmailBody(e, file){ return (e && e.bodyFn) ? e.bodyFn(file || {}) : ((e && e.body) || ''); }
+  function rawEmailSubject(e, file){ return (e && e.subjectFn) ? e.subjectFn(file || {}) : ((e && e.subject) || ''); }
+
+  // ===== Confirm-dates variation engine =====
+  // Never the same email twice. A pool of Cattoni hooks / intros / fixes /
+  // closes recombines, seeded by the file id, so each transaction draws a
+  // different natural mix — while the dates, financials, and contacts stay
+  // exact. Deterministic per file (a TC reopening sees the same copy).
+  const _CD_HOOKS = [
+    'You got {{address}} under contract. Nice work. Now let us make sure nothing slips between here and the closing table.',
+    'Under contract on {{address}}. That is the hard part handled. From here the dates run the deal, so let us lock them in.',
+    'Congrats on {{address}}. Officially under contract, and I want to keep it that way.',
+    'Big one done. {{address}} is under contract. Now let us stay ahead of every date.',
+    '{{address}} is under contract. The win is yours. Keeping it on track is on me.',
+    'Nice work getting {{address}} under contract. Here is where I take the timeline off your plate.',
+  ];
+  const _CD_INTROS = [
+    'I pulled every date and detail straight from the executed contract. Give it a quick once over and reply "confirmed." That is my green light to calendar everything and start working the file for you.',
+    'I went line by line through the contract and lined everything up below. Confirm it matches and I take it from there.',
+    'Here is everything I pulled from the contract. Eyeball it, hit reply with "confirmed," and every deadline goes on the calendar today.',
+    'Below is what I pulled from the executed contract. Look it over, reply "confirmed," and consider the timeline handled.',
+    'I read the contract closely and mapped out every date that matters. Confirm it looks right and I will run with it.',
+  ];
+  const _CD_FIXES = [
+    'See something off? Tell me now and I will fix it before it turns into a problem.',
+    'If anything looks wrong, flag it today so we catch it early.',
+    'Spot a mistake? Send it back and I will correct it right away.',
+    '',
+  ];
+  const _CD_CLOSES = [
+    'One reply and we are ahead of every deadline. Send it over.',
+    'Reply "confirmed" and I will calendar all of it today.',
+    'Quick thumbs up keeps us ahead of the whole timeline.',
+    'Give it a confirm and it is handled.',
+    'One reply locks it in. Send it my way.',
+  ];
+  const _CD_SUBJECTS = [
+    'Confirm these and I will take it from here, {{agent_first_name}}',
+    'Quick confirm on {{address}} so I can lock your dates',
+    '{{address}}: confirm the dates and I run with it',
+    'Your {{address}} timeline, ready for a thumbs up',
+    'Two minutes to confirm {{address}} and you are set',
+  ];
+  function _cdSeed(seed, salt, mod){
+    let h = 0; const s = String(seed || '') + salt;
+    for(let i = 0; i < s.length; i++){ h = (h * 31 + s.charCodeAt(i)) >>> 0; }
+    return h % mod;
+  }
+  function confirmDatesSubject(file){
+    return _CD_SUBJECTS[_cdSeed(file.id || file.property_address, 's', _CD_SUBJECTS.length)];
+  }
+  function confirmDatesBody(file){
+    const seed = file.id || file.property_address || '';
+    const hook  = _CD_HOOKS[_cdSeed(seed, 'h', _CD_HOOKS.length)];
+    const intro = _CD_INTROS[_cdSeed(seed, 'i', _CD_INTROS.length)];
+    const fix   = _CD_FIXES[_cdSeed(seed, 'f', _CD_FIXES.length)];
+    const close = _CD_CLOSES[_cdSeed(seed, 'c', _CD_CLOSES.length)];
+    const cash = (function(){ try { return isCashFile(file); } catch(_){ return false; } })();
+    const dl = ['Effective Date: {{effective_date}}', 'Deposit Due: {{em_deadline}}'];
+    if(!cash) dl.push('Loan Application: {{loan_app_deadline}}');
+    dl.push('Inspection: {{inspection_deadline}}');
+    if(!cash) dl.push('Loan Approval: {{loan_approval_deadline}}');
+    dl.push('Closing: {{closing_date}} (on or before)');
+    const fin = ['Purchase Price: {{purchase_price}}', 'Deposit: {{earnest_money}}', 'Financing: {{financing_type}}', 'Notes: {{commission_notes}}'];
+    let contacts = [
+      'Lender: {{lender_name}} | {{lender_company}} | {{lender_phone}} | {{lender_email}}',
+      "Buyer's Agent: {{agent_name}} | {{agent_company}} | {{agent_phone}} | {{agent_email}}",
+      'Co-Agent: {{co_agent_name}} | {{co_agent_company}} | {{co_agent_phone}} | {{co_agent_email}}',
+      'Listing Agent: {{listing_agent_name}} | {{listing_agent_company}} | {{listing_agent_phone}} | {{listing_agent_email}}',
+      'Title: {{title_company}} | {{title_closer_name}} | {{title_phone}} | {{title_email}}',
+    ];
+    if(cash) contacts = contacts.filter(c => c.indexOf('Lender:') !== 0);
+    return 'Hi {{agent_first_name}},\n\n' + hook + '\n\n' + intro + (fix ? ' ' + fix : '') + '\n\n' +
+      'Deadlines\n' + dl.join('\n') + '\n\n' +
+      'Financials\n' + fin.join('\n') + '\n\n' +
+      'Contacts\n' + contacts.join('\n') + '\n\n' +
+      close;
+  }
+
   const EMAIL_PLAYBOOK = {
     sale: {
       new: [
@@ -972,6 +1055,15 @@ Aari Transactions · 239.688.1770`,
         },
       ],
       under_contract: [
+        {
+          id:'uc_confirm_dates_agent',
+          thread:2,
+          label:'Confirm dates with agent',
+          to:'{{agent_name}} <{{agent_email}}>',
+          cc:'{{co_agent_name}} <{{co_agent_email}}>',
+          subjectFn: confirmDatesSubject,
+          bodyFn: confirmDatesBody,
+        },
         {
           id:'uc_emd_followup_title',
           thread:3,
@@ -5647,8 +5739,8 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const thread = EMAIL_THREADS[e.thread] || EMAIL_THREADS[1];
     const filledTo = fillEmailVars(e.to || '', file, agent);
     const filledCc = fillEmailVars(e.cc || '', file, agent);
-    const filledSubject = fillEmailVars(e.subject || '', file, agent);
-    const filledBody = fillEmailVars(e.body || '', file, agent);
+    const filledSubject = fillEmailVars(rawEmailSubject(e, file), file, agent);
+    const filledBody = fillEmailVars(rawEmailBody(e, file), file, agent);
     const eid = esc(e.id);
     return '<div class="tpb-email'+(sent?' sent':'')+'" data-email-id="'+eid+'">' +
       '<div class="tpb-email-head">' +
@@ -5704,14 +5796,14 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         let txt = '';
         if(field === 'to') txt = fillEmailVars(e.to || '', _drawerFile, _drawerAgent);
         else if(field === 'cc') txt = fillEmailVars(e.cc || '', _drawerFile, _drawerAgent);
-        else if(field === 'subject') txt = fillEmailVars(e.subject || '', _drawerFile, _drawerAgent);
+        else if(field === 'subject') txt = fillEmailVars(rawEmailSubject(e, _drawerFile), _drawerFile, _drawerAgent);
         if(await _clip(txt)) _flashCopied(copyOne);
         return;
       }
       const copyAll = t.closest('[data-copy-all]');
       if(copyAll){
         const e = _emailTplById[copyAll.getAttribute('data-copy-all')]; if(!e) return;
-        const combined = fillEmailVars(e.subject || '', _drawerFile, _drawerAgent) + '\n\n' + fillEmailVars(e.body || '', _drawerFile, _drawerAgent);
+        const combined = fillEmailVars(rawEmailSubject(e, _drawerFile), _drawerFile, _drawerAgent) + '\n\n' + fillEmailVars(rawEmailBody(e, _drawerFile), _drawerFile, _drawerAgent);
         if(await _clip(combined)) _flashCopied(copyAll);
         return;
       }
