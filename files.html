@@ -1231,7 +1231,7 @@ Aari Transactions · 239.688.1770`,
           id:'uc_hoa_docs_request',
           thread:6,
           label:'HOA document request · management company',
-          showIf:(f)=>(((f.raw_form_data||{}).pa_hoa)==='yes'),
+          showIf:(f)=>hoaApplies(f),
           to:'[HOA management contact]',
           cc:'{{agent_name}} <{{agent_email}}>',
           subject:'HOA document request — {{street}}',
@@ -1386,6 +1386,7 @@ Targeting a clean CTC at least 5 business days before close.
         {
           id:'insp_reminder_buyer_agent',
           thread:2,
+          showIf:(f)=>!inspectionWaived(f),
           label:'Inspection reminder · buyer&rsquo;s agent (24h before)',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
@@ -1402,6 +1403,7 @@ Aari Transactions · 239.688.1770`,
         {
           id:'insp_proceed_or_cancel',
           thread:2,
+          showIf:(f)=>!inspectionWaived(f),
           label:'Proceeding or canceling? · buyer&rsquo;s agent',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
@@ -4756,7 +4758,12 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const status = _deadlinesByFile[file.id] || {};
     const ENG = window.AariDeadlineEngine;
     const overridesJson = file.deadline_overrides || {};
-    const rows = ENG.contractDeadlines(ct, effISO, clsISO, overridesJson).map(function(it){
+    const _waived = inspectionWaived(file), _noHoa = !hoaApplies(file);
+    const rows = ENG.contractDeadlines(ct, effISO, clsISO, overridesJson).filter(function(it){
+      if(_waived && (it.key === 'inspection_end' || it.key === 'seller_response')) return false;
+      if(_noHoa && it.key === 'hoa_review') return false;
+      return true;
+    }).map(function(it){
       const rec = status[it.key];
       const override = rec && rec.due_date && rec.original_due_date && rec.override_reason
         ? { date: new Date(String(rec.due_date).length===10 ? (rec.due_date+'T00:00:00') : rec.due_date),
@@ -5353,7 +5360,36 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   }
   // Step 1 conditionals · TC-confirmed contract terms tailor the file.
   function inspectionWaived(f){ return !!((f.logistics || {}).inspection_waived); }
-  function hoaApplies(f){ const v = (f.logistics || {}).hoa_applies; return v === 'yes'; }
+  function hoaApplies(f){
+    const v = (f.logistics || {}).hoa_applies;
+    if(v === 'yes') return true;
+    if(v === 'no') return false;
+    // Fall back to the intake answer when Step 1 hasn't set it yet.
+    return ((f.raw_form_data || {}).pa_hoa) === 'yes';
+  }
+  // Deadlines that actually apply to THIS file: a waived inspection drops the
+  // inspection (and its seller-response) deadline; a non-HOA file drops HOA
+  // doc review. Single source of truth used by the drawer + hub chip.
+  function fileContractDeadlines(file){
+    const ENG = window.AariDeadlineEngine;
+    const ct = file.contract_type;
+    if(!ENG || !ct || !ENG.CONTRACT_DEADLINES || !ENG.CONTRACT_DEADLINES[ct]) return [];
+    const lg = file.logistics || {};
+    const ov = Object.assign({}, file.deadline_overrides || {});
+    if(ov.insp == null && lg.inspection_days != null && lg.inspection_days !== '') ov.insp = Number(lg.inspection_days);
+    let rows;
+    try {
+      rows = (file.effective_date && file.closing_date)
+        ? ENG.contractDeadlines(ct, file.effective_date, file.closing_date, ov)
+        : ENG.CONTRACT_DEADLINES[ct].map(function(d){ return { key:d.key, name:d.name, category:d.category }; });
+    } catch(_){ rows = ENG.CONTRACT_DEADLINES[ct]; }
+    const waived = inspectionWaived(file), noHoa = !hoaApplies(file);
+    return rows.filter(function(d){
+      if(waived && (d.key === 'inspection_end' || d.key === 'seller_response')) return false;
+      if(noHoa && d.key === 'hoa_review') return false;
+      return true;
+    });
+  }
   function termsConfirmed(f){
     return !!(f.contract_type && f.effective_date && f.closing_date && ((f.logistics || {}).financing_confirmed));
   }
@@ -7328,8 +7364,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const dl = document.getElementById('tpb-chip-dl');
     if(dl){
       let n = null;
-      try { const ENG = window.AariDeadlineEngine, ct = file.contract_type;
-        if(ENG && ct && ENG.CONTRACT_DEADLINES[ct]) n = ENG.CONTRACT_DEADLINES[ct].length; } catch(_){}
+      try { if(file.contract_type) n = fileContractDeadlines(file).length; } catch(_){}
       dl.textContent = 'Deadlines' + (n != null ? ' · ' + n : '');
     }
     const vf = document.getElementById('tpb-chip-vf');
