@@ -5662,10 +5662,16 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         if(up.error) throw up.error;
         const signed = await _client.storage.from('transaction-files').createSignedUrl(path, 604800);
         const url = signed.data && signed.data.signedUrl;
-        await _client.from('files').update({ contract_url: url, contract_filename: f.name }).eq('id', file.id);
-        file.contract_url = url; file.contract_filename = f.name;
-        if(_currentFile && _currentFile.id === file.id){ _currentFile.contract_url = url; _currentFile.contract_filename = f.name; }
-        const ff = (_files || []).find(function(x){ return x.id === file.id; }); if(ff){ ff.contract_url = url; ff.contract_filename = f.name; }
+        // The contract reference lives INSIDE raw_form_data (no top-level column),
+        // so merge it there — and verify the write actually landed.
+        const raw = Object.assign({}, file.raw_form_data || {});
+        raw.contract_url = url; raw.contract_filename = f.name;
+        const { data, error } = await _client.from('files').update({ raw_form_data: raw }).eq('id', file.id).select('id');
+        if(error) throw error;
+        if(!data || data.length === 0){ alert('Uploaded, but could not link it to the file — you may not have permission (RLS).'); return; }
+        file.raw_form_data = raw; file.contract_filename = f.name; file._resolvedContract = url;
+        if(_currentFile && _currentFile.id === file.id){ _currentFile.raw_form_data = raw; _currentFile.contract_filename = f.name; _currentFile._resolvedContract = url; }
+        const ff = (_files || []).find(function(x){ return x.id === file.id; }); if(ff){ ff.raw_form_data = raw; ff.contract_filename = f.name; }
         renderPlaybook(file);
       } catch(err){ console.warn('[files] attach contract failed', err); alert('Upload failed: ' + (err && err.message || 'unknown')); }
     });
