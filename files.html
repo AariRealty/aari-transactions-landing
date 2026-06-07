@@ -5976,23 +5976,26 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       : '');
     const assocBlock = associationSectionHtml(file);
     let termsBody;
-    const contactsStep = _ctContactsStep || !!((file.logistics || {}).contacts_confirmed_at);
-    if(confirmed && contactsStep){
-      // Contacts step · terms collapse to one summary line; contacts panel below,
-      // still beside the contract PDF so the TC verifies against the document.
-      const confDate = ((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '';
-      const termsSummary =
-        '<button type="button" data-ct-terms-toggle="1" style="width:100%;display:flex;align-items:center;gap:11px;padding:11px;border:0.5px solid #ece8e0;border-radius:10px;background:#fff;cursor:pointer;font-family:inherit;text-align:left">' +
-          '<span style="flex:none;width:24px;height:24px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px">&#10003;</span>' +
-          '<span style="flex:1"><span style="display:block;font-size:13px;font-weight:600;color:#0f0f0f">Contract terms confirmed</span><span style="font-size:11px;color:#8a857c">Confirmed' + confDate + '</span></span>' +
-          '<span style="color:#c2bdb4;font-size:18px;display:inline-block;transform:rotate(' + (_ctTermsExpanded ? '90' : '0') + 'deg)">&#8250;</span>' +
-        '</button>';
-      termsBody = termsSummary +
-        (_ctTermsExpanded ? ('<div style="margin-top:8px">' + ctLines + daysBlock + assocBlock + '</div>') : '') +
-        '<div style="margin-top:14px">' + contactsTaskHtml(file) + '</div>';
+    const contactsStep = confirmed && (_ctContactsStep || !!((file.logistics || {}).contacts_confirmed_at));
+    // Two-step wizard bar · ① Contract terms  ②  Contacts. Only the active step
+    // renders below — the two never stack on the same page.
+    const wizardBar =
+      '<div style="display:flex;align-items:center;gap:8px;margin:0 0 14px">' +
+        '<button type="button" data-ct-wizard="terms" style="display:inline-flex;align-items:center;gap:6px;border:0;background:none;cursor:pointer;font-family:inherit;padding:0">' +
+          '<span style="width:20px;height:20px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600">' + (confirmed ? '&#10003;' : '1') + '</span>' +
+          '<span style="font-size:11px;font-weight:600;color:' + (contactsStep ? '#8a857c' : '#0f0f0f') + '">Terms</span>' +
+        '</button>' +
+        '<span style="flex:1;height:1.5px;background:#ece4d2"></span>' +
+        '<button type="button" data-ct-wizard="contacts"' + (confirmed ? '' : ' disabled') + ' style="display:inline-flex;align-items:center;gap:6px;border:0;background:none;cursor:' + (confirmed ? 'pointer' : 'default') + ';font-family:inherit;padding:0">' +
+          '<span style="width:20px;height:20px;border-radius:50%;background:' + (contactsStep ? '#0f0f0f' : '#d3d1c7') + ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600">2</span>' +
+          '<span style="font-size:11px;font-weight:600;color:' + (contactsStep ? '#0f0f0f' : '#a39e95') + '">Contacts</span>' +
+        '</button>' +
+      '</div>';
+    if(contactsStep){
+      termsBody = wizardBar + contactsTaskHtml(file);
     } else if(confirmed){
-      // Terms confirmed · still shown in full; the "Next" CTA sits at the very end.
-      termsBody = ctLines +
+      // Terms step (confirmed) · full terms, then the "Next" CTA at the very end.
+      termsBody = wizardBar + ctLines +
         '<p style="font-size:10.5px;color:#a39e95;margin:13px 2px 0">&#10003; Confirmed' + (((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '') + '</p>' +
         daysBlock + assocBlock +
         '<button type="button" data-ct-next-contacts="1" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:11px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;margin:16px 0 2px">Next: confirm all contacts &rarr;</button>';
@@ -6002,7 +6005,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
             '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Stamps it with your name + date and records agent-submitted vs confirmed</p>'
         : '<div style="display:block;width:100%;background:#efece6;color:#a39e95;border:0;border-radius:9px;padding:12px;text-align:center;font-size:13.5px;font-weight:600;font-family:inherit;margin:14px 0 2px">Confirm &amp; unlock my work</div>' +
             '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Set contract type, both dates, and financing above to confirm</p>';
-      termsBody = ctLines + confirmBlock + daysBlock + assocBlock;
+      termsBody = wizardBar + ctLines + confirmBlock + daysBlock + assocBlock;
     }
 
     const _ctModal = document.getElementById('tpb-popview');
@@ -6047,11 +6050,16 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     // ---- wiring ---- (PDF-panel buttons are wired once during shell build above)
     const ac = document.getElementById('ct-attachcontract');
     if(ac) ac.addEventListener('click', () => attachContract(file));
-    host.querySelectorAll('[data-ct-terms-toggle]').forEach(function(b){
-      b.addEventListener('click', function(){ _ctTermsExpanded = !_ctTermsExpanded; renderContractTerms(file); });
+    host.querySelectorAll('[data-ct-wizard]').forEach(function(b){
+      b.addEventListener('click', function(){
+        const step = b.getAttribute('data-ct-wizard');
+        if(step === 'contacts'){ if(!termsAttested(file)) return; _ctContactsStep = true; }
+        else { _ctContactsStep = false; }
+        renderContractTerms(file);
+      });
     });
     host.querySelectorAll('[data-ct-next-contacts]').forEach(function(b){
-      b.addEventListener('click', function(){ _ctContactsStep = true; _ctTermsExpanded = false; renderContractTerms(file); });
+      b.addEventListener('click', function(){ _ctContactsStep = true; renderContractTerms(file); });
     });
     const ctc = document.getElementById('ct-contract');
     if(ctc) ctc.addEventListener('change', () => ctSave(file, { contract_type: ctc.value || null }, null));
