@@ -524,6 +524,11 @@
   .tpb-dl-estban.ok{background:#eef4ea;color:#2f855a}
   .tpb-dl-estban .tpb-dl-estn{float:right;font-weight:600;font-size:10.5px;margin-left:8px}
   .ck-duesoon{background:#faf8f4;border:0.5px solid #e8e4db;border-radius:10px;padding:8px 12px 4px;margin:0 0 12px}
+  .rail-docs-eb{font-size:10px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:600;margin:12px 2px 4px}
+  .rail-doc-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 2px;border-top:0.5px solid #f0ebe0;font-size:11.5px}
+  .rail-doc-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#0f0f0f}
+  .rail-doc-view,.rail-doc-tab{border:0;background:none;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit;padding:0}
+  .rail-doc-backct{border:0;background:none;color:#0f0f0f;font-size:11px;cursor:pointer;font-family:inherit;margin-top:6px;text-decoration:underline;text-underline-offset:2px}
   .dl-ctline{font-size:11.5px;color:#5f5e5a;margin:0 0 10px}
   .dl-ctline span{color:#a39e95}
   .dl-step-card{background:#faeeda;border-radius:10px;padding:12px 14px;margin:0 0 10px}
@@ -5772,6 +5777,67 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   // If no contract URL is saved on the row, the agent may still have uploaded
   // the file at intake — go look for it in storage at {submitted_by}/{file.id}/
   // and resolve a fresh signed URL. Cached per file (null = checked, none found).
+  // Work rail · agent-submitted addenda + disclosures (uploaded at intake to
+  // {submitted_by}/{file_id}/additional/) listed under the contract viewer.
+  // Storage is listed live + signed on demand — the URLs recorded at submission
+  // expire after 7 days, so we never trust them, only the paths.
+  async function railLoadDocs(file){
+    const hostD = document.getElementById('rail-docs');
+    if(!hostD) return;
+    if(hostD.getAttribute('data-docs') === String(file.id)) return;
+    hostD.setAttribute('data-docs', String(file.id));
+    const raw = file.raw_form_data || {};
+    const uid = raw.submitted_by;
+    let docs = [];
+    if(uid){
+      try {
+        const { data: objs } = await _client.storage.from('transaction-files').list(uid + '/' + file.id + '/additional');
+        if(objs && objs.length) docs = objs.filter(o => o.name).map(o => ({ name: o.name, path: uid + '/' + file.id + '/additional/' + o.name }));
+      } catch(_){}
+      if(!docs.length && Array.isArray(raw.additional_docs)){
+        docs = raw.additional_docs.filter(d => d && d.filename).map(d => ({ name: d.filename, path: uid + '/' + file.id + '/additional/' + d.filename }));
+      }
+    }
+    if(!docs.length){ hostD.innerHTML = ''; return; }
+    hostD.innerHTML = '<p class="rail-docs-eb">Addenda &amp; docs from the agent &middot; ' + docs.length + '</p>' +
+      docs.map(function(d){
+        return '<div class="rail-doc-row">' +
+          '<span class="rail-doc-name">&#128196; ' + esc(d.name) + '</span>' +
+          '<span style="flex:none;display:inline-flex;gap:10px">' +
+            '<button type="button" class="rail-doc-view" data-doc-view="' + esc(d.path) + '">View here</button>' +
+            '<button type="button" class="rail-doc-tab" data-doc-tab="' + esc(d.path) + '">Open in tab</button>' +
+          '</span></div>';
+      }).join('') +
+      '<button type="button" class="rail-doc-backct" id="rail-doc-backct" style="display:none">&larr; Back to the contract</button>';
+    hostD.querySelectorAll('[data-doc-view]').forEach(function(b){
+      b.addEventListener('click', async function(){
+        try {
+          const { data } = await _client.storage.from('transaction-files').createSignedUrl(b.getAttribute('data-doc-view'), 3600);
+          const fr = document.getElementById('ct-pdfframe');
+          if(data && data.signedUrl && fr){ fr.src = data.signedUrl; const bk = document.getElementById('rail-doc-backct'); if(bk) bk.style.display = 'inline-block'; }
+        } catch(_){}
+      });
+    });
+    hostD.querySelectorAll('[data-doc-tab]').forEach(function(b){
+      b.addEventListener('click', function(){
+        const w = window.open('about:blank', '_blank');
+        (async function(){
+          try {
+            const { data } = await _client.storage.from('transaction-files').createSignedUrl(b.getAttribute('data-doc-tab'), 3600);
+            if(data && data.signedUrl){ w.location = data.signedUrl; return; }
+          } catch(_){}
+          try { w.close(); } catch(_){}
+          alert('Could not open this document. It may have been removed from storage.');
+        })();
+      });
+    });
+    const bk = document.getElementById('rail-doc-backct');
+    if(bk) bk.addEventListener('click', async function(){
+      try { const u = await ctResolveViewUrl(file); const fr = document.getElementById('ct-pdfframe'); if(fr && u) fr.src = u; } catch(_){}
+      bk.style.display = 'none';
+    });
+  }
+
   async function resolveContractUrl(file){
     if((file.raw_form_data || {}).contract_removed){ file._resolvedContract = null; return; }
     if(file.contract_url || (file.raw_form_data || {}).contract_url) return;
@@ -6175,13 +6241,15 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
               '<button type="button" id="ct-remove" style="border:0;background:none;color:#a3402f;font-size:11px;cursor:pointer;font-family:inherit">&#10005; Remove</button>' +
             '</span>' +
           '</div>' +
-          '<iframe id="ct-pdfframe" title="Executed contract" style="width:100%;height:calc(92vh - 150px);border:0.5px solid #e6ddc9;border-radius:8px;background:#faf7f1"></iframe>';
+          '<iframe id="ct-pdfframe" title="Executed contract" style="width:100%;height:calc(88vh - 220px);border:0.5px solid #e6ddc9;border-radius:8px;background:#faf7f1"></iframe>' +
+          '<div id="rail-docs"></div>';
         const _vc = document.getElementById('ct-viewcontract'); if(_vc) _vc.addEventListener('click', () => openContract(file));
         const _rep = document.getElementById('ct-replace'); if(_rep) _rep.addEventListener('click', () => attachContract(file));
         const _rem = document.getElementById('ct-remove'); if(_rem) _rem.addEventListener('click', () => removeContract(file));
         (async function(){ const u = await ctResolveViewUrl(file); const fr = document.getElementById('ct-pdfframe'); if(fr){ if(u){ fr.src = u; } else { fr.outerHTML = '<div style="padding:16px;font-size:12px;color:#a3402f;border:0.5px solid #e6ddc9;border-radius:8px;background:#faf7f1">Could not load the contract preview. Use “Open in tab”.</div>'; } } })();
       }
       _railPdf.hidden = false;
+      try { railLoadDocs(file); } catch(_){}
       host.removeAttribute('data-ctshell');
       host.innerHTML = _ctBackLink + introP + termsBody;
     } else if(hasContract){
@@ -6221,8 +6289,10 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         _railPdf.hidden = false;
         _railPdf.removeAttribute('data-ctshell');
         _railPdf.innerHTML = '<div class="rail-pdf-empty">No executed contract attached yet.<br>' +
-          '<button type="button" id="rail-attach" style="margin-top:10px;background:#0f0f0f;color:#fff;border:0;border-radius:7px;padding:8px 16px;font-size:12px;font-weight:500;cursor:pointer;font-family:inherit">&#8613; Attach contract</button></div>';
+          '<button type="button" id="rail-attach" style="margin-top:10px;background:#0f0f0f;color:#fff;border:0;border-radius:7px;padding:8px 16px;font-size:12px;font-weight:500;cursor:pointer;font-family:inherit">&#8613; Attach contract</button></div>' +
+          '<div id="rail-docs"></div>';
         const _ra = document.getElementById('rail-attach'); if(_ra) _ra.addEventListener('click', () => attachContract(file));
+        try { railLoadDocs(file); } catch(_){}
       }
       host.innerHTML = _ctBackLink + introP + attachBtn + termsBody;
     }
