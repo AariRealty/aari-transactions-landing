@@ -523,6 +523,7 @@
   .tpb-dl-estban strong{font-weight:600}
   .tpb-dl-estban.ok{background:#eef4ea;color:#2f855a}
   .tpb-dl-estban .tpb-dl-estn{float:right;font-weight:600;font-size:10.5px;margin-left:8px}
+  .ck-duesoon{background:#faf8f4;border:0.5px solid #e8e4db;border-radius:10px;padding:8px 12px 4px;margin:0 0 12px}
   .dl-ctline{font-size:11.5px;color:#5f5e5a;margin:0 0 10px}
   .dl-ctline span{color:#a39e95}
   .dl-step-card{background:#faeeda;border-radius:10px;padding:12px 14px;margin:0 0 10px}
@@ -7869,10 +7870,50 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
           '<span><strong style="font-weight:600">Service Agreement not signed.</strong> This agent has not signed the Aari Transactions Service Agreement. You cannot begin work on this file until the SA is on file. Notify Marlenyi to resolve this before proceeding.</span>' +
         '</div>'
       : '';
+    // DUE SOON · tasks follow deadlines, not lanes. Any task from ANOTHER stage
+    // whose linked contract deadline is within 3 days (or already running late,
+    // but not past-at-intake) surfaces here, fully actionable — checkbox, inline
+    // logistics, and its Send email all work exactly as they do in home stage.
+    // Solves parallel contingencies (e.g. appraisal landing inside the
+    // inspection period) without breaking the one-lane focus model.
+    let dueSoon = '';
+    try {
+      const _ft = file.file_type || 'sale';
+      if(file.contract_type && STAGE_CHECKLISTS[_ft]){
+        const _dlKeyMap = { emd_initial:'init_deposit', loan_app:'loan_app', inspection_end:'inspection_end', loan_approval:'loan_approval', title_commitment:'title_evidence', walkthrough:'walk_through', estoppel:'estoppels_due', survey:'survey_seller' };
+        const _cDates = {};
+        fileContractDeadlines(file).forEach(function(d){ if(d.date) _cDates[d.key] = d.date; });
+        const _t0 = new Date(); _t0.setHours(0,0,0,0);
+        const _in0 = new Date(file.tc_accepted_at || file.created_at || 0); _in0.setHours(0,0,0,0);
+        const _hz = new Date(_t0.getTime() + 3 * 86400000);
+        const _dsItems = [];
+        Object.keys(STAGE_CHECKLISTS[_ft]).forEach(function(s){
+          if(s === stage) return;
+          (STAGE_CHECKLISTS[_ft][s] || []).forEach(function(t){
+            if(!t.dl || done[t.id]) return;
+            if(t.showIf && !t.showIf(file)) return;
+            const ck = _dlKeyMap[t.dl]; const d = ck && _cDates[ck];
+            if(!d) return;
+            const dd = new Date(d.getTime()); dd.setHours(0,0,0,0);
+            if(dd > _hz || dd < _in0) return;
+            _dsItems.push({ t: t, date: dd, stage: s });
+          });
+        });
+        if(_dsItems.length){
+          _dsItems.sort(function(a,b){ return a.date - b.date; });
+          _dsItems.forEach(function(it){
+            const ems = ((EMAIL_PLAYBOOK[_ft] || {})[it.stage] || []).filter(function(e){ return (e.task || e.id) === it.t.id && (!e.showIf || e.showIf(file)); });
+            if(ems.length) _emailByTask[it.t.id] = ems;
+          });
+          dueSoon = '<div class="ck-duesoon"><p class="rail-eb" style="margin:0 0 2px">Due soon &middot; from other stages</p>' +
+            _dsItems.map(function(it){ return ckRow(file, it.t, dls, done); }).join('') + '</div>';
+        }
+      }
+    } catch(_){}
     const tasksHtml = tasks
       ? tasks.map(t => ckRow(file, t, dls, done)).join('')
       : '<p class="ck-empty">Checklist for the ' + esc(STAGE_LABELS[stage] || stage) + ' stage ships next.</p>';
-    host.innerHTML = roBanner + saBanner + gate + widget +
+    host.innerHTML = roBanner + saBanner + gate + widget + dueSoon +
       (saLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
       archiveBlock;
     // Work rail · re-mark the NEXT task after every checklist render.
