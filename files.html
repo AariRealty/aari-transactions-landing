@@ -2874,16 +2874,10 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     }
     const { data: files } = await q;
     _files = files || [];
-    // SA-signed status per agent · powers the Stage-1 lock, card badge, drag gate
-    // and morning briefing. Re-pulled each load so a fresh signature unlocks.
-    try {
-      const aids = [...new Set(_files.map(f => f.agent_id).filter(Boolean))];
-      if(aids.length){
-        const { data: sa } = await _client.from('agents').select('id, first_name, last_name, agreement_signed_at').in('id', aids);
-        _saByAgent = {}; _agentNameById = {};
-        (sa || []).forEach(a => { _saByAgent[a.id] = a.agreement_signed_at || null; _agentNameById[a.id] = ((a.first_name || '') + ' ' + (a.last_name || '')).trim(); });
-      }
-    } catch(_){}
+    // SA cockpit lock DISABLED June 2026 · the SA is enforced upstream (signed at
+    // intake + re-checked at portal login), so a file can't reach the TC portal
+    // unsigned. Leaving _saByAgent empty makes saUnsigned() always false, which
+    // no-ops the banner, task lock, card badge, drag gate and briefing row.
     // Pull TCs once for everyone · cards show the assigned TC, brokers also
     // get the filter dropdown.
     if(Object.keys(_tcsById).length === 0){
@@ -5975,7 +5969,8 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       ctLine('fin', 'Financing', (FIN_LABELS[shownFinType] || ''), segN(shownFinType || '', [['cash','Cash'],['conventional','Conv'],['fha','FHA'],['va','VA'],['usda','USDA']], 'fin')) +
       ctLine('assoc', 'Association', (shownAssoc ? (ASSOC_LABEL[shownAssoc] || '') : ''), segN(shownAssoc || 'none', [['none','None'],['hoa','HOA'],['condo','Condo']], 'assoc'), (raw.pa_hoa && !assocType(file)) ? ('Agent said HOA: ' + raw.pa_hoa) : '') +
       (confirmed
-        ? '<p style="font-size:10.5px;color:#a39e95;margin:13px 2px 0">&#10003; Confirmed' + (((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '') + '</p>'
+        ? '<p style="font-size:10.5px;color:#a39e95;margin:13px 2px 8px">&#10003; Confirmed' + (((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '') + '</p>' +
+            '<button type="button" id="ct-next-contacts" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:11px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;margin:2px 0 2px">Next: confirm all contacts &rarr;</button>'
         : (ready
             ? '<button type="button" id="ct-confirm" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:12px;text-align:center;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;margin:14px 0 2px">&check; Confirm &amp; unlock my work</button>' +
               '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Stamps it with your name + date and records agent-submitted vs confirmed</p>'
@@ -6032,6 +6027,8 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     // ---- wiring ---- (PDF-panel buttons are wired once during shell build above)
     const ac = document.getElementById('ct-attachcontract');
     if(ac) ac.addEventListener('click', () => attachContract(file));
+    const nextC = document.getElementById('ct-next-contacts');
+    if(nextC) nextC.addEventListener('click', () => { try { openSectionPop('ck'); } catch(_){} });
     const ctc = document.getElementById('ct-contract');
     if(ctc) ctc.addEventListener('change', () => ctSave(file, { contract_type: ctc.value || null }, null));
     const effI = document.getElementById('ct-eff');
@@ -7469,8 +7466,10 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       const warnPill = function(txt){ return '<span style="font-size:11px;font-weight:600;color:#8a6a1f;background:#faf3e3;border:0.5px solid #ecdcb8;border-radius:7px;padding:4px 10px;white-space:nowrap">' + txt + '</span>'; };
       if(t.systemCheck === 'sa'){
         const signed = !!(_drawerAgent && _drawerAgent.agreement_signed_at);
-        pill = signed ? okPill('&#10003; SA on file') : badPill('SA not signed');
-        note = signed ? '' : 'Agent cannot be served until this is complete. Notify Marlenyi.';
+        // SA is enforced upstream (intake + portal login); this row is a passive
+        // confirmation, not a gate. No alarm when unsigned.
+        pill = signed ? okPill('&#10003; SA on file') : '<span style="font-size:11px;font-weight:600;color:#8a857c;background:#f1ede6;border-radius:7px;padding:4px 10px;white-space:nowrap">SA pending</span>';
+        note = '';
       } else {
         const f = _drawerFile || file;
         if(f.payment_confirmed){ pill = okPill('&#10003; Payment confirmed'); }
