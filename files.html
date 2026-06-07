@@ -523,6 +523,19 @@
   .tpb-dl-estban strong{font-weight:600}
   .tpb-dl-estban.ok{background:#eef4ea;color:#2f855a}
   .tpb-dl-estban .tpb-dl-estn{float:right;font-weight:600;font-size:10.5px;margin-left:8px}
+  .dl-ctline{font-size:11.5px;color:#5f5e5a;margin:0 0 10px}
+  .dl-ctline span{color:#a39e95}
+  .dl-step-card{background:#faeeda;border-radius:10px;padding:12px 14px;margin:0 0 10px}
+  .dl-step-eb{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:#8a6a1f;margin:0 0 3px;font-weight:600}
+  .dl-step-name{font-size:13.5px;font-weight:600;color:#0f0f0f;margin:0 0 2px}
+  .dl-step-note{font-size:11px;color:#633806;margin:0 0 10px;line-height:1.5}
+  .dl-step-ok{background:#0f0f0f;color:#fff;border:0;border-radius:6px;font-size:11px;font-weight:500;padding:6px 14px;cursor:pointer;font-family:inherit;margin-right:8px}
+  .dl-step-editbtn{border:0.5px solid rgba(15,15,15,0.3);background:#fff;border-radius:6px;font-size:11px;padding:6px 12px;cursor:pointer;font-family:inherit;color:#0f0f0f}
+  .dl-step-editform{gap:8px;align-items:center;margin-top:10px}
+  .dl-step-editform input{padding:5px 8px;border-radius:5px;border:0.5px solid rgba(15,15,15,0.25);font-size:11.5px;font-family:inherit;background:#fff}
+  .dl-step-save{background:#0f0f0f;color:#fff;border:0;border-radius:6px;font-size:11px;padding:6px 12px;cursor:pointer;font-family:inherit}
+  .tpb-dlA-row.dl-queued{opacity:0.55}
+  .tpb-dlA-tag.intake{background:#f1efe8;color:#5f5e5a}
   .tpb-dlA-conf{margin:2px 0 0;font-size:10.5px}
   .tpb-dlA-conf.est{color:#854f0b}
   .tpb-dlA-conf.ok{color:#2f855a}
@@ -910,6 +923,7 @@
           <option value="frbar_crsp">CRSP-17 (FR Residential)</option>
           <option value="nabor">NABOR Standard</option>
           <option value="nab089">NABOR As-Is (NAB089)</option>
+          <option value="builder">Builder / New Construction</option>
         </optgroup>
         <optgroup label="Vacant Land">
           <option value="vac_15">FR/BAR Vacant Land (VAC-15)</option>
@@ -4635,7 +4649,9 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     if(!hostEl) return;
     const stageCtx = stageItemsForFile(file);
     if(stageCtx.items.length === 0 && !stageCtx.hasContractCheck){
-      hostEl.innerHTML = '<div class="tpb-dl-empty">Pick a contract type to load the verification checklist for this stage.</div>';
+      hostEl.innerHTML = '<div class="tpb-dl-empty">' + (file && file.contract_type
+        ? 'No verification checklist for ' + esc(window.AariDeadlineEngine.contractLabel(file.contract_type)) + ' yet · verify directly from the executed contract.'
+        : 'Pick a contract type to load the verification checklist for this stage.') + '</div>';
       if(metaEl) metaEl.textContent = stageLabel(stageCtx.file_type, stageCtx.stage);
       return;
     }
@@ -4850,38 +4866,81 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const citesToggle = '<div class="tpb-dlA-cites"><button type="button" id="tpb-dl-cites">' +
       (showCites ? 'Hide para refs' : 'Show para refs') + '</button></div>';
 
-    // B treatment · every computed date is an ESTIMATE until the TC confirms it
-    // against the executed contract. A manual override (date entered from the
-    // contract) counts as confirmed. Confirmations live in logistics.dl_confirmed
-    // keyed by deadline key, storing the exact date confirmed — if the computed
-    // date later changes (effective/closing edited), the stale confirmation
-    // auto-invalidates and the row drops back to "estimate".
+    // C treatment (June 2026, supersedes B's per-row buttons) · confirmation is a
+    // one-at-a-time stepper: one amber card walks the TC through each unconfirmed
+    // date (her "one question per screen" rule); the full queue stays visible,
+    // dimmed, below. A manual override (date entered from the contract) counts as
+    // confirmed. Confirmations live in logistics.dl_confirmed keyed by deadline
+    // key, storing the exact date confirmed — if the computed date later changes
+    // (effective/closing edited), the stale confirmation auto-invalidates and the
+    // row returns to the queue.
     const lgConf = ((file.logistics || {}).dl_confirmed) || {};
     const isConfirmed = function(it){ return !!it.override || lgConf[it.key] === it.date.toISOString().slice(0,10); };
-    const unconf = rows.filter(function(it){ return !isConfirmed(it); }).length;
-    const estBanner = unconf > 0
-      ? '<div class="tpb-dl-estban">' + (ct === 'builder'
-          ? '<strong>These dates are estimates.</strong> A builder contract sets its own timeline. Confirm each date against the executed contract before you rely on it.'
-          : '<strong>Confirm before you rely on them.</strong> Dates are computed from the ' + esc(ENG.contractLabel(ct)) + ' standard timeline. Verify each against the executed contract.') +
-        ' <span class="tpb-dl-estn">' + unconf + ' to confirm</span></div>'
-      : '<div class="tpb-dl-estban ok">&#10003; All dates confirmed from the contract.</div>';
+    const unconfList = rows.filter(function(it){ return !isConfirmed(it); });
+    const stepIt = unconfList.length ? unconfList[0] : null;
+    let _intake = null;
+    try { if(file.tc_accepted_at || file.created_at){ _intake = new Date(file.tc_accepted_at || file.created_at); _intake.setHours(0,0,0,0); } } catch(_){}
+    const _today0 = new Date(); _today0.setHours(0,0,0,0);
+    const pastAtIntake = function(it){
+      if(!_intake) return false;
+      const d = new Date(it.date.getTime()); d.setHours(0,0,0,0);
+      return d < _today0 && d < _intake;
+    };
 
-    hostEl.innerHTML = estBanner + citesToggle + rows.map(function(it){
+    // The editable contract/dates config row duplicates Contract Terms (Step 1).
+    // Once the file has a contract type it collapses to a quiet read-only line.
+    try {
+      const cfg = hostEl.parentElement ? hostEl.parentElement.querySelector('.tpb-dl-config') : null;
+      if(cfg) cfg.style.display = file.contract_type ? 'none' : '';
+    } catch(_){}
+    const fmtShortIso = function(iso){ try { return new Date(iso + 'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(_){ return iso; } };
+    const ctLine = file.contract_type
+      ? '<p class="dl-ctline">' + esc(ENG.contractLabel(ct)) + ((effISO && clsISO) ? ' · ' + fmtShortIso(effISO) + ' &rarr; ' + fmtShortIso(clsISO) : '') + ' · <span>set in Contract terms</span></p>'
+      : '';
+
+    let stepper;
+    if(stepIt){
+      const idx = rows.length - unconfList.length + 1;
+      const note = pastAtIntake(stepIt)
+        ? 'Was already past when this file reached you. Check the contract and confirm its status.'
+        : (ct === 'builder'
+            ? 'A builder contract sets its own timeline. Check the executed contract before relying on this date.'
+            : 'Check the executed contract before relying on this date.');
+      stepper =
+        '<div class="dl-step-card">' +
+          '<p class="dl-step-eb">Confirm ' + idx + ' of ' + rows.length + '</p>' +
+          '<p class="dl-step-name">' + esc(stepIt.name) + ' · ' + esc(fmtDl(stepIt.date)) + '</p>' +
+          '<p class="dl-step-note">' + note + '</p>' +
+          '<div class="dl-step-actions">' +
+            '<button type="button" class="dl-step-ok" data-dl-confirm="' + esc(stepIt.key) + '" data-dl-cdate="' + stepIt.date.toISOString().slice(0,10) + '">Matches contract &#10003;</button>' +
+            '<button type="button" class="dl-step-editbtn" data-dl-stepedit="1">Edit date</button>' +
+          '</div>' +
+          '<div class="dl-step-editform" id="dl-stepform" style="display:none">' +
+            '<input type="date" id="dl-stepdate" value="' + stepIt.date.toISOString().slice(0,10) + '">' +
+            '<button type="button" class="dl-step-save" data-dl-stepsave="' + esc(stepIt.key) + '" data-dl-original="' + stepIt.computedDate.toISOString().slice(0,10) + '">Save from contract</button>' +
+          '</div>' +
+        '</div>';
+    } else {
+      stepper = '<div class="tpb-dl-estban ok">&#10003; All ' + rows.length + ' dates confirmed from the contract.</div>';
+    }
+
+    hostEl.innerHTML = ctLine + stepper + citesToggle + rows.map(function(it){
       const rec = status[it.key];
       const done = rec && rec.completed_at;
+      const confirmedRow = isConfirmed(it);
       const cd = dlCountdown(it.date);
-      const tagCls = done ? 'done' : cd.cls;
-      const tagText = done ? 'done' : cd.tag;
+      const intakeTag = !done && pastAtIntake(it);
+      const tagCls = done ? 'done' : (intakeTag ? 'intake' : cd.cls);
+      const tagText = done ? 'done' : (intakeTag ? 'past at intake' : cd.tag);
       const overrideStrip = it.override
         ? '<p class="tpb-dlA-ext">Extended from ' + esc(fmtFullDate(it.override.originalDate)) + ' · ' + esc(it.override.reason) +
           ' <button type="button" class="tpb-dl-reset" data-dl-reset="' + esc(it.key) + '">Reset to default</button></p>'
         : '';
       const citeLine = (showCites && it.citation) ? '<p class="tpb-dlA-cite">' + esc(it.citation) + '</p>' : '';
-      const confStrip = it.override ? '' : (isConfirmed(it)
-        ? '<p class="tpb-dlA-conf ok">&#10003; confirmed from contract <button type="button" class="tpb-dl-unconf" data-dl-unconfirm="' + esc(it.key) + '">undo</button></p>'
-        : '<p class="tpb-dlA-conf est">est · <button type="button" class="tpb-dl-confbtn" data-dl-confirm="' + esc(it.key) + '" data-dl-cdate="' + it.date.toISOString().slice(0,10) + '">Confirm from contract</button></p>');
+      const confStrip = (it.override || !confirmedRow) ? '' :
+        '<p class="tpb-dlA-conf ok">&#10003; confirmed from contract <button type="button" class="tpb-dl-unconf" data-dl-unconfirm="' + esc(it.key) + '">undo</button></p>';
       const sub = (citeLine || overrideStrip || confStrip) ? '<div class="tpb-dlA-sub">' + citeLine + overrideStrip + confStrip + '</div>' : '';
-      return '<div class="tpb-dlA-row' + (done ? ' done' : '') + '">' +
+      return '<div class="tpb-dlA-row' + (done ? ' done' : '') + ((!done && !confirmedRow) ? ' dl-queued' : '') + '">' +
         '<button type="button" class="tpb-dlA-circle" data-dl-toggle="' + esc(it.key) + '" data-dl-date="' + it.date.toISOString().slice(0,10) + '" aria-label="Mark done">' + (done ? '●' : '○') + '</button>' +
         '<span class="tpb-dlA-date">' + esc(fmtDl(it.date)) + '</span>' +
         '<button type="button" class="tpb-dlA-name" data-dl-edit="' + esc(it.key) + '" title="Edit date">' + esc(it.name) + '</button>' +
@@ -4959,6 +5018,32 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       try { renderHubStatus(file); } catch(_){}
       _saveDlConf();
     }));
+    // C stepper · "Edit date" reveals the date field; "Save from contract" stores
+    // a correction as a proper override (auto-reason) so it counts as confirmed.
+    // Saving the unchanged date is just a confirm.
+    const _se = hostEl.querySelector('[data-dl-stepedit]');
+    if(_se) _se.addEventListener('click', () => {
+      const f = document.getElementById('dl-stepform');
+      if(f) f.style.display = (f.style.display === 'none' ? 'flex' : 'none');
+    });
+    const _ss = hostEl.querySelector('[data-dl-stepsave]');
+    if(_ss) _ss.addEventListener('click', () => {
+      const k = _ss.getAttribute('data-dl-stepsave');
+      const orig = _ss.getAttribute('data-dl-original');
+      const inp = document.getElementById('dl-stepdate');
+      const v = inp ? inp.value : '';
+      if(!v){ alert('Pick the contract date.'); return; }
+      if(v === orig){
+        const lg = file.logistics || (file.logistics = {});
+        const m = lg.dl_confirmed || (lg.dl_confirmed = {});
+        m[k] = v;
+        renderDeadlinesForFile(file);
+        try { renderHubStatus(file); } catch(_){}
+        _saveDlConf();
+        return;
+      }
+      saveDeadlineOverride(file, k, v, orig, 'Per executed contract');
+    });
   }
 
   async function saveDeadlineOverride(file, key, newDateISO, originalISO, reason){
