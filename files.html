@@ -5957,33 +5957,46 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     // When a contract is attached, Contract Terms opens straight into the split
     // verify panel (PDF beside the terms). When it isn't, show an Attach button.
     const attachBtn = '<button type="button" id="ct-attachcontract" style="display:inline-flex;align-items:center;gap:6px;border:0.5px dashed #c2bdb4;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;color:#5f5e5a;cursor:pointer;margin:2px 0 10px">&#128206; Attach contract</button>';
-    const introP = '<p style="font-size:11px;color:#8a877f;margin:0 0 8px">Pre-filled from the agent’s submission. Glance, then confirm — tap a line to change anything that doesn’t match the contract.</p>';
-    // The term lines + confirm + contingency days + association — shared by both
-    // the normal view and the right column of the split verify view.
-    const termsBody =
+    const introP = confirmed ? '' : '<p style="font-size:11px;color:#8a877f;margin:0 0 8px">Pre-filled from the agent’s submission. Glance, then confirm — tap a line to change anything that doesn’t match the contract.</p>';
+    // The editable term lines, the contingency-day block, and the association block.
+    const ctLines =
       ctLine('contract', 'Contract type', (shownCt ? ctLabelFor(shownCt) : ''), ctSelect, agentForm ? ('Agent submitted: ' + agentForm) : '') +
       ctLine('eff', 'Effective date', fmtLineDate(shownEff), dateCtl('ct-eff', shownEff), (agentEff && !eff) ? ('Agent entered ' + agentEff) : '') +
       ctLine('cls', 'Closing date', fmtLineDate(shownCls), dateCtl('ct-cls', shownCls), (agentCls && !cls) ? ('Agent entered ' + agentCls) : '') +
       ctLine('price', 'Purchase price', shownPrice, '<input type="number" id="ct-price" value="' + (priceCents ? (priceCents / 100) : '') + '" placeholder="209999" min="0" step="1" style="border:0.5px solid #d9d4ca;border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit;background:#fff;box-sizing:border-box;width:100%">', (raw.purchase_price && !priceCents) ? ('Agent entered ' + raw.purchase_price) : '') +
       ctLine('emd', 'Binder deposit (EMD)', (emdAmt ? esc(emdAmt) : ''), '<input type="text" id="ct-emd" value="' + esc(emdAmt) + '" placeholder="$2,000" style="border:0.5px solid #d9d4ca;border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit;background:#fff;box-sizing:border-box;width:100%">', 'Also feeds the EMD tracker in Your Work.') +
       ctLine('fin', 'Financing', (FIN_LABELS[shownFinType] || ''), segN(shownFinType || '', [['cash','Cash'],['conventional','Conv'],['fha','FHA'],['va','VA'],['usda','USDA']], 'fin')) +
-      ctLine('assoc', 'Association', (shownAssoc ? (ASSOC_LABEL[shownAssoc] || '') : ''), segN(shownAssoc || 'none', [['none','None'],['hoa','HOA'],['condo','Condo']], 'assoc'), (raw.pa_hoa && !assocType(file)) ? ('Agent said HOA: ' + raw.pa_hoa) : '') +
-      (confirmed
-        ? '<p style="font-size:10.5px;color:#a39e95;margin:13px 2px 8px">&#10003; Confirmed' + (((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '') + '</p>' +
-            '<button type="button" id="ct-next-contacts" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:11px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;margin:2px 0 2px">Next: confirm all contacts &rarr;</button>'
-        : (ready
-            ? '<button type="button" id="ct-confirm" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:12px;text-align:center;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;margin:14px 0 2px">&check; Confirm &amp; unlock my work</button>' +
-              '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Stamps it with your name + date and records agent-submitted vs confirmed</p>'
-            : '<div style="display:block;width:100%;background:#efece6;color:#a39e95;border:0;border-radius:9px;padding:12px;text-align:center;font-size:13.5px;font-weight:600;font-family:inherit;margin:14px 0 2px">Confirm &amp; unlock my work</div>' +
-              '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Set contract type, both dates, and financing above to confirm</p>')) +
-      (ct
-        ? (dayRows
-            ? grp('Contingency days') +
-              '<p style="font-size:11.5px;color:#5f5e5a;margin:0 0 4px">Standards are filled. Change only what your contract differs on.</p>' + dayRows +
-              (haveDates ? '' : '<p style="font-size:10.5px;color:#b3aea5;margin:8px 0 0">Set both dates above to see each deadline date.</p>')
-            : '')
-        : '') +
-      associationSectionHtml(file);
+      ctLine('assoc', 'Association', (shownAssoc ? (ASSOC_LABEL[shownAssoc] || '') : ''), segN(shownAssoc || 'none', [['none','None'],['hoa','HOA'],['condo','Condo']], 'assoc'), (raw.pa_hoa && !assocType(file)) ? ('Agent said HOA: ' + raw.pa_hoa) : '');
+    const daysBlock = (ct
+      ? (dayRows
+          ? grp('Contingency days') +
+            '<p style="font-size:11.5px;color:#5f5e5a;margin:0 0 4px">Standards are filled. Change only what your contract differs on.</p>' + dayRows +
+            (haveDates ? '' : '<p style="font-size:10.5px;color:#b3aea5;margin:8px 0 0">Set both dates above to see each deadline date.</p>')
+          : '')
+      : '');
+    const assocBlock = associationSectionHtml(file);
+    let termsBody;
+    if(confirmed){
+      // Terms are confirmed → collapse them to one summary line; contacts below,
+      // still beside the contract PDF so the TC verifies against the document.
+      const confDate = ((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '';
+      const termsSummary =
+        '<button type="button" data-ct-terms-toggle="1" style="width:100%;display:flex;align-items:center;gap:11px;padding:11px;border:0.5px solid #ece8e0;border-radius:10px;background:#fff;cursor:pointer;font-family:inherit;text-align:left">' +
+          '<span style="flex:none;width:24px;height:24px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px">&#10003;</span>' +
+          '<span style="flex:1"><span style="display:block;font-size:13px;font-weight:600;color:#0f0f0f">Contract terms confirmed</span><span style="font-size:11px;color:#8a857c">Confirmed' + confDate + '</span></span>' +
+          '<span style="color:#c2bdb4;font-size:18px;display:inline-block;transform:rotate(' + (_ctTermsExpanded ? '90' : '0') + 'deg)">&#8250;</span>' +
+        '</button>';
+      termsBody = termsSummary +
+        (_ctTermsExpanded ? ('<div style="margin-top:8px">' + ctLines + daysBlock + assocBlock + '</div>') : '') +
+        '<div style="margin-top:14px">' + contactsTaskHtml(file) + '</div>';
+    } else {
+      const confirmBlock = ready
+        ? '<button type="button" id="ct-confirm" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:12px;text-align:center;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;margin:14px 0 2px">&check; Confirm &amp; unlock my work</button>' +
+            '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Stamps it with your name + date and records agent-submitted vs confirmed</p>'
+        : '<div style="display:block;width:100%;background:#efece6;color:#a39e95;border:0;border-radius:9px;padding:12px;text-align:center;font-size:13.5px;font-weight:600;font-family:inherit;margin:14px 0 2px">Confirm &amp; unlock my work</div>' +
+            '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Set contract type, both dates, and financing above to confirm</p>';
+      termsBody = ctLines + confirmBlock + daysBlock + assocBlock;
+    }
 
     const _ctModal = document.getElementById('tpb-popview');
     if(hasContract){
@@ -6027,8 +6040,9 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     // ---- wiring ---- (PDF-panel buttons are wired once during shell build above)
     const ac = document.getElementById('ct-attachcontract');
     if(ac) ac.addEventListener('click', () => attachContract(file));
-    const nextC = document.getElementById('ct-next-contacts');
-    if(nextC) nextC.addEventListener('click', () => { try { openSectionPop('ck'); } catch(_){} });
+    host.querySelectorAll('[data-ct-terms-toggle]').forEach(function(b){
+      b.addEventListener('click', function(){ _ctTermsExpanded = !_ctTermsExpanded; renderContractTerms(file); });
+    });
     const ctc = document.getElementById('ct-contract');
     if(ctc) ctc.addEventListener('change', () => ctSave(file, { contract_type: ctc.value || null }, null));
     const effI = document.getElementById('ct-eff');
@@ -7344,6 +7358,14 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   // ===== Stage 2 · Task 3 · inline contact-confirmation panel =====
   let _contactsExpanded = false;  // collapsed confirmed row → expand read-only
   let _contactEditKey = null;     // which contact row is in edit mode
+  let _ctTermsExpanded = false;   // confirmed terms · collapsed summary → expand
+  // The contact panel renders in two places — the Contract Terms split column
+  // (#tpb-terms) and Your Work Task 3 (#tpb-checklist). Re-render whichever is open.
+  function rerenderContactsHost(){
+    if(!_currentFile) return;
+    if(_openPopKey === 'terms'){ try { renderContractTerms(_currentFile); } catch(_){} }
+    else { try { renderStageChecklist(_currentFile); } catch(_){} }
+  }
   // Build the party rows, seeded from the agent's submission, merged with any TC
   // corrections stored in file.logistics.contacts. Returns [{key,label,reqPhone,c,complete}].
   function contactRows(file){
@@ -7449,7 +7471,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     file.logistics = lg; file.stage_tasks = st;
     if(_currentFile && _currentFile.id === file.id){ _currentFile.logistics = lg; _currentFile.stage_tasks = st; }
     _contactsExpanded = false; _contactEditKey = null;
-    renderStageChecklist(file);
+    rerenderContactsHost();
     const { error } = await _client.from('files').update({ logistics: lg, stage_tasks: st }).eq('id', file.id);
     if(error){ alert('Could not confirm contacts — check your connection and try again.'); }
   }
@@ -7692,9 +7714,9 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     if(!_currentFile) return;
     if(_currentFile.status === 'archived' || saUnsigned(_currentFile)) return;
     const tog = e.target.closest && e.target.closest('[data-contacts-toggle]');
-    if(tog){ _contactsExpanded = !_contactsExpanded; renderStageChecklist(_currentFile); return; }
+    if(tog){ _contactsExpanded = !_contactsExpanded; rerenderContactsHost(); return; }
     const ed = e.target.closest && e.target.closest('[data-contact-edit]');
-    if(ed){ const k = ed.getAttribute('data-contact-edit'); _contactEditKey = (_contactEditKey === k) ? null : k; renderStageChecklist(_currentFile); return; }
+    if(ed){ const k = ed.getAttribute('data-contact-edit'); _contactEditKey = (_contactEditKey === k) ? null : k; rerenderContactsHost(); return; }
     const cf = e.target.closest && e.target.closest('[data-contacts-confirm]');
     if(cf){ confirmContacts(_currentFile); return; }
   });
