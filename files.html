@@ -7385,51 +7385,62 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     // agent_name, listing_agent_name, title_contact_name, lender_contact_name…).
     // Cover every naming variant + the file's own client_* columns so nothing reads "No name".
     const pick = function(){ for(var i=0;i<arguments.length;i++){ if(arguments[i]) return arguments[i]; } return ''; };
+    // This file's intake uses pa_-prefixed keys (per renderFileDetails). The file's
+    // own agent (pa_agent_name) is the buyer's agent on a buy-side deal. Try pa_*
+    // first, then the non-prefixed keys, then the agent record / client_* columns.
     const ourAgent = {
-      name:  pick(raw.agent_name, ((ag.first_name || '') + ' ' + (ag.last_name || '')).trim()),
-      email: pick(raw.agent_email, ag.email),
-      phone: pick(raw.agent_phone, ag.phone),
+      name:  pick(raw.pa_agent_name, raw.agent_name, ((ag.first_name || '') + ' ' + (ag.last_name || '')).trim()),
+      email: pick(raw.pa_agent_email, raw.agent_email, ag.email),
+      phone: pick(raw.pa_agent_phone, raw.agent_phone, ag.phone),
     };
     const coAgent  = {
-      name:  pick(raw.listing_agent_name, raw.pa_listing_agent_name),
-      email: pick(raw.listing_agent_email, raw.pa_listing_agent_email),
-      phone: pick(raw.listing_agent_phone, raw.pa_listing_agent_phone),
+      name:  pick(raw.pa_listing_agent_name, raw.listing_agent_name),
+      email: pick(raw.pa_listing_agent_email, raw.listing_agent_email),
+      phone: pick(raw.pa_listing_agent_phone, raw.listing_agent_phone),
     };
     const src = {
       buyer: {
-        name:  pick(raw.buyer_name, raw.pa_buyer_name, (buyerSide ? file.client_name : '')),
-        email: pick(raw.buyer_email, raw.pa_buyer_email, (buyerSide ? file.client_email : '')),
-        phone: pick(raw.buyer_phone, raw.pa_buyer_phone, (buyerSide ? file.client_phone : '')),
+        name:  pick(raw.pa_buyer_name, raw.buyer_name, (buyerSide ? file.client_name : '')),
+        email: pick(raw.pa_buyer_email, raw.buyer_email, (buyerSide ? file.client_email : '')),
+        phone: pick(raw.pa_buyer_phone, raw.buyer_phone, (buyerSide ? file.client_phone : '')),
       },
       seller: {
-        name:  pick(raw.seller_name, raw.pa_seller_name, (sellerSide ? file.client_name : '')),
-        email: pick(raw.seller_email, raw.pa_seller_email, (sellerSide ? file.client_email : '')),
-        phone: pick(raw.seller_phone, raw.pa_seller_phone, (sellerSide ? file.client_phone : '')),
+        name:  pick(raw.pa_seller_name, raw.seller_name, (sellerSide ? file.client_name : '')),
+        email: pick(raw.pa_seller_email, raw.seller_email, (sellerSide ? file.client_email : '')),
+        phone: pick(raw.pa_seller_phone, raw.seller_phone, (sellerSide ? file.client_phone : '')),
       },
       buyer_agent:   buyerSide  ? ourAgent : coAgent,
       listing_agent: sellerSide ? ourAgent : coAgent,
       title:  {
-        name:  pick(raw.title_contact_name, raw.title_name, raw.pa_title_contact_name, file.title_contact),
-        email: pick(raw.title_contact_email, raw.title_email, raw.pa_title_contact_email),
-        phone: pick(raw.title_contact_phone, raw.title_phone, raw.pa_title_contact_phone),
+        name:  pick(raw.pa_title_contact_name, raw.title_contact_name, raw.title_name, file.title_contact),
+        email: pick(raw.pa_title_contact_email, raw.title_contact_email, raw.title_email),
+        phone: pick(raw.pa_title_contact_phone, raw.title_contact_phone, raw.title_phone),
       },
       lender: {
-        name:  pick(raw.lender_contact_name, raw.lender_name, raw.pa_lender_contact_name, file.lender_contact),
-        email: pick(raw.lender_contact_email, raw.lender_email, raw.pa_lender_contact_email),
-        phone: pick(raw.lender_contact_phone, raw.lender_phone, raw.pa_lender_contact_phone),
+        name:  pick(raw.pa_lender_contact_name, raw.lender_contact_name, raw.lender_name, file.lender_contact),
+        email: pick(raw.pa_lender_contact_email, raw.lender_contact_email, raw.lender_email),
+        phone: pick(raw.pa_lender_contact_phone, raw.lender_contact_phone, raw.lender_phone),
       },
     };
+    src.co_agent = {
+      name:  pick(raw.pa_co_agent_name, raw.co_agent_name),
+      email: pick(raw.pa_co_agent_email, raw.co_agent_email),
+      phone: pick(raw.pa_co_agent_phone, raw.co_agent_phone),
+    };
     const ov = (file.logistics || {}).contacts || {};
+    const coLabel = buyerSide ? "Co-buyer's agent" : (sellerSide ? 'Co-listing agent' : 'Co-agent');
+    const hasCo = !!(src.co_agent.name || (ov.co_agent && ov.co_agent.name));
     return [
       { key:'buyer',         label:'Buyer',          reqPhone:true,  show:true },
       { key:'seller',        label:'Seller',         reqPhone:true,  show:true },
       { key:'buyer_agent',   label:"Buyer's Agent",  reqPhone:true,  show:true },
       { key:'listing_agent', label:'Listing Agent',  reqPhone:true,  show:true },
+      { key:'co_agent',      label:coLabel,          reqPhone:false, show:hasCo, optional:true },
       { key:'title',         label:'Title Company',  reqPhone:true,  show:true },
       { key:'lender',        label:'Lender',         reqPhone:false, show:!isCashFile(file) },
     ].filter(r => r.show).map(r => {
       const c = Object.assign({ name:'', email:'', phone:'' }, src[r.key] || {}, ov[r.key] || {});
-      const complete = !!(c.name && c.email && (!r.reqPhone || c.phone));
+      const complete = r.optional ? true : !!(c.name && c.email && (!r.reqPhone || c.phone));
       return Object.assign({}, r, { c, complete });
     });
   }
