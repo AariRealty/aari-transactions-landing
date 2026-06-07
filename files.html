@@ -7381,15 +7381,43 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const ag = _drawerAgent || {};
     const buyerSide = file.client_type === 'buyer';
     const sellerSide = file.client_type === 'seller';
-    const ourAgent = { name: ((ag.first_name || '') + ' ' + (ag.last_name || '')).trim(), email: ag.email || '', phone: ag.phone || '' };
-    const coAgent  = { name: raw.pa_listing_agent_name || raw.listing_agent_name || '', email: raw.pa_listing_agent_email || raw.listing_agent_email || '', phone: raw.pa_listing_agent_phone || raw.listing_agent_phone || '' };
+    // Intake saves structured fields WITHOUT a pa_ prefix (buyer_name, seller_name,
+    // agent_name, listing_agent_name, title_contact_name, lender_contact_name…).
+    // Cover every naming variant + the file's own client_* columns so nothing reads "No name".
+    const pick = function(){ for(var i=0;i<arguments.length;i++){ if(arguments[i]) return arguments[i]; } return ''; };
+    const ourAgent = {
+      name:  pick(raw.agent_name, ((ag.first_name || '') + ' ' + (ag.last_name || '')).trim()),
+      email: pick(raw.agent_email, ag.email),
+      phone: pick(raw.agent_phone, ag.phone),
+    };
+    const coAgent  = {
+      name:  pick(raw.listing_agent_name, raw.pa_listing_agent_name),
+      email: pick(raw.listing_agent_email, raw.pa_listing_agent_email),
+      phone: pick(raw.listing_agent_phone, raw.pa_listing_agent_phone),
+    };
     const src = {
-      buyer:  buyerSide  ? { name:file.client_name||'', email:file.client_email||'', phone:file.client_phone||'' } : { name:raw.pa_buyer_name||raw.buyer_name||'', email:raw.pa_buyer_email||raw.buyer_email||'', phone:raw.pa_buyer_phone||raw.buyer_phone||'' },
-      seller: sellerSide ? { name:file.client_name||'', email:file.client_email||'', phone:file.client_phone||'' } : { name:raw.pa_seller_name||raw.seller_name||'', email:raw.pa_seller_email||raw.seller_email||'', phone:raw.pa_seller_phone||raw.seller_phone||'' },
+      buyer: {
+        name:  pick(raw.buyer_name, raw.pa_buyer_name, (buyerSide ? file.client_name : '')),
+        email: pick(raw.buyer_email, raw.pa_buyer_email, (buyerSide ? file.client_email : '')),
+        phone: pick(raw.buyer_phone, raw.pa_buyer_phone, (buyerSide ? file.client_phone : '')),
+      },
+      seller: {
+        name:  pick(raw.seller_name, raw.pa_seller_name, (sellerSide ? file.client_name : '')),
+        email: pick(raw.seller_email, raw.pa_seller_email, (sellerSide ? file.client_email : '')),
+        phone: pick(raw.seller_phone, raw.pa_seller_phone, (sellerSide ? file.client_phone : '')),
+      },
       buyer_agent:   buyerSide  ? ourAgent : coAgent,
       listing_agent: sellerSide ? ourAgent : coAgent,
-      title:  { name:raw.title_name||raw.pa_title_contact_name||'', email:raw.title_email||raw.pa_title_contact_email||'', phone:raw.title_phone||raw.pa_title_contact_phone||'' },
-      lender: { name:raw.lender_name||raw.pa_lender_contact_name||'', email:raw.lender_email||raw.pa_lender_contact_email||'', phone:raw.lender_phone||raw.pa_lender_contact_phone||'' },
+      title:  {
+        name:  pick(raw.title_contact_name, raw.title_name, raw.pa_title_contact_name, file.title_contact),
+        email: pick(raw.title_contact_email, raw.title_email, raw.pa_title_contact_email),
+        phone: pick(raw.title_contact_phone, raw.title_phone, raw.pa_title_contact_phone),
+      },
+      lender: {
+        name:  pick(raw.lender_contact_name, raw.lender_name, raw.pa_lender_contact_name, file.lender_contact),
+        email: pick(raw.lender_contact_email, raw.lender_email, raw.pa_lender_contact_email),
+        phone: pick(raw.lender_contact_phone, raw.lender_phone, raw.pa_lender_contact_phone),
+      },
     };
     const ov = (file.logistics || {}).contacts || {};
     return [
@@ -7429,23 +7457,31 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       return html + '</div>';
     }
     const inputStyle = 'width:100%;border:0.5px solid #d9d4ca;border-radius:6px;padding:5px 8px;font-size:12px;font-family:inherit;background:#fff;box-sizing:border-box;margin-top:4px';
+    const initials = function(name){ const p = (name || '').trim().split(/\s+/); if(!p[0]) return ''; return ((p[0][0] || '') + ((p[1] || '')[0] || '')).toUpperCase(); };
     const rowsHtml = rows.map(d => {
       const editing = (_contactEditKey === d.key);
-      let body;
       if(editing){
-        body = '<input type="text" data-contact-input="' + d.key + '__name" value="' + esc(d.c.name) + '" placeholder="Full name" style="' + inputStyle + '">' +
-               '<input type="email" data-contact-input="' + d.key + '__email" value="' + esc(d.c.email) + '" placeholder="Email" style="' + inputStyle + '">' +
-               '<input type="tel" data-contact-input="' + d.key + '__phone" value="' + esc(d.c.phone) + '" placeholder="Phone' + (d.reqPhone ? '' : ' (optional)') + '" style="' + inputStyle + '">';
-      } else {
-        body = '<div style="font-size:12px;font-weight:500;color:' + (d.c.name ? '#0f0f0f' : '#c2bdb4') + '">' + (d.c.name ? esc(d.c.name) : 'No name') + '</div>' +
-               '<div style="font-size:11px;color:#888">' + esc(d.c.email || '') + (d.c.phone ? ' &middot; ' + esc(d.c.phone) : '') + '</div>';
+        return '<div style="padding:10px 12px;border-top:0.5px solid #f0ebe0">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.04em">' + esc(d.label) + '</span>' +
+            '<button type="button" data-contact-edit="' + d.key + '" style="border:0;background:none;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit">Done</button></div>' +
+          '<input type="text" data-contact-input="' + d.key + '__name" value="' + esc(d.c.name) + '" placeholder="Full name" style="' + inputStyle + '">' +
+          '<input type="email" data-contact-input="' + d.key + '__email" value="' + esc(d.c.email) + '" placeholder="Email" style="' + inputStyle + '">' +
+          '<input type="tel" data-contact-input="' + d.key + '__phone" value="' + esc(d.c.phone) + '" placeholder="Phone' + (d.reqPhone ? '' : ' (optional)') + '" style="' + inputStyle + '">' +
+        '</div>';
       }
-      const editLink = '<button type="button" data-contact-edit="' + d.key + '" style="border:0;background:none;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit">' + (editing ? 'Done' : 'Edit') + '</button>';
-      const right = d.complete ? editLink
-        : '<span style="display:inline-flex;align-items:center;gap:6px"><span style="font-size:9px;font-weight:700;color:#c96b6b;background:#fdecea;border-radius:4px;padding:2px 6px">Incomplete</span>' + editLink + '</span>';
-      return '<div style="padding:8px 12px;border-top:0.5px solid #f0ebe0">' +
-        '<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.04em">' + esc(d.label) + '</span>' + right + '</div>' +
-        body + '</div>';
+      const avatar = d.complete
+        ? '<span style="flex:none;width:30px;height:30px;border-radius:50%;background:#efece6;color:#5f5e5a;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">' + esc(initials(d.c.name) || '&middot;') + '</span>'
+        : '<span style="flex:none;width:30px;height:30px;border-radius:50%;background:#fdecea;color:#c96b6b;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700">!</span>';
+      const mid = d.c.name
+        ? '<span style="display:block;font-size:12.5px;font-weight:500;color:#0f0f0f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(d.c.name) + '</span>' +
+          '<span style="display:block;font-size:10px;color:#a39e95;text-transform:uppercase;letter-spacing:.04em">' + esc(d.label) + '</span>' +
+          ((d.c.email || d.c.phone) ? '<span style="display:block;font-size:11px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(d.c.email || '') + (d.c.phone ? ' &middot; ' + esc(d.c.phone) : '') + '</span>' : '')
+        : '<span style="display:block;font-size:12.5px;font-weight:500;color:#c2bdb4">Add ' + esc(d.label.toLowerCase()) + '</span>' +
+          '<span style="display:block;font-size:10px;color:#a39e95;text-transform:uppercase;letter-spacing:.04em">' + esc(d.label) + '</span>';
+      const right = d.complete
+        ? '<span style="flex:none;display:inline-flex;align-items:center;gap:9px"><span style="color:#3e7d57;font-size:15px">&#10003;</span><button type="button" data-contact-edit="' + d.key + '" style="border:0;background:none;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit">Edit</button></span>'
+        : '<button type="button" data-contact-edit="' + d.key + '" style="flex:none;border:0;background:none;color:#185FA5;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit">' + (d.c.name ? 'Edit' : 'Add') + '</button>';
+      return '<div style="display:flex;align-items:center;gap:11px;padding:10px 12px;border-top:0.5px solid #f0ebe0">' + avatar + '<span style="flex:1;min-width:0">' + mid + '</span>' + right + '</div>';
     }).join('');
     return '<div class="ck-task-wrap">' +
       '<div style="font-size:13px;font-weight:500;color:#0f0f0f;padding:4px 2px 2px">Identify all parties and confirm contact information is complete</div>' +
