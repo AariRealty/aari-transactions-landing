@@ -5977,25 +5977,13 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const assocBlock = associationSectionHtml(file);
     let termsBody;
     const contactsStep = confirmed && (_ctContactsStep || !!((file.logistics || {}).contacts_confirmed_at));
-    // Two-step wizard bar · ① Contract terms  ②  Contacts. Only the active step
-    // renders below — the two never stack on the same page.
-    const wizardBar =
-      '<div style="display:flex;align-items:center;gap:8px;margin:0 0 14px">' +
-        '<button type="button" data-ct-wizard="terms" style="display:inline-flex;align-items:center;gap:6px;border:0;background:none;cursor:pointer;font-family:inherit;padding:0">' +
-          '<span style="width:20px;height:20px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600">' + (confirmed ? '&#10003;' : '1') + '</span>' +
-          '<span style="font-size:11px;font-weight:600;color:' + (contactsStep ? '#8a857c' : '#0f0f0f') + '">Terms</span>' +
-        '</button>' +
-        '<span style="flex:1;height:1.5px;background:#ece4d2"></span>' +
-        '<button type="button" data-ct-wizard="contacts"' + (confirmed ? '' : ' disabled') + ' style="display:inline-flex;align-items:center;gap:6px;border:0;background:none;cursor:' + (confirmed ? 'pointer' : 'default') + ';font-family:inherit;padding:0">' +
-          '<span style="width:20px;height:20px;border-radius:50%;background:' + (contactsStep ? '#0f0f0f' : '#d3d1c7') + ';color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600">2</span>' +
-          '<span style="font-size:11px;font-weight:600;color:' + (contactsStep ? '#0f0f0f' : '#a39e95') + '">Contacts</span>' +
-        '</button>' +
-      '</div>';
+    // D · the drawer HEADER swaps to "Confirm contacts" (with a "Contract terms"
+    // back button) on the contacts step — so terms and contacts never share a page.
     if(contactsStep){
-      termsBody = wizardBar + contactsTaskHtml(file);
+      termsBody = contactsTaskHtml(file);
     } else if(confirmed){
       // Terms step (confirmed) · full terms, then the "Next" CTA at the very end.
-      termsBody = wizardBar + ctLines +
+      termsBody = ctLines +
         '<p style="font-size:10.5px;color:#a39e95;margin:13px 2px 0">&#10003; Confirmed' + (((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '') + '</p>' +
         daysBlock + assocBlock +
         '<button type="button" data-ct-next-contacts="1" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:11px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;margin:16px 0 2px">Next: confirm all contacts &rarr;</button>';
@@ -6005,7 +5993,15 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
             '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Stamps it with your name + date and records agent-submitted vs confirmed</p>'
         : '<div style="display:block;width:100%;background:#efece6;color:#a39e95;border:0;border-radius:9px;padding:12px;text-align:center;font-size:13.5px;font-weight:600;font-family:inherit;margin:14px 0 2px">Confirm &amp; unlock my work</div>' +
             '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Set contract type, both dates, and financing above to confirm</p>';
-      termsBody = wizardBar + ctLines + confirmBlock + daysBlock + assocBlock;
+      termsBody = ctLines + confirmBlock + daysBlock + assocBlock;
+    }
+    // D · swap the drawer header to reflect the active step (only when this is the
+    // open section). Contacts step → "Confirm contacts" + a "Contract terms" back.
+    if(_openPopKey === 'terms'){
+      const _tt = document.getElementById('tpb-poptitle');
+      const _bk = document.getElementById('tpb-popback');
+      if(_tt) _tt.textContent = contactsStep ? 'Confirm contacts' : 'Contract terms';
+      if(_bk) _bk.innerHTML = contactsStep ? '&larr; Contract terms' : '&larr; All sections';
     }
 
     const _ctModal = document.getElementById('tpb-popview');
@@ -6050,14 +6046,6 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     // ---- wiring ---- (PDF-panel buttons are wired once during shell build above)
     const ac = document.getElementById('ct-attachcontract');
     if(ac) ac.addEventListener('click', () => attachContract(file));
-    host.querySelectorAll('[data-ct-wizard]').forEach(function(b){
-      b.addEventListener('click', function(){
-        const step = b.getAttribute('data-ct-wizard');
-        if(step === 'contacts'){ if(!termsAttested(file)) return; _ctContactsStep = true; }
-        else { _ctContactsStep = false; }
-        renderContractTerms(file);
-      });
-    });
     host.querySelectorAll('[data-ct-next-contacts]').forEach(function(b){
       b.addEventListener('click', function(){ _ctContactsStep = true; renderContractTerms(file); });
     });
@@ -8196,7 +8184,12 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       if(b && modal.contains(b)) openSectionPop(b.getAttribute('data-open-pop'));
     });
     const back = document.getElementById('tpb-popback');
-    if(back) back.addEventListener('click', closeSectionPop);
+    if(back) back.addEventListener('click', function(){
+      // On the Contract Terms contacts step, "back" returns to the terms step
+      // (header swap), not all the way out to the hub.
+      if(_openPopKey === 'terms' && _ctContactsStep){ _ctContactsStep = false; try { renderContractTerms(_currentFile); } catch(_){} return; }
+      closeSectionPop();
+    });
     if(bd0) bd0.addEventListener('click', closeSectionPop);
   }
   // The section popup is a CENTERED modal over the drawer (the drawer stays put).
@@ -8207,6 +8200,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     if(key !== 'terms'){ pv.classList.remove('verify'); }
     pv.querySelectorAll('.tpb-pop').forEach(p => { p.hidden = (p.getAttribute('data-pop') !== key); });
     const tt = document.getElementById('tpb-poptitle'); if(tt) tt.textContent = _POP_TITLES[key] || '';
+    const bk = document.getElementById('tpb-popback'); if(bk) bk.innerHTML = '&larr; All sections';
     pv.hidden = false; if(bd) bd.classList.add('show');
     // Contract terms opens straight into the split verify panel; re-render so the
     // modal widens and the PDF gets a fresh (non-expired) signed link.
