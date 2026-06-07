@@ -7344,8 +7344,121 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       saveLogisticsField(_drawerFile, el.getAttribute('data-cklg-key'), (el.value || '').trim());
     });
   }
+  // ===== Stage 2 · Task 3 · inline contact-confirmation panel =====
+  let _contactsExpanded = false;  // collapsed confirmed row → expand read-only
+  let _contactEditKey = null;     // which contact row is in edit mode
+  // Build the party rows, seeded from the agent's submission, merged with any TC
+  // corrections stored in file.logistics.contacts. Returns [{key,label,reqPhone,c,complete}].
+  function contactRows(file){
+    const raw = file.raw_form_data || {};
+    const ag = _drawerAgent || {};
+    const buyerSide = file.client_type === 'buyer';
+    const sellerSide = file.client_type === 'seller';
+    const ourAgent = { name: ((ag.first_name || '') + ' ' + (ag.last_name || '')).trim(), email: ag.email || '', phone: ag.phone || '' };
+    const coAgent  = { name: raw.pa_listing_agent_name || raw.listing_agent_name || '', email: raw.pa_listing_agent_email || raw.listing_agent_email || '', phone: raw.pa_listing_agent_phone || raw.listing_agent_phone || '' };
+    const src = {
+      buyer:  buyerSide  ? { name:file.client_name||'', email:file.client_email||'', phone:file.client_phone||'' } : { name:raw.pa_buyer_name||raw.buyer_name||'', email:raw.pa_buyer_email||raw.buyer_email||'', phone:raw.pa_buyer_phone||raw.buyer_phone||'' },
+      seller: sellerSide ? { name:file.client_name||'', email:file.client_email||'', phone:file.client_phone||'' } : { name:raw.pa_seller_name||raw.seller_name||'', email:raw.pa_seller_email||raw.seller_email||'', phone:raw.pa_seller_phone||raw.seller_phone||'' },
+      buyer_agent:   buyerSide  ? ourAgent : coAgent,
+      listing_agent: sellerSide ? ourAgent : coAgent,
+      title:  { name:raw.title_name||raw.pa_title_contact_name||'', email:raw.title_email||raw.pa_title_contact_email||'', phone:raw.title_phone||raw.pa_title_contact_phone||'' },
+      lender: { name:raw.lender_name||raw.pa_lender_contact_name||'', email:raw.lender_email||raw.pa_lender_contact_email||'', phone:raw.lender_phone||raw.pa_lender_contact_phone||'' },
+    };
+    const ov = (file.logistics || {}).contacts || {};
+    return [
+      { key:'buyer',         label:'Buyer',          reqPhone:true,  show:true },
+      { key:'seller',        label:'Seller',         reqPhone:true,  show:true },
+      { key:'buyer_agent',   label:"Buyer's Agent",  reqPhone:true,  show:true },
+      { key:'listing_agent', label:'Listing Agent',  reqPhone:true,  show:true },
+      { key:'title',         label:'Title Company',  reqPhone:true,  show:true },
+      { key:'lender',        label:'Lender',         reqPhone:false, show:!isCashFile(file) },
+    ].filter(r => r.show).map(r => {
+      const c = Object.assign({ name:'', email:'', phone:'' }, src[r.key] || {}, ov[r.key] || {});
+      const complete = !!(c.name && c.email && (!r.reqPhone || c.phone));
+      return Object.assign({}, r, { c, complete });
+    });
+  }
+  function contactsTaskHtml(file){
+    const lg = file.logistics || {};
+    const confirmedAt = lg.contacts_confirmed_at || '';
+    const rows = contactRows(file);
+    const allComplete = rows.every(r => r.complete);
+    const fmtD = (iso) => { try { return new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); } catch(_){ return ''; } };
+    if(confirmedAt){
+      let html = '<div class="ck-task-wrap">' +
+        '<button type="button" data-contacts-toggle="1" style="width:100%;display:flex;align-items:center;gap:12px;padding:12px;border:0.5px solid #ece8e0;border-radius:10px;background:#fff;cursor:pointer;font-family:inherit;text-align:left">' +
+          '<span style="flex:none;width:26px;height:26px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px">&#10003;</span>' +
+          '<span style="flex:1"><span style="display:block;font-size:13.5px;font-weight:600;color:#0f0f0f">Contacts</span><span style="font-size:11px;color:#8a857c">Confirmed &middot; ' + fmtD(confirmedAt) + '</span></span>' +
+          '<span style="color:#c2bdb4;font-size:18px;display:inline-block;transform:rotate(' + (_contactsExpanded ? '90' : '0') + 'deg)">&#8250;</span>' +
+        '</button>';
+      if(_contactsExpanded){
+        html += '<div style="background:#faf8f4;border:0.5px solid #e8e4db;border-radius:8px;margin-top:8px;overflow:hidden">' +
+          rows.map(d => '<div style="padding:8px 12px;border-top:0.5px solid #f0ebe0">' +
+            '<span style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.04em">' + esc(d.label) + '</span>' +
+            '<div style="font-size:12px;font-weight:500;color:#0f0f0f">' + (d.c.name ? esc(d.c.name) : '&mdash;') + '</div>' +
+            '<div style="font-size:11px;color:#888">' + esc(d.c.email || '') + (d.c.phone ? ' &middot; ' + esc(d.c.phone) : '') + '</div>' +
+          '</div>').join('') + '</div>';
+      }
+      return html + '</div>';
+    }
+    const inputStyle = 'width:100%;border:0.5px solid #d9d4ca;border-radius:6px;padding:5px 8px;font-size:12px;font-family:inherit;background:#fff;box-sizing:border-box;margin-top:4px';
+    const rowsHtml = rows.map(d => {
+      const editing = (_contactEditKey === d.key);
+      let body;
+      if(editing){
+        body = '<input type="text" data-contact-input="' + d.key + '__name" value="' + esc(d.c.name) + '" placeholder="Full name" style="' + inputStyle + '">' +
+               '<input type="email" data-contact-input="' + d.key + '__email" value="' + esc(d.c.email) + '" placeholder="Email" style="' + inputStyle + '">' +
+               '<input type="tel" data-contact-input="' + d.key + '__phone" value="' + esc(d.c.phone) + '" placeholder="Phone' + (d.reqPhone ? '' : ' (optional)') + '" style="' + inputStyle + '">';
+      } else {
+        body = '<div style="font-size:12px;font-weight:500;color:' + (d.c.name ? '#0f0f0f' : '#c2bdb4') + '">' + (d.c.name ? esc(d.c.name) : 'No name') + '</div>' +
+               '<div style="font-size:11px;color:#888">' + esc(d.c.email || '') + (d.c.phone ? ' &middot; ' + esc(d.c.phone) : '') + '</div>';
+      }
+      const editLink = '<button type="button" data-contact-edit="' + d.key + '" style="border:0;background:none;color:#0f0f0f;font-size:10px;cursor:pointer;font-family:inherit;text-decoration:underline">' + (editing ? 'Done' : 'Edit') + '</button>';
+      const right = d.complete ? editLink
+        : '<span style="display:inline-flex;align-items:center;gap:6px"><span style="font-size:9px;font-weight:700;color:#c96b6b;background:#fdecea;border-radius:4px;padding:2px 6px">Incomplete</span>' + editLink + '</span>';
+      return '<div style="padding:8px 12px;border-top:0.5px solid #f0ebe0">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.04em">' + esc(d.label) + '</span>' + right + '</div>' +
+        body + '</div>';
+    }).join('');
+    return '<div class="ck-task-wrap">' +
+      '<div style="font-size:13px;font-weight:500;color:#0f0f0f;padding:4px 2px 2px">Identify all parties and confirm contact information is complete</div>' +
+      '<div style="font-size:11px;color:#8a857c;padding:0 2px 8px">Pre-filled from the agent’s submission. Correct anything that’s off, then confirm.</div>' +
+      '<div style="background:#faf8f4;border:0.5px solid #e8e4db;border-radius:8px;overflow:hidden">' +
+        rowsHtml +
+        '<div style="padding:10px 12px;border-top:0.5px solid #f0ebe0">' +
+          (allComplete
+            ? '<button type="button" data-contacts-confirm="1" style="width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Confirm all contacts &rarr;</button>'
+            : '<button type="button" disabled style="width:100%;background:#efece6;color:#a39e95;border:0;border-radius:8px;padding:10px;font-size:13px;font-weight:600;font-family:inherit">Fill every required field to confirm</button>') +
+        '</div>' +
+      '</div></div>';
+  }
+  async function saveContactField(file, key, field, value){
+    const lg = Object.assign({}, file.logistics || {});
+    const contacts = Object.assign({}, lg.contacts || {});
+    contacts[key] = Object.assign({}, contacts[key] || {}, (function(){ const o = {}; o[field] = (value || '').trim(); return o; })());
+    lg.contacts = contacts; file.logistics = lg;
+    if(_currentFile && _currentFile.id === file.id) _currentFile.logistics = lg;
+    // No re-render here — keeps focus during inline editing. Badges / Confirm
+    // state refresh when the TC clicks Done or Confirm.
+    const { error } = await _client.from('files').update({ logistics: lg }).eq('id', file.id);
+    if(error){ alert('Could not save that edit — check your connection and try again.'); }
+  }
+  async function confirmContacts(file){
+    if(!contactRows(file).every(r => r.complete)){ alert('Fill every required field before confirming.'); return; }
+    const lg = Object.assign({}, file.logistics || {});
+    lg.contacts_confirmed_at = new Date().toISOString();
+    const st = Object.assign({}, file.stage_tasks || {});
+    st.wtc_contacts_complete = { done:true, at:lg.contacts_confirmed_at, by:(_profile && (_profile.first_name || _profile.email)) || 'TC' };
+    file.logistics = lg; file.stage_tasks = st;
+    if(_currentFile && _currentFile.id === file.id){ _currentFile.logistics = lg; _currentFile.stage_tasks = st; }
+    _contactsExpanded = false; _contactEditKey = null;
+    renderStageChecklist(file);
+    const { error } = await _client.from('files').update({ logistics: lg, stage_tasks: st }).eq('id', file.id);
+    if(error){ alert('Could not confirm contacts — check your connection and try again.'); }
+  }
   function ckRow(file, t, dls, done){
     let rec = done[t.id];
+    if(t.id === 'wtc_contacts_complete') return contactsTaskHtml(file);
     // Accept task auto-reflects SMS / portal acceptance (files.tc_accepted_at).
     if(!rec && t.systemCheck === 'accept' && file.tc_accepted_at){ rec = { done:true, at:file.tc_accepted_at }; }
     // System-status rows (SA, payment) — auto badges from system data, no manual checkbox.
@@ -7573,6 +7686,24 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       renderStageChecklist(_currentFile);
       alert('Could not save that checkbox — check your connection and try again.');
     }
+  });
+
+  // Stage 2 · Task 3 contact panel · delegated controls (edit / confirm / expand).
+  document.addEventListener('click', (e) => {
+    if(!_currentFile) return;
+    if(_currentFile.status === 'archived' || saUnsigned(_currentFile)) return;
+    const tog = e.target.closest && e.target.closest('[data-contacts-toggle]');
+    if(tog){ _contactsExpanded = !_contactsExpanded; renderStageChecklist(_currentFile); return; }
+    const ed = e.target.closest && e.target.closest('[data-contact-edit]');
+    if(ed){ const k = ed.getAttribute('data-contact-edit'); _contactEditKey = (_contactEditKey === k) ? null : k; renderStageChecklist(_currentFile); return; }
+    const cf = e.target.closest && e.target.closest('[data-contacts-confirm]');
+    if(cf){ confirmContacts(_currentFile); return; }
+  });
+  document.addEventListener('change', (e) => {
+    const inp = e.target.closest && e.target.closest('[data-contact-input]');
+    if(!inp || !_currentFile) return;
+    const parts = inp.getAttribute('data-contact-input').split('__');
+    saveContactField(_currentFile, parts[0], parts[1], inp.value);
   });
 
   // ============== FILE DETAILS · TC EDIT MODE ==============
