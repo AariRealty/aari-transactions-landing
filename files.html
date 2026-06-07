@@ -2815,6 +2815,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   let _profile = null;       // current user's agents row
   let _files = [];           // raw files visible to this user
   let _saByAgent = {};       // { agent_id: agreement_signed_at|null } · SA lock
+  let _agentNameById = {};   // { agent_id: 'First Last' } · for SA briefing rows
   // SA lock · a file is locked from any work until its agent has signed the SA.
   // Only locks when we KNOW the agent's status (id present in the map) and it's
   // null; unknown agents are never locked.
@@ -2878,9 +2879,9 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     try {
       const aids = [...new Set(_files.map(f => f.agent_id).filter(Boolean))];
       if(aids.length){
-        const { data: sa } = await _client.from('agents').select('id, agreement_signed_at').in('id', aids);
-        _saByAgent = {};
-        (sa || []).forEach(a => { _saByAgent[a.id] = a.agreement_signed_at || null; });
+        const { data: sa } = await _client.from('agents').select('id, first_name, last_name, agreement_signed_at').in('id', aids);
+        _saByAgent = {}; _agentNameById = {};
+        (sa || []).forEach(a => { _saByAgent[a.id] = a.agreement_signed_at || null; _agentNameById[a.id] = ((a.first_name || '') + ' ' + (a.last_name || '')).trim(); });
       }
     } catch(_){}
     // Pull TCs once for everyone · cards show the assigned TC, brokers also
@@ -3018,6 +3019,21 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   }
   // Re-render priority queue on every loadAndRender, and on a 60s tick
   setInterval(() => { try { renderPriorityQueue(); } catch(_){} }, 60000);
+
+  // SA lock auto-release · while any visible file is SA-locked, re-pull that
+  // agent's SA status every 30s so a fresh signature unlocks the file in place,
+  // no page refresh. Only queries when something is actually locked (cheap).
+  setInterval(async () => {
+    try {
+      if(!_client || !_files || !_files.length) return;
+      const locked = [...new Set(_files.filter(f => saUnsigned(f)).map(f => f.agent_id))];
+      if(!locked.length) return;
+      const { data: sa } = await _client.from('agents').select('id, agreement_signed_at').in('id', locked);
+      let changed = false;
+      (sa || []).forEach(a => { const v = a.agreement_signed_at || null; if(_saByAgent[a.id] !== v){ _saByAgent[a.id] = v; changed = true; } });
+      if(changed){ try { renderKanban(); } catch(_){} if(_currentFile){ try { renderStageChecklist(_currentFile); } catch(_){} } }
+    } catch(_){}
+  }, 30000);
 
   // ============ AGENT MESSAGES PANEL (TC + broker view) ============
   // Surfaces pending file_messages from agents awaiting TC reply.
@@ -5141,6 +5157,11 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     }
   });
   function fileTriage(f){
+    // SA lock · agent hasn't signed the Service Agreement → top of the briefing,
+    // before any deadline math. Nothing outranks an unservable file.
+    if(saUnsigned(f)){
+      return { tier:'today', dlText:'SA not signed — ' + (_agentNameById[f.agent_id] || 'agent'), dlTone:'#c96b6b', sortKey:-100000 };
+    }
     // Returns { tier: 'today'|'week'|'ontrack', dlText, dlTone, sortKey }
     const stage = deriveStage(f);
     const today = new Date(); today.setHours(0,0,0,0);
@@ -6141,6 +6162,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
 
     var cashBadge = cash ? '<span class="card-tag-cash">Cash</span>' : '';
     var payBadge = f.payment_pending ? '<span class="card-tag-pay">Awaiting payment</span>' : '';
+    var saBadge = saUnsigned(f) ? '<span style="display:inline-block;font-size:9px;font-weight:700;color:#c96b6b;background:#fdecea;border:0.5px solid #f2a9a9;border-radius:999px;padding:2px 7px;margin-left:6px;letter-spacing:0.3px">SA missing</span>' : '';
     var scoreBadge = '<span class="card-score score-' + cert.bucket + '" title="Closing Certainty">' + cert.score + '</span>';
 
     var raw = f.raw_form_data || {};
@@ -6157,7 +6179,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     return '<div class="card' + (cash ? ' cash' : '') + '" draggable="true" data-file-id="' + esc(f.id) + '">' +
       '<div class="cardv2-face">' +
         '<div class="cardv2-top">' +
-          '<p class="cardv2-addr" title="' + esc(addr) + '">' + esc(addr.split(',')[0]) + cashBadge + payBadge + '</p>' +
+          '<p class="cardv2-addr" title="' + esc(addr) + '">' + esc(addr.split(',')[0]) + cashBadge + payBadge + saBadge + '</p>' +
           scoreBadge +
         '</div>' +
         nameLine +
@@ -6430,6 +6452,12 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       const file = _files.find(f => f.id === fid);
       if(!file) return;
       if(file.transaction_stage === newStage) return; // no-op guard
+      // SA gate · a file whose agent hasn't signed the Service Agreement is locked
+      // — it cannot move to any column until the SA is on file.
+      if(saUnsigned(file)){
+        alert('This file is locked. The agent has not signed the Aari Transactions Service Agreement, so work cannot begin and the file cannot move. Notify Marlenyi to resolve this.');
+        return;
+      }
       // Stage-7 gate · the 5 closing-critical tasks are NON-NEGOTIABLE before Closed.
       try {
         if(newStage === 'closed' && deriveStage(file) === 'ctc'){
@@ -7467,6 +7495,8 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const taskId = cb.getAttribute('data-ck-task');
     // Archived files are read-only · no checkbox changes.
     if(_currentFile.status === 'archived'){ cb.checked = !cb.checked; return; }
+    // SA lock · no task may be checked until the agent signs the Service Agreement.
+    if(saUnsigned(_currentFile)){ cb.checked = !cb.checked; alert('This file is locked until the agent signs the Aari Transactions Service Agreement. Notify Marlenyi.'); return; }
     // ===== STAGE 8 · ARCHIVE GATE =====
     // Archiving requires the 4 protective tasks, a confirm, and flips the file
     // to status=archived: off the active board, read-only, audit-logged.
