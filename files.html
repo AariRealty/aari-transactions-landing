@@ -2664,7 +2664,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       closing_time: '[closing time]', closing_location: '[closing location]',
       walkthrough_date: '[walkthrough date]',
       purchase_price: price,
-      financing_type: isCashFile(file) ? 'Cash' : (raw.financing_type || raw.pa_financing_type || 'Financed'),
+      financing_type: (function(){ var t = (file.logistics || {}).financing_type; var L = { cash:'Cash', conventional:'Conventional', fha:'FHA', va:'VA', usda:'USDA' }; if(t && L[t]) return L[t]; return isCashFile(file) ? 'Cash' : (raw.financing_type || raw.pa_financing_type || 'Financed'); })(),
       em_deadline: '[em deadline]',
       loan_app_deadline: '[loan app deadline]',
       loan_approval_deadline: '[loan approval deadline]',
@@ -5981,7 +5981,12 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     if(effI) effI.addEventListener('change', () => ctSave(file, { effective_date: effI.value || null }, null));
     const clsI = document.getElementById('ct-cls');
     if(clsI) clsI.addEventListener('change', () => ctSave(file, { closing_date: clsI.value || null }, null));
-    host.querySelectorAll('[data-ct-fin]').forEach(b => b.addEventListener('click', () => ctSave(file, null, { financing_confirmed: b.getAttribute('data-ct-fin') })));
+    const priceI = document.getElementById('ct-price');
+    if(priceI) priceI.addEventListener('change', () => { const v = String(priceI.value).trim(); ctSave(file, { purchase_price_cents: (v === '' ? null : Math.round(parseFloat(v) * 100)) }, null); });
+    const emdI = document.getElementById('ct-emd');
+    if(emdI) emdI.addEventListener('change', () => { const e = Object.assign({}, file.emd || {}); e.amount = String(emdI.value).trim(); ctSave(file, { emd: e }, null); });
+    // Financing now captures the loan TYPE; derive cash-vs-financed for deadlines.
+    host.querySelectorAll('[data-ct-fin]').forEach(b => b.addEventListener('click', () => { const t = b.getAttribute('data-ct-fin'); ctSave(file, null, { financing_type: t, financing_confirmed: (t === 'cash' ? 'cash' : 'financed') }); }));
     host.querySelectorAll('[data-ct-hoa]').forEach(b => b.addEventListener('click', () => ctSave(file, null, { hoa_applies: b.getAttribute('data-ct-hoa') })));
     // Property type picker → drives the association section.
     host.querySelectorAll('[data-ct-assoc]').forEach(b => b.addEventListener('click', () => {
@@ -7007,8 +7012,6 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
           sub:'Due within 5 days of Effective Date if available.' },
       ],
       under_contract: [
-        { id:'uc_emd_verify',        label:'Verify EMD amount and due date match the contract',
-          sub:'Update the widget above if the contract differs.' },
         { id:'uc_emd_followup',      label:'Follow up with title — confirm initial EMD received', dl:'emd_initial',
           sub:'Template ready in &ldquo;What to send next&rdquo; below.' },
         { id:'uc_emd_confirmed',     label:'EMD status set to &ldquo;Confirmed in Writing&rdquo;',
