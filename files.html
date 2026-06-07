@@ -2618,9 +2618,15 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const ourAgentLabel   = _ourWord ? _ourWord + ' Agent' : 'Our Agent';
     const otherAgentLabel = _otherWord + ' Agent';
     const coAgentLabel    = _ourWord ? _ourWord + ' Co-Agent' : 'Co-Agent';
-    const isBuyerSide = file.client_type === 'buyer';
-    const buyerName = isBuyerSide ? (file.client_name || '[buyer name]') : '[buyer name]';
-    const sellerName = !isBuyerSide && file.client_type === 'seller' ? (file.client_name || '[seller name]') : '[seller name]';
+    const isBuyerSide = String(file.client_type || '').toLowerCase() === 'buyer';
+    const isSellerSide = String(file.client_type || '').toLowerCase() === 'seller';
+    // Prefer the TC-confirmed contacts (logistics.contacts) over raw intake data,
+    // so any name/email/phone the TC corrected flows into every email.
+    const _cc = (file.logistics || {}).contacts || {};
+    const _ccGet = function(k, f){ return (_cc[k] && _cc[k][f]) || ''; };
+    const _rfd = file.raw_form_data || {};
+    const buyerName = _ccGet('buyer','name') || (isBuyerSide ? (file.client_name || '[buyer name]') : (_rfd.pa_buyer_name || _rfd.buyer_name || '[buyer name]'));
+    const sellerName = _ccGet('seller','name') || (isSellerSide ? (file.client_name || '[seller name]') : (_rfd.pa_seller_name || _rfd.seller_name || _rfd.pa_other_party_name || '[seller name]'));
     const tenantName = file.client_name || '[tenant name]';
     const buyerFirst = buyerName.split(' ')[0];
     const sellerFirst = sellerName.split(' ')[0];
@@ -2631,21 +2637,21 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     // ===== Structured contacts · pull from raw_form_data first (intake form),
     // then fall back to free-text lender_contact / title_contact columns.
     const raw = file.raw_form_data || {};
-    const lenderName  = raw.lender_name   || raw.pa_lender_contact_name || (file.lender_contact || '').toString() || '[lender name]';
-    const lenderEmail = raw.lender_email  || raw.pa_lender_contact_email || '[lender email]';
-    const lenderPhone = raw.lender_phone  || raw.pa_lender_contact_phone || '[lender phone]';
+    const lenderName  = _ccGet('lender','name')  || raw.lender_name   || raw.pa_lender_contact_name || (file.lender_contact || '').toString() || '[lender name]';
+    const lenderEmail = _ccGet('lender','email') || raw.lender_email  || raw.pa_lender_contact_email || '[lender email]';
+    const lenderPhone = _ccGet('lender','phone') || raw.lender_phone  || raw.pa_lender_contact_phone || '[lender phone]';
     const lenderCo    = raw.lender_company || raw.pa_lender || '';
     const lenderFirst = (lenderName.split(' ')[0]) || '[lender]';
-    const titleName   = raw.title_name    || raw.pa_title_contact_name || (file.title_contact || '').toString() || '[title closer]';
-    const titleEmail  = raw.title_email   || raw.pa_title_contact_email || '[title email]';
-    const titlePhone  = raw.title_phone   || raw.pa_title_contact_phone || '[title phone]';
+    const titleName   = _ccGet('title','name')  || raw.title_name    || raw.pa_title_contact_name || (file.title_contact || '').toString() || '[title closer]';
+    const titleEmail  = _ccGet('title','email') || raw.title_email   || raw.pa_title_contact_email || '[title email]';
+    const titlePhone  = _ccGet('title','phone') || raw.title_phone   || raw.pa_title_contact_phone || '[title phone]';
     const titleCo     = raw.title_company || raw.pa_title_company || '';
     const titleFirst  = (titleName.split(' ')[0]) || '[title]';
     // ===== Other agents (co-broke + same-side co-agent) · intake raw_form_data
-    const listAgentName  = raw.pa_listing_agent_name    || raw.listing_agent_name    || '[listing agent]';
+    const listAgentName  = _ccGet('listing_agent','name')  || raw.pa_listing_agent_name    || raw.listing_agent_name    || '[listing agent]';
     const listAgentCo    = raw.pa_listing_agent_company || raw.listing_agent_company || '[brokerage]';
-    const listAgentPhone = raw.pa_listing_agent_phone   || raw.listing_agent_phone   || '[phone]';
-    const listAgentEmail = raw.pa_listing_agent_email   || raw.listing_agent_email   || '[email]';
+    const listAgentPhone = _ccGet('listing_agent','phone') || raw.pa_listing_agent_phone   || raw.listing_agent_phone   || '[phone]';
+    const listAgentEmail = _ccGet('listing_agent','email') || raw.pa_listing_agent_email   || raw.listing_agent_email   || '[email]';
     const listAgentFirst = (listAgentName.split(' ')[0]) || '[listing agent]';
     const coAgentName    = raw.pa_co_agent_name    || raw.co_agent_name    || '';
     const coAgentCo      = raw.pa_co_agent_company || raw.co_agent_company || '';
@@ -2664,9 +2670,9 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       street: (file.property_address || '[property address]').split(',')[0].trim(),
       client_side: side,
       buyer_name: buyerName, buyer_first_name: buyerFirst,
-      buyer_email: isBuyerSide ? (file.client_email || '[buyer email]') : '[buyer email]',
+      buyer_email: _ccGet('buyer','email') || (isBuyerSide ? (file.client_email || '[buyer email]') : '[buyer email]'),
       seller_name: sellerName, seller_first_name: sellerFirst,
-      seller_email: !isBuyerSide ? (file.client_email || '[seller email]') : '[seller email]',
+      seller_email: _ccGet('seller','email') || (isSellerSide ? (file.client_email || '[seller email]') : '[seller email]'),
       tenant_name: tenantName, tenant_first_name: tenantFirst, tenant_email: file.client_email || '[tenant email]',
       agent_name: agentName, agent_first_name: agentFirst, agent_email: agentEmail,
       agent_phone: agentPhone, agent_company: agentCompany,
@@ -7088,12 +7094,8 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
           sub:'Buyer side — coordinate with lender and buyer agent. Seller side — coordinate with listing agent and title. Both — all parties.' },
       ],
       waiting_for_tc: [
-        { id:'wtc_accept',          label:'Accept file — confirm you are taking this transaction', systemCheck:'accept',
-          sub:'Once you accept, this file is yours. The 30-minute acceptance window closes and the file moves toward Under Contract.' },
         { id:'wtc_review_contract', label:'Review full contract — read every page before contacting anyone',
           sub:'You are about to represent this transaction to all parties. Know the contract before you make contact.' },
-        { id:'wtc_contacts_complete', label:'Identify all parties and confirm contact information is complete',
-          sub:'Buyer · Seller · Buyer&rsquo;s agent · Listing agent · Title · Lender (skip if cash) — name, email, phone each. Don&rsquo;t send the opening email until every contact is confirmed.' },
         { id:'wtc_escrow_instructions', label:'Open escrow with title company — send escrow opening instructions',
           sub:'Template in &ldquo;What to send next&rdquo; — auto-filled with buyer, seller, EMD amount and due date.' },
         { id:'wtc_opening_email',   label:'Send opening email to all parties',
