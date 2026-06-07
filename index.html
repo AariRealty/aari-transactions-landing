@@ -5910,6 +5910,29 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           </div>
           </div>
         </section>
+        <section class="pa-step" data-pa-step="deal" hidden>
+          <div class="field">
+            <label>How is this purchase being funded?</label>
+            <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+              <label class="radio-pill"><input type="radio" name="pa_deal_type" value="financing"> Financing</label>
+              <label class="radio-pill"><input type="radio" name="pa_deal_type" value="cash"> Cash</label>
+            </div>
+          </div>
+        </section>
+        <section class="pa-step" data-pa-step="entity" hidden>
+          <div class="field">
+            <label>Is your client an entity?</label>
+            <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
+              <label class="radio-pill"><input type="radio" name="pa_client_entity" value="individual"> No &middot; individual</label>
+              <label class="radio-pill"><input type="radio" name="pa_client_entity" value="llc"> LLC</label>
+              <label class="radio-pill"><input type="radio" name="pa_client_entity" value="trust"> Trust</label>
+              <label class="radio-pill"><input type="radio" name="pa_client_entity" value="corporation"> Corporation</label>
+            </div>
+            <div id="paEntityDetails" hidden>
+              <div class="field" style="margin-top:14px"><label for="paEntityName">Entity&rsquo;s legal name</label><input type="text" id="paEntityName" autocomplete="off"></div>
+            </div>
+          </div>
+        </section>
         <section class="pa-step" data-pa-step="6" hidden>
           <div class="field">
             <label for="paTitleCompany">Title company <span class="req">*</span></label>
@@ -10810,6 +10833,8 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       'effective': { h:'<em>Effective</em> date?', s:'When the contract was fully executed.' },
       5:  { h:'<em>Closing</em> date?',           s:'When does this deal close?' },
       'hoa': { h:'<em>HOA</em> or condo?',         s:'Is the property in an association?' },
+      'deal': { h:'Cash or <em>financing?</em>',   s:'Sets the loan deadlines and lender follow-ups on your file.' },
+      'entity': { h:'Client an <em>entity?</em>',  s:'LLC, trust, or corporation &middot; drives FinCEN reporting at closing.' },
       'for-agent': { h:'Submitting <em>for?</em>', s:'Pick the agent this file belongs to.' },
       'agent-info': { h:'Agent <em>info.</em>', s:'Pulled from the account &mdash; confirm it&rsquo;s current. Your TC uses it for updates.' },
       6:  { h:'<em>Title</em> company?',          s:'From your profile. Update if different.' },
@@ -10836,7 +10861,14 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
     // the contract is the source of truth, so it comes in first.
     // 'for-agent' (TC/broker only · filtered out for agents in activeSteps)
     // asks WHO the file belongs to, before anything else is captured.
-    const ALL_STEPS = [1,2,'for-agent','agent-info',9,3,'clients-buyer','clients-seller','other-party',4,'effective',5,'hoa',6,7,8,'listing-terms','listing-comm','listing-setup','listing-updates','listing-mls','offer-terms',10,'tc','final','pay-summary','pay-wait','pay-tclink','done'];
+    const ALL_STEPS = [1,2,'for-agent','agent-info',9,3,'clients-buyer','clients-seller','other-party',4,'effective','deal','entity',5,'hoa',6,7,8,'listing-terms','listing-comm','listing-setup','listing-updates','listing-mls','offer-terms',10,'tc','final','pay-summary','pay-wait','pay-tclink','done'];
+    // Entity reveal · the legal-name field only appears for LLC/trust/corp.
+    document.addEventListener('change', function(e){
+      if(e.target && e.target.name === 'pa_client_entity'){
+        var d = document.getElementById('paEntityDetails');
+        if(d) d.hidden = (e.target.value === 'individual');
+      }
+    });
 
     let state = { step: 1, data: {}, profile: null, active: false };
 
@@ -10872,14 +10904,14 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       if(lane === 'listing'){
         // No executed sale contract yet: no effective/closing dates, no title,
         // no lender, no other-side agent, no other party.
-        steps = steps.filter(s => !['effective',5,6,7,8,'other-party','offer-terms'].includes(s));
+        steps = steps.filter(s => !['effective','deal','entity',5,6,7,8,'other-party','offer-terms'].includes(s));
         // Listing Docs ($99) skips Lead Source + Signing Platform — unnecessary
         // friction for the quick-docs tier. LC + MLS Setup keep it.
         if(pkgId === 'listing_docs') steps = steps.filter(s => s !== 'listing-setup');
         if(pkgId !== 'lc') steps = steps.filter(s => s !== 'listing-updates');
         if(pkgId !== 'lc' && pkgId !== 'mls_setup') steps = steps.filter(s => s !== 'listing-mls');
       } else if(lane === 'addons'){
-        steps = steps.filter(s => !['effective',5,'hoa',6,7,8,'other-party'].concat(LISTING_BLOCK).includes(s));
+        steps = steps.filter(s => !['effective','deal','entity',5,'hoa',6,7,8,'other-party'].concat(LISTING_BLOCK).includes(s));
         if(pkgId !== 'op_basic' && pkgId !== 'op_complete') steps = steps.filter(s => s !== 'offer-terms');
       } else {
         // TC lane (or nothing picked yet) · the full sale flow, no listing/offer blocks.
@@ -13500,6 +13532,22 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           state.data.offerPrice = op.value.trim(); state.data.financing = fin.value; state.data.turnaround = ta.value;
           return true;
         }
+        case 'deal': {
+          const v = document.querySelector('input[name="pa_deal_type"]:checked');
+          if(!v){ alert('Pick cash or financing.'); return false; }
+          state.data.dealType = v.value;
+          return true;
+        }
+        case 'entity': {
+          const v = document.querySelector('input[name="pa_client_entity"]:checked');
+          if(!v){ alert('Let us know if your client is an entity.'); return false; }
+          state.data.clientEntityType = v.value;
+          const en = document.getElementById('paEntityName');
+          const nm = en ? en.value.trim() : '';
+          if(v.value !== 'individual' && !nm){ if(en) paintFieldError(en, 'Add the entity&rsquo;s legal name'); return false; }
+          state.data.clientEntityName = (v.value === 'individual') ? '' : nm;
+          return true;
+        }
         case 'hoa': {
           const v = document.querySelector('input[name="pa_hoa"]:checked');
           if(!v){ alert('Let us know if there is an HOA or condo association.'); return false; }
@@ -13746,6 +13794,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           commission_notes: state.data.commissionNotes || '', agent_notes: state.data.agentNotes || '', pa_hoa: state.data.hoa || '',
           purchase_price: state.data.contractPurchasePrice || '',
           earnest_money: state.data.contractEscrowAmount || '',
+          pa_deal_type: state.data.dealType || '',
+          pa_buyer_entity_type: (state.data.representation !== 'seller' ? (state.data.clientEntityType || '') : ''),
+          pa_buyer_entity_name: (state.data.representation !== 'seller' ? (state.data.clientEntityName || '') : ''),
+          pa_seller_entity_type: (state.data.representation === 'seller' ? (state.data.clientEntityType || '') : ''),
+          pa_seller_entity_name: (state.data.representation === 'seller' ? (state.data.clientEntityName || '') : ''),
           corrected_at: new Date().toISOString()
         });
         const fixRepMap = { buyer: 'Buyer', seller: 'Seller', both_sides: 'Both' };
@@ -13916,6 +13969,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             preferred_tc: state.data.preferredTcName || 'Auto-assign', preferred_tc_id: state.data.preferredTcId || 'auto', preferred_tc_email: state.data.preferredTcEmail || '',
             purchase_price: state.data.contractPurchasePrice || '',
             earnest_money: state.data.contractEscrowAmount || '',
+            pa_deal_type: state.data.dealType || '',
+            pa_buyer_entity_type: (state.data.representation !== 'seller' ? (state.data.clientEntityType || '') : ''),
+            pa_buyer_entity_name: (state.data.representation !== 'seller' ? (state.data.clientEntityName || '') : ''),
+            pa_seller_entity_type: (state.data.representation === 'seller' ? (state.data.clientEntityType || '') : ''),
+            pa_seller_entity_name: (state.data.representation === 'seller' ? (state.data.clientEntityName || '') : ''),
             contract_url: contractUrl, contract_filename: safeContractName, contract_form_type: state.data.contractFormType || '', additional_docs: additionalUrls, submission_id: submissionId
           };
           var fileRow = {
