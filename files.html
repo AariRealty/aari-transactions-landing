@@ -519,6 +519,16 @@
   .tpb-dl-row.done{opacity:0.6}
   .tpb-dl-row.urgent{background:#fde0db}
   .tpb-dl-row.past{background:#fafafa}
+  .tpb-dl-estban{background:#faeeda;color:#633806;font-size:11.5px;line-height:1.55;padding:9px 12px;border-radius:8px;margin:0 0 10px}
+  .tpb-dl-estban strong{font-weight:600}
+  .tpb-dl-estban.ok{background:#eef4ea;color:#2f855a}
+  .tpb-dl-estban .tpb-dl-estn{float:right;font-weight:600;font-size:10.5px;margin-left:8px}
+  .tpb-dlA-conf{margin:2px 0 0;font-size:10.5px}
+  .tpb-dlA-conf.est{color:#854f0b}
+  .tpb-dlA-conf.ok{color:#2f855a}
+  .tpb-dl-confbtn{border:0.5px solid rgba(133,79,11,0.45);background:#fff;color:#854f0b;font-size:10.5px;padding:2px 9px;border-radius:5px;cursor:pointer;font-family:inherit}
+  .tpb-dl-confbtn:hover{background:#faeeda}
+  .tpb-dl-unconf{border:none;background:none;color:#999;font-size:10px;cursor:pointer;text-decoration:underline;font-family:inherit;padding:0 0 0 4px}
   .tpb-dl-left{min-width:0}
   .tpb-dl-name{font-size:12.5px;font-weight:500;color:#0f0f0f;margin:0 0 2px;line-height:1.3}
   .tpb-dl-note{font-size:10.5px;color:#888;margin:0;line-height:1.4}
@@ -4796,7 +4806,23 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const citesToggle = '<div class="tpb-dlA-cites"><button type="button" id="tpb-dl-cites">' +
       (showCites ? 'Hide para refs' : 'Show para refs') + '</button></div>';
 
-    hostEl.innerHTML = citesToggle + rows.map(function(it){
+    // B treatment · every computed date is an ESTIMATE until the TC confirms it
+    // against the executed contract. A manual override (date entered from the
+    // contract) counts as confirmed. Confirmations live in logistics.dl_confirmed
+    // keyed by deadline key, storing the exact date confirmed — if the computed
+    // date later changes (effective/closing edited), the stale confirmation
+    // auto-invalidates and the row drops back to "estimate".
+    const lgConf = ((file.logistics || {}).dl_confirmed) || {};
+    const isConfirmed = function(it){ return !!it.override || lgConf[it.key] === it.date.toISOString().slice(0,10); };
+    const unconf = rows.filter(function(it){ return !isConfirmed(it); }).length;
+    const estBanner = unconf > 0
+      ? '<div class="tpb-dl-estban">' + (ct === 'builder'
+          ? '<strong>These dates are estimates.</strong> A builder contract sets its own timeline. Confirm each date against the executed contract before you rely on it.'
+          : '<strong>Confirm before you rely on them.</strong> Dates are computed from the ' + esc(ENG.contractLabel(ct)) + ' standard timeline. Verify each against the executed contract.') +
+        ' <span class="tpb-dl-estn">' + unconf + ' to confirm</span></div>'
+      : '<div class="tpb-dl-estban ok">&#10003; All dates confirmed from the contract.</div>';
+
+    hostEl.innerHTML = estBanner + citesToggle + rows.map(function(it){
       const rec = status[it.key];
       const done = rec && rec.completed_at;
       const cd = dlCountdown(it.date);
@@ -4807,7 +4833,10 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
           ' <button type="button" class="tpb-dl-reset" data-dl-reset="' + esc(it.key) + '">Reset to default</button></p>'
         : '';
       const citeLine = (showCites && it.citation) ? '<p class="tpb-dlA-cite">' + esc(it.citation) + '</p>' : '';
-      const sub = (citeLine || overrideStrip) ? '<div class="tpb-dlA-sub">' + citeLine + overrideStrip + '</div>' : '';
+      const confStrip = it.override ? '' : (isConfirmed(it)
+        ? '<p class="tpb-dlA-conf ok">&#10003; confirmed from contract <button type="button" class="tpb-dl-unconf" data-dl-unconfirm="' + esc(it.key) + '">undo</button></p>'
+        : '<p class="tpb-dlA-conf est">est · <button type="button" class="tpb-dl-confbtn" data-dl-confirm="' + esc(it.key) + '" data-dl-cdate="' + it.date.toISOString().slice(0,10) + '">Confirm from contract</button></p>');
+      const sub = (citeLine || overrideStrip || confStrip) ? '<div class="tpb-dlA-sub">' + citeLine + overrideStrip + confStrip + '</div>' : '';
       return '<div class="tpb-dlA-row' + (done ? ' done' : '') + '">' +
         '<button type="button" class="tpb-dlA-circle" data-dl-toggle="' + esc(it.key) + '" data-dl-date="' + it.date.toISOString().slice(0,10) + '" aria-label="Mark done">' + (done ? '●' : '○') + '</button>' +
         '<span class="tpb-dlA-date">' + esc(fmtDl(it.date)) + '</span>' +
@@ -4861,6 +4890,30 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       const k = btn.getAttribute('data-dl-reset');
       if(!confirm('Reset this deadline to the contract-calculated date and remove the extension note?')) return;
       resetDeadlineOverride(file, k);
+    }));
+    // B treatment · confirm / un-confirm a computed date against the contract.
+    const _saveDlConf = async function(){
+      const lg = file.logistics || (file.logistics = {});
+      const r = await _client.from('files').update({ logistics: lg }).eq('id', file.id);
+      if(r && r.error){ alert('Not saved — the database rejected the change. You may not have edit permission on this file (RLS).'); }
+    };
+    hostEl.querySelectorAll('[data-dl-confirm]').forEach(btn => btn.addEventListener('click', () => {
+      const k = btn.getAttribute('data-dl-confirm');
+      const lg = file.logistics || (file.logistics = {});
+      const m = lg.dl_confirmed || (lg.dl_confirmed = {});
+      m[k] = btn.getAttribute('data-dl-cdate');
+      renderDeadlinesForFile(file);
+      try { renderHubStatus(file); } catch(_){}
+      _saveDlConf();
+    }));
+    hostEl.querySelectorAll('[data-dl-unconfirm]').forEach(btn => btn.addEventListener('click', () => {
+      const k = btn.getAttribute('data-dl-unconfirm');
+      const lg = file.logistics || (file.logistics = {});
+      const m = lg.dl_confirmed || (lg.dl_confirmed = {});
+      delete m[k];
+      renderDeadlinesForFile(file);
+      try { renderHubStatus(file); } catch(_){}
+      _saveDlConf();
     }));
   }
 
@@ -6207,19 +6260,24 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       reasons.push({ amt: -penalty, label: needsAction + ' verification' + (needsAction>1?'s':'') + ' need you' });
     }
 
-    // --- 2. Overdue deadlines (-10 each, max -50) · computed from the shared
-    //        engine so the score matches the card's action line — NOT the
-    //        sparse file_deadlines table (which only has rows a TC touched).
-    //        A stored completed_at on that key clears it. ---
+    // --- 2. Overdue deadlines (-10 each, max -50) · CONTRACT-AWARE: same
+    //        engine + same keys as the Deadlines panel, so a completed_at
+    //        saved there actually clears the alarm here. Deadlines that were
+    //        already past when the file reached the TC ("past at intake")
+    //        are flagged softly, once — the TC didn't miss those. ---
     const today = new Date(); today.setHours(0,0,0,0);
-    let overdue = 0;
+    let overdue = 0, pastAtIntake = 0;
     if(ft === 'sale' && stage !== 'closed'){
       try {
-        const eng = fileDeadlines(file);
-        Object.keys(eng).forEach(k => {
-          if(dls[k] && dls[k].completed_at) return; // TC marked it done
-          const dd = new Date(eng[k].date.getTime()); dd.setHours(0,0,0,0);
-          if(dd < today) overdue++;
+        const intake = new Date(file.tc_accepted_at || file.created_at || 0);
+        intake.setHours(0,0,0,0);
+        fileContractDeadlines(file).forEach(d => {
+          if(!d.date) return;
+          if(d.key === 'closing') return;
+          if(dls[d.key] && dls[d.key].completed_at) return; // TC marked it done
+          const dd = new Date(d.date.getTime()); dd.setHours(0,0,0,0);
+          if(dd >= today) return;
+          if(dd < intake) pastAtIntake++; else overdue++;
         });
       } catch(_){}
     }
@@ -6227,6 +6285,10 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       const penalty = Math.min(overdue * 10, 50);
       score -= penalty;
       reasons.push({ amt: -penalty, label: overdue + ' deadline' + (overdue>1?'s':'') + ' overdue' });
+    }
+    if(pastAtIntake > 0){
+      score -= 5;
+      reasons.push({ amt: -5, label: pastAtIntake + ' deadline' + (pastAtIntake>1?'s were':' was') + ' already past at intake · confirm status' });
     }
 
     // --- 2b. EMD / loan overdue (-15) · mirrors the card chip so a clearly
