@@ -564,9 +564,10 @@
   .dl-lrow.dl-queued td{opacity:0.6}
   .dl-lname button{border:0;background:none;font-size:12.5px;font-weight:500;color:#0f0f0f;cursor:pointer;font-family:inherit;padding:0;text-align:left}
   .dl-ldue{color:#5f5e5a}
-  .dl-mark{border:0.5px solid #d9d4ca;background:#fff;border-radius:6px;font-size:10.5px;padding:3px 11px;cursor:pointer;font-family:inherit;color:#5f5e5a}
-  .dl-mark:hover{background:#2a2a2a;color:#fff;border-color:#2a2a2a}
-  .dl-undo{border:0;background:none;color:#a39e95;font-size:10px;cursor:pointer;text-decoration:underline;font-family:inherit;padding:0 0 0 4px}
+  .dl-recv-date{border:0.5px solid #d9d4ca;border-radius:6px;font-size:11.5px;padding:4px 7px;font-family:inherit;color:#0f0f0f;background:#fff;width:100%;box-sizing:border-box;margin:0 0 4px}
+  .dl-recv-note{border:0;border-bottom:0.5px dashed #d9d4ca;font-size:10.5px;padding:2px 1px;font-family:inherit;color:#5f5e5a;background:none;width:100%;box-sizing:border-box}
+  .dl-recv-note:focus{outline:none;border-bottom-color:#0f0f0f}
+  .dl-recv-note::placeholder{color:#b3aea5}
   .dl-lresult{font-weight:600}
   .dl-lresult.ok{color:#2f855a}
   .dl-lresult.late,.dl-lresult.over{color:#854f0b}
@@ -5037,30 +5038,19 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         else if(cd.cls === 'overdue'){ resCls = 'over'; resText = 'past due'; }
         else { resCls = 'up'; resText = cd.tag; }
         const _note = (((file.logistics || {}).dl_notes) || {})[it.key] || '';
-        // One action per row · the only thing the ledger captures is when each
-        // deadline was RECEIVED. Due dates are read-only here (set in Contract
-        // terms), so there's no second editor to collide with.
-        const receivedCell = done
-          ? esc(fmtDl(new Date(rec.completed_at))) +
-            ' <button type="button" class="dl-undo" data-dl-markopen="' + esc(it.key) + '">edit</button>'
-          : '<button type="button" class="dl-mark" data-dl-markopen="' + esc(it.key) + '">mark received</button>';
+        // Direct edit · Received is a date field right in the row (empty = not
+        // received yet). Pick a date → it records on-time/late from THAT date.
+        // The note field saves on blur. No button, no pop-open, nothing to jam.
+        const receivedCell =
+          '<input type="date" class="dl-recv-date" data-mark-date="' + esc(it.key) + '" value="' + (done ? new Date(rec.completed_at).toISOString().slice(0,10) : '') + '">' +
+          '<input type="text" class="dl-recv-note" data-mark-note="' + esc(it.key) + '" value="' + esc(_note) + '" placeholder="+ note" maxlength="200">';
         const citeRow = (showCites && it.citation) ? '<tr class="dl-lextra"><td colspan="4">' + esc(it.citation) + '</td></tr>' : '';
-        const noteRow = (done && _note) ? '<tr class="dl-lextra"><td colspan="4">Note: ' + esc(_note) + '</td></tr>' : '';
-        const _markDefault = done ? new Date(rec.completed_at).toISOString().slice(0,10) : it.date.toISOString().slice(0,10);
-        const markRow = '<tr class="dl-mark-row" id="dl-mark-row-' + esc(it.key) + '" style="display:none"><td colspan="4"><div class="dl-ledit-inner">' +
-            '<label style="font-size:10.5px;color:#8a857c">Received on</label>' +
-            '<input type="date" data-mark-date="' + esc(it.key) + '" value="' + _markDefault + '">' +
-            '<input type="text" data-mark-note="' + esc(it.key) + '" value="' + esc(_note) + '" placeholder="' + esc(markNoteHint(it.key)) + '" maxlength="200">' +
-            '<button type="button" class="tpb-dl-edit-save" data-mark-save="' + esc(it.key) + '">Save</button>' +
-            (done ? '<button type="button" class="dl-undo" data-dl-toggle="' + esc(it.key) + '" data-dl-date="' + it.date.toISOString().slice(0,10) + '">Clear</button>' : '') +
-            '<button type="button" class="tpb-dl-edit-cancel" data-mark-cancel="' + esc(it.key) + '">Cancel</button>' +
-          '</div></td></tr>';
         return '<tr class="dl-lrow' + (done ? ' done' : '') + ((!done && !confirmedRow) ? ' dl-queued' : '') + '">' +
             '<td class="dl-lname"><span>' + esc(it.name) + '</span></td>' +
             '<td class="dl-ldue">' + esc(fmtDl(it.date)) + '</td>' +
             '<td class="dl-ldone">' + receivedCell + '</td>' +
             '<td class="dl-lresult ' + resCls + '">' + esc(resText) + '</td>' +
-          '</tr>' + citeRow + noteRow + markRow;
+          '</tr>' + citeRow;
       }).join('') +
       '</tbody></table>' + citesToggle;
 
@@ -5109,21 +5099,18 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       const form = document.getElementById('dl-edit-form-' + k);
       if(form) form.style.display = 'none';
     }));
-    // Mark-received form · captures the ACTUAL completion date + note.
-    hostEl.querySelectorAll('[data-dl-markopen]').forEach(btn => btn.addEventListener('click', () => {
-      const k = btn.getAttribute('data-dl-markopen');
-      const row = document.getElementById('dl-mark-row-' + k);
-      if(row) row.style.display = (row.style.display === 'table-row') ? 'none' : 'table-row';
-    }));
-    hostEl.querySelectorAll('[data-mark-cancel]').forEach(btn => btn.addEventListener('click', () => {
-      const row = document.getElementById('dl-mark-row-' + btn.getAttribute('data-mark-cancel'));
-      if(row) row.style.display = 'none';
-    }));
-    hostEl.querySelectorAll('[data-mark-save]').forEach(btn => btn.addEventListener('click', () => {
-      const k = btn.getAttribute('data-mark-save');
-      const dEl = hostEl.querySelector('[data-mark-date="' + k + '"]');
+    // Received date · pick one to record it (empty = not received). The real
+    // date drives on-time/late. Saves immediately, re-renders the result.
+    hostEl.querySelectorAll('[data-mark-date]').forEach(el => el.addEventListener('change', () => {
+      const k = el.getAttribute('data-mark-date');
       const nEl = hostEl.querySelector('[data-mark-note="' + k + '"]');
-      markDeadlineDone(file, k, dEl ? dEl.value : '', nEl ? nEl.value : '');
+      markDeadlineDone(file, k, el.value, nEl ? nEl.value : '');
+    }));
+    // Note · saves on blur without changing the received date.
+    hostEl.querySelectorAll('[data-mark-note]').forEach(el => el.addEventListener('blur', () => {
+      const k = el.getAttribute('data-mark-note');
+      const dEl = hostEl.querySelector('[data-mark-date="' + k + '"]');
+      markDeadlineDone(file, k, dEl ? dEl.value : '', el.value);
     }));
     hostEl.querySelectorAll('[data-dl-save]').forEach(btn => btn.addEventListener('click', () => {
       const k = btn.getAttribute('data-dl-save');
@@ -5270,7 +5257,8 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const rec = status[key] || {};
     try {
       const { data: { user } } = await _client.auth.getUser();
-      const completedIso = actualDateISO ? new Date(actualDateISO + 'T12:00:00').toISOString() : new Date().toISOString();
+      // Empty date = unmark (cleared the Received field).
+      const completedIso = actualDateISO ? new Date(actualDateISO + 'T12:00:00').toISOString() : null;
       const payload = {
         file_id: file.id, deadline_key: key,
         due_date: rec.due_date || null,
