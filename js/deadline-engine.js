@@ -477,9 +477,9 @@
   // already defines the key, so we never duplicate.
   const SALE_TYPES = ['frbar_asis','frbar_standard','frbar_crsp','nabor','nab089','builder'];
   const SALE_EXTRAS = [
-    { key:'appraisal', category:'Financing', name:'Appraisal Contingency',
-      compute:(E,C,c)=>addDays(E, Math.max((c.lappr || c.fin || 30) - 5, 1)), bizDay:true,
-      note:()=>'Appraisal Contingency rider · a few days before the loan approval deadline.' },
+    { key:'appraisal', category:'Financing', name:'Appraisal Completed',
+      compute:(E,C,c)=>addDays(C, -5), bizDay:true,
+      note:()=>'Lender schedules the actual date · target a few days before the final walk-through. Update with the real date once the lender confirms.' },
     { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
       compute:(E,C,c)=>addDays(E, c.addlDep || 10), bizDay:false,
       note:(c)=>(c.addlDep || 10) + ' days after Effective Date · Paragraph 2(b).' },
