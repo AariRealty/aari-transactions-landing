@@ -565,9 +565,15 @@
   .dl-lname button{border:0;background:none;font-size:12.5px;font-weight:500;color:#0f0f0f;cursor:pointer;font-family:inherit;padding:0;text-align:left}
   .dl-ldue{color:#5f5e5a}
   .dl-recv-date{border:0.5px solid #d9d4ca;border-radius:6px;font-size:11.5px;padding:4px 7px;font-family:inherit;color:#0f0f0f;background:#fff;width:100%;box-sizing:border-box;margin:0 0 4px}
-  .dl-recv-note{border:0;border-bottom:0.5px dashed #d9d4ca;font-size:10.5px;padding:2px 1px;font-family:inherit;color:#5f5e5a;background:none;width:100%;box-sizing:border-box}
+  .dl-recv-note{border:0;border-bottom:0.5px dashed #d9d4ca;font-size:10.5px;padding:2px 1px;font-family:inherit;color:#5f5e5a;background:none;width:100%;box-sizing:border-box;margin:0 0 4px}
   .dl-recv-note:focus{outline:none;border-bottom-color:#0f0f0f}
   .dl-recv-note::placeholder{color:#b3aea5}
+  .dl-recv-date-txt{color:#0f0f0f}
+  .dl-recv-edit{border:0;background:none;color:#a39e95;font-size:10px;cursor:pointer;text-decoration:underline;font-family:inherit;padding:0 0 0 4px}
+  .dl-recv-link{border:0;background:none;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit;padding:0}
+  .dl-recv-dash{border:0;background:none;color:#c2bdb4;font-size:13px;cursor:pointer;font-family:inherit;padding:0 6px}
+  .dl-recv-done{border:0.5px solid #d9d4ca;background:#fff;border-radius:6px;font-size:10.5px;padding:3px 11px;cursor:pointer;font-family:inherit;color:#0f0f0f}
+  .dl-recv-done:hover{background:#f5f0e8}
   .dl-lresult{font-weight:600}
   .dl-lresult.ok{color:#2f855a}
   .dl-lresult.late,.dl-lresult.over{color:#854f0b}
@@ -4869,6 +4875,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   let _deadlinesByFile = {}; // { file_id: { deadline_key: { completed_at, notes } } }
   let _dlState = { contract:'', effective:'', closing:'' };
   let _dlShowCites = false; // Mockup A · paragraph citations off by default
+  let _dlEditKey = null; // which deadline's received editor is open (one at a time)
 
   async function loadDeadlineStatusForFile(fileId){
     if(_deadlinesByFile[fileId]) return _deadlinesByFile[fileId];
@@ -5038,12 +5045,24 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         else if(cd.cls === 'overdue'){ resCls = 'over'; resText = 'past due'; }
         else { resCls = 'up'; resText = cd.tag; }
         const _note = (((file.logistics || {}).dl_notes) || {})[it.key] || '';
-        // Direct edit · Received is a date field right in the row (empty = not
-        // received yet). Pick a date → it records on-time/late from THAT date.
-        // The note field saves on blur. No button, no pop-open, nothing to jam.
-        const receivedCell =
-          '<input type="date" class="dl-recv-date" data-mark-date="' + esc(it.key) + '" value="' + (done ? new Date(rec.completed_at).toISOString().slice(0,10) : '') + '">' +
-          '<input type="text" class="dl-recv-note" data-mark-note="' + esc(it.key) + '" value="' + esc(_note) + '" placeholder="+ note" maxlength="200">';
+        // Quiet until you act (view A) · the Received cell shows the recorded
+        // date, a "mark received" link when it's due, or a quiet dash when far
+        // off. The date + note editor only appears on click (re-render based, so
+        // it never jams). The note is never shown in the resting row.
+        let receivedCell;
+        if(_dlEditKey === it.key){
+          receivedCell =
+            '<input type="date" class="dl-recv-date" data-mark-date="' + esc(it.key) + '" value="' + (done ? new Date(rec.completed_at).toISOString().slice(0,10) : '') + '">' +
+            '<input type="text" class="dl-recv-note" data-mark-note="' + esc(it.key) + '" value="' + esc(_note) + '" placeholder="' + esc(markNoteHint(it.key)) + '" maxlength="200">' +
+            '<button type="button" class="dl-recv-done" data-dl-edit-close="1">done</button>';
+        } else if(done){
+          receivedCell = '<span class="dl-recv-date-txt">' + esc(fmtDl(new Date(rec.completed_at))) + '</span>' +
+            ' <button type="button" class="dl-recv-edit" data-dl-edit-recv="' + esc(it.key) + '">edit</button>';
+        } else if(cd.cls === 'overdue' || cd.cls === 'today'){
+          receivedCell = '<button type="button" class="dl-recv-link" data-dl-edit-recv="' + esc(it.key) + '">+ mark received</button>';
+        } else {
+          receivedCell = '<button type="button" class="dl-recv-dash" data-dl-edit-recv="' + esc(it.key) + '">—</button>';
+        }
         const citeRow = (showCites && it.citation) ? '<tr class="dl-lextra"><td colspan="4">' + esc(it.citation) + '</td></tr>' : '';
         return '<tr class="dl-lrow' + (done ? ' done' : '') + ((!done && !confirmedRow) ? ' dl-queued' : '') + '">' +
             '<td class="dl-lname"><span>' + esc(it.name) + '</span></td>' +
@@ -5099,8 +5118,14 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       const form = document.getElementById('dl-edit-form-' + k);
       if(form) form.style.display = 'none';
     }));
-    // Received date · pick one to record it (empty = not received). The real
-    // date drives on-time/late. Saves immediately, re-renders the result.
+    // Open / close the inline received editor (re-render based · never jams).
+    hostEl.querySelectorAll('[data-dl-edit-recv]').forEach(el => el.addEventListener('click', () => {
+      _dlEditKey = el.getAttribute('data-dl-edit-recv'); renderDeadlinesForFile(file);
+    }));
+    hostEl.querySelectorAll('[data-dl-edit-close]').forEach(el => el.addEventListener('click', () => {
+      _dlEditKey = null; renderDeadlinesForFile(file);
+    }));
+    // Received date · drives on-time/late from the real date. Saves on change.
     hostEl.querySelectorAll('[data-mark-date]').forEach(el => el.addEventListener('change', () => {
       const k = el.getAttribute('data-mark-date');
       const nEl = hostEl.querySelector('[data-mark-note="' + k + '"]');
@@ -7077,7 +7102,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   function openPlaybook(file){
     _currentFile = file;
     _openPopKey = null;
-    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null;
+    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null;
     document.body.classList.add('tpb-open');
     renderPlaybook(file);
     renderDeleteZone(file);
