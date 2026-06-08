@@ -549,6 +549,12 @@
   .tpb-dlA-tag.ok{background:#e8f5ed;color:#2f855a}
   .tpb-dlA-tag.late{background:#faeeda;color:#854f0b}
   .emd-count-ok{color:#2f855a!important;font-weight:600}
+  .dl-perf{display:flex;align-items:center;gap:10px;background:#f5f0e8;border-radius:10px;padding:9px 12px;margin:0 0 10px}
+  .dl-perf-tag{font-size:11px;font-weight:700;color:#854f0b;letter-spacing:.03em}
+  .dl-perf.ok .dl-perf-tag{color:#2f855a}
+  .dl-perf-txt{flex:1;font-size:11.5px;color:#5f5e5a}
+  .dl-perf-recap{border:0.5px solid #d9d4ca;background:#fff;border-radius:8px;font-size:11px;font-weight:600;padding:5px 11px;cursor:pointer;font-family:inherit;color:#0f0f0f;white-space:nowrap}
+  .dl-perf-recap:hover{background:#f5f0e8}
   .tpb-dlA-conf{margin:2px 0 0;font-size:10.5px}
   .tpb-dlA-conf.est{color:#854f0b}
   .tpb-dlA-conf.ok{color:#2f855a}
@@ -4898,6 +4904,29 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const citesToggle = '<div class="tpb-dlA-cites"><button type="button" id="tpb-dl-cites">' +
       (showCites ? 'Hide para refs' : 'Show para refs') + '</button></div>';
 
+    // Performance strip · the file's on-time record, computed from completed_at
+    // vs the contract due date. Feeds the one-tap client recap.
+    let _met = 0, _lateN = 0, _openOver = 0;
+    const _tNow = new Date(); _tNow.setHours(0,0,0,0);
+    rows.forEach(function(it){
+      const rc = status[it.key];
+      const dd = new Date(it.date.getTime()); dd.setHours(0,0,0,0);
+      if(rc && rc.completed_at){
+        const c = new Date(rc.completed_at); c.setHours(0,0,0,0);
+        if(c <= dd) _met++; else _lateN++;
+      } else if(dd < _tNow && !pastAtIntake(it)){ _openOver++; }
+    });
+    const _perfClean = (_lateN === 0 && _openOver === 0);
+    const _perfBits = [];
+    if(_met) _perfBits.push(_met + ' on time');
+    if(_lateN) _perfBits.push(_lateN + ' late');
+    if(_openOver) _perfBits.push(_openOver + ' open + overdue');
+    const perfStrip = '<div class="dl-perf' + (_perfClean ? ' ok' : '') + '">' +
+      '<span class="dl-perf-tag">' + (_perfClean ? 'On track' : 'Watch') + '</span>' +
+      '<span class="dl-perf-txt">' + (_perfBits.length ? _perfBits.join(' &middot; ') : 'No deadlines met yet') + '</span>' +
+      '<button type="button" class="dl-perf-recap" id="dl-recap">Weekly recap &rarr;</button>' +
+    '</div>';
+
     // C treatment (June 2026, supersedes B's per-row buttons) · confirmation is a
     // one-at-a-time stepper: one amber card walks the TC through each unconfirmed
     // date (her "one question per screen" rule); the full queue stays visible,
@@ -4967,7 +4996,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       stepper = '<div class="tpb-dl-estban ok">&#10003; All ' + rows.length + ' dates confirmed from the contract.</div>';
     }
 
-    hostEl.innerHTML = ctLine + stepper + citesToggle + rows.map(function(it){
+    hostEl.innerHTML = ctLine + stepper + perfStrip + citesToggle + rows.map(function(it){
       const rec = status[it.key];
       const done = rec && rec.completed_at;
       const confirmedRow = isConfirmed(it);
@@ -5011,6 +5040,26 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
 
     const citesBtn = document.getElementById('tpb-dl-cites');
     if(citesBtn) citesBtn.addEventListener('click', function(){ _dlShowCites = !_dlShowCites; renderDeadlinesForFile(file); });
+
+    // Weekly recap · builds a clean client-ready ledger from the same data and
+    // copies it to the clipboard. Due / result per deadline, neutral + factual.
+    const recapBtn = document.getElementById('dl-recap');
+    if(recapBtn) recapBtn.addEventListener('click', function(){
+      const fD = function(d){ return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); };
+      const street = String(file.property_address || '').split(',')[0].trim();
+      const lines = rows.map(function(it){
+        const rc = status[it.key];
+        const dd = new Date(it.date.getTime()); dd.setHours(0,0,0,0);
+        let result;
+        if(rc && rc.completed_at){ result = lateLabel(rc.completed_at, it.date, 'met').text; }
+        else if(dd < _tNow && !pastAtIntake(it)){ result = 'open, past due'; }
+        else { result = 'upcoming'; }
+        return it.name + ' — due ' + fD(it.date) + ' — ' + result;
+      });
+      const recap = street + ' — deadline update (as of ' + _tNow.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }) + ')\n\n' + lines.join('\n');
+      try { navigator.clipboard.writeText(recap); recapBtn.textContent = 'Copied ✓'; setTimeout(function(){ recapBtn.textContent = 'Weekly recap →'; }, 1800); }
+      catch(_){ alert(recap); }
+    });
 
     hostEl.querySelectorAll('[data-dl-toggle]').forEach(btn => btn.addEventListener('click', () => {
       const k = btn.getAttribute('data-dl-toggle');
