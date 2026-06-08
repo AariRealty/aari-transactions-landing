@@ -470,13 +470,38 @@
     const d = new Date(s.length === 10 ? (s + 'T00:00:00') : s);
     return isNaN(d.getTime()) ? null : d;
   }
+  // Conditional deadlines appended to residential SALE contracts. The cockpit
+  // shows each only when its condition holds (appraisal = financed file;
+  // additional deposit = an amount entered in Contract Terms; HOA review +
+  // estoppel = an association on the property). Skipped if the base array
+  // already defines the key, so we never duplicate.
+  const SALE_TYPES = ['frbar_asis','frbar_standard','frbar_crsp','nabor','nab089','builder'];
+  const SALE_EXTRAS = [
+    { key:'appraisal', category:'Financing', name:'Appraisal Contingency',
+      compute:(E,C,c)=>addDays(E, Math.max((c.lappr || c.fin || 30) - 5, 1)), bizDay:true,
+      note:()=>'Appraisal Contingency rider · a few days before the loan approval deadline.' },
+    { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
+      compute:(E,C,c)=>addDays(E, c.addlDep || 10), bizDay:false,
+      note:(c)=>(c.addlDep || 10) + ' days after Effective Date · Paragraph 2(b).' },
+    { key:'hoa_review', category:'HOA', name:'HOA/Condo Doc Review Deadline',
+      compute:(E,C,c)=>addDays(E, c.hoaReview || 3), bizDay:true,
+      note:()=>'3-day review on receipt of governance docs · Condo/HOA Rider. Buyer may cancel.' },
+    { key:'estoppel', category:'HOA', name:'Estoppel Received',
+      compute:(E,C,c)=>addDays(C, -10), bizDay:true,
+      note:()=>'Order early · estoppel/governance package received before closing.' },
+  ];
   function contractDeadlines(contractType, effective, closing, overrides){
-    const defs = CONTRACT_DEADLINES[contractType];
-    if(!defs) return [];
+    const baseDefs = CONTRACT_DEADLINES[contractType];
+    if(!baseDefs) return [];
     const E = _toDate(effective);
     const C = _toDate(closing);
     if(!E) return [];
     const cfg = Object.assign({}, CONTRACT_DEFAULTS[contractType] || {}, overrides || {});
+    let defs = baseDefs;
+    if(SALE_TYPES.indexOf(contractType) !== -1){
+      const have = {}; baseDefs.forEach(d => { have[d.key] = true; });
+      defs = baseDefs.concat(SALE_EXTRAS.filter(x => !have[x.key]));
+    }
     const rows = [];
     for(const it of defs){
       let computed;
