@@ -6885,6 +6885,30 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     if(tt){ _ctTermsExpanded = !_ctTermsExpanded; try { renderContractTerms(_currentFile); } catch(_){} }
   });
 
+  // Move-to-next-stage · delegated once. Mirrors the kanban drag guards:
+  // SA lock + the stage-2 agent-confirm gate. Never offers Closed.
+  document.addEventListener('click', async function(e){
+    const mb = e.target && e.target.closest && e.target.closest('[data-move-next-stage]');
+    if(!mb || !_currentFile) return;
+    const file = _currentFile;
+    const newStage = mb.getAttribute('data-move-next-stage');
+    if(saUnsigned(file)){ alert('This file is locked until the agent signs the Aari Transactions Service Agreement.'); return; }
+    try {
+      const doneTasks = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+      if(deriveStage(file) === 'waiting_for_tc' && !doneTasks['wtc_agent_confirm']){
+        if(!confirm('You have not confirmed dates and contacts with the agent yet. Move anyway?')) return;
+      }
+    } catch(_){}
+    if(!confirm('Move this file to ' + (STAGE_LABELS[newStage] || newStage) + '?')) return;
+    file.transaction_stage = newStage;
+    try { renderKanban(); } catch(_){}
+    try {
+      const r = await _client.from('files').update({ transaction_stage: newStage }).eq('id', file.id);
+      if(r && r.error){ alert('Not saved — the database rejected the move. You may not have edit permission on this file (RLS).'); return; }
+    } catch(_){}
+    try { renderPlaybook(file); } catch(_){}
+  });
+
   // ============== PLAYBOOK ==============
   function openPlaybook(file){
     _currentFile = file;
@@ -8039,9 +8063,16 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const tasksHtml = tasks
       ? tasks.map(t => ckRow(file, t, dls, done)).join('')
       : '<p class="ck-empty">Checklist for the ' + esc(STAGE_LABELS[stage] || stage) + ' stage ships next.</p>';
+    // Move-to-next-stage button · same guards as the kanban drag. Closed is
+    // excluded on purpose — its 5-task protective gate stays on the board drag.
+    const _stO = STAGES_BY_TYPE.sale, _stI = _stO.indexOf(stage);
+    const _stNext = ((file.file_type || 'sale') === 'sale' && _stI >= 0) ? _stO[_stI + 1] : null;
+    const moveBtn = (_stNext && _stNext !== 'closed' && file.status !== 'archived' && !saLock)
+      ? '<div style="padding:14px 0 4px;border-top:0.5px solid #f1ede6;margin-top:14px;text-align:right"><button type="button" data-move-next-stage="' + esc(_stNext) + '" style="background:#fff;border:0.5px solid rgba(15,15,15,0.35);border-radius:8px;padding:8px 16px;font-size:12px;font-weight:600;color:#0f0f0f;cursor:pointer;font-family:inherit">Move to ' + esc(STAGE_LABELS[_stNext] || _stNext) + ' &rarr;</button></div>'
+      : '';
     host.innerHTML = roBanner + saBanner + gate + widget + dueSoon +
       (saLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
-      archiveBlock;
+      archiveBlock + moveBtn;
     // Work rail · re-mark the NEXT task after every checklist render.
     try { if(typeof markNextTask === 'function') markNextTask(); } catch(_){}
   }
