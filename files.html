@@ -5036,17 +5036,26 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         } else if(intakeTag){ resCls = 'intake'; resText = 'past at intake'; }
         else if(cd.cls === 'overdue'){ resCls = 'over'; resText = 'past due'; }
         else { resCls = 'up'; resText = cd.tag; }
+        const _note = (((file.logistics || {}).dl_notes) || {})[it.key] || '';
         const doneCell = done
           ? esc(fmtDl(new Date(rec.completed_at))) + ' <button type="button" class="dl-undo" data-dl-toggle="' + esc(it.key) + '" data-dl-date="' + it.date.toISOString().slice(0,10) + '">undo</button>'
-          : '<button type="button" class="dl-mark" data-dl-toggle="' + esc(it.key) + '" data-dl-date="' + it.date.toISOString().slice(0,10) + '">mark</button>';
+          : '<button type="button" class="dl-mark" data-dl-markopen="' + esc(it.key) + '">mark</button>';
         const citeRow = (showCites && it.citation) ? '<tr class="dl-lextra"><td colspan="4">' + esc(it.citation) + '</td></tr>' : '';
+        const noteRow = (done && _note) ? '<tr class="dl-lextra"><td colspan="4">Note: ' + esc(_note) + '</td></tr>' : '';
         const extRow = it.override ? '<tr class="dl-lextra"><td colspan="4">Extended from ' + esc(fmtFullDate(it.override.originalDate)) + ' · ' + esc(it.override.reason) + ' <button type="button" class="tpb-dl-reset" data-dl-reset="' + esc(it.key) + '">Reset to default</button></td></tr>' : '';
+        const markRow = done ? '' : '<tr class="dl-mark-row" id="dl-mark-row-' + esc(it.key) + '" style="display:none"><td colspan="4"><div class="dl-ledit-inner">' +
+            '<label style="font-size:10.5px;color:#8a857c">Received on</label>' +
+            '<input type="date" data-mark-date="' + esc(it.key) + '" value="' + it.date.toISOString().slice(0,10) + '">' +
+            '<input type="text" data-mark-note="' + esc(it.key) + '" placeholder="Note (optional) — e.g. wired, confirmed by title" maxlength="200">' +
+            '<button type="button" class="tpb-dl-edit-save" data-mark-save="' + esc(it.key) + '">Save</button>' +
+            '<button type="button" class="tpb-dl-edit-cancel" data-mark-cancel="' + esc(it.key) + '">Cancel</button>' +
+          '</div></td></tr>';
         return '<tr class="dl-lrow' + (done ? ' done' : '') + ((!done && !confirmedRow) ? ' dl-queued' : '') + '">' +
             '<td class="dl-lname"><button type="button" data-dl-edit="' + esc(it.key) + '" title="Edit date">' + esc(it.name) + '</button></td>' +
             '<td class="dl-ldue">' + esc(fmtDl(it.date)) + '</td>' +
             '<td class="dl-ldone">' + doneCell + '</td>' +
             '<td class="dl-lresult ' + resCls + '">' + esc(resText) + '</td>' +
-          '</tr>' + citeRow + extRow +
+          '</tr>' + citeRow + noteRow + extRow + markRow +
           '<tr class="dl-ledit-row" id="dl-edit-form-' + esc(it.key) + '" style="display:none"><td colspan="4"><div class="dl-ledit-inner">' +
             '<input type="date" data-edit-date="' + esc(it.key) + '" value="' + it.date.toISOString().slice(0,10) + '">' +
             '<input type="text" data-edit-reason="' + esc(it.key) + '" placeholder="Reason (addendum, mutual agreement, lender delay…)" maxlength="200">' +
@@ -5100,6 +5109,22 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       const k = btn.getAttribute('data-dl-cancel');
       const form = document.getElementById('dl-edit-form-' + k);
       if(form) form.style.display = 'none';
+    }));
+    // Mark-received form · captures the ACTUAL completion date + note.
+    hostEl.querySelectorAll('[data-dl-markopen]').forEach(btn => btn.addEventListener('click', () => {
+      const k = btn.getAttribute('data-dl-markopen');
+      const row = document.getElementById('dl-mark-row-' + k);
+      if(row) row.style.display = (row.style.display === 'table-row') ? 'none' : 'table-row';
+    }));
+    hostEl.querySelectorAll('[data-mark-cancel]').forEach(btn => btn.addEventListener('click', () => {
+      const row = document.getElementById('dl-mark-row-' + btn.getAttribute('data-mark-cancel'));
+      if(row) row.style.display = 'none';
+    }));
+    hostEl.querySelectorAll('[data-mark-save]').forEach(btn => btn.addEventListener('click', () => {
+      const k = btn.getAttribute('data-mark-save');
+      const dEl = hostEl.querySelector('[data-mark-date="' + k + '"]');
+      const nEl = hostEl.querySelector('[data-mark-note="' + k + '"]');
+      markDeadlineDone(file, k, dEl ? dEl.value : '', nEl ? nEl.value : '');
     }));
     hostEl.querySelectorAll('[data-dl-save]').forEach(btn => btn.addEventListener('click', () => {
       const k = btn.getAttribute('data-dl-save');
@@ -5220,6 +5245,35 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     renderDeadlinesForFile(file);
   }
 
+  // Mark a deadline complete with the date it ACTUALLY happened (not "now") + an
+  // optional note. The real date drives the on-time/late record so a deposit
+  // received on time but logged days later reads "on time", not "late". Note
+  // lives in files.logistics.dl_notes (jsonb · no schema change · RLS-safe).
+  async function markDeadlineDone(file, key, actualDateISO, note){
+    const status = _deadlinesByFile[file.id] || (_deadlinesByFile[file.id] = {});
+    const rec = status[key] || {};
+    try {
+      const { data: { user } } = await _client.auth.getUser();
+      const completedIso = actualDateISO ? new Date(actualDateISO + 'T12:00:00').toISOString() : new Date().toISOString();
+      const payload = {
+        file_id: file.id, deadline_key: key,
+        due_date: rec.due_date || null,
+        original_due_date: rec.original_due_date || null,
+        override_reason: rec.override_reason || null,
+        extended_at: rec.extended_at || null, extended_by: rec.extended_by || null,
+        completed_at: completedIso, completed_by: user ? user.id : null,
+      };
+      const r = await _client.from('file_deadlines').upsert(payload, { onConflict: 'file_id,deadline_key' });
+      if(r && r.error){ alert('Not saved — the database rejected the change. You may not have edit permission on this file (RLS).'); return; }
+      status[key] = payload;
+      const lg = file.logistics || (file.logistics = {});
+      const notes = lg.dl_notes || (lg.dl_notes = {});
+      if(note && note.trim()) notes[key] = note.trim(); else delete notes[key];
+      await _client.from('files').update({ logistics: lg }).eq('id', file.id);
+    } catch(err){ console.warn('[files] markDeadlineDone failed', err); }
+    renderDeadlinesForFile(file);
+    try { renderHubStatus(file); } catch(_){}
+  }
   async function toggleDeadlineDone(file, key, dueISO){
     const status = _deadlinesByFile[file.id] || (_deadlinesByFile[file.id] = {});
     const rec = status[key];
