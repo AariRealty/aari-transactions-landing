@@ -10143,6 +10143,30 @@ If you want to pause, I will archive your file with the option to pick back up a
         alert('This file is locked. The agent has not signed the Aari Transactions Service Agreement, so work cannot begin and the file cannot move. Notify Marlenyi to resolve this.');
         return;
       }
+      // Payment gate (Item 13) · upfront-service file with unconfirmed payment
+      // cannot move to any column until payment_confirmed.
+      if(isPaymentLocked(file)){
+        alert('Payment not confirmed. Do not start work until payment is received.');
+        return;
+      }
+      // Stage-1 gate (Item 14) · every applicable New-stage task must be checked
+      // before the file can leave New. SA/payment system rows are enforced by
+      // their own gates above, so this checks the manual tasks.
+      try {
+        if(deriveStage(file) === 'new' && newStage !== 'new'){
+          const dt = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+          const newTasks = ((STAGE_CHECKLISTS[file.file_type || 'sale'] || {}).new) || [];
+          const incomplete = newTasks.filter(t => {
+            if(t.showIf && !t.showIf(file)) return false;
+            if(t.systemCheck === 'sa' || t.systemCheck === 'payment') return false;
+            return !dt[t.id];
+          });
+          if(incomplete.length){
+            alert('Complete all New stage tasks before moving this file.');
+            return;
+          }
+        }
+      } catch(_){}
       // Stage-7 gate · the 5 closing-critical tasks are NON-NEGOTIABLE before Closed.
       try {
         if(newStage === 'closed' && deriveStage(file) === 'ctc'){
@@ -10282,6 +10306,7 @@ If you want to pause, I will archive your file with the option to pick back up a
     const file = _currentFile;
     const newStage = mb.getAttribute('data-move-next-stage');
     if(saUnsigned(file)){ alert('This file is locked until the agent signs the Aari Transactions Service Agreement.'); return; }
+    if(isPaymentLocked(file)){ alert('Payment not confirmed. Do not start work until payment is received.'); return; }
     try {
       const doneTasks = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
       if(deriveStage(file) === 'waiting_for_tc' && !doneTasks['wtc_agent_confirm']){
@@ -10826,6 +10851,15 @@ If you want to pause, I will archive your file with the option to pick back up a
   // Services billed UPFRONT (payment must clear before work starts). Everything
   // else is a TC service billed at closing → the Stage 1 payment row is hidden.
   const UPFRONT_SERVICES = ['listing_docs','listing_coordinator','mls_setup','offer_prep','file_organization'];
+  // Payment gate (Section 4 · Item 13) — HARD block, mirrors the SA gate. An
+  // upfront-service file whose payment has not confirmed is locked: tasks grayed
+  // and unclickable, file cannot move columns. Releases when payment_confirmed.
+  // TC service files (billed at closing) are NEVER payment-locked.
+  function isPaymentLocked(file){
+    if(!file) return false;
+    if(UPFRONT_SERVICES.indexOf(file.service_type) === -1) return false;
+    return !file.payment_confirmed;
+  }
 
   const STAGE_CHECKLISTS = {
     sale: {
@@ -11463,6 +11497,15 @@ If you want to pause, I will archive your file with the option to pick back up a
           '<span><strong style="font-weight:600">Service Agreement not signed.</strong> This agent has not signed the Aari Transactions Service Agreement. You cannot begin work on this file until the SA is on file. Notify Marlenyi to resolve this before proceeding.</span>' +
         '</div>'
       : '';
+    // Payment lock (Item 13) — hard block, same treatment as the SA lock.
+    const payLock = isPaymentLocked(file);
+    const payBanner = payLock
+      ? '<div style="background:#fdecea;border:0.5px solid #f2a9a9;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#c96b6b;display:flex;gap:8px;align-items:flex-start">' +
+          '<span style="flex:none;font-size:14px;line-height:1.2">&#9888;&#65039;</span>' +
+          '<span><strong style="font-weight:600">Payment not confirmed.</strong> Do not start work until payment is received.</span>' +
+        '</div>'
+      : '';
+    const anyLock = saLock || payLock;
     // DUE SOON · tasks follow deadlines, not lanes. Any task from ANOTHER stage
     // whose linked contract deadline is within 3 days (or already running late,
     // but not past-at-intake) surfaces here, fully actionable — checkbox, inline
@@ -11533,12 +11576,12 @@ If you want to pause, I will archive your file with the option to pick back up a
     // excluded on purpose — its 5-task protective gate stays on the board drag.
     const _stO = STAGES_BY_TYPE.sale, _stI = _stO.indexOf(stage);
     const _stNext = ((file.file_type || 'sale') === 'sale' && _stI >= 0) ? _stO[_stI + 1] : null;
-    const moveBtn = (_stNext && _stNext !== 'closed' && file.status !== 'archived' && !saLock)
+    const moveBtn = (_stNext && _stNext !== 'closed' && file.status !== 'archived' && !anyLock)
       ? '<div style="padding:14px 0 4px;border-top:0.5px solid #f1ede6;margin-top:14px;text-align:right"><button type="button" class="move-stage-btn" data-move-next-stage="' + esc(_stNext) + '">Move to ' + esc(STAGE_LABELS[_stNext] || _stNext) + ' &rarr;</button></div>'
       : '';
     // Swapped per Marlenyi: Earlier stages on top, Due-soon toggled at the bottom.
-    host.innerHTML = roBanner + saBanner + gate + widget + archiveBlock +
-      (saLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
+    host.innerHTML = roBanner + saBanner + payBanner + gate + widget + archiveBlock +
+      (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
       dueSoon + moveBtn;
     // Work rail · re-mark the NEXT task after every checklist render.
     try { if(typeof markNextTask === 'function') markNextTask(); } catch(_){}
@@ -11574,6 +11617,7 @@ If you want to pause, I will archive your file with the option to pick back up a
     if(_currentFile.status === 'archived'){ cb.checked = !cb.checked; return; }
     // SA lock · no task may be checked until the agent signs the Service Agreement.
     if(saUnsigned(_currentFile)){ cb.checked = !cb.checked; alert('This file is locked until the agent signs the Aari Transactions Service Agreement. Notify Marlenyi.'); return; }
+    if(isPaymentLocked(_currentFile)){ cb.checked = !cb.checked; alert('Payment not confirmed. Do not start work until payment is received.'); return; }
     // ===== STAGE 8 · ARCHIVE GATE =====
     // Archiving requires the 4 protective tasks, a confirm, and flips the file
     // to status=archived: off the active board, read-only, audit-logged.

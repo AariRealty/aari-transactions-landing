@@ -200,6 +200,7 @@ Deno.serve(async (req) => {
 
   const weekStart = lastMondayEt();
   const cutoff = new Date(Date.now() - 6 * 86400000); // dedup window
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000); // 7-day minimum age gate
   const today = new Date(); today.setUTCHours(0, 0, 0, 0);
   let sent = 0, skipped = 0, failed = 0;
 
@@ -207,11 +208,13 @@ Deno.serve(async (req) => {
     try {
       const { data: files } = await supabaseAdmin
         .from("files")
-        .select("id, property_address, transaction_stage, status, tc_accepted_at, assigned_tc_id, closing_date, effective_date, deadline_overrides, stage_tasks, friday_summary_sent_at")
+        .select("id, property_address, transaction_stage, status, tc_accepted_at, assigned_tc_id, closing_date, effective_date, deadline_overrides, stage_tasks, friday_summary_sent_at, created_at")
         .eq("agent_id", agent.id)
         .not("status", "in", '("closed","cancelled","archived")');
       const active = (files ?? []).filter(f =>
-        !f.friday_summary_sent_at || new Date(f.friday_summary_sent_at) < cutoff);
+        // 7-day minimum age — a file less than a week old is skipped silently.
+        f.created_at && new Date(f.created_at) <= sevenDaysAgo &&
+        (!f.friday_summary_sent_at || new Date(f.friday_summary_sent_at) < cutoff));
       if (!active.length) { skipped++; continue; }
 
       let tc: { first_name: string; last_name: string; email: string; phone: string | null } | null = null;
