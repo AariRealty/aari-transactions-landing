@@ -786,6 +786,9 @@
   @keyframes movePulse{0%,100%{opacity:1;transform:scale(1);box-shadow:0 0 0 0 rgba(15,15,15,0.35)}50%{opacity:0.55;transform:scale(1.03);box-shadow:0 0 0 7px rgba(15,15,15,0)}}
   .ck-send:hover{background:#2a2a2a;color:#fff}
   .ck-send.sent{background:#fff;color:#5f5e5a;border:0.5px solid #d9d4ca}
+  .ck-soft-btn{display:inline-block;margin-left:8px;font-size:10px;font-weight:600;border:0.5px solid #e0dbd0;background:#fff;color:#8a857c;border-radius:8px;padding:3px 9px;cursor:pointer;font-family:inherit;white-space:nowrap}
+  .ck-soft-btn:hover{border-color:#0f0f0f;color:#0f0f0f}
+  .ck-softchip{display:inline-block;margin-left:8px;font-size:10px;font-weight:600;color:#5f5e5a;background:#f1ede6;border-radius:7px;padding:3px 9px;white-space:nowrap}
   .ck-email{margin:0 0 8px}
   .ck-archive-wrap{margin-top:14px;border-top:0.5px solid #ececec;padding-top:10px}
   .ck-archive-wrap>summary{font-size:10.5px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#a39e95;cursor:pointer;list-style:none;padding:2px 0}
@@ -10857,6 +10860,7 @@ If you want to pause, I will archive your file with the option to pick back up a
           showIf:(f)=>String(f.client_type||'').toLowerCase()==='buyer'||String(f.client_type||'').toLowerCase()==='both' },
         { id:'wtc_survey_title_request', label:'Request existing survey + title policy from the listing agent',
           sub:'Ask the listing agent for any existing survey and the seller&rsquo;s owner&rsquo;s title policy. Survey is due within 5 days of Effective Date per FAR/BAR; the prior owner&rsquo;s policy can qualify the buyer for the reissue rate.',
+          softComplete:{ flag:'na', label:'Mark as not applicable', chip:'Not applicable' },
           showIf:(f)=>f.contract_type !== 'builder' },
         { id:'wtc_hoa_request',     label:'Request HOA documents from the management company',
           sub:'Request immediately — the buyer&rsquo;s review period starts when docs are received, not when requested.',
@@ -10866,6 +10870,7 @@ If you want to pause, I will archive your file with the option to pick back up a
         { id:'uc_emd_followup',      label:'Follow up with title — confirm initial EMD received', dl:'emd_initial',
           sub:'Template ready in &ldquo;What to send next&rdquo; below.' },
         { id:'uc_title_commitment_reminder', label:'Remind title of the title-commitment due date', dl:'title_commitment',
+          softComplete:{ flag:'received', label:'Mark as received', chip:'Received' },
           sub:'Template in &ldquo;What to send next&rdquo; — based on the contract deadline.' },
         { id:'uc_emd_confirmed',     label:'EMD status set to "Confirmed in Writing"',
           sub:'Auto-checks when you set the widget status above.' },
@@ -11357,10 +11362,14 @@ If you want to pause, I will archive your file with the option to pick back up a
         ? '<div class="ck-dl-table">' + rows + '</div>'
         : '<div class="ck-dl-table ck-dl-empty-note">Add the Effective + Closing dates to this file to auto-calculate deadlines.</div>';
     }
+    // Soft-complete (Section 4 · Items 4 & 5) — a task config'd with `softComplete`
+    // can be marked Not applicable / Received. That collapses it (no sub, no
+    // logistics, no email button), counts it complete, and stores rec.soft.
+    const _soft = rec && rec.soft;
     // Mockup 1 · emails that fulfil this task render inline beneath it.
     let emailHtml = '';
     const ems = (_emailByTask && _emailByTask[t.id]) || [];
-    if(ems.length){
+    if(ems.length && !_soft){
       const sends = _sendsByFile[(_drawerFile || {}).id] || {};
       emailHtml = '<div class="ck-emails">' + ems.map(e => {
         const sent = sends[e.id];
@@ -11374,17 +11383,26 @@ If you want to pause, I will archive your file with the option to pick back up a
     }
 
     // Logistics fields this task needs — asked inline, no separate section.
-    const lgHtml = logisticsFieldsHtml(_drawerFile || file, t.id);
+    const lgHtml = _soft ? '' : logisticsFieldsHtml(_drawerFile || file, t.id);
+    // Soft-complete control: a chip when already soft-done, else the Mark-as link.
+    let softCtl = '';
+    if(t.softComplete){
+      if(_soft){
+        softCtl = '<span class="ck-softchip">' + esc(t.softComplete.chip) + '</span>';
+      } else if(!rec && file.status !== 'archived'){
+        softCtl = '<button type="button" class="ck-soft-btn" data-soft-complete="' + esc(t.id) + '" data-soft-flag="' + esc(t.softComplete.flag) + '">' + esc(t.softComplete.label) + '</button>';
+      }
+    }
 
     return '<div class="ck-task-wrap">' +
       '<label class="ck-task' + (rec ? ' ck-done' : '') + '">' +
         '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + (file.status === 'archived' ? ' disabled' : '') + '>' +
         '<span class="ck-body"><span class="ck-label">' + esc(t.label) + '</span>' +
-        ((function(){ var s = (t.sub || '').replace(/Template in &ldquo;What to send next&rdquo;\.?\s*/g, '').trim(); return s ? '<span class="ck-sub">' + s + '</span>' : ''; })()) +
+        (_soft ? '' : ((function(){ var s = (t.sub || '').replace(/Template in &ldquo;What to send next&rdquo;\.?\s*/g, '').trim(); return s ? '<span class="ck-sub">' + s + '</span>' : ''; })())) +
         scopeChip +
-        (rec && rec.at ? '<span class="ck-stamp">Done ' + new Date(rec.at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + new Date(rec.at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) + '</span>' : '') +
-        allDl +
-        '</span>' + dlChip + '</label>' +
+        (rec && rec.at ? '<span class="ck-stamp">' + (_soft ? esc(t.softComplete.chip) + ' ' : 'Done ') + new Date(rec.at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + '</span>' : '') +
+        (_soft ? '' : allDl) +
+        '</span>' + dlChip + softCtl + '</label>' +
       lgHtml +
       emailHtml +
     '</div>';
@@ -11525,6 +11543,28 @@ If you want to pause, I will archive your file with the option to pick back up a
     // Work rail · re-mark the NEXT task after every checklist render.
     try { if(typeof markNextTask === 'function') markNextTask(); } catch(_){}
   }
+  // Soft-complete handler (Section 4 · Items 4 & 5) — "Mark as not applicable" /
+  // "Mark as received". Marks the task done with rec.soft set, which collapses
+  // the row and hides its email. Same persistence + locks as the checkbox.
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest && e.target.closest('[data-soft-complete]');
+    if(!btn || !_currentFile || _ckSaving) return;
+    const taskId = btn.getAttribute('data-soft-complete');
+    const flag = btn.getAttribute('data-soft-flag') || 'na';
+    if(_currentFile.status === 'archived') return;
+    if(saUnsigned(_currentFile)){ alert('This file is locked until the agent signs the Aari Transactions Service Agreement. Notify Marlenyi.'); return; }
+    if(typeof isPaymentLocked === 'function' && isPaymentLocked(_currentFile)){ alert('Payment not confirmed. Do not start work until payment is received.'); return; }
+    const cur = (_currentFile.stage_tasks && typeof _currentFile.stage_tasks === 'object') ? { ..._currentFile.stage_tasks } : {};
+    cur[taskId] = { done:true, soft:flag, at:new Date().toISOString(), by:(_profile && (_profile.first_name || _profile.email)) || 'TC' };
+    _ckSaving = true;
+    const prev = _currentFile.stage_tasks;
+    _currentFile.stage_tasks = cur;
+    renderStageChecklist(_currentFile);
+    const r = await _client.from('files').update({ stage_tasks: cur }).eq('id', _currentFile.id);
+    _ckSaving = false;
+    if(r && r.error){ _currentFile.stage_tasks = prev; renderStageChecklist(_currentFile); alert('Could not save — check your connection and try again.'); }
+    else { try { renderKanban(); } catch(_){} }
+  });
   // Delegated check handler · optimistic, timestamped, persisted.
   document.addEventListener('change', async (e) => {
     const cb = e.target.closest && e.target.closest('[data-ck-task]');
