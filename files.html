@@ -3457,6 +3457,17 @@ Once the seller responds, I'll circulate the executed addendum on this thread.
       ],
       appraisal: [
         {
+          id:'app_missing_information',
+          task:'app_missing_info',
+          thread:1,
+          label:'Flag missing information · agent',
+          showIf:(f)=>{ try { const mf = (typeof missingFieldsFor === 'function') ? missingFieldsFor({}, f) : []; return !!(mf && mf.length); } catch(_){ return false; } },
+          to:'{{agent_name}} <{{agent_email}}>',
+          cc:'',
+          subject:'A few items still needed · {{street}}',
+          versionsFrom:'sale_new_agent_setup',
+        },
+        {
           id:'app_ordered_confirm',
           task:'app_ordered',
           thread:2,
@@ -10763,6 +10774,10 @@ If you want to pause, I will archive your file with the option to pick back up a
         '<div class="emd-row1"><span class="emd-label">Appraisal result</span></div>' +
         '<div style="display:flex;gap:8px;margin-top:6px">' + resBtn('at_above', 'At / Above Value') + resBtn('below', 'Below Value') + '</div>' +
         (res ? '' : '<p style="font-size:10px;color:#9a9a9a;margin:6px 0 0">Pick one when the appraisal lands — it loads that branch&rsquo;s tasks.</p>') +
+        (res === 'below'
+          ? '<div style="margin-top:8px"><label style="font-size:10px;color:#8a877f;display:block;margin-bottom:3px">Appraised value ($) — fills the low-appraisal email</label>' +
+            '<input type="number" data-cklg-key="appraisal_value" placeholder="209000" value="' + esc(lg.appraisal_value || '') + '" style="width:100%;border:0.5px solid #dcdcdc;border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit;background:#fff"></div>'
+          : '') +
       '</div>' +
     '</div>';
   }
@@ -10855,6 +10870,16 @@ If you want to pause, I will archive your file with the option to pick back up a
     // Loan-approval gate (Item 16) — confirmed before Clear to Close (cash exempt)
     if(newStage === 'ctc' && cur !== 'ctc' && !isCashFile(file) && !dt['uc_loan_approval_acknowledged']){
       return 'Loan approval must be confirmed before moving to Clear to Close.';
+    }
+    // Below-value appraisal gate (Section 10 · Fix 2) — a below-value file cannot
+    // advance to Clear to Close until the buyer/seller decision is documented.
+    if(newStage === 'ctc' && cur !== 'ctc' && ((file.logistics||{}).appraisal_result) === 'below' && !dt['app_low_decision']){
+      return 'Document buyer and seller decision before moving to Clear to Close.';
+    }
+    // Conditional-approval gate (Section 10 · Fix 4) — if loan approval is
+    // conditional, every condition must be cleared before Clear to Close.
+    if(newStage === 'ctc' && cur !== 'ctc' && ((file.logistics||{}).loan_approval_type) === 'conditional' && ((file.logistics||{}).loan_conditions_cleared) !== 'yes'){
+      return 'Clear all outstanding loan approval conditions before moving to Clear to Close.';
     }
     // Stage-7 gate — the 5 closing-critical tasks before Closed
     if(newStage === 'closed' && cur === 'ctc'){
@@ -11026,11 +11051,22 @@ If you want to pause, I will archive your file with the option to pick back up a
         { id:'app_low_deposit_return', label:'Below value — if cancellation, initiate deposit return with title',
           showIf:(f)=>(((f.logistics||{}).appraisal_result)==='below') },
         { id:'app_loan_approved',    label:'Loan approval received from lender IN WRITING before Day 30', dl:'loan_approval',
-          sub:'Auto-checks when you set the widget badge to Approved. Template in &ldquo;What to send next&rdquo;.' },
+          sub:'Auto-checks when you set the widget badge to Approved. Log full vs conditional approval in the dropdown below — conditional locks Clear to Close until every condition clears.' },
         { id:'app_no_approval_notice', label:'No approval by deadline — confirm buyer&rsquo;s written notice to seller TODAY',
           sub:'Template in &ldquo;What to send next&rdquo;.',
           showIf:(f)=>loanEffStatus(f)==='overdue' },
+        { id:'app_review_approval_letter', label:'Review every page of the loan approval letter.',
+          sub:'Check for outstanding conditions. Do not check this box until all conditions are cleared.' },
+        { id:'app_verify_signatures', label:'Verify all signatures and initials on all addenda received to date.',
+          sub:'Go through every executed addendum. Check every signature and initial. No exceptions.' },
+        { id:'app_confirm_contacts', label:'Confirm all contact information is still current.',
+          sub:'Verify title closer, lender, both agents, buyer, and seller contact information has not changed. Update anything that has.' },
+        { id:'app_missing_info',     label:'Flag any missing information to agent',
+          showIf:(f)=>{ try { const mf = (typeof missingFieldsFor === 'function') ? missingFieldsFor({}, f) : []; return !!(mf && mf.length); } catch(_){ return false; } },
+          sub:'If the system flags missing items on this file, send the agent a request for what is still needed.' },
         { id:'app_title_commitment', label:'Follow up with title — commitment on track', dl:'title_commitment',
+          softComplete:{ flag:'received', label:'Mark as received', chip:'Received' },
+          showIf:(f)=>!((f.stage_tasks||{}).uc_title_commitment_reminder),
           sub:'Template in &ldquo;What to send next&rdquo;.' },
         { id:'app_weekly_update',    label:'Send weekly update email to agent — every Friday',
           sub:'Template in &ldquo;What to send next&rdquo;.' },
@@ -11160,6 +11196,13 @@ If you want to pause, I will archive your file with the option to pick back up a
     ],
     insp_cancel_confirmed: [
       { key:'cancellation_release', label:'Executed cancellation + release', type:'file' },
+    ],
+    app_loan_approved: [
+      { key:'loan_approval_type', label:'Approval type', type:'select',
+        options:[['','— not logged —'],['full','Full approval'],['conditional','Conditional approval']] },
+      { key:'loan_conditions', label:'Outstanding conditions (if conditional)', type:'text', ph:'e.g. updated paystub, proof of funds' },
+      { key:'loan_conditions_cleared', label:'All conditions cleared?', type:'select',
+        options:[['','—'],['no','No · still pending'],['yes','Yes · all cleared']] },
     ],
     ctc_closing_confirmed: [
       { key:'closing_time',      label:'Closing time',        type:'text', ph:'2:00 PM' },
