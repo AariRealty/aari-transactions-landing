@@ -1,6 +1,11 @@
 // Edge function: send-review-request
-// Trigger: pg_cron daily at 14:00 UTC. Scans tc_files closed ~24h ago.
+// Trigger: pg_cron daily at 14:00 UTC. Scans files closed ~72h ago (Day 3).
 // Payload: { run_date: "YYYY-MM-DD" }
+//
+// STAGED (Dec 2026 · Email System v2 Step 15): timing moved from Day 1 (~24h)
+// to Day 3 (~72h) per spec. Same single-daily-run mechanic, just three days
+// out — the review_request_sent_at null gate still guarantees one send per
+// file. Inert until `supabase functions deploy send-review-request` is run.
 
 import * as React from "react";
 import { supabaseAdmin } from "../_shared/supabase.ts";
@@ -9,10 +14,10 @@ import { SITE_URL } from "../_shared/resend.ts";
 import { ReviewRequest } from "../_email-templates/ReviewRequest.tsx";
 
 Deno.serve(async (_req) => {
-  // Window: files closed between 23h and 25h ago (1-hour buffer for cron jitter)
+  // Window: files closed between 71h and 73h ago (Day 3, 1-hour buffer for cron jitter)
   const now = new Date();
-  const upper = new Date(now.getTime() - 23 * 60 * 60 * 1000).toISOString();
-  const lower = new Date(now.getTime() - 25 * 60 * 60 * 1000).toISOString();
+  const upper = new Date(now.getTime() - 71 * 60 * 60 * 1000).toISOString();
+  const lower = new Date(now.getTime() - 73 * 60 * 60 * 1000).toISOString();
 
   const { data: files, error } = await supabaseAdmin
     .from("tc_files")
