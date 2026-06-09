@@ -4582,7 +4582,7 @@ Has closing completed, are funds collected, and has the deed been recorded?
         {
           id:'closed_congrats_agent',
           task:'cl_congrats_agent',
-          thread:4,
+          thread:1,
           label:'Closing congratulations · agent',
           to:'{{agent_name}} <{{agent_email}}>',
           cc:'',
@@ -10805,6 +10805,16 @@ If you want to pause, I will archive your file with the option to pick back up a
     if(UPFRONT_SERVICES.indexOf(file.service_type) === -1) return false;
     return !file.payment_confirmed;
   }
+  // Closing lock (Section 12 · Fix 1) — in the Closed stage NOTHING else can be
+  // checked until title confirms closing (cl_funds_recorded). cl_funds_recorded
+  // itself stays live; every other Closed task grays out. Mirrors the SA lock.
+  function closingLocked(file){
+    if(!file) return false;
+    if(file.status === 'archived') return false;
+    if(deriveStage(file) !== 'closed') return false;
+    const dt = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    return !dt.cl_funds_recorded;
+  }
   // Shared HARD stage-move gate (Section 4) — single source of truth for every
   // non-negotiable block, called by BOTH the kanban drag and the Move button so
   // the two paths can never diverge. Returns an alert message if blocked, else ''.
@@ -11088,10 +11098,10 @@ If you want to pause, I will archive your file with the option to pick back up a
           sub:'Send as a SEPARATE email — never combined with the congratulations email. A standalone request gets a much higher response rate.' },
         { id:'cl_closed_stamp',      label:'Closed date stamped on file — automatic',
           sub:'closed_at is recorded the moment the file lands in Closed. Nothing for you to do — this row confirms it happened.' },
-        { id:'cl_review_24h',        label:'24-hour post-closing review request — automatic',
-          sub:'The system emails the agent a review request 24 hours after closing. This is in addition to your manual request above.' },
+        { id:'cl_review_24h',        label:'Post-closing review requests — automatic',
+          sub:'The system sends a review request to the agent at Day 3 and to title and lender at Day 3 from the actual closing date. Nothing for you to do — this row confirms it is scheduled.' },
         { id:'cl_archive',           label:'Archive file — mark as closed in system',
-          sub:'Locks the file read-only and moves it off the active board. Requires: funds/deed confirmed · documents filed · congratulations sent · Google review requested.' },
+          sub:'Locks the file read-only and moves it off the active board. Requires: funds/deed confirmed · documents filed · congratulations sent · actual closing date logged.' },
       ],
     },
   };
@@ -11141,6 +11151,44 @@ If you want to pause, I will archive your file with the option to pick back up a
       pill('ctc_title_exceptions', 'Title exceptions found') +
     '</div>';
   }
+
+  // Closed-stage manual closing date (Section 12 · Fix 2) — the TC logs the
+  // confirmed closing date from title. This is the source of truth for closed_at
+  // and for the Day 3 / Day 14 auto-send math; the move timestamp is fallback.
+  function renderClosingDateWidget(file){
+    const v = file.actual_closing_date || '';
+    const ro = file.status === 'archived';
+    return '<div style="background:#faf9f7;border:0.5px solid #e8e6e1;border-radius:8px;padding:10px 12px;margin-bottom:10px">' +
+      '<div style="font-size:11px;font-weight:600;color:#5f5e5a;margin-bottom:6px">Actual closing date</div>' +
+      '<input type="date" data-closing-date value="' + esc(v) + '"' + (ro ? ' disabled' : '') +
+        ' style="border:0.5px solid #dcdcdc;border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit;background:#fff">' +
+      '<div class="ck-sub" style="margin-top:6px;color:#9a9a9a">Log the confirmed closing date from title. This drives the Day 3 and Day 14 automatic emails. ' +
+        (v ? '' : 'Until set, the system falls back to the move timestamp.') + '</div>' +
+    '</div>';
+  }
+  async function saveClosingDate(val){
+    if(!_currentFile) return;
+    if(_currentFile.status === 'archived') return;
+    const next = val || null;
+    const prev = _currentFile.actual_closing_date;
+    if(prev === next) return;
+    _currentFile.actual_closing_date = next;
+    renderStageChecklist(_currentFile);
+    const r = await _client.from('files').update({ actual_closing_date: next }).eq('id', _currentFile.id);
+    if(r && r.error){
+      console.warn('[closing-date] save failed', r.error.message);
+      _currentFile.actual_closing_date = prev;
+      renderStageChecklist(_currentFile);
+      alert('Could not save the closing date — check your connection and try again.');
+    } else {
+      const ff = (_files || []).find(x => x.id === _currentFile.id); if(ff) ff.actual_closing_date = next;
+    }
+  }
+  document.addEventListener('change', (e) => {
+    const inp = e.target.closest && e.target.closest('[data-closing-date]');
+    if(!inp || !_currentFile) return;
+    saveClosingDate(inp.value);
+  });
 
   let _ckSaving = false;
   function ckTasksFor(file, stage){
@@ -11611,7 +11659,8 @@ If you want to pause, I will archive your file with the option to pick back up a
     const widget = (stage === 'under_contract') ? renderEmdWidget(file)
                  : (stage === 'remedy') ? renderRemedyFlags(file)
                  : (stage === 'appraisal') ? renderApprWidget(file)
-                 : (stage === 'ctc') ? renderCtcFlags(file) : '';
+                 : (stage === 'ctc') ? renderCtcFlags(file)
+                 : (stage === 'closed') ? renderClosingDateWidget(file) : '';
     const roBanner = (file.status === 'archived')
       ? '<div style="background:#f3f3f1;border:0.5px solid #e8e6e1;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:11px;color:#5f5e5a;font-weight:600">Archived \u00b7 read-only \u00b7 no further edits</div>'
       : '';
@@ -11638,6 +11687,14 @@ If you want to pause, I will archive your file with the option to pick back up a
         '</div>'
       : '';
     const anyLock = saLock || payLock;
+    // Closing lock (Section 12 · Fix 1) — only when no harder lock is already on.
+    const closingLock = !anyLock && stage === 'closed' && file.status !== 'archived' && !done['cl_funds_recorded'];
+    const closingBanner = closingLock
+      ? '<div style="background:#fdecea;border:0.5px solid #f2a9a9;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#c96b6b;display:flex;gap:8px;align-items:flex-start">' +
+          '<span style="flex:none;font-size:14px;line-height:1.2">&#9888;&#65039;</span>' +
+          '<span><strong style="font-weight:600">Closing not yet confirmed by title.</strong> Complete the title confirmation before proceeding.</span>' +
+        '</div>'
+      : '';
     // DUE SOON · tasks follow deadlines, not lanes. Any task from ANOTHER stage
     // whose linked contract deadline is within 3 days (or already running late,
     // but not past-at-intake) surfaces here, fully actionable — checkbox, inline
@@ -11702,7 +11759,13 @@ If you want to pause, I will archive your file with the option to pick back up a
       }
     } catch(_){}
     const tasksHtml = tasks
-      ? tasks.map(t => ckRow(file, t, dls, done)).join('')
+      ? (closingLock
+          ? tasks.map(t => {
+              const row = ckRow(file, t, dls, done);
+              return t.id === 'cl_funds_recorded' ? row
+                : '<div style="opacity:0.4;pointer-events:none">' + row + '</div>';
+            }).join('')
+          : tasks.map(t => ckRow(file, t, dls, done)).join(''))
       : '<p class="ck-empty">Checklist for the ' + esc(STAGE_LABELS[stage] || stage) + ' stage ships next.</p>';
     // Move-to-next-stage button · same guards as the kanban drag. Closed is
     // excluded on purpose — its 5-task protective gate stays on the board drag.
@@ -11712,7 +11775,7 @@ If you want to pause, I will archive your file with the option to pick back up a
       ? '<div style="padding:14px 0 4px;border-top:0.5px solid #f1ede6;margin-top:14px;text-align:right"><button type="button" class="move-stage-btn" data-move-next-stage="' + esc(_stNext) + '">Move to ' + esc(STAGE_LABELS[_stNext] || _stNext) + ' &rarr;</button></div>'
       : '';
     // Swapped per Marlenyi: Earlier stages on top, Due-soon toggled at the bottom.
-    host.innerHTML = roBanner + saBanner + payBanner + gate + widget + archiveBlock +
+    host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget + archiveBlock +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
       dueSoon + moveBtn;
     // Work rail · re-mark the NEXT task after every checklist render.
@@ -11741,6 +11804,7 @@ If you want to pause, I will archive your file with the option to pick back up a
     if(_currentFile.status === 'archived') return;
     if(saUnsigned(_currentFile)){ alert('This file is locked until the agent signs the Aari Transactions Service Agreement. Notify Marlenyi.'); return; }
     if(typeof isPaymentLocked === 'function' && isPaymentLocked(_currentFile)){ alert('Payment not confirmed. Do not start work until payment is received.'); return; }
+    if(closingLocked(_currentFile) && taskId !== 'cl_funds_recorded'){ alert('Closing not yet confirmed by title. Complete the title confirmation before proceeding.'); return; }
     const cur = (_currentFile.stage_tasks && typeof _currentFile.stage_tasks === 'object') ? { ..._currentFile.stage_tasks } : {};
     cur[taskId] = { done:true, soft:flag, at:new Date().toISOString(), by:(_profile && (_profile.first_name || _profile.email)) || 'TC' };
     _ckSaving = true;
@@ -11762,18 +11826,21 @@ If you want to pause, I will archive your file with the option to pick back up a
     // SA lock · no task may be checked until the agent signs the Service Agreement.
     if(saUnsigned(_currentFile)){ cb.checked = !cb.checked; alert('This file is locked until the agent signs the Aari Transactions Service Agreement. Notify Marlenyi.'); return; }
     if(isPaymentLocked(_currentFile)){ cb.checked = !cb.checked; alert('Payment not confirmed. Do not start work until payment is received.'); return; }
+    // Closing lock (Section 12 · Fix 1) — title confirmation gates every other Closed task.
+    if(closingLocked(_currentFile) && taskId !== 'cl_funds_recorded'){ cb.checked = !cb.checked; alert('Closing not yet confirmed by title. Complete the title confirmation before proceeding.'); return; }
     // ===== STAGE 8 · ARCHIVE GATE =====
-    // Archiving requires the 4 protective tasks, a confirm, and flips the file
-    // to status=archived: off the active board, read-only, audit-logged.
+    // Archiving requires the 3 protective tasks + a logged actual closing date,
+    // a confirm, and flips the file to status=archived: off the active board,
+    // read-only, audit-logged. (Section 12 · Fix 7 — Google review dropped.)
     if(taskId === 'cl_archive' && cb.checked){
       const dt = (_currentFile.stage_tasks && typeof _currentFile.stage_tasks === 'object') ? _currentFile.stage_tasks : {};
       const reqd = [
         ['cl_funds_recorded', 'Closing funds confirmed and deed recorded'],
         ['cl_docs_filed',     'Closing documents received and filed'],
         ['cl_congrats_agent', 'Congratulations email sent to agent'],
-        ['cl_google_review',  'Google review request sent'],
       ];
       const missing = reqd.filter(r => !dt[r[0]]).map(r => r[1]);
+      if(!_currentFile.actual_closing_date) missing.push('Actual closing date logged');
       if(missing.length){
         cb.checked = false;
         alert('This file cannot be archived yet. Still unchecked:\n\n\u00b7 ' + missing.join('\n\u00b7 '));
