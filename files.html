@@ -4914,6 +4914,9 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
     const overridesJson = file.deadline_overrides || {};
     const _waived = inspectionWaived(file), _noHoa = !hoaApplies(file);
     const _cash = isCashFile(file), _noAddl = !((file.emd || {}).additional_amount);
+    // Lender/operational dates · no fixed contract date (TC enters the scheduled
+    // date). Never in the confirm stepper; their Due cell is editable.
+    const _noConfirm = { appraisal:1 };
     const rows = ENG.contractDeadlines(ct, effISO, clsISO, overridesJson).filter(function(it){
       if(_waived && (it.key === 'inspection_end' || it.key === 'seller_response')) return false;
       if(_noHoa && (it.key === 'hoa_review' || it.key === 'estoppel')) return false;
@@ -4927,8 +4930,14 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
             originalDate: new Date(String(rec.original_due_date).length===10 ? (rec.original_due_date+'T00:00:00') : rec.original_due_date),
             reason: rec.override_reason }
         : null;
+      // Operational rows (appraisal) · the DUE date is the lender-scheduled date
+      // the TC enters, stored in logistics.dl_scheduled (jsonb · RLS-safe). It
+      // replaces the computed default once set.
+      const _sched = (((file.logistics || {}).dl_scheduled) || {})[it.key];
+      const _schedDate = (_noConfirm[it.key] && _sched) ? new Date(_sched + 'T00:00:00') : null;
       return { key: it.key, name: it.name, category: it.category, citation: it.citation,
-               date: override ? override.date : it.date, computedDate: it.date, override: override };
+               date: _schedDate || (override ? override.date : it.date), computedDate: it.date,
+               override: override, scheduled: !!_noConfirm[it.key] };
     });
     rows.sort(function(a,b){ return a.date - b.date; }); // soonest first (Mockup A)
     if(metaEl) metaEl.textContent = ENG.contractLabel(ct) + ' · ' + rows.length + ' deadline' + (rows.length===1?'':'s');
@@ -4957,10 +4966,6 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       if((it.key === 'closing' || it.key === 'walk_through') && typeof termsAttested === 'function' && termsAttested(file)) return true;
       const k = _dayKeyByRow[it.key]; return !!(k && _dayOv[k] != null && _dayOv[k] !== '');
     };
-    // Lender/operational dates have no fixed date in the contract to confirm
-    // against (the lender schedules the appraisal), so they're never in the
-    // "confirm from contract" stepper — they're just tracked in the ledger.
-    const _noConfirm = { appraisal:1 };
     const isConfirmed = function(it){ return !!_noConfirm[it.key] || !!it.override || _fromTerms(it) || lgConf[it.key] === it.date.toISOString().slice(0,10); };
     const unconfList = rows.filter(function(it){ return !isConfirmed(it); });
     const stepIt = unconfList.length ? unconfList[0] : null;
@@ -5071,9 +5076,13 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
           receivedCell = '<button type="button" class="dl-recv-dash" data-dl-edit-recv="' + esc(it.key) + '">—</button>';
         }
         const citeRow = (showCites && it.citation) ? '<tr class="dl-lextra"><td colspan="4">' + esc(it.citation) + '</td></tr>' : '';
+        // Appraisal etc. · Due is the lender-scheduled date the TC enters.
+        const dueCell = it.scheduled
+          ? '<input type="date" class="dl-due-input" data-due-date="' + esc(it.key) + '" value="' + it.date.toISOString().slice(0,10) + '" title="Lender-scheduled date">'
+          : esc(fmtDl(it.date));
         return '<tr class="dl-lrow' + (done ? ' done' : '') + ((!done && !confirmedRow) ? ' dl-queued' : '') + '">' +
             '<td class="dl-lname"><span>' + esc(it.name) + '</span></td>' +
-            '<td class="dl-ldue">' + esc(fmtDl(it.date)) + '</td>' +
+            '<td class="dl-ldue">' + dueCell + '</td>' +
             '<td class="dl-ldone">' + receivedCell + '</td>' +
             '<td class="dl-lresult ' + resCls + '">' + esc(resText) + '</td>' +
           '</tr>' + citeRow;
