@@ -1673,8 +1673,6 @@ Title: {{title_closer_name}} · {{title_phone}} · {{title_email}}
 Reply confirmed and this goes to title, lender, and the other side. Anything needs fixing, now is the time.`,
           ],
         },
-      ],
-      under_contract: [
         {
           id:'wtc_opening_all_parties',
           task:'wtc_opening_email',
@@ -2001,6 +1999,8 @@ Lender: {{lender_name}} · {{lender_company}} · {{lender_phone}} · {{lender_em
             ],
           },
         },
+      ],
+      under_contract: [
         {
           id:'uc_hoa_docs_request',
           task:'wtc_hoa_request',
@@ -10141,16 +10141,8 @@ If you want to pause, I will archive your file with the option to pick back up a
       // live in one shared gate so drag + Move button can never disagree.
       const _gateMsg = hardStageGate(file, newStage);
       if(_gateMsg){ alert(_gateMsg); return; }
-      // Stage-2 gate · the agent must confirm dates + contacts before the file
-      // goes live. Confirming with the agent is what opens the transaction; the
-      // opening comms (escrow, opening email) happen once it's Under Contract.
-      try {
-        const curStage = deriveStage(file);
-        const doneTasks = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
-        if(curStage === 'waiting_for_tc' && newStage !== 'waiting_for_tc' && !doneTasks['wtc_agent_confirm']){
-          if(!confirm('You have not confirmed dates and contacts with the agent yet. Are you sure you want to move this file?')) return;
-        }
-      } catch(_){}
+      // Opening-sequence gate now lives in hardStageGate (Item 15) — the
+      // wtc_agent_confirm soft prompt was replaced by the opening-email hard gate.
       const prevStage = file.transaction_stage;
       file.transaction_stage = newStage;
       renderKanban();
@@ -10263,12 +10255,7 @@ If you want to pause, I will archive your file with the option to pick back up a
     const newStage = mb.getAttribute('data-move-next-stage');
     const _gateMsg2 = hardStageGate(file, newStage);
     if(_gateMsg2){ alert(_gateMsg2); return; }
-    try {
-      const doneTasks = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
-      if(deriveStage(file) === 'waiting_for_tc' && !doneTasks['wtc_agent_confirm']){
-        if(!confirm('You have not confirmed dates and contacts with the agent yet. Move anyway?')) return;
-      }
-    } catch(_){}
+    // Opening-sequence gate now enforced by hardStageGate (Item 15).
     if(!confirm('Move this file to ' + (STAGE_LABELS[newStage] || newStage) + '?')) return;
     file.transaction_stage = newStage;
     try { renderKanban(); } catch(_){}
@@ -10833,6 +10820,11 @@ If you want to pause, I will archive your file with the option to pick back up a
       const inc = tasksFor('new').filter(t => (!t.showIf || t.showIf(file)) && t.systemCheck !== 'sa' && t.systemCheck !== 'payment' && !dt[t.id]);
       if(inc.length) return 'Complete all New stage tasks before moving this file.';
     }
+    // Opening-email gate (Item 15) — the opening email to all parties must be
+    // sent (its task checked) before the file can go live to Under Contract.
+    if(cur === 'waiting_for_tc' && newStage === 'under_contract' && !dt['wtc_opening_email']){
+      return 'Send the opening email to all parties before moving this file to Under Contract.';
+    }
     // Loan-approval gate (Item 16) — confirmed before Clear to Close (cash exempt)
     if(newStage === 'ctc' && cur !== 'ctc' && !isCashFile(file) && !dt['uc_loan_approval_acknowledged']){
       return 'Loan approval must be confirmed before moving to Clear to Close.';
@@ -10870,8 +10862,6 @@ If you want to pause, I will archive your file with the option to pick back up a
           sub:'You are about to represent this transaction to all parties. Know the contract before you make contact.' },
         { id:'wtc_agent_confirm',   label:'Confirm dates + contacts with the agent before opening',
           sub:'Send the agent the dates, financials, and contacts to verify — fix anything off before it goes out to all parties. Once the agent confirms, this file moves to Under Contract and you open it up.' },
-      ],
-      under_contract: [
         { id:'wtc_escrow_instructions', label:'Open escrow with title company — send escrow opening instructions',
           sub:'Template in &ldquo;What to send next&rdquo; — auto-filled with buyer, seller, EMD amount and due date.' },
         { id:'wtc_opening_email',   label:'Send the opening email — agents, title, lender',
@@ -10883,6 +10873,8 @@ If you want to pause, I will archive your file with the option to pick back up a
         { id:'wtc_buyer_title_intro', label:'Introduce the buyer to title',
           sub:'Standalone to the buyer. Plants the early wire-fraud warning seed.',
           showIf:(f)=>String(f.client_type||'').toLowerCase()==='buyer'||String(f.client_type||'').toLowerCase()==='both' },
+      ],
+      under_contract: [
         { id:'wtc_survey_title_request', label:'Request existing survey + title policy from the listing agent',
           sub:'Ask the listing agent for any existing survey and the seller&rsquo;s owner&rsquo;s title policy. Survey is due within 5 days of Effective Date per FAR/BAR; the prior owner&rsquo;s policy can qualify the buyer for the reissue rate.',
           softComplete:{ flag:'na', label:'Mark as not applicable', chip:'Not applicable' },
