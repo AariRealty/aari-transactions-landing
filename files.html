@@ -1149,7 +1149,24 @@
   //   e.bodyFn    · generated copy (back-compat · the old confirm-dates engine)
   const _emailVer = {}; // key → { current: idx, remaining: [idxs not yet shown] }
   function _verKey(e, file){ return ((file && file.id) || '0') + ':' + ((e && e.id) || ''); }
-  function emailVersionList(e){ return (e && Array.isArray(e.versions) && e.versions.length) ? e.versions : null; }
+  // versions[] OR a DRY compose shape { openings:[…], body:'…', closings:[…],
+  // count } → built into `count` full versions (default 10), body written once.
+  // Version i = openings[i % n] + body + closings[i % m]. Result memoized on e.
+  function emailVersionList(e){
+    if(e && Array.isArray(e.versions) && e.versions.length) return e.versions;
+    if(e && e.compose && !e._composed){
+      const c = e.compose, n = (c.openings || []).length, m = (c.closings || []).length;
+      const count = c.count || Math.max(n, m, 1);
+      const out = [];
+      for(let i = 0; i < count; i++){
+        const op = n ? (c.openings[i % n] + '\n\n') : '';
+        const cl = m ? ('\n\n' + c.closings[i % m]) : '';
+        out.push(op + (c.body || '') + cl);
+      }
+      e._composed = out;
+    }
+    return (e && e._composed && e._composed.length) ? e._composed : null;
+  }
   function _pickRandom(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
   function emailVersionIndex(e, file){
     const list = emailVersionList(e); if(!list) return 0;
@@ -1578,13 +1595,17 @@ Please feel free to reach out to me directly at any time. I look forward to work
           label:'Escrow opening · instructions to title',
           to:'{{title_closer_name}} <{{title_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'New escrow! {{street}}',
-          body:
-`Hi {{title_closer_first_name}},
-
-We're opening escrow on {{street}}. The executed contract is attached, and here are the key dates and details so we're aligned from day one.
-
-Key dates
+          subject:'New escrow · {{street}}',
+          compose:{
+            openings:[
+`Excited to be coordinating {{street}} and getting everyone aligned from day one.`,
+`{{street}} is officially open. Here is everything you need so we are all moving in the same direction.`,
+`Welcome to the team on {{street}}. Let's get this one to the closing table.`,
+`Thrilled to be coordinating this one. Everything you need for {{street}} is below.`,
+`{{street}} is in motion. Here are the key details so everyone is on the same page from day one.`,
+            ],
+            body:
+`Key dates
 Effective Date: {{effective_date}}
 Binder due: {{dl_emd_initial}}
 Loan application deadline: {{dl_loan_app}}
@@ -1598,7 +1619,8 @@ Financing: {{financing_type}}
 
 Contacts
 Buyer: {{buyer_name}} · {{buyer_email}} · {{buyer_phone}}
-Seller: {{seller_name}}
+
+Seller: {{seller_name}} · {{seller_email}} · {{seller_phone}}
 
 Lender: {{lender_name}} · {{lender_company}} · {{lender_phone}} · {{lender_email}}
 
@@ -1606,11 +1628,20 @@ Lender: {{lender_name}} · {{lender_company}} · {{lender_phone}} · {{lender_em
 
 {{co_agent_label}}: {{co_agent_name}} · {{co_agent_company}} · {{co_agent_phone}} · {{co_agent_email}}
 
-{{other_agent_label}}: {{listing_agent_name}} · {{listing_agent_phone}} · {{listing_agent_email}}
-
-Please reach out to the buyer directly to send over the wiring instructions, and reply with written confirmation once the earnest money deposit is received.
-
-Looking forward to getting this one to your closing table.`,
+{{other_agent_label}}: {{listing_agent_name}} · {{listing_agent_phone}} · {{listing_agent_email}}`,
+            closings:[
+`Reply with written confirmation once the deposit lands. Looking forward to a smooth closing.`,
+`Send written confirmation of the deposit to this thread. Let's get this one to the closing table.`,
+`Reply here once the earnest money is in. Looking forward to working with you on this one.`,
+`Written confirmation of the deposit to this thread. Looking forward to a great closing.`,
+`Reply with confirmation once the deposit is received. Let's close this one strong.`,
+`Send written confirmation once the deposit lands. Can't wait to see this one to the closing table.`,
+`Reply here with written confirmation of the earnest money. Looking forward to getting this one closed.`,
+`Written confirmation of the deposit once it is in. Looking forward to a smooth one.`,
+`Reply with deposit confirmation to this thread. Let's get this one done right.`,
+`Send written confirmation once the earnest money lands. Looking forward to closing this one together.`,
+            ],
+          },
         },
         {
           id:'uc_hoa_docs_request',
