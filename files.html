@@ -2869,24 +2869,6 @@ If I am making this transaction easier for you I would love a Google review when
       ],
       inspection: [
         {
-          id:'insp_reminder_buyer_agent',
-          task:'insp_reminder_sent',
-          thread:1,
-          showIf:(f)=>!inspectionWaived(f),
-          label:'Inspection reminder · buyer\'s agent (24h before)',
-          to:'{{agent_name}} <{{agent_email}}>',
-          cc:'',
-          subject:'Inspection reminder · {{street}}',
-          body:
-`{{time_of_day_greeting}} {{agent_first_name}},
-
-A reminder that the inspection for {{street}} is scheduled for {{inspection_date}} at {{inspection_time}} with {{inspector_name}}.
-
-The inspection period ends {{dl_inspection_end}}.
-
-Please make sure your buyer has everything they need before then.`,
-        },
-        {
           id:'insp_proceed_confirmed',
           task:'insp_proceed_confirmed',
           thread:4,
@@ -10975,21 +10957,29 @@ If you want to pause, I will archive your file with the option to pick back up a
           sub:'Template in &ldquo;What to send next&rdquo;.' },
       ],
       inspection: [
-        { id:'insp_scheduled',      label:'Confirm inspection is scheduled — inspector name, date, time',
-          sub:'Save them in Closing Logistics below — they auto-fill the reminder email.' },
-        { id:'insp_reminder_sent',  label:'Send inspection reminder to buyer\'s agent — 24 hours before inspection',
-          sub:'Template in &ldquo;What to send next&rdquo;.' },
+        { id:'insp_scheduled',      label:'Confirm inspection is scheduled — inspector name, company, phone, date, time',
+          checkGate:(f)=>{ const lg = f.logistics || {}; return !!(lg.inspection_date && lg.inspection_time && lg.inspector_name && lg.inspector_company && lg.inspector_phone); },
+          checkGateNote:'Enter inspector name, company, phone, date, and time first.',
+          sub:'Save them in Closing Logistics below — they auto-fill the scheduling email.' },
         { id:'insp_deadline_watch', label:'Inspection period deadline — confirm everyone knows the date', dl:'inspection_end',
           sub:'Day 15 from Effective Date unless the contract says otherwise — tap the date in Stage 1&rsquo;s table to correct.' },
+        { id:'insp_review_report',  label:'Review every page of the inspection report',
+          sub:'Read the full report before asking the agent for a decision. Know what is in it.' },
         { id:'insp_decision_followup', label:'Follow up with buyer\'s agent — proceeding or canceling?', dl:'inspection_end',
-          sub:'Template in &ldquo;What to send next&rdquo;.' },
+          sub:'Template in &ldquo;What to send next&rdquo;. Log the buyer decision in the dropdown below.' },
         { id:'insp_proceed_confirmed', label:'Confirm buyer proceeding · notify all parties',
-          sub:'Master-thread announcement once the buyer proceeds. Mutually exclusive with canceling.' },
+          showIf:(f)=>((f.logistics||{}).inspection_decision)==='proceed',
+          sub:'Master-thread announcement once the buyer proceeds.' },
+        { id:'insp_proceed_notice', label:'If proceeding — confirm written notice to seller before deadline',
+          showIf:(f)=>((f.logistics||{}).inspection_decision)==='proceed' },
         { id:'insp_cancel_confirmed', label:'Confirm buyer canceling · notify all parties',
-          sub:'Upload the executed cancellation and release first; the email attaches it. Mutually exclusive with proceeding.' },
-        { id:'insp_proceed_notice', label:'If proceeding — confirm written notice to seller before deadline' },
-        { id:'insp_cancel_notice',  label:'If canceling — confirm written notice to seller before deadline' },
-        { id:'insp_deposit_return', label:'If canceling — initiate deposit return process with title company' },
+          showIf:(f)=>((f.logistics||{}).inspection_decision)==='cancel',
+          emailGate:{ requiresLogistics:'cancellation_release_uploaded', note:'Upload the executed cancellation and release before sending.' },
+          sub:'Upload the executed cancellation and release below; the email attaches it.' },
+        { id:'insp_cancel_notice',  label:'If canceling — confirm written notice to seller before deadline',
+          showIf:(f)=>((f.logistics||{}).inspection_decision)==='cancel' },
+        { id:'insp_deposit_return', label:'If canceling — initiate deposit return process with title company',
+          showIf:(f)=>((f.logistics||{}).inspection_decision)==='cancel' },
         { id:'insp_permits',        label:'Follow up on any open permit issues identified during inspection' },
         { id:'insp_lender_update',  label:'Follow up with lender — update on loan status',
           sub:'Template in &ldquo;What to send next&rdquo;.' },
@@ -11164,6 +11154,13 @@ If you want to pause, I will archive your file with the option to pick back up a
       { key:'inspector_company', label:'Inspector company',   type:'text', ph:'ABC Inspections' },
       { key:'inspector_phone',   label:'Inspector phone',     type:'text', ph:'(239) 555-0100' },
     ],
+    insp_decision_followup: [
+      { key:'inspection_decision', label:'Buyer decision', type:'select',
+        options:[['','— not logged —'],['proceed','Proceeding as is'],['cancel','Canceling']] },
+    ],
+    insp_cancel_confirmed: [
+      { key:'cancellation_release', label:'Executed cancellation + release', type:'file' },
+    ],
     ctc_closing_confirmed: [
       { key:'closing_time',      label:'Closing time',        type:'text', ph:'2:00 PM' },
       { key:'closing_location',  label:'Closing location',    type:'text', ph:'ABC Title · Fort Myers, FL' },
@@ -11186,11 +11183,20 @@ If you want to pause, I will archive your file with the option to pick back up a
     if(!fields) return '';
     if(taskId === 'uc_hoa_docs' && !hoaApplies(file)) return '';
     const lg = file.logistics || {};
+    const inStyle = 'border:0.5px solid #dcdcdc;border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit;background:#fff';
     return '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 6px 28px">' + fields.map(function(f){
       const v = (lg[f.key] != null) ? lg[f.key] : '';
+      let control;
+      if(f.type === 'select'){
+        control = '<select data-cklg-key="' + f.key + '" style="' + inStyle + '">' + (f.options || []).map(function(o){ return '<option value="' + esc(o[0]) + '"' + (String(v) === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>';
+      } else if(f.type === 'file'){
+        const up = !!lg[f.key + '_uploaded'];
+        control = '<input type="file" data-cklg-file="' + f.key + '" accept=".pdf,application/pdf,image/*" style="' + inStyle + '">' + (up ? '<span style="font-size:10px;color:#2f6b48;font-weight:600;margin-top:2px">&#10003; ' + esc(lg[f.key] || 'Uploaded') + '</span>' : '');
+      } else {
+        control = '<input type="' + f.type + '" data-cklg-key="' + f.key + '" placeholder="' + esc(f.ph || '') + '" value="' + esc(v) + '" style="' + inStyle + '">';
+      }
       return '<div style="display:flex;flex-direction:column;gap:3px">' +
-        '<label style="font-size:10px;color:#8a877f">' + esc(f.label) + '</label>' +
-        '<input type="' + f.type + '" data-cklg-key="' + f.key + '" placeholder="' + esc(f.ph || '') + '" value="' + esc(v) + '" style="border:0.5px solid #dcdcdc;border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit;background:#fff">' +
+        '<label style="font-size:10px;color:#8a877f">' + esc(f.label) + '</label>' + control +
       '</div>';
     }).join('') + '</div>';
   }
@@ -11207,7 +11213,29 @@ If you want to pause, I will archive your file with the option to pick back up a
   let _ckLgWired = false;
   function wireLogisticsDelegation(){
     if(_ckLgWired) return; _ckLgWired = true;
-    document.addEventListener('change', function(e){
+    document.addEventListener('change', async function(e){
+      // File-upload logistics field (e.g. executed cancellation + release).
+      // Uploads to transaction-files and stamps logistics[key+'_uploaded']=true,
+      // which an emailGate (requiresLogistics) reads to unlock the send button.
+      const fileEl = e.target.closest && e.target.closest('[data-cklg-file]');
+      if(fileEl && _drawerFile){
+        const key = fileEl.getAttribute('data-cklg-file');
+        const fl = fileEl.files && fileEl.files[0];
+        if(!fl) return;
+        try {
+          const safe = fl.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const path = _drawerFile.id + '/' + key + '-' + Date.now() + '-' + safe;
+          const up = await _client.storage.from('transaction-files').upload(path, fl, { upsert:false, contentType: fl.type || 'application/octet-stream' });
+          if(up.error) throw up.error;
+          const lg = Object.assign({}, _drawerFile.logistics || {});
+          lg[key] = fl.name; lg[key + '_uploaded'] = true; lg[key + '_path'] = path;
+          _drawerFile.logistics = lg;
+          if(_currentFile && _currentFile.id === _drawerFile.id) _currentFile.logistics = lg;
+          await _client.from('files').update({ logistics: lg }).eq('id', _drawerFile.id);
+          try { renderStageChecklist(_currentFile || _drawerFile); } catch(_){}
+        } catch(err){ console.warn('[files] doc upload failed', err); alert('Upload failed — check your connection and try again.'); }
+        return;
+      }
       const el = e.target.closest && e.target.closest('[data-cklg-key]');
       if(!el || !_drawerFile) return;
       saveLogisticsField(_drawerFile, el.getAttribute('data-cklg-key'), (el.value || '').trim());
@@ -11457,7 +11485,9 @@ If you want to pause, I will archive your file with the option to pick back up a
       const sends = _sendsByFile[(_drawerFile || {}).id] || {};
       // Email send-gate (Section 7 · Fix 6) — a task may require another task done
       // before its email can be sent. Until then the button is disabled with a note.
-      const _emGate = t.emailGate && !(done[t.emailGate.requires] || ((file.logistics || {}).contacts_confirmed_at));
+      const _emGate = t.emailGate && (t.emailGate.requiresLogistics
+        ? !((file.logistics || {})[t.emailGate.requiresLogistics])
+        : !(done[t.emailGate.requires] || ((file.logistics || {}).contacts_confirmed_at)));
       emailHtml = '<div class="ck-emails">' + ems.map(e => {
         const sent = sends[e.id];
         if(_emGate){
@@ -11485,10 +11515,14 @@ If you want to pause, I will archive your file with the option to pick back up a
       }
     }
 
+    // Check-gate (Section 9 · Fix 3) — the checkbox stays disabled until the
+    // task's checkGate predicate passes (e.g. all inspector fields entered).
+    const _checkBlocked = !rec && t.checkGate && !t.checkGate(file);
     return '<div class="ck-task-wrap">' +
       '<label class="ck-task' + (rec ? ' ck-done' : '') + '">' +
-        '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + (file.status === 'archived' ? ' disabled' : '') + '>' +
+        '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + ((file.status === 'archived' || _checkBlocked) ? ' disabled' : '') + '>' +
         '<span class="ck-body"><span class="ck-label">' + esc(t.label) + '</span>' +
+        (_checkBlocked ? '<span class="ck-sub" style="color:#a08a5a">' + esc(t.checkGateNote || 'Complete the required fields first.') + '</span>' : '') +
         (_soft ? '' : ((function(){ var s = (t.sub || '').replace(/Template in &ldquo;What to send next&rdquo;\.?\s*/g, '').trim(); return s ? '<span class="ck-sub">' + s + '</span>' : ''; })())) +
         scopeChip +
         (rec && rec.at ? '<span class="ck-stamp">' + (_soft ? esc(t.softComplete.chip) + ' ' : 'Done ') + new Date(rec.at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + '</span>' : '') +
