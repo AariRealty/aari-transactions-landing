@@ -565,6 +565,8 @@
   .dl-lname button{border:0;background:none;font-size:12.5px;font-weight:500;color:#0f0f0f;cursor:pointer;font-family:inherit;padding:0;text-align:left}
   .dl-ldue{color:#5f5e5a}
   .dl-due-input{border:0.5px solid #d9d4ca;border-radius:6px;font-size:11.5px;padding:3px 6px;font-family:inherit;color:#0f0f0f;background:#fff}
+  .dl-due-link{border:0;background:none;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit;padding:0}
+  .dl-lender-tag{font-size:9px;color:#8a6a1f;background:#faeeda;border-radius:8px;padding:1px 7px;white-space:nowrap;font-weight:600}
   .dl-recv-date{border:0.5px solid #d9d4ca;border-radius:6px;font-size:11.5px;padding:4px 7px;font-family:inherit;color:#0f0f0f;background:#fff;width:100%;box-sizing:border-box;margin:0 0 4px}
   .dl-recv-note{border:0;border-bottom:0.5px dashed #d9d4ca;font-size:10.5px;padding:2px 1px;font-family:inherit;color:#5f5e5a;background:none;width:100%;box-sizing:border-box;margin:0 0 4px}
   .dl-recv-note:focus{outline:none;border-bottom-color:#0f0f0f}
@@ -4878,6 +4880,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   let _dlState = { contract:'', effective:'', closing:'' };
   let _dlShowCites = false; // Mockup A · paragraph citations off by default
   let _dlEditKey = null; // which deadline's received editor is open (one at a time)
+  let _dlDueEditKey = null; // which lender-scheduled (appraisal) due editor is open
 
   async function loadDeadlineStatusForFile(fileId){
     if(_deadlinesByFile[fileId]) return _deadlinesByFile[fileId];
@@ -4938,7 +4941,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       const _schedDate = (_noConfirm[it.key] && _sched) ? new Date(_sched + 'T00:00:00') : null;
       return { key: it.key, name: it.name, category: it.category, citation: it.citation,
                date: _schedDate || (override ? override.date : it.date), computedDate: it.date,
-               override: override, scheduled: !!_noConfirm[it.key] };
+               override: override, scheduled: !!_noConfirm[it.key], scheduledSet: !!_schedDate };
     });
     rows.sort(function(a,b){ return a.date - b.date; }); // soonest first (Mockup A)
     if(metaEl) metaEl.textContent = ENG.contractLabel(ct) + ' · ' + rows.length + ' deadline' + (rows.length===1?'':'s');
@@ -5049,7 +5052,8 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         const intakeTag = !done && pastAtIntake(it);
         // Result column · the real outcome vs the contract due date.
         let resCls, resText;
-        if(done){
+        if(it.scheduled && !it.scheduledSet){ resCls = 'up'; resText = 'no date'; }
+        else if(done){
           const c = new Date(rec.completed_at); c.setHours(0,0,0,0);
           const dd2 = new Date(it.date.getTime()); dd2.setHours(0,0,0,0);
           const lateD = Math.round((c - dd2) / 86400000);
@@ -5077,12 +5081,21 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
           receivedCell = '<button type="button" class="dl-recv-dash" data-dl-edit-recv="' + esc(it.key) + '">—</button>';
         }
         const citeRow = (showCites && it.citation) ? '<tr class="dl-lextra"><td colspan="4">' + esc(it.citation) + '</td></tr>' : '';
-        // Appraisal etc. · Due is the lender-scheduled date the TC enters.
-        const dueCell = it.scheduled
-          ? '<input type="date" class="dl-due-input" data-due-date="' + esc(it.key) + '" value="' + it.date.toISOString().slice(0,10) + '" title="Lender-scheduled date">'
-          : esc(fmtDl(it.date));
+        // Appraisal etc. · Due is the lender-scheduled date. No invented date —
+        // "+ set date" until the lender confirms, then an editable date.
+        let dueCell;
+        if(it.scheduled){
+          if(_dlDueEditKey === it.key){
+            dueCell = '<input type="date" class="dl-due-input" data-due-date="' + esc(it.key) + '" value="' + (it.scheduledSet ? it.date.toISOString().slice(0,10) : '') + '">';
+          } else if(it.scheduledSet){
+            dueCell = '<button type="button" class="dl-recv-datebtn" data-due-open="' + esc(it.key) + '">' + esc(fmtDl(it.date)) + '</button>';
+          } else {
+            dueCell = '<button type="button" class="dl-due-link" data-due-open="' + esc(it.key) + '">+ set date</button>';
+          }
+        } else { dueCell = esc(fmtDl(it.date)); }
+        const lenderTag = (it.scheduled && !it.scheduledSet) ? ' <span class="dl-lender-tag">lender sets</span>' : '';
         return '<tr class="dl-lrow' + (done ? ' done' : '') + ((!done && !confirmedRow) ? ' dl-queued' : '') + '">' +
-            '<td class="dl-lname"><span>' + esc(it.name) + '</span></td>' +
+            '<td class="dl-lname"><span>' + esc(it.name) + '</span>' + lenderTag + '</td>' +
             '<td class="dl-ldue">' + dueCell + '</td>' +
             '<td class="dl-ldone">' + receivedCell + '</td>' +
             '<td class="dl-lresult ' + resCls + '">' + esc(resText) + '</td>' +
@@ -5135,12 +5148,16 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       const form = document.getElementById('dl-edit-form-' + k);
       if(form) form.style.display = 'none';
     }));
-    // Lender-scheduled due date (appraisal) · saves to logistics.dl_scheduled.
+    // Lender-scheduled due date (appraisal) · "+ set date" opens the picker.
+    hostEl.querySelectorAll('[data-due-open]').forEach(el => el.addEventListener('click', () => {
+      _dlDueEditKey = el.getAttribute('data-due-open'); renderDeadlinesForFile(file);
+    }));
     hostEl.querySelectorAll('[data-due-date]').forEach(el => el.addEventListener('change', async () => {
       const k = el.getAttribute('data-due-date');
       const lg = file.logistics || (file.logistics = {});
       const m = lg.dl_scheduled || (lg.dl_scheduled = {});
       if(el.value) m[k] = el.value; else delete m[k];
+      _dlDueEditKey = null;
       try { const r = await _client.from('files').update({ logistics: lg }).eq('id', file.id); if(r && r.error){ alert('Not saved — the database rejected the change (RLS).'); } } catch(_){}
       renderDeadlinesForFile(file);
     }));
@@ -7131,7 +7148,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
   function openPlaybook(file){
     _currentFile = file;
     _openPopKey = null;
-    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null;
+    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null;
     document.body.classList.add('tpb-open');
     renderPlaybook(file);
     renderDeleteZone(file);
