@@ -1154,7 +1154,18 @@
   // versions[] OR a DRY compose shape { openings:[…], body:'…', closings:[…],
   // count } → built into `count` full versions (default 10), body written once.
   // Version i = openings[i % n] + body + closings[i % m]. Result memoized on e.
+  // Global email-by-id index (lazy) so an email can reuse another's versions via
+  // `versionsFrom:'<id>'` without duplicating the bodies.
+  let _emailIdx = null;
+  function _emailById(id){
+    if(!_emailIdx){
+      _emailIdx = {};
+      try { Object.keys(EMAIL_PLAYBOOK).forEach(function(ft){ Object.keys(EMAIL_PLAYBOOK[ft]).forEach(function(stg){ (EMAIL_PLAYBOOK[ft][stg] || []).forEach(function(em){ if(em && em.id) _emailIdx[em.id] = em; }); }); }); } catch(_){}
+    }
+    return _emailIdx[id];
+  }
   function emailVersionList(e){
+    if(e && e.versionsFrom){ const src = _emailById(e.versionsFrom); if(src && src !== e) return emailVersionList(src); }
     if(e && Array.isArray(e.versions) && e.versions.length) return e.versions;
     if(e && e.compose && !e._composed){
       const c = e.compose, n = (c.openings || []).length, m = (c.closings || []).length;
@@ -2166,6 +2177,39 @@ Does the seller have either available?
         },
       ],
       under_contract: [
+        {
+          id:'uc_hoa_docs_followup',
+          task:'uc_hoa_followup',
+          thread:4,
+          label:'HOA document status · management',
+          showIf:(f)=>hoaApplies(f),
+          to:'[HOA management contact]',
+          cc:'{{agent_name}} <{{agent_email}}>',
+          subject:'HOA document status · {{street}}',
+          versionsFrom:'uc_hoa_docs_request',
+        },
+        {
+          id:'uc_survey_title_policy',
+          task:'uc_survey_received',
+          thread:4,
+          label:'Survey + title policy received · listing agent',
+          showIf:(f)=>f.contract_type !== 'builder' && !((f.stage_tasks||{}).wtc_survey_title_request),
+          to:'{{listing_agent_name}} <{{listing_agent_email}}>',
+          cc:'{{agent_name}} <{{agent_email}}>',
+          subject:'Survey and title policy · {{street}}',
+          versionsFrom:'wtc_survey_title_request_email',
+        },
+        {
+          id:'uc_missing_information',
+          task:'uc_missing_info',
+          thread:1,
+          label:'Flag missing information · agent',
+          showIf:(f)=>{ try { const mf = (typeof missingFieldsFor === 'function') ? missingFieldsFor({}, f) : []; return !!(mf && mf.length); } catch(_){ return false; } },
+          to:'{{agent_name}} <{{agent_email}}>',
+          cc:'',
+          subject:'A few items still needed · {{street}}',
+          versionsFrom:'sale_new_agent_setup',
+        },
         {
           id:'uc_emd_wiring_instructions',
           task:'uc_emd_wiring',
@@ -10896,13 +10940,11 @@ If you want to pause, I will archive your file with the option to pick back up a
       under_contract: [
         { id:'uc_emd_wiring',        label:'Confirm EMD wiring instructions sent to buyer',
           sub:'Ask title whether the buyer has the wiring instructions. Send this before chasing the deposit.' },
-        { id:'uc_emd_followup',      label:'Follow up with title — confirm initial EMD received', dl:'emd_initial',
-          sub:'Template ready in &ldquo;What to send next&rdquo; below.' },
-        { id:'uc_title_commitment_reminder', label:'Remind title of the title-commitment due date', dl:'title_commitment',
-          softComplete:{ flag:'received', label:'Mark as received', chip:'Received' },
-          sub:'Template in &ldquo;What to send next&rdquo; — based on the contract deadline.' },
         { id:'uc_emd_confirmed',     label:'EMD status set to "Confirmed in Writing"',
           sub:'Auto-checks when you set the widget status above.' },
+        { id:'uc_emd_followup',      label:'Follow up with title — confirm initial EMD received', dl:'emd_initial',
+          emailGate:{ requires:'uc_emd_wiring', note:'Send wiring instructions first.' },
+          sub:'Template ready in &ldquo;What to send next&rdquo; below.' },
         { id:'uc_addl_followup',     label:'Confirm additional deposit received', dl:'emd_additional',
           sub:'Template in &ldquo;What to send next&rdquo;.',
           showIf:(f)=>!!(emdData(f).additional_amount) },
@@ -10910,12 +10952,25 @@ If you want to pause, I will archive your file with the option to pick back up a
           sub:'Template in &ldquo;What to send next&rdquo;. Skip for cash deals.' },
         { id:'uc_lender_followup',   label:'Follow up with lender — loan in process + appraisal will be ordered',
           sub:'Template in &ldquo;What to send next&rdquo;.' },
+        { id:'uc_title_commitment_reminder', label:'Remind title of the title-commitment due date', dl:'title_commitment',
+          softComplete:{ flag:'received', label:'Mark as received', chip:'Received' },
+          sub:'Template in &ldquo;What to send next&rdquo; — based on the contract deadline.' },
+        { id:'uc_tenant_lease',      label:'Confirm seller provided lease info — if tenant occupied', dl:'loan_app',
+          sub:'Due within 5 days of Effective Date when the property is tenant occupied.' },
+        { id:'uc_hoa_followup',      label:'Check HOA document status',
+          showIf:(f)=>hoaApplies(f),
+          sub:'Follow up with the HOA management company on the status of the requested documents.' },
+        { id:'uc_survey_received',   label:'Confirm survey and title policy received from seller',
+          showIf:(f)=>f.contract_type !== 'builder' && !((f.stage_tasks||{}).wtc_survey_title_request),
+          sub:'Confirm the listing agent delivered the existing survey and the seller&rsquo;s owner&rsquo;s title policy.' },
+        { id:'uc_missing_info',      label:'Flag any missing information to agent',
+          showIf:(f)=>{ try { const mf = (typeof missingFieldsFor === 'function') ? missingFieldsFor({}, f) : []; return !!(mf && mf.length); } catch(_){ return false; } },
+          sub:'If the system flags missing items on this file, send the agent a request for what is still needed.' },
         { id:'uc_loan_approval_acknowledged', label:'Confirm loan approval received — full or conditional',
           sub:'Full approval moves the file forward. Conditional → log the outstanding conditions and flag the agent; the file cannot reach Clear to Close until every condition clears.', showIf:(f)=>!isCashFile(f) },
         { id:'uc_loan_approval_confirmed', label:'Announce loan approval to all parties',
+          emailGate:{ requires:'uc_loan_approval_acknowledged', note:'Confirm loan approval first.' },
           sub:'Master-thread good-news email. Sends after loan approval is confirmed.', showIf:(f)=>!isCashFile(f) },
-        { id:'uc_tenant_lease',      label:'Confirm seller provided lease info — if tenant occupied', dl:'loan_app',
-          sub:'Due within 5 days of Effective Date when the property is tenant occupied.' },
         { id:'uc_weekly_update',     label:'Send weekly update email to agent — every Friday',
           sub:'Template in &ldquo;What to send next&rdquo;.' },
       ],
