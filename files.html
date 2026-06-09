@@ -1098,13 +1098,34 @@
   // Each thread carries ONE subject (street only, no city/state/zip) so every
   // email on the thread shares it and actually threads in the mailbox. The TC
   // sets the subject once on the first send; replies keep the same line.
+  // ===== THREAD STRUCTURE (email v2 · Step 2) =====
+  // Marlenyi's 4 permanent threads + standalone. Numeric keys kept stable so
+  // existing thread:N email refs don't break mid-rebuild; labels/recipients now
+  // match her model. Recipients are enforced per-email via to/cc — the rule
+  // below each is the contract for what to/cc MUST be when those emails are
+  // (re)built in the stage steps.
+  //   T1 Agent Direct · TC + our agent only
+  //   T2 Loan File    · TC + our agent + lender
+  //   T3 Escrow       · TC + our agent + title only — NEVER the buyer
+  //   T4 Master       · TC + both agents + both TCs + title + lender
+  //   Standalone (thread:0 / no match) · one-offs: buyer-title intro, other-agent
+  //     intro, wire-fraud warning, review requests
+  // Legacy 5 (Client) → migrate to Standalone · legacy 6 (HOA) → fold into T4
+  // Master, both during the stage rebuilds.
   const EMAIL_THREADS = {
-    1: { name:'Master Coordination', short:'Master',  color:'#2b6cb0', subject:'Under contract · {{street}}' },        // blue · title + lender + listing agent
-    2: { name:'Agent Direct',        short:'Agent',   color:'#2f855a', subject:'{{street}} · updates' },               // green · our agent
-    3: { name:'Title Direct',        short:'Title',   color:'#6b46c1', subject:'{{street}} · title + escrow' },        // purple · title
-    4: { name:'Lender Direct',       short:'Lender',  color:'#c05621', subject:'{{street}} · financing' },             // orange · lender
-    5: { name:'Client Coordination', short:'Client',  color:'#b7791f', subject:'{{street}} · your closing' },          // gold · client
-    6: { name:'HOA Direct',          short:'HOA',     color:'#2c7a7b', subject:'{{street}} · HOA + estoppel' },        // teal · HOA
+    1: { name:'Thread 4 — Master',       short:'T4 Master',  color:'#2b6cb0', subject:'{{street}}' },          // both agents + both TCs + title + lender
+    2: { name:'Thread 1 — Agent Direct', short:'T1 Agent',   color:'#2f855a', subject:'{{street}}' },          // our agent only
+    3: { name:'Thread 3 — Escrow',       short:'T3 Escrow',  color:'#6b46c1', subject:'{{street}}' },          // agent + title · NO buyer
+    4: { name:'Thread 2 — Loan File',    short:'T2 Loan',    color:'#c05621', subject:'{{street}}' },          // agent + lender
+    5: { name:'Standalone',              short:'Standalone', color:'#b7791f', subject:'{{street}}' },          // legacy client → standalone
+    6: { name:'Thread 4 — Master',       short:'T4 Master',  color:'#2b6cb0', subject:'{{street}}' },          // legacy HOA → master
+  };
+  const EMAIL_THREAD_RULES = {
+    1: 'TC + both agents + both TCs + title + lender',
+    2: 'TC + our agent only',
+    3: 'TC + our agent + title only · NEVER the buyer',
+    4: 'TC + our agent + lender',
+    5: 'Standalone · one-off, no ongoing thread',
   };
 
   // ============== EMAIL PLAYBOOK · per file_type · per stage ==============
@@ -5571,6 +5592,24 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         }
         const est = emdEffStatus(f, 'initial');
         if(est === 'overdue'){ tier = 'today'; dlTone = '#c96b6b'; dlText = (dlText ? dlText + ' \u00b7 ' : '') + 'EMD overdue'; }
+        // Inspection urgency (email v2 \u00b7 Step 3/13) \u00b7 48 hours before the
+        // inspection deadline, if the buyer's decision hasn't been logged \u2192
+        // DO FIRST. Visual flag only, no email. Buyer decision = the proceed
+        // or cancel task checked, OR a logged inspection_decision in logistics.
+        try {
+          if(stage === 'inspection' && dls.inspection_end){
+            const _lg = (f.logistics && typeof f.logistics === 'object') ? f.logistics : {};
+            const _st = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
+            const _decided = !!(_st.insp_proceed_confirmed || _st.insp_cancel_confirmed || _lg.inspection_decision);
+            const _ie = new Date(dls.inspection_end.date.getTime()); _ie.setHours(0,0,0,0);
+            const _hrsToIe = (_ie - today) / 3600000;
+            if(!_decided && _hrsToIe <= 48 && _hrsToIe >= -24){
+              tier = 'today'; dlTone = '#c96b6b';
+              dlText = 'Inspection deadline in 48 hours. Get buyer decision now.';
+              sortKey = Math.min(sortKey, -90000);
+            }
+          }
+        } catch(_){}
         // Fix 2 \u00b7 loan-approval escalation ladder \u00b7 mirrors loan-deadline-ping.
         // STAGE-AGNOSTIC (June 2026 advisor fix): the contract deadline doesn't
         // care which kanban column the card sits in. Any active financed sale
