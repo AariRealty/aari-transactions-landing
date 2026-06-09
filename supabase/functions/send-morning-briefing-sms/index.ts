@@ -134,7 +134,7 @@ Deno.serve(async (req) => {
   // Closed files 14+ days past closing with an outstanding TC service fee
   // (non-upfront service) surface as DO FIRST. Upfront services pay before
   // work, so they are excluded here.
-  const UPFRONT_SERVICES = ["listing_docs", "listing_coordinator", "mls_setup", "offer_prep", "file_organization"];
+  const TC_SERVICES = ["tc_one_side", "tc_both_sides"];
   const { data: unpaidFiles } = await admin
     .from("files")
     .select("id, property_address, client_name, service_type, closed_at, payment_confirmed, agent_id")
@@ -143,12 +143,12 @@ Deno.serve(async (req) => {
     .not("closed_at", "is", null)
     .limit(100);
   (unpaidFiles ?? []).forEach((u: any) => {
-    if (UPFRONT_SERVICES.indexOf(u.service_type) !== -1) return;
+    if (TC_SERVICES.indexOf(u.service_type) === -1) return;
     const days = Math.floor((Date.now() - new Date(u.closed_at).getTime()) / (1000 * 60 * 60 * 24));
     if (days < 14) return;
     const agentName = u.client_name ?? "Agent";
     const addr = u.property_address ?? ("File " + String(u.id).slice(0, 4).toUpperCase());
-    scored.unshift({ f: u as FileRow, score: 95, reasons: [`TC fee unpaid — ${agentName} · ${addr} · 14 days past closing`] });
+    scored.unshift({ f: u as FileRow, score: 95, reasons: [`TC fee unpaid · ${agentName} · ${addr} · 14 days past closing`] });
   });
   scored.sort((a, b) => b.score - a.score);
 

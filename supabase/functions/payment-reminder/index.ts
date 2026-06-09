@@ -26,19 +26,21 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { resend, FROM, REPLY_TO, SITE_URL } from "../_shared/resend.ts";
+import { STRIPE_LINKS } from "../_shared/stripe-links.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const BROKER_EMAIL = Deno.env.get("BROKER_NOTIFY_EMAIL") ?? "marlenyi@aaritransactions.com";
 
-// Stripe payment links per upfront service (same links the intake uses).
-const STRIPE_LINKS: Record<string, { label: string; price: string; url: string }> = {
-  lc:           { label: "Listing Coordinator",    price: "$199", url: "https://buy.stripe.com/dRm3cn77V6in5Cj9QScAo0h" },
-  listing_docs: { label: "Listing Docs",           price: "$99",  url: "https://buy.stripe.com/6oU7sD8bZbCH3ubfbccAo08" },
-  mls_setup:    { label: "MLS Setup",              price: "$149", url: "https://buy.stripe.com/fZu5kvgIvbCH7Kr7IKcAo09" },
-  op_basic:     { label: "Offer Prep · Basic",     price: "$69",  url: "https://buy.stripe.com/3cI5kv63R227ggXbZ0cAo07" },
-  op_complete:  { label: "Offer Prep · Complete",  price: "$149", url: "https://buy.stripe.com/6oUfZ99g3gX18Ov4wycAo05" },
-  file_org:     { label: "File Organization",      price: "$99",  url: "https://buy.stripe.com/6oU00b2RF6infcT8MOcAo0f" },
+// Label + price per upfront service for the reminder copy. URLs come from the
+// shared canonical STRIPE_LINKS map. Keys match the canonical service_type slugs.
+const SERVICE_META: Record<string, { label: string; price: string }> = {
+  listing_coordinator: { label: "Listing Coordinator",   price: "$199" },
+  listing_docs:        { label: "Listing Docs",          price: "$99"  },
+  mls_setup:           { label: "MLS Setup",             price: "$149" },
+  offer_prep_basic:    { label: "Offer Prep · Basic",    price: "$69"  },
+  offer_prep_complete: { label: "Offer Prep · Complete", price: "$149" },
+  file_organization:   { label: "File Organization",     price: "$99"  },
 };
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -73,8 +75,9 @@ Deno.serve(async (req) => {
 
   let sent = 0;
   for (const f of files ?? []) {
-    const svc = STRIPE_LINKS[f.service_type as string];
-    if (!svc) continue; // not an upfront service we know · skip silently
+    const meta = SERVICE_META[f.service_type as string];
+    const url = STRIPE_LINKS[f.service_type as string];
+    if (!meta || !url) continue; // not an upfront service we know · skip silently
 
     const count = Number(f.payment_reminder_count ?? 0);
     const daysPending = Math.floor((Date.now() - new Date(f.created_at).getTime()) / DAY);
@@ -88,19 +91,19 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (!agent?.email) continue;
 
-    const payUrl = `${svc.url}?client_reference_id=${encodeURIComponent(f.id)}`;
+    const payUrl = `${url}?client_reference_id=${encodeURIComponent(f.id)}`;
     const addr = f.property_address || "your file";
     const subject = rung === 1
-      ? `Payment pending · ${svc.label} for ${addr}`
+      ? `Payment pending · ${meta.label} for ${addr}`
       : rung === 2
-        ? `Still pending · ${svc.label} for ${addr}`
-        : `Final notice · ${svc.label} for ${addr}`;
+        ? `Still pending · ${meta.label} for ${addr}`
+        : `Final notice · ${meta.label} for ${addr}`;
 
     const lead = rung === 1
-      ? `Your <strong>${svc.label}</strong> file for <strong>${addr}</strong> is in my system. I cannot start work until the <strong>${svc.price}</strong> payment comes through.`
+      ? `Your <strong>${meta.label}</strong> file for <strong>${addr}</strong> is in my system. I cannot start work until the <strong>${meta.price}</strong> payment comes through.`
       : rung === 2
-        ? `It has been a week. Your <strong>${svc.label}</strong> file for <strong>${addr}</strong> is still on hold for the <strong>${svc.price}</strong> payment. Work stays paused until it clears.`
-        : `This is the final reminder on your <strong>${svc.label}</strong> file for <strong>${addr}</strong>. It has been two weeks and the <strong>${svc.price}</strong> payment has not come through. I am flagging this one for review on my end.`;
+        ? `It has been a week. Your <strong>${meta.label}</strong> file for <strong>${addr}</strong> is still on hold for the <strong>${meta.price}</strong> payment. Work stays paused until it clears.`
+        : `This is the final reminder on your <strong>${meta.label}</strong> file for <strong>${addr}</strong>. It has been two weeks and the <strong>${meta.price}</strong> payment has not come through. I am flagging this one for review on my end.`;
 
     try {
       await resend.emails.send({
@@ -113,7 +116,7 @@ Deno.serve(async (req) => {
             <p>Hi ${agent.first_name ?? "there"},</p>
             <p>${lead}</p>
             <p style="margin:24px 0">
-              <a href="${payUrl}" style="background:#2c2c2a;color:#fff;border-radius:10px;padding:12px 22px;text-decoration:none;font-weight:500">Pay ${svc.price} now &rarr;</a>
+              <a href="${payUrl}" style="background:#2c2c2a;color:#fff;border-radius:10px;padding:12px 22px;text-decoration:none;font-weight:500">Pay ${meta.price} now &rarr;</a>
             </p>
             <p style="font-size:13px;color:#9a9a9a">Already paid? No action needed. Confirmation can take a few minutes.
             Questions? Just reply to this email.</p>
@@ -128,12 +131,12 @@ Deno.serve(async (req) => {
             from: FROM,
             to: BROKER_EMAIL,
             reply_to: REPLY_TO,
-            subject: `Payment unresolved at 14 days · ${svc.label} · ${addr}`,
+            subject: `Payment unresolved at 14 days · ${meta.label} · ${addr}`,
             html: `
               <div style="font-family:Inter,Arial,sans-serif;color:#2c2c2a;max-width:520px;margin:0 auto">
                 <p>Heads up.</p>
-                <p><strong>${agent.first_name ?? "An agent"}</strong> (${agent.email}) has a <strong>${svc.label}</strong> file
-                for <strong>${addr}</strong> that has been payment pending for 14 days. The <strong>${svc.price}</strong> payment
+                <p><strong>${agent.first_name ?? "An agent"}</strong> (${agent.email}) has a <strong>${meta.label}</strong> file
+                for <strong>${addr}</strong> that has been payment pending for 14 days. The <strong>${meta.price}</strong> payment
                 has not cleared after the full D1, D7, and D14 reminder ladder.</p>
                 <p style="font-size:13px;color:#9a9a9a">Final notice has gone to the agent. This file needs a decision on your end.</p>
               </div>`,

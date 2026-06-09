@@ -1,11 +1,10 @@
 // Edge function: closed-payment-reminder (Email System v2 · Section 5)
 // ============================================================================
-// POST-CLOSING TC-fee reminder ladder for files billed at closing (NOT the
-// upfront pre-work flow — that's `payment-reminder`). Runs daily.
+// POST-CLOSING TC-fee reminder ladder for TC services billed at closing (NOT
+// the upfront pre-work flow — that's `payment-reminder`). Runs daily.
 //
 // Targets: status='closed', closed_at not null, payment_confirmed=false, and
-// service_type NOT in the upfront list (upfront services pay before work and
-// are handled by payment-reminder, so they're excluded here).
+// service_type in ('tc_one_side','tc_both_sides').
 //
 // Ladder, measured from closed_at:
 //   Day 1  · 20–28h after closing  → email the agent (Thread 1 tone)
@@ -17,21 +16,21 @@
 // landed in or after that rung's window start, so each window fires once.
 //
 // Sender: From = assigned TC's name on the verified domain, Reply-To = TC email.
-// {{payment_link}} = env TC_FEE_PAYMENT_URL, falling back to the portal page.
+// {{payment_link}} = the canonical Stripe link for the file's service_type.
 //
 // STAGED (Dec 2026): deploy via `supabase functions deploy closed-payment-reminder`
 // after running 20260625_closed_payment_reminder.sql.
 // ============================================================================
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { resend, FROM, SITE_URL } from "../_shared/resend.ts";
+import { resend, FROM } from "../_shared/resend.ts";
+import { STRIPE_LINKS } from "../_shared/stripe-links.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const PAY_URL = Deno.env.get("TC_FEE_PAYMENT_URL") ?? `${SITE_URL}/portal.html`;
 const FROM_ADDR = (FROM.match(/<([^>]+)>/) || [])[1] ?? "hello@aaritransactions.com";
 
-const UPFRONT_SERVICES = ["listing_docs", "listing_coordinator", "mls_setup", "offer_prep", "file_organization"];
+const TC_SERVICES = ["tc_one_side", "tc_both_sides"];
 const HOUR = 60 * 60 * 1000;
 
 // Eastern time-of-day greeting — mirrors getTimeOfDayGreeting in files.html
@@ -43,23 +42,23 @@ function greeting(): string {
   return "Good evening";
 }
 
-const D1_BODY = (first: string) =>
+const D1_BODY = (first: string, payLink: string) =>
 `${greeting()} ${first},
 
 Your file just closed and I wanted to touch base on the TC service fee.
 
 *Please use the link below to complete your payment at your earliest convenience.*
 
-${PAY_URL}`;
+${payLink}`;
 
-const D7_BODY = (first: string) =>
+const D7_BODY = (first: string, payLink: string) =>
 `${greeting()} ${first},
 
 Just a reminder that the TC service fee for your recent closing is still outstanding.
 
 *Please take a moment to complete your payment using the link below.*
 
-${PAY_URL}`;
+${payLink}`;
 
 function htmlWrap(text: string): string {
   return `<div style="font-family:Inter,Arial,sans-serif;color:#2c2c2a;max-width:520px;margin:0 auto;white-space:pre-line">${text.replace(/\*([^*]+)\*/g, "<strong>$1</strong>")}</div>`;
@@ -75,6 +74,7 @@ Deno.serve(async (req) => {
     .eq("status", "closed")
     .eq("payment_confirmed", false)
     .not("closed_at", "is", null)
+    .in("service_type", TC_SERVICES)
     .limit(200);
 
   if (error) {
@@ -84,8 +84,8 @@ Deno.serve(async (req) => {
 
   let sent = 0;
   for (const f of files ?? []) {
-    // Upfront services pay before work — excluded from the post-closing flow.
-    if (UPFRONT_SERVICES.indexOf(f.service_type as string) !== -1) continue;
+    const payLink = STRIPE_LINKS[f.service_type as string];
+    if (!payLink) continue; // no Stripe link for this service · skip silently
 
     const closedMs = new Date(f.closed_at).getTime();
     const hrs = (Date.now() - closedMs) / HOUR;
@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
     }
 
     const first = agent.first_name ?? "there";
-    const text = rung === 1 ? D1_BODY(first) : D7_BODY(first);
+    const text = rung === 1 ? D1_BODY(first, payLink) : D7_BODY(first, payLink);
     const subject = rung === 1
       ? `TC service fee · ${f.property_address ?? "your closing"}`
       : `Reminder · TC service fee · ${f.property_address ?? "your closing"}`;
