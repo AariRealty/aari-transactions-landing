@@ -400,6 +400,8 @@
   .tpb-ef-textarea{width:100%;min-height:160px;font-family:inherit;font-size:12px;line-height:1.5;color:#222;background:#fafaf9;border:0.5px solid rgba(15,15,15,0.12);border-radius:4px;padding:8px 10px;resize:vertical;box-sizing:border-box}
   .tpb-email-actions{display:flex;gap:8px;justify-content:flex-end}
   .tpb-email-copy-all{font-size:11.5px;color:#fff;background:#0f0f0f;border:0;padding:6px 14px;border-radius:4px;cursor:pointer;font-weight:500;letter-spacing:.2px}
+  .tpb-email-try{font-size:11.5px;color:#0f0f0f;background:#fff;border:0.5px solid rgba(15,15,15,0.3);padding:6px 12px;border-radius:4px;cursor:pointer;font-weight:500;font-family:inherit}
+  .tpb-email-try:hover{background:#f5f0e8}
   .tpb-email-copy-all:hover{background:#222}
   .tpb-email-copy-all.copied{background:#2f855a}
   .tpb-email-mark-sent{font-size:11.5px;color:#666;background:transparent;border:0.5px solid rgba(15,15,15,0.2);padding:6px 12px;border-radius:4px;cursor:pointer}
@@ -1136,8 +1138,44 @@
   // bodyFn / subjectFn · optional · receives (file) → string · generated copy
   // (used by the confirm-dates variation engine so no two files read alike).
 
-  // ===== Email content resolvers · static body/subject OR generated fn =====
-  function rawEmailBody(e, file){ return (e && e.bodyFn) ? e.bodyFn(file || {}) : ((e && e.body) || ''); }
+  // ===== ROTATING VERSIONS ENGINE (email v2 · Step 11 backbone) =====
+  // An email may carry `versions: [body, body, …]` (e.g. 10 variations). The TC
+  // sees one, and "Try another →" cycles to the next. Rules: never repeat the
+  // same version back-to-back · remember the last shown per email per file ·
+  // reshuffle once every version has been shown. State lives in memory keyed by
+  // file.id + email.id, so a reload reshuffles (fresh randomness) which is fine.
+  //   e.versions  · array of full body strings (preferred for 10-variation emails)
+  //   e.body      · single body (back-compat · treated as one version)
+  //   e.bodyFn    · generated copy (back-compat · the old confirm-dates engine)
+  const _emailVer = {}; // key → { current: idx, remaining: [idxs not yet shown] }
+  function _verKey(e, file){ return ((file && file.id) || '0') + ':' + ((e && e.id) || ''); }
+  function emailVersionList(e){ return (e && Array.isArray(e.versions) && e.versions.length) ? e.versions : null; }
+  function _pickRandom(arr){ return arr[Math.floor(Math.random() * arr.length)]; }
+  function emailVersionIndex(e, file){
+    const list = emailVersionList(e); if(!list) return 0;
+    const k = _verKey(e, file);
+    let st = _emailVer[k];
+    if(!st){ const i = Math.floor(Math.random() * list.length); st = _emailVer[k] = { current: i, remaining: list.map((_,j)=>j).filter(j=>j!==i) }; }
+    return st.current;
+  }
+  function emailNextVersion(e, file){
+    const list = emailVersionList(e); if(!list) return 0;
+    const k = _verKey(e, file);
+    let st = _emailVer[k] || (emailVersionIndex(e, file), _emailVer[k]);
+    if(!st.remaining || !st.remaining.length){
+      // Reshuffle · all shown · rebuild the pool excluding current (no repeat).
+      st.remaining = list.map((_,j)=>j).filter(j=>j!==st.current);
+    }
+    const idx = Math.floor(Math.random() * st.remaining.length);
+    st.current = st.remaining.splice(idx, 1)[0];
+    return st.current;
+  }
+  // ===== Email content resolvers · versions[] OR static body OR generated fn =====
+  function rawEmailBody(e, file){
+    const list = emailVersionList(e);
+    if(list) return list[emailVersionIndex(e, file)] || list[0] || '';
+    return (e && e.bodyFn) ? e.bodyFn(file || {}) : ((e && e.body) || '');
+  }
   // Subject resolves: explicit subjectFn → explicit subject → the THREAD's
   // shared subject (street only). Falling through to the thread means every
   // email on a thread carries the same line, so they thread in the mailbox
@@ -7292,6 +7330,7 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
       '</div>' +
       '<div class="tpb-email-actions">' +
         '<button class="tpb-email-copy-all" data-copy-all="'+eid+'">Copy email (subject + body)</button>' +
+        (emailVersionList(e) ? '<button class="tpb-email-try" data-try-another="'+eid+'">Try another &rarr;</button>' : '') +
         (sent
           ? '<button class="tpb-email-mark-sent" data-unmark="'+eid+'">Unmark sent</button>'
           : '<button class="tpb-email-mark-sent" data-mark-sent="'+eid+'">Mark sent</button>') +
@@ -7341,6 +7380,17 @@ No pressure either way. If you want to continue, reply and we'll get a fresh agr
         const e = _emailTplById[copyAll.getAttribute('data-copy-all')]; if(!e) return;
         const combined = fillEmailVars(rawEmailSubject(e, _drawerFile), _drawerFile, _drawerAgent) + '\n\n' + fillEmailVars(rawEmailBody(e, _drawerFile), _drawerFile, _drawerAgent);
         if(await _clip(combined)) _flashCopied(copyAll);
+        return;
+      }
+      // Try another → · advance to the next rotating version, refresh the body
+      // in place (no page refresh, no scroll jump).
+      const tryBtn = t.closest('[data-try-another]');
+      if(tryBtn){
+        const e = _emailTplById[tryBtn.getAttribute('data-try-another')]; if(!e) return;
+        emailNextVersion(e, _drawerFile);
+        const card = tryBtn.closest('.tpb-email');
+        const ta = card && card.querySelector('[data-copy-field="body"]');
+        if(ta) ta.value = fillEmailVars(rawEmailBody(e, _drawerFile), _drawerFile, _drawerAgent);
         return;
       }
       const mf = t.closest('[data-mf-save]');
