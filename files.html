@@ -3836,23 +3836,6 @@ If anything is off track for {{loan_approval_deadline}}, flag now so I can addre
       ],
       ctc: [
         {
-          id:'ctc_loan_written_req',
-          task:'ctc_loan_written',
-          thread:2,
-          label:'Written loan approval · for the file',
-          to:'{{lender_name}} <{{lender_email}}>',
-          cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Written loan approval confirmation · {{street}}',
-          body:
-`{{time_of_day_greeting}} {{lender_first_name}},
-
-One thing for the file on {{street}}: I need the written loan approval.
-
-Send over the approval letter or written confirmation and I'll log it.
-
-Once that's in, financing is buttoned up on my end.`,
-        },
-        {
           id:'ctc_title_commitment_followup',
           task:'ctc_title_commitment_received',
           thread:3,
@@ -4184,23 +4167,6 @@ Reach {{title_closer_name}} at {{title_phone}} with any questions.`,
           ],
         },
         {
-          id:'ctc_walkthrough_reminder',
-          task:'ctc_walkthrough',
-          thread:4,
-          label:'Walk-through reminder · listing agent',
-          to:'{{listing_agent_name}} <{{listing_agent_email}}>',
-          cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'Walk through reminder · {{street}}',
-          body:
-`{{time_of_day_greeting}} {{listing_agent_first_name}},
-
-This is a reminder that the walk-through for {{street}} is scheduled for {{dl_walkthrough}}.
-
-This is to verify the property condition and confirm all personal property per the contract remains on the premises.
-
-Please confirm this works for your client.`,
-        },
-        {
           id:'ctc_estoppel_request',
           task:'ctc_estoppels',
           thread:4,
@@ -4259,28 +4225,6 @@ What's the seller's status?
 Send the appropriate documentation and I'll get it to title.`,
         },
         {
-          id:'ctc_48hr_reminder',
-          thread:4,
-          label:'48-hour closing reminder · all parties (wire warning)',
-          to:'{{buyer_name}} <{{buyer_email}}>; {{seller_name}} <{{seller_email}}>; {{listing_agent_name}} <{{listing_agent_email}}>',
-          cc:'{{agent_name}} <{{agent_email}}>',
-          subject:'48 hour closing reminder · {{street}}',
-          body:
-`{{time_of_day_greeting}} everyone,
-
-This is your 48-hour reminder that closing for {{street}} is scheduled for {{closing_date}} at {{closing_time}} at {{closing_location}}.
-
-Wire instructions: please contact {{title_closer_name}} directly at {{title_phone}} to confirm wire instructions before sending any funds.
-
-Do not wire based on email alone.
-
-Always verify by phone.
-
-Bring a valid government-issued photo ID.
-
-I look forward to a smooth closing.`,
-        },
-        {
           id:'ctc_weekly_update',
           thread:1,
           label:'Weekly update · agent',
@@ -4291,7 +4235,7 @@ I look forward to a smooth closing.`,
         },
         {
           id:'sale_ctc_client_wire_warning',
-          task:'ctc_48hr_reminder',
+          task:'ctc_wire_warning',
           thread:5,
           label:'Wire fraud warning · CRITICAL · Client',
           to:'{{buyer_name}} <{{buyer_email}}>',
@@ -10836,6 +10780,22 @@ If you want to pause, I will archive your file with the option to pick back up a
   // Services billed UPFRONT (payment must clear before work starts). Everything
   // else is a TC service billed at closing → the Stage 1 payment row is hidden.
   const UPFRONT_SERVICES = ['listing_docs','listing_coordinator','mls_setup','offer_prep','file_organization'];
+  // TC service files billed at closing.
+  const TC_SERVICES = ['tc_one_side','tc_both_sides'];
+  // Canonical Stripe payment links by service_type — mirrors supabase
+  // _shared/stripe-links.ts. Used by the CTC payment-link send button.
+  const STRIPE_LINKS = {
+    listing_coordinator:         'https://buy.stripe.com/dRm3cn77V6in5Cj9QScAo0h',
+    file_organization:           'https://buy.stripe.com/6oU00b2RF6infcT8MOcAo0f',
+    starter_membership_monthly:  'https://buy.stripe.com/cNi14f0JxdKPggX5ACcAo0c',
+    producer_membership_monthly: 'https://buy.stripe.com/eVq7sD4ZN7mrfcT7IKcAo0a',
+    mls_setup:                   'https://buy.stripe.com/fZu5kvgIvbCH7Kr7IKcAo09',
+    listing_docs:                'https://buy.stripe.com/6oU7sD8bZbCH3ubfbccAo08',
+    offer_prep_basic:            'https://buy.stripe.com/3cI5kv63R227ggXbZ0cAo07',
+    offer_prep_complete:         'https://buy.stripe.com/6oUfZ99g3gX18Ov4wycAo05',
+    tc_one_side:                 'https://buy.stripe.com/8x23cn8bZ9uzc0H6EGcAo04',
+    tc_both_sides:               'https://buy.stripe.com/cNi4grdwj9uz3ubfbccAo03',
+  };
   // Payment gate (Section 4 · Item 13) — HARD block, mirrors the SA gate. An
   // upfront-service file whose payment has not confirmed is locked: tasks grayed
   // and unclickable, file cannot move columns. Releases when payment_confirmed.
@@ -10883,14 +10843,16 @@ If you want to pause, I will archive your file with the option to pick back up a
     }
     // Stage-7 gate — the 5 closing-critical tasks before Closed
     if(newStage === 'closed' && cur === 'ctc'){
+      // ctc_loan_written dropped from CTC (Section 11) — loan approval is enforced
+      // at the Appraisal→CTC gate (uc_loan_approval_acknowledged), not re-asked here.
       const required = [
-        ['ctc_loan_written', 'Loan approval in writing'],
-        ['ctc_title_commitment_received', 'Title commitment received'],
         ['ctc_cd_received', 'Closing disclosure confirmed'],
         ['ctc_closing_confirmed', 'Closing confirmed with all parties'],
         ['ctc_walkthrough', 'Walk-through scheduled'],
       ];
       const missing = required.filter(r => !dt[r[0]]).map(r => r[1]);
+      // Title commitment can be received in Appraisal OR CTC — accept either.
+      if(!(dt['ctc_title_commitment_received'] || dt['app_title_commitment'])) missing.unshift('Title commitment received');
       if(missing.length) return 'This file cannot move to Closed yet. Still unchecked:\n\n· ' + missing.join('\n· ');
     }
     return '';
@@ -11072,9 +11034,12 @@ If you want to pause, I will archive your file with the option to pick back up a
           sub:'Template in &ldquo;What to send next&rdquo;.' },
       ],
       ctc: [
-        { id:'ctc_loan_written',   label:'Loan approval in writing ON FILE — nothing proceeds without it',
-          sub:'Template in &ldquo;What to send next&rdquo;.' },
+        { id:'ctc_payment_link',   label:'Send TC service fee payment link to agent.',
+          showIf:(f)=>TC_SERVICES.indexOf(f.service_type) !== -1,
+          sub:'Payment link auto-generates from Stripe based on the service type on this file. Send on Thread 1 — agent only. File closes regardless of payment status.' },
         { id:'ctc_title_commitment_received', label:'Title commitment received', dl:'title_commitment',
+          softComplete:{ flag:'received', label:'Mark as received', chip:'Received' },
+          showIf:(f)=>!((f.stage_tasks||{}).app_title_commitment),
           sub:'Due 15 days before closing. Template in &ldquo;What to send next&rdquo;.' },
         { id:'ctc_title_review',   label:'Review title commitment for exceptions or issues',
           sub:'Exceptions found? Flip the &ldquo;Title exceptions&rdquo; flag above — it loads the notify + resolve tasks.' },
@@ -11084,11 +11049,14 @@ If you want to pause, I will archive your file with the option to pick back up a
         { id:'ctc_title_exceptions_resolved', label:'Confirm ALL title exceptions resolved before closing',
           showIf:(f)=>(((f.logistics||{}).ctc_title_exceptions)==='yes') },
         { id:'ctc_cd_received',    label:'Closing disclosure received from lender — confirm CFPB 3-day clock',
-          sub:'CFPB requires the BUYER to receive the closing disclosure at least 3 business days before closing. Confirm the lender sent it on time. Template in &ldquo;What to send next&rdquo;.' },
+          sub:'CFPB requires the BUYER to receive the closing disclosure at least 3 business days before closing. Log the CD delivery date below — the window calculates automatically.' },
         { id:'ctc_closing_confirmed', label:'Closing date, time, and location confirmed with ALL parties',
+          emailGate:{ requiresFn:(f,done)=>{ const lg=f.logistics||{}; return !!(f.closing_date && lg.closing_time && lg.closing_location && done['ctc_wire_warning']); }, note:'Enter closing details and send wire fraud warning first.' },
           sub:'Set time + location in Closing Logistics below first — they fill the email. Template in &ldquo;What to send next&rdquo;.' },
+        { id:'ctc_wire_warning',   label:'Send wire fraud warning to buyer.',
+          sub:'This must be sent before the closing confirmation. The buyer must be warned about wire fraud before any funds are sent.' },
         { id:'ctc_walkthrough',    label:'Walk-through scheduled — day before or day of closing', dl:'walkthrough',
-          sub:'Template in &ldquo;What to send next&rdquo;.' },
+          sub:'Log the walk-through date and time below. ShowingTime handles scheduling.' },
         { id:'ctc_estoppels',      label:'Estoppel letters received from all tenants', dl:'estoppel',
           sub:'Due 10 days before closing. Template in &ldquo;What to send next&rdquo;.',
           showIf:(f)=>(((f.logistics||{}).ctc_tenant_occupied)==='yes') },
@@ -11098,8 +11066,8 @@ If you want to pause, I will archive your file with the option to pick back up a
         { id:'ctc_firpta',         label:'FIRPTA certification or withholding certificate on file — foreign seller',
           sub:'No non-foreign certification = buyer must withhold up to 15% of the sale price at closing. Confirm with the closing agent. Template in &ldquo;What to send next&rdquo;.',
           showIf:(f)=>(((f.logistics||{}).ctc_foreign_seller)==='yes') },
-        { id:'ctc_48hr_reminder',  label:'Send 48-hour closing reminder to all parties', dl:'walkthrough',
-          sub:'Template in &ldquo;What to send next&rdquo; — wire-fraud warning included, never remove it.' },
+        { id:'ctc_file_review',    label:'Review entire file for completeness before closing.',
+          sub:'Check every document. Check every signature line. Check every initial box. Nothing gets missed before the closing table.' },
         { id:'ctc_weekly_update',  label:'Send weekly update email to agent — every Friday',
           sub:'Template in &ldquo;What to send next&rdquo;.' },
       ],
@@ -11528,9 +11496,11 @@ If you want to pause, I will archive your file with the option to pick back up a
       const sends = _sendsByFile[(_drawerFile || {}).id] || {};
       // Email send-gate (Section 7 · Fix 6) — a task may require another task done
       // before its email can be sent. Until then the button is disabled with a note.
-      const _emGate = t.emailGate && (t.emailGate.requiresLogistics
-        ? !((file.logistics || {})[t.emailGate.requiresLogistics])
-        : !(done[t.emailGate.requires] || ((file.logistics || {}).contacts_confirmed_at)));
+      const _emGate = t.emailGate && (t.emailGate.requiresFn
+        ? !t.emailGate.requiresFn(file, done)
+        : t.emailGate.requiresLogistics
+          ? !((file.logistics || {})[t.emailGate.requiresLogistics])
+          : !(done[t.emailGate.requires] || ((file.logistics || {}).contacts_confirmed_at)));
       emailHtml = '<div class="ck-emails">' + ems.map(e => {
         const sent = sends[e.id];
         if(_emGate){
@@ -11561,6 +11531,17 @@ If you want to pause, I will archive your file with the option to pick back up a
     // Check-gate (Section 9 · Fix 3) — the checkbox stays disabled until the
     // task's checkGate predicate passes (e.g. all inspector fields entered).
     const _checkBlocked = !rec && t.checkGate && !t.checkGate(file);
+    // Per-task custom controls (Section 11): the CTC payment-link button and the
+    // CFPB-window calculation note.
+    let customCtl = '';
+    if(t.id === 'ctc_payment_link'){
+      const _pl = (typeof STRIPE_LINKS !== 'undefined' && STRIPE_LINKS[file.service_type]) || '';
+      customCtl = _pl
+        ? '<div style="margin:6px 0 8px 28px;display:flex;gap:8px;align-items:center"><button type="button" class="ck-send" data-copy-paylink="' + esc(_pl) + '">Copy payment link &rarr;</button><a href="' + esc(_pl) + '" target="_blank" rel="noopener" class="ck-send" style="text-decoration:none">Open</a></div>'
+        : '<div class="ck-sub" style="margin-left:28px;color:#a08a5a">No Stripe link configured for this service type.</div>';
+    } else if(t.id === 'ctc_cd_received'){
+      customCtl = cfpbWindowNote(file);
+    }
     return '<div class="ck-task-wrap">' +
       '<label class="ck-task' + (rec ? ' ck-done' : '') + '">' +
         '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + ((file.status === 'archived' || _checkBlocked) ? ' disabled' : '') + '>' +
@@ -11572,8 +11553,25 @@ If you want to pause, I will archive your file with the option to pick back up a
         (_soft ? '' : allDl) +
         '</span>' + dlChip + softCtl + '</label>' +
       lgHtml +
+      customCtl +
       emailHtml +
     '</div>';
+  }
+  // CFPB 3-business-day window (Section 11 · Fix 2): CD delivery + 3 FL business
+  // days must land on or before the closing date, else closing must reschedule.
+  function cfpbWindowNote(file){
+    const lg = file.logistics || {};
+    if(!lg.cd_received_date || !file.closing_date) return '';
+    try {
+      let clear = new Date(lg.cd_received_date + 'T12:00:00');
+      for(let i = 0; i < 3; i++){ clear = flBusinessDay(addDays(clear, 1)); }
+      const close = new Date(file.closing_date + 'T12:00:00');
+      const fmt = (d) => d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+      if(clear > close){
+        return '<div style="margin:6px 0 8px 28px;background:#fdecea;border:0.5px solid #f2a9a9;border-radius:8px;padding:8px 12px;font-size:11.5px;color:#c0392b;font-weight:600">CFPB window does not clear before closing. Closing must be rescheduled.</div>';
+      }
+      return '<div style="margin:6px 0 8px 28px;background:#eef7f0;border:0.5px solid #cfe5d8;border-radius:8px;padding:8px 12px;font-size:11.5px;color:#2f6b48;font-weight:600">CFPB window clears on ' + fmt(clear) + ' — closing on ' + fmt(close) + ' is safe.</div>';
+    } catch(_){ return ''; }
   }
   function renderStageChecklist(file){
     const host = document.getElementById('tpb-checklist');
@@ -11720,6 +11718,18 @@ If you want to pause, I will archive your file with the option to pick back up a
     // Work rail · re-mark the NEXT task after every checklist render.
     try { if(typeof markNextTask === 'function') markNextTask(); } catch(_){}
   }
+  // Copy payment link (Section 11 · Fix 1) — copies the Stripe link to clipboard.
+  document.addEventListener('click', function(e){
+    const btn = e.target.closest && e.target.closest('[data-copy-paylink]');
+    if(!btn) return;
+    const link = btn.getAttribute('data-copy-paylink');
+    try {
+      navigator.clipboard.writeText(link).then(function(){
+        const orig = btn.textContent; btn.textContent = 'Copied ✓';
+        setTimeout(function(){ btn.textContent = orig; }, 1500);
+      });
+    } catch(_){ window.prompt('Copy this payment link:', link); }
+  });
   // Soft-complete handler (Section 4 · Items 4 & 5) — "Mark as not applicable" /
   // "Mark as received". Marks the task done with rec.soft set, which collapses
   // the row and hides its email. Same persistence + locks as the checkbox.
