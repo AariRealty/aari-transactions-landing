@@ -1110,7 +1110,7 @@
 
   // ============== STAGE CONFIG (file-type aware) ==============
   const STAGES_BY_TYPE = {
-    sale:      ['new','waiting_for_tc','under_contract','inspection','remedy','appraisal','ctc','closed'],
+    sale:      ['new','waiting_for_tc','under_contract','inspection','appraisal','ctc','closed'], // remedy hidden until fully built — tasks/emails remain in code below
     listing:   ['new','active','pending','closed','cancelled'],
     lease:     ['new','active','signed','occupied','expired'],
     buyer_rep: ['signed','active','representing','expired'],
@@ -9721,6 +9721,9 @@ If you want to pause, I will archive your file with the option to pick back up a
           : '')
       : '');
     const assocBlock = associationSectionHtml(file);
+    // Full deadline strip (Priority 6) — every contract deadline + CFPB, in one place,
+    // on every file. Lives in the Contract Terms panel below the contingency days.
+    const dlStrip = '<p class="ct-grouplabel" style="margin-top:14px">All deadlines</p>' + deadlineStripHtml(file);
     let termsBody;
     const contactsStep = confirmed && (_ctContactsStep || !!((file.logistics || {}).contacts_confirmed_at));
     // D · the drawer HEADER swaps to "Confirm contacts" (with a "Contract terms"
@@ -9745,13 +9748,13 @@ If you want to pause, I will archive your file with the option to pick back up a
           (_pillHtml ? ('<div style="display:flex;flex-wrap:wrap;gap:5px">' + _pillHtml + '</div>') : '') +
         '</button>';
       termsBody = termsSummary +
-        (_ctTermsExpanded ? ('<div style="margin:0 0 12px">' + ctLines + daysBlock + assocBlock + '</div>') : '') +
+        (_ctTermsExpanded ? ('<div style="margin:0 0 12px">' + ctLines + daysBlock + dlStrip + assocBlock + '</div>') : '') +
         contactsTaskHtml(file);
     } else if(confirmed){
       // Terms step (confirmed) · full terms, then the "Next" CTA at the very end.
       termsBody = ctLines +
         '<p style="font-size:10.5px;color:#a39e95;margin:13px 2px 0">&#10003; Confirmed' + (((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '') + '</p>' +
-        daysBlock + assocBlock +
+        daysBlock + dlStrip + assocBlock +
         '<button type="button" data-ct-next-contacts="1" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:11px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;margin:16px 0 2px">Next: confirm all contacts &rarr;</button>';
     } else {
       const confirmBlock = ready
@@ -9759,7 +9762,7 @@ If you want to pause, I will archive your file with the option to pick back up a
             '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Stamps it with your name + date and records agent-submitted vs confirmed</p>'
         : '<div style="display:block;width:100%;background:#efece6;color:#a39e95;border:0;border-radius:9px;padding:12px;text-align:center;font-size:13.5px;font-weight:600;font-family:inherit;margin:14px 0 2px">Confirm &amp; unlock my work</div>' +
             '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Set contract type, both dates, and financing above to confirm</p>';
-      termsBody = ctLines + confirmBlock + daysBlock + assocBlock;
+      termsBody = ctLines + confirmBlock + daysBlock + dlStrip + assocBlock;
     }
     // D · swap the drawer header to reflect the active step (only when this is the
     // open section). Contacts step → "Confirm contacts" + a "Contract terms" back.
@@ -11717,35 +11720,7 @@ If you want to pause, I will archive your file with the option to pick back up a
       }
     }
     let allDl = '';
-    if(t.showAllDeadlines){
-      const rows = DEADLINE_DEFS
-        .filter(def => dls[def.key])
-        .map(def => {
-          const d = dls[def.key];
-          const st = dlState(d.date);
-          return '<div class="ck-dl-row"><span>' + esc(def.label) + (d.manual ? ' <em class="ck-dl-edited">edited</em>' : '') + '</span>' +
-            '<span class="ck-dl-wrap">' +
-              '<button type="button" class="ck-dl ck-dl-' + st + ' ck-dl-btn" data-dl-edit="' + def.key + '" title="Tap to enter the contract&#39;s actual date">' + fmtDl(d.date) + '</button>' +
-              (d.manual ? '<button type="button" class="ck-dl-reset" data-dl-reset="' + def.key + '" title="Back to auto-calculated">&#8634;</button>' : '') +
-            '</span></div>';
-        }).join('');
-      // CFPB 3-business-day clear date (Priority 6) — data-driven from the logged CD
-      // delivery date (cd_received_date), not Effective/Closing, so it lives outside
-      // DEADLINE_DEFS. Shows in the strip once the CD date is logged.
-      let cfpbRow = '';
-      const _cdr = (file.logistics || {}).cd_received_date;
-      if(_cdr){
-        try {
-          let d = new Date(_cdr + 'T12:00:00');
-          for(let i = 0; i < 3; i++){ d = flBusinessDay(addDays(d, 1)); }
-          cfpbRow = '<div class="ck-dl-row"><span>CFPB 3-day clear</span><span class="ck-dl-wrap">' +
-            '<button type="button" class="ck-dl ck-dl-' + dlState(d) + '" disabled title="CD delivery + 3 FL business days">' + fmtDl(d) + '</button></span></div>';
-        } catch(_){}
-      }
-      allDl = (rows || cfpbRow)
-        ? '<div class="ck-dl-table">' + rows + cfpbRow + '</div>'
-        : '<div class="ck-dl-table ck-dl-empty-note">Add the Effective + Closing dates to this file to auto-calculate deadlines.</div>';
-    }
+    if(t.showAllDeadlines){ allDl = deadlineStripHtml(file); }
     // Soft-complete (Section 4 · Items 4 & 5) — a task config'd with `softComplete`
     // can be marked Not applicable / Received. That collapses it (no sub, no
     // logistics, no email button), counts it complete, and stores rec.soft.
@@ -11833,6 +11808,36 @@ If you want to pause, I will archive your file with the option to pick back up a
       }
       return '<div style="margin:6px 0 8px 28px;background:#eef7f0;border:0.5px solid #cfe5d8;border-radius:8px;padding:8px 12px;font-size:11.5px;color:#2f6b48;font-weight:600">CFPB window clears on ' + fmt(clear) + ' — closing on ' + fmt(close) + ' is safe.</div>';
     } catch(_){ return ''; }
+  }
+  // Full deadline strip (Priority 6) — every DEADLINE_DEFS deadline + the data-driven
+  // CFPB 3-day clear date, in one editable table. Rendered in the Contract Terms panel
+  // so the TC sees every date on every file. Tapping a date edits the override; the
+  // handlers are document-delegated so it stays interactive here.
+  function deadlineStripHtml(file){
+    const dls = fileDeadlines(file || {});
+    const rows = DEADLINE_DEFS
+      .filter(def => dls[def.key])
+      .map(def => {
+        const d = dls[def.key]; const st = dlState(d.date);
+        return '<div class="ck-dl-row"><span>' + esc(def.label) + (d.manual ? ' <em class="ck-dl-edited">edited</em>' : '') + '</span>' +
+          '<span class="ck-dl-wrap">' +
+            '<button type="button" class="ck-dl ck-dl-' + st + ' ck-dl-btn" data-dl-edit="' + def.key + '" title="Tap to enter the contract&#39;s actual date">' + fmtDl(d.date) + '</button>' +
+            (d.manual ? '<button type="button" class="ck-dl-reset" data-dl-reset="' + def.key + '" title="Back to auto-calculated">&#8634;</button>' : '') +
+          '</span></div>';
+      }).join('');
+    let cfpbRow = '';
+    const _cdr = ((file && file.logistics) || {}).cd_received_date;
+    if(_cdr){
+      try {
+        let d = new Date(_cdr + 'T12:00:00');
+        for(let i = 0; i < 3; i++){ d = flBusinessDay(addDays(d, 1)); }
+        cfpbRow = '<div class="ck-dl-row"><span>CFPB 3-day clear</span><span class="ck-dl-wrap">' +
+          '<button type="button" class="ck-dl ck-dl-' + dlState(d) + '" disabled title="CD delivery + 3 FL business days">' + fmtDl(d) + '</button></span></div>';
+      } catch(_){}
+    }
+    return (rows || cfpbRow)
+      ? '<div class="ck-dl-table">' + rows + cfpbRow + '</div>'
+      : '<div class="ck-dl-table ck-dl-empty-note">Add the Effective + Closing dates to this file to auto-calculate deadlines.</div>';
   }
   function renderStageChecklist(file){
     const host = document.getElementById('tpb-checklist');
