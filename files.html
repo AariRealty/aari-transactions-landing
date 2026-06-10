@@ -8798,6 +8798,20 @@ If you want to pause, I will archive your file with the option to pick back up a
     if(_view === 'list') renderFileList();
   }
   document.addEventListener('click', (e) => {
+    const saBtn = e.target.closest && e.target.closest('[data-sa-open]');
+    if(saBtn){
+      e.preventDefault();
+      const path = saBtn.getAttribute('data-sa-open');
+      if(path && _client){
+        saBtn.disabled = true;
+        _client.storage.from('signed-agreements').createSignedUrl(path, 300).then(function(r){
+          saBtn.disabled = false;
+          if(r && r.data && r.data.signedUrl){ window.open(r.data.signedUrl, '_blank', 'noopener'); }
+          else { alert('Could not open the signed agreement — it may not have been generated yet.'); }
+        }).catch(function(){ saBtn.disabled = false; alert('Could not open the signed agreement.'); });
+      }
+      return;
+    }
     const vb = e.target.closest && e.target.closest('[data-view]');
     if(vb){ setView(vb.getAttribute('data-view')); return; }
     const row = e.target.closest && e.target.closest('.flist-row');
@@ -11733,9 +11747,17 @@ If you want to pause, I will archive your file with the option to pick back up a
       const warnPill = function(txt){ return '<span style="font-size:11px;font-weight:600;color:#8a6a1f;background:#faf3e3;border:0.5px solid #ecdcb8;border-radius:7px;padding:4px 10px;white-space:nowrap">' + txt + '</span>'; };
       if(t.systemCheck === 'sa'){
         const signed = !!(_drawerAgent && _drawerAgent.agreement_signed_at);
+        const saPath = (_drawerAgent && _drawerAgent.agreement_pdf_path) || '';
         // SA is enforced upstream (intake + portal login); this row is a passive
-        // confirmation, not a gate. No alarm when unsigned.
-        pill = signed ? okPill('&#10003; SA on file') : '<span style="font-size:11px;font-weight:600;color:#8a857c;background:#f1ede6;border-radius:7px;padding:4px 10px;white-space:nowrap">SA pending</span>';
+        // confirmation, not a gate. No alarm when unsigned. When the executed PDF
+        // is on file, the pill OPENS it (signed URL · broker/TC read access).
+        if(signed && saPath){
+          pill = '<button type="button" data-sa-open="' + esc(saPath) + '" title="Open the executed Service Agreement" style="font-size:11px;font-weight:600;color:#2f6b48;background:#eaf3ee;border:0.5px solid #cfe5d8;border-radius:7px;padding:4px 10px;white-space:nowrap;cursor:pointer">&#10003; SA on file <span style="opacity:.65">&#183; open</span></button>';
+        } else if(signed){
+          pill = okPill('&#10003; SA on file');
+        } else {
+          pill = '<span style="font-size:11px;font-weight:600;color:#8a857c;background:#f1ede6;border-radius:7px;padding:4px 10px;white-space:nowrap">SA pending</span>';
+        }
         note = '';
       } else {
         const f = _drawerFile || file;
@@ -12768,7 +12790,7 @@ If you want to pause, I will archive your file with the option to pick back up a
     if(_agentCache[agentId] !== undefined) return _agentCache[agentId];
     try {
       const { data } = await _client.from('agents')
-        .select('id, first_name, last_name, email, phone, agreement_signed_at, google_review_link')
+        .select('id, first_name, last_name, email, phone, agreement_signed_at, agreement_pdf_path, google_review_link')
         .eq('id', agentId).single();
       _agentCache[agentId] = data || null;
       return _agentCache[agentId];
