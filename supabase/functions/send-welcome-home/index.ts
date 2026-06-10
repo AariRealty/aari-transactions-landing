@@ -4,7 +4,9 @@
 // file's status flips to closed. Mirrors the send-review-request pattern:
 // daily pg_cron, idempotent stamp, opt-out honored via the shared sendEmail.
 //
-// WINDOW: files closed between 21 and 14 days ago, gated by welcome_home_sent_at
+// WINDOW: base date = actual_closing_date (TC-logged source of truth) ?? closed_at
+// (fallback) — consistent with send-agent-review and the Section 12 ruling. Fires
+// when the base is 14–21 days ago, gated by welcome_home_sent_at
 // IS NULL. The wide lower bound is a catch-up safety net — if a daily run is
 // missed, the file still gets its welcome within the week instead of never. The
 // stamp guarantees exactly one send per file regardless of how many runs scan it.
@@ -40,20 +42,23 @@ Deno.serve(async (req) => {
   // ---- Pull candidate sale files ----
   let query = supabaseAdmin
     .from("files")
-    .select("id, agent_id, property_address, file_type, status, closed_at, review_token, client_email, client_name")
+    .select("id, agent_id, property_address, file_type, status, closed_at, actual_closing_date, review_token, client_email, client_name")
     .eq("status", "closed")
     .is("welcome_home_sent_at", null);
 
   if (forceFileId) {
     query = supabaseAdmin
       .from("files")
-      .select("id, agent_id, property_address, file_type, status, closed_at, review_token, client_email, client_name")
+      .select("id, agent_id, property_address, file_type, status, closed_at, actual_closing_date, review_token, client_email, client_name")
       .eq("id", forceFileId);
   } else {
     const now = Date.now();
-    const upper = new Date(now - 14 * DAY).toISOString(); // closed at least 14 days ago
-    const lower = new Date(now - 21 * DAY).toISOString(); // catch-up floor
-    query = query.lte("closed_at", upper).gte("closed_at", lower);
+    // Base date = actual_closing_date (TC-logged source of truth) else closed_at
+    // (fallback). Pull a generous closed_at floor to bound the set, then apply the
+    // precise 14–21 day window against the base in code below — actual_closing_date
+    // can differ from the move timestamp. Mirrors send-agent-review.
+    const floor = new Date(now - 35 * DAY).toISOString();
+    query = query.gte("closed_at", floor);
   }
 
   const { data: files, error } = await query;
@@ -69,6 +74,16 @@ Deno.serve(async (req) => {
     const ft = String(f.file_type ?? "sale").toLowerCase();
     if (ft === "listing" || ft === "referral") { bump("not_a_sale"); continue; }
     if (!f.client_email) { bump("no_client_email"); continue; }
+
+    // Day-14 window against the base date (actual_closing_date ?? closed_at).
+    // Skipped when forcing a single file for testing.
+    if (!forceFileId) {
+      const baseStr = (f.actual_closing_date as string | null) ?? (f.closed_at as string | null);
+      if (!baseStr) { bump("no_base_date"); continue; }
+      const baseMs = new Date(String(baseStr).length === 10 ? `${baseStr}T12:00:00-05:00` : String(baseStr)).getTime();
+      const ageDays = (Date.now() - baseMs) / DAY;
+      if (ageDays < 14 || ageDays > 21) { bump("outside_window"); continue; }
+    }
 
     // ---- Agent first name + (optional) Google review link ----
     let agentFirstName = "your agent";
