@@ -14,7 +14,8 @@
 //
 // Sender: From = assigned TC's name on the verified domain, Reply-To = TC email
 // (mirrors closed-payment-reminder). The Aari Google review link comes from the
-// GOOGLE_REVIEW_LINK_AARI secret (placeholder until the live URL is wired).
+// org_settings.google_review_link_aari (single global value, set in the cockpit),
+// falling back to the GOOGLE_REVIEW_LINK_AARI secret, then a placeholder.
 //
 // STAGED (Dec 2026): deploy via `supabase functions deploy send-agent-review`
 // after running 20260628_actual_closing_date_review.sql.
@@ -26,7 +27,7 @@ import { resend, FROM } from "../_shared/resend.ts";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const FROM_ADDR = (FROM.match(/<([^>]+)>/) || [])[1] ?? "hello@aaritransactions.com";
-const REVIEW_LINK = Deno.env.get("GOOGLE_REVIEW_LINK_AARI") ?? "[Aari Google review link]";
+const REVIEW_LINK_ENV = Deno.env.get("GOOGLE_REVIEW_LINK_AARI") ?? "";
 
 const HOUR = 60 * 60 * 1000;
 // Day 3 window with a Day 10 cap so a backlog of older closed files does not
@@ -69,6 +70,16 @@ const firstName = (full: string) => (full || "").trim().split(" ")[0] || "";
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("ok", { status: 200 });
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+
+  // Aari review link · single global value from org_settings (one source of truth,
+  // matches the cockpit). Falls back to the GOOGLE_REVIEW_LINK_AARI env secret,
+  // then a visible placeholder if neither is set yet.
+  let orgReviewLink = "";
+  try {
+    const { data: os } = await supabase.from("org_settings").select("google_review_link_aari").eq("id", 1).maybeSingle();
+    orgReviewLink = String(os?.google_review_link_aari ?? "").trim();
+  } catch (_) { /* fall through to env */ }
+  const reviewLink = orgReviewLink || REVIEW_LINK_ENV || "[Aari Google review link]";
 
   const { data: files, error } = await supabase
     .from("files")
@@ -117,7 +128,7 @@ Thank you for trusting me with your file.
 
 If the experience was a good one, a Google review would mean a lot.
 
-*It takes about two minutes: ${REVIEW_LINK}*
+*It takes about two minutes: ${reviewLink}*
 
 Thank you.`;
       try {
@@ -148,7 +159,7 @@ It was a pleasure working alongside you on this one.
 
 Your words carry a lot of weight in our industry.
 
-${REVIEW_LINK}`;
+${reviewLink}`;
         try {
           await resend.emails.send({
             from: fromLine, to, cc: agentEmail ? [agentEmail] : undefined, reply_to: replyTo,

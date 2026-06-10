@@ -910,6 +910,7 @@
       <div class="ft-filter ft-filter-inline" id="ft-filter"></div>
     </div>
     <div style="display:flex;align-items:center">
+      <button type="button" class="gml-link" id="rl-open-link" title="Aari Google review link" style="display:none">Review link</button>
       <button type="button" class="gml-link" id="gml-open-link" title="Gmail label setup">Gmail label setup</button>
       <button type="button" class="kbd-hint-btn kbd-hint-btn-icon" id="kbd-hint-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">
         <kbd>?</kbd>
@@ -963,6 +964,22 @@
   <div class="gml-body" id="gml-body"><!-- built by renderGmailLabelModal() --></div>
   <div class="gml-foot">
     <button type="button" class="gml-dismiss" id="gml-dismiss">Got it &mdash; I have set up my labels</button>
+  </div>
+</div>
+
+<!-- Aari Google review link · broker-only global setting (org_settings) -->
+<div class="gml-backdrop" id="rl-backdrop"></div>
+<div class="gml-modal" id="rl-modal" role="dialog" aria-modal="true" aria-labelledby="rl-title">
+  <div class="gml-head">
+    <p class="gml-title" id="rl-title">Aari Google review link</p>
+  </div>
+  <div class="gml-body">
+    <p class="gml-intro">The single Aari Google review link used in every review request email. Set it once here and it fills <code>{{google_review_link_aari}}</code> for all TCs and the automated review sends. Leave blank to keep the manual paste-in placeholder.</p>
+    <input type="url" id="rl-input" placeholder="https://g.page/r/..." style="width:100%;border:0.5px solid #dcdcdc;border-radius:7px;padding:9px 10px;font-size:13px;font-family:inherit;background:#fff;box-sizing:border-box">
+    <div id="rl-status" style="font-size:11.5px;margin-top:8px;min-height:14px"></div>
+  </div>
+  <div class="gml-foot">
+    <button type="button" class="gml-dismiss" id="rl-save">Save</button>
   </div>
 </div>
 
@@ -5793,13 +5810,14 @@ If you want to pause, I will archive your file with the option to pick back up a
     // the line below the token. Once the real URL is set on the profile/agent the
     // sub-line vanishes automatically (the token resolves straight to the link).
     try {
-      const prof = (typeof _profile!=='undefined' && _profile) ? _profile : {};
+      // Aari link = single global value from org_settings (loaded on init).
       if(template.indexOf('{{google_review_link_aari}}') !== -1){
-        const aariLink = prof.google_review_link_aari;
+        const aariLink = (typeof _orgReviewLink !== 'undefined' && _orgReviewLink) ? _orgReviewLink : '';
         template = template.split('{{google_review_link_aari}}').join(aariLink || '[Aari Google review link]\nCopy and paste your Google review link here before sending.');
       }
+      // Agent link = the file's agent's own google_review_link (per-agent).
       if(template.indexOf('{{google_review_link_agent}}') !== -1){
-        const agentLink = (agent && agent.google_review_link) || prof.google_review_link_agent || '';
+        const agentLink = (agent && agent.google_review_link) || '';
         template = template.split('{{google_review_link_agent}}').join(agentLink || "[agent Google review link]\nCopy and paste the agent's Google review link here before sending.");
       }
     } catch(_){}
@@ -6116,6 +6134,9 @@ If you want to pause, I will archive your file with the option to pick back up a
   let _searchQuery = ''; // live search across address / client / agent / lender / title
   let _currentFile = null; // file currently open in the playbook modal
 
+  // Org-level Google review link (single global value · org_settings singleton).
+  // Loaded once on init; feeds {{google_review_link_aari}} for every staff user.
+  let _orgReviewLink = '';
   // ============== INIT ==============
   async function init(){
     if(!window.AariAuth){ return showGate('Sign in required.', 'Please sign in.', '/login.html'); }
@@ -6131,6 +6152,13 @@ If you want to pause, I will archive your file with the option to pick back up a
     document.getElementById('auth-gate').style.display = 'none';
     document.getElementById('page-main').style.display = 'block';
     if(role === 'broker'){ document.getElementById('tc-filter').style.display = 'flex'; }
+    // Load the global Aari Google review link (org_settings singleton).
+    try {
+      const { data: _os } = await _client.from('org_settings').select('google_review_link_aari').eq('id', 1).maybeSingle();
+      _orgReviewLink = (_os && _os.google_review_link_aari) ? String(_os.google_review_link_aari).trim() : '';
+    } catch(_){ _orgReviewLink = ''; }
+    // The Aari review-link setting is broker-only (org_settings RLS: broker writes).
+    if(role === 'broker'){ const _rl = document.getElementById('rl-open-link'); if(_rl) _rl.style.display = ''; }
     wireUi();
     await loadAndRender();
   }
@@ -10409,10 +10437,9 @@ If you want to pause, I will archive your file with the option to pick back up a
     // above the body so the TC pastes the link before sending. Auto-hides once the
     // real URL is set on the profile/agent.
     const _gmlRaw = rawEmailBody(e, file) || '';
-    const _gmlProf = (typeof _profile!=='undefined' && _profile) ? _profile : {};
     const _reviewNeedsLink =
-      (_gmlRaw.indexOf('{{google_review_link_aari}}') !== -1 && !_gmlProf.google_review_link_aari) ||
-      (_gmlRaw.indexOf('{{google_review_link_agent}}') !== -1 && !((agent && agent.google_review_link) || _gmlProf.google_review_link_agent));
+      (_gmlRaw.indexOf('{{google_review_link_aari}}') !== -1 && !(typeof _orgReviewLink !== 'undefined' && _orgReviewLink)) ||
+      (_gmlRaw.indexOf('{{google_review_link_agent}}') !== -1 && !(agent && agent.google_review_link));
     const reviewNotice = _reviewNeedsLink
       ? '<div class="tpb-review-notice">Action required &mdash; paste the Google review link before sending this email.</div>'
       : '';
@@ -12613,7 +12640,7 @@ If you want to pause, I will archive your file with the option to pick back up a
     if(_agentCache[agentId] !== undefined) return _agentCache[agentId];
     try {
       const { data } = await _client.from('agents')
-        .select('id, first_name, last_name, email, phone, agreement_signed_at')
+        .select('id, first_name, last_name, email, phone, agreement_signed_at, google_review_link')
         .eq('id', agentId).single();
       _agentCache[agentId] = data || null;
       return _agentCache[agentId];
@@ -12652,6 +12679,7 @@ If you want to pause, I will archive your file with the option to pick back up a
     document.getElementById('tpb-backdrop').addEventListener('click', closePlaybook);
     wireKeyboardShortcuts();
     wireGmailLabelModal();
+    wireReviewLinkModal();
 
   // ===== GMAIL LABEL SETUP · first-login onboarding (Section 14) =====
   // A first-login modal showing the exact Gmail label sets each person keeps in
@@ -12697,6 +12725,35 @@ If you want to pause, I will archive your file with the option to pick back up a
     if(!seen) open();
   }
 
+  // ===== AARI REVIEW LINK · broker-only global setting (org_settings) =====
+  function wireReviewLinkModal(){
+    const modal = document.getElementById('rl-modal');
+    const back = document.getElementById('rl-backdrop');
+    const link = document.getElementById('rl-open-link');
+    const input = document.getElementById('rl-input');
+    const saveBtn = document.getElementById('rl-save');
+    const status = document.getElementById('rl-status');
+    if(!modal || !back) return;
+    const open = function(){ if(input) input.value = _orgReviewLink || ''; if(status) status.textContent = ''; modal.classList.add('open'); back.classList.add('open'); };
+    const close = function(){ modal.classList.remove('open'); back.classList.remove('open'); };
+    if(link) link.addEventListener('click', open);
+    if(back) back.addEventListener('click', close);
+    if(saveBtn) saveBtn.addEventListener('click', async function(){
+      const val = (input && input.value || '').trim();
+      saveBtn.disabled = true; if(status){ status.style.color = '#9a9a9a'; status.textContent = 'Saving…'; }
+      try {
+        const r = await _client.from('org_settings').update({ google_review_link_aari: val || null, updated_at: new Date().toISOString() }).eq('id', 1);
+        if(r && r.error) throw r.error;
+        _orgReviewLink = val;
+        if(status){ status.style.color = '#2f6b48'; status.textContent = '✓ Saved.'; }
+        setTimeout(close, 700);
+      } catch(e){
+        console.warn('[review-link] save failed', e);
+        if(status){ status.style.color = '#c0392b'; status.textContent = 'Could not save. Check your connection and try again.'; }
+      } finally { saveBtn.disabled = false; }
+    });
+  }
+
   // ===== KEYBOARD SHORTCUTS · TC speed mode =====
   // / focus search · j/k card next/prev · h/l lane prev/next · 1-7 jump lane
   // Enter open · Esc close/clear · g top · r refresh · ? cheatsheet
@@ -12720,6 +12777,8 @@ If you want to pause, I will archive your file with the option to pick back up a
       if(e.key === 'Escape'){
         const gml = document.getElementById('gml-modal');
         if(gml && gml.classList.contains('open')){ gml.classList.remove('open'); const gb = document.getElementById('gml-backdrop'); if(gb) gb.classList.remove('open'); return; }
+        const rlm = document.getElementById('rl-modal');
+        if(rlm && rlm.classList.contains('open')){ rlm.classList.remove('open'); const rb = document.getElementById('rl-backdrop'); if(rb) rb.classList.remove('open'); return; }
         if(cheatModal.classList.contains('open')){ closeCheat(); return; }
         if(document.body.classList.contains('tpb-open')){ closePlaybook(); return; }
         const searchEl = document.getElementById('file-search');
