@@ -9110,6 +9110,14 @@ If you want to pause, I will archive your file with the option to pick back up a
     if(!f.lender_contact && !raw.lender_name && !raw.pa_lender) return true;
     return false;
   }
+  // Normalized loan type for showIf gating · TC-confirmed (logistics) wins,
+  // else the intake value (pa_financing_type). Returns 'va'|'fha'|'conventional'|'cash'|'usda'|''.
+  function financingType(f){
+    const lg = (f.logistics || {}).financing_type;
+    if(lg) return String(lg).toLowerCase();
+    const raw = f.raw_form_data || {};
+    return String(raw.financing_type || raw.pa_financing_type || '').toLowerCase();
+  }
   // Step 1 conditionals · TC-confirmed contract terms tailor the file.
   function inspectionWaived(f){ return !!((f.logistics || {}).inspection_waived); }
   function assocType(f){ return (f.logistics || {}).assoc_type || ''; }
@@ -11070,12 +11078,23 @@ If you want to pause, I will archive your file with the option to pick back up a
           showIf:(f)=>UPFRONT_SERVICES.indexOf(f.service_type) !== -1 },
         { id:'new_contract_attached', label:'Confirm executed contract is attached to the file.',
           sub:'Confirm the fully executed contract is uploaded to the file before proceeding.' },
+        { id:'new_sellers_disclosure', label:"Confirm seller's property disclosure is in the file.",
+          sub:'The seller must complete the disclosure — not the agent and not the TC. Confirm the disclosure is signed and dated by the seller specifically. If it is missing request it from the agent immediately.' },
         { id:'new_riders_addenda',  label:'Verify all riders and addenda are attached and fully executed by all parties',
           sub:'Check for HOA, financing, and inspection riders plus any addenda. If anything is missing, request it from the agent before moving forward.' },
         { id:'new_review_terms',    label:'Review Contract Terms panel — confirm all auto-filled fields match the executed contract',
           sub:'The system pre-filled contract type, dates, price, EMD, financing, and association from the agent&rsquo;s submission. Open the contract and verify each field. Tap any field to edit anything that differs from the contract.' },
         { id:'new_signatures_verified', label:'Verify every signature and initial on the contract and all attachments.',
           sub:'Go through every page. Check every signature line. Check every initial box. Do not check this box until everything is signed and initialed.' },
+        { id:'new_va_fha_rider',    label:'Verify correct VA or FHA rider is attached.',
+          showIf:(f)=>['va','fha'].indexOf(financingType(f)) !== -1,
+          sub:'Check that the correct rider or addendum is attached and executed by all parties. VA and FHA have specific contract requirements — verify the rider matches the financing type on this file.' },
+        { id:'new_fha_condo_approval', label:'Verify condo is FHA approved.',
+          showIf:(f)=>financingType(f)==='fha' && assocType(f)==='condo',
+          sub:'FHA financing cannot close on a condo that is not on the HUD approved list. Look up the condo here before going further: https://entp.hud.gov/idapp/html/condlook.cfm — If the condo is NOT approved flag the agent and lender immediately. Do not wait.' },
+        { id:'new_va_condo_approval', label:'Verify condo is VA approved.',
+          showIf:(f)=>financingType(f)==='va' && assocType(f)==='condo',
+          sub:'VA financing cannot close on a condo that is not on the VA approved list. Look up the condo here before going further: https://lgy.va.gov/lgyhub/condo-report — If the condo is NOT approved flag the agent and lender immediately. Do not wait.' },
         { id:'new_scope_confirm',   label:'Confirm scope of work — buyer side, seller side, or both', systemPrefill:'scope',
           sub:'Buyer side — coordinate with lender and buyer agent. Seller side — coordinate with listing agent and title. Both — all parties.' },
       ],
@@ -11085,6 +11104,9 @@ If you want to pause, I will archive your file with the option to pick back up a
         { id:'wtc_review_contract', label:'Review full contract — read every page before contacting anyone',
           sub:'You are about to represent this transaction to all parties. Know the contract before you make contact.' },
         { id:'wtc_contacts_complete', label:'Confirm all contact information is complete' },
+        { id:'wtc_condo_docs',      label:'Confirm condo documents delivered to buyer and log receipt date.',
+          showIf:(f)=>assocType(f)==='condo',
+          sub:'Buyer&rsquo;s statutory review window to void starts the moment they receive the documents — not when they are sent. Log the receipt date in the Association timeline (Closing Logistics below); the cancellation deadline calculates and displays there. Get proof of receipt signed and dated by the buyer.' },
         { id:'wtc_agent_confirm',   label:'Confirm dates + contacts with the agent before opening',
           sub:'Send the agent the dates, financials, and contacts to verify — fix anything off before it goes out to all parties. Once the agent confirms, this file moves to Under Contract and you open it up.' },
         { id:'wtc_escrow_instructions', label:'Open escrow with title company — send escrow opening instructions',
@@ -11133,6 +11155,9 @@ If you want to pause, I will archive your file with the option to pick back up a
         { id:'uc_tenant_lease',      label:'Confirm seller provided lease info — tenant occupied', dl:'tenant_lease',
           showIf:(f)=>(((f.logistics||{}).ctc_tenant_occupied)==='yes'),
           sub:'Due within 5 days of Effective Date when the property is tenant occupied.' },
+        { id:'uc_tenant_estoppel_request', label:'Request estoppel letter from each tenant.',
+          showIf:(f)=>(((f.logistics||{}).ctc_tenant_occupied)==='yes'),
+          sub:'One estoppel letter is required per tenant — not one for the property. Each estoppel must disclose: rent amount, lease duration, advance rents if any, and security deposits. Request these immediately — they take time to get. The buyer receives any advance monies and security deposits at closing. Notify title of this when sending the escrow opening.' },
         { id:'uc_hoa_followup',      label:'Check HOA document status',
           showIf:(f)=>hoaApplies(f),
           sub:'Follow up with the HOA management company on the status of the requested documents.' },
@@ -11151,6 +11176,8 @@ If you want to pause, I will archive your file with the option to pick back up a
           sub:'Template in &ldquo;What to send next&rdquo;.' },
       ],
       inspection: [
+        { id:'insp_utilities_on',   label:'Confirm all utilities are on for the inspection.',
+          sub:'Electricity, water, gas, and all utilities must be on throughout the entire inspection period and the final walk-through. Coordinate with the listing agent now before the inspection is scheduled. If utilities are off the inspector cannot complete the inspection and the buyer may lose their inspection window.' },
         { id:'insp_scheduled',      label:'Confirm inspection is scheduled — inspector name, company, phone, date, time',
           checkGate:(f)=>{ const lg = f.logistics || {}; return !!(lg.inspection_date && lg.inspection_time && lg.inspector_name && lg.inspector_company && lg.inspector_phone); },
           checkGateNote:'Enter inspector name, company, phone, date, and time first.',
@@ -11254,6 +11281,8 @@ If you want to pause, I will archive your file with the option to pick back up a
           sub:'Due 15 days before closing. Template in &ldquo;What to send next&rdquo;.' },
         { id:'ctc_title_review',   label:'Review title commitment for exceptions or issues',
           sub:'Exceptions found? Flip the &ldquo;Title exceptions&rdquo; flag above — it loads the notify + resolve tasks.' },
+        { id:'ctc_open_permits',   label:'Verify all open and expired permits are closed by seller.',
+          sub:'The title search will catch liens but open and expired permits are not always title issues — they are seller obligations. Verify with the listing agent that all open and expired permits have been closed out and received finals before the closing date. An open permit at closing becomes the buyer&rsquo;s problem. Do not let this slip through.' },
         { id:'ctc_title_exceptions_notify', label:'Title exceptions — notify agents and parties IMMEDIATELY, in writing',
           sub:'Template in &ldquo;What to send next&rdquo;.',
           showIf:(f)=>(((f.logistics||{}).ctc_title_exceptions)==='yes') },
