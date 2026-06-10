@@ -202,6 +202,28 @@
   .kbd-row span{color:#5f5e5a;font-size:12px;line-height:1.4}
   @media (max-width:560px){.kbd-body{grid-template-columns:1fr;gap:18px}}
 
+  /* Gmail label onboarding modal (Section 14 · first-login setup) */
+  .gml-link{background:none;border:0;color:#5f5e5a;font-size:10.5px;cursor:pointer;font-family:inherit;padding:0;margin-left:14px;letter-spacing:0.2px}
+  .gml-link:hover{color:#0f0f0f;text-decoration:underline;text-underline-offset:2px}
+  .gml-backdrop{display:none;position:fixed;inset:0;background:rgba(15,15,15,0.45);z-index:9992}
+  .gml-backdrop.open{display:block}
+  .gml-modal{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:10px;width:min(560px,92vw);max-height:88vh;z-index:9993;box-shadow:0 12px 40px rgba(0,0,0,0.20);overflow:hidden}
+  .gml-modal.open{display:flex;flex-direction:column}
+  .gml-head{padding:18px 22px;border-bottom:0.5px solid rgba(15,15,15,0.10)}
+  .gml-title{font-size:15px;font-weight:600;color:#0f0f0f;margin:0;line-height:1.3}
+  .gml-body{padding:16px 22px 8px;overflow-y:auto}
+  .gml-intro{font-size:12.5px;color:#5f5e5a;line-height:1.55;margin:0 0 16px}
+  .gml-set{margin:0 0 16px}
+  .gml-set-h{font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#0f0f0f;font-weight:600;margin:0 0 8px;padding-bottom:5px;border-bottom:0.5px solid rgba(15,15,15,0.10)}
+  .gml-labels{list-style:none;margin:0;padding:0}
+  .gml-labels li{font-size:12.5px;color:#0f0f0f;padding:3px 0 3px 14px;position:relative;line-height:1.4}
+  .gml-labels li::before{content:'';position:absolute;left:0;top:11px;width:4px;height:4px;border-radius:50%;background:#b7791f}
+  .gml-labels li.gml-parent{font-weight:600}
+  .gml-labels li.gml-parent::before{background:#0f0f0f}
+  .gml-foot{padding:14px 22px 20px;border-top:0.5px solid rgba(15,15,15,0.10);display:flex;justify-content:flex-end}
+  .gml-dismiss{background:#0f0f0f;color:#fff;border:0;border-radius:7px;font-family:inherit;font-size:12.5px;font-weight:600;padding:9px 18px;cursor:pointer}
+  .gml-dismiss:hover{background:#2c2c2a}
+
   /* Selected card outline · driven by JS shortcut nav */
   .card.kbd-selected{outline:2px solid #0f0f0f;outline-offset:-1px;box-shadow:0 4px 12px rgba(0,0,0,0.10)}
   .kanban-title{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#666;font-weight:500;margin:0}
@@ -886,9 +908,12 @@
       <p class="kanban-title" id="kanban-title">Transaction pipeline</p>
       <div class="ft-filter ft-filter-inline" id="ft-filter"></div>
     </div>
-    <button type="button" class="kbd-hint-btn kbd-hint-btn-icon" id="kbd-hint-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">
-      <kbd>?</kbd>
-    </button>
+    <div style="display:flex;align-items:center">
+      <button type="button" class="gml-link" id="gml-open-link" title="Gmail label setup">Gmail label setup</button>
+      <button type="button" class="kbd-hint-btn kbd-hint-btn-icon" id="kbd-hint-btn" aria-label="Keyboard shortcuts" title="Keyboard shortcuts">
+        <kbd>?</kbd>
+      </button>
+    </div>
   </div>
   <!-- VIEW TOGGLE · List (triage groups · default) · Board (drag & drop) -->
   <div id="viewToggle" style="display:flex;justify-content:flex-end;margin:0 0 10px">
@@ -925,6 +950,18 @@
       <div class="kbd-row"><kbd>r</kbd><span>Refresh file list</span></div>
       <div class="kbd-row"><kbd>?</kbd><span>Show this cheatsheet</span></div>
     </div>
+  </div>
+</div>
+
+<!-- Gmail label setup · first-login onboarding (Section 14) -->
+<div class="gml-backdrop" id="gml-backdrop"></div>
+<div class="gml-modal" id="gml-modal" role="dialog" aria-modal="true" aria-labelledby="gml-title">
+  <div class="gml-head">
+    <p class="gml-title" id="gml-title">Gmail label setup &mdash; do this before your first file</p>
+  </div>
+  <div class="gml-body" id="gml-body"><!-- built by renderGmailLabelModal() --></div>
+  <div class="gml-foot">
+    <button type="button" class="gml-dismiss" id="gml-dismiss">Got it &mdash; I have set up my labels</button>
   </div>
 </div>
 
@@ -12548,6 +12585,51 @@ If you want to pause, I will archive your file with the option to pick back up a
     document.getElementById('tpb-close').addEventListener('click', closePlaybook);
     document.getElementById('tpb-backdrop').addEventListener('click', closePlaybook);
     wireKeyboardShortcuts();
+    wireGmailLabelModal();
+
+  // ===== GMAIL LABEL SETUP · first-login onboarding (Section 14) =====
+  // A first-login modal showing the exact Gmail label sets each person keeps in
+  // their own inbox. No Gmail API — labeling is manual; the thread badge on each
+  // email card tells the TC which label to apply. Dismiss writes a per-user
+  // localStorage flag so it never auto-shows twice; the header link reopens it.
+  const GMAIL_LABEL_SETS = [
+    { owner:'Eileen',   labels:['Eileen','Eileen / Thread 1 — Agent Direct','Eileen / Thread 2 — Loan File','Eileen / Thread 3 — Escrow','Eileen / Thread 4 — Master','Eileen / Standalone','Eileen / ⚠️ Needs Attention'] },
+    { owner:'Milennys', labels:['Milennys','Milennys / Thread 1 — Agent Direct','Milennys / Thread 2 — Loan File','Milennys / Thread 3 — Escrow','Milennys / Thread 4 — Master','Milennys / Standalone','Milennys / ⚠️ Needs Attention'] },
+    { owner:'Marlenyi', labels:['Marlenyi','Marlenyi / Thread 1 — Agent Direct','Marlenyi / Thread 2 — Loan File','Marlenyi / Thread 3 — Escrow','Marlenyi / Thread 4 — Master','Marlenyi / Standalone','Marlenyi / ⚠️ Needs Attention'] },
+  ];
+  function renderGmailLabelModal(){
+    const body = document.getElementById('gml-body');
+    if(!body) return;
+    const intro = '<p class="gml-intro">Create these labels in Gmail before your first file. When you send an email from the portal the thread badge on each email tells you which label to apply in Gmail. Use ⚠️ Needs Attention when a file requires your immediate action.</p>';
+    const sets = GMAIL_LABEL_SETS.map(function(s){
+      const items = s.labels.map(function(l, i){
+        return '<li class="' + (i === 0 ? 'gml-parent' : '') + '">' + esc(l) + '</li>';
+      }).join('');
+      return '<div class="gml-set"><p class="gml-set-h">For ' + esc(s.owner) + '</p><ul class="gml-labels">' + items + '</ul></div>';
+    }).join('');
+    body.innerHTML = intro + sets;
+  }
+  function _gmlSeenKey(){ return 'aari_gmail_labels_seen_' + ((_profile && _profile.id) || 'anon'); }
+  function wireGmailLabelModal(){
+    const modal = document.getElementById('gml-modal');
+    const back = document.getElementById('gml-backdrop');
+    const link = document.getElementById('gml-open-link');
+    const dismiss = document.getElementById('gml-dismiss');
+    if(!modal || !back) return;
+    renderGmailLabelModal();
+    const open = function(){ modal.classList.add('open'); back.classList.add('open'); };
+    const close = function(){ modal.classList.remove('open'); back.classList.remove('open'); };
+    if(link) link.addEventListener('click', open);
+    if(back) back.addEventListener('click', close);
+    if(dismiss) dismiss.addEventListener('click', function(){
+      try { localStorage.setItem(_gmlSeenKey(), '1'); } catch(_){}
+      close();
+    });
+    // First login · show once per user until dismissed.
+    let seen = false;
+    try { seen = localStorage.getItem(_gmlSeenKey()) === '1'; } catch(_){}
+    if(!seen) open();
+  }
 
   // ===== KEYBOARD SHORTCUTS · TC speed mode =====
   // / focus search · j/k card next/prev · h/l lane prev/next · 1-7 jump lane
@@ -12570,6 +12652,8 @@ If you want to pause, I will archive your file with the option to pick back up a
       const inField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.isContentEditable === true));
       // Esc is the only key that works even while typing (closes the playbook)
       if(e.key === 'Escape'){
+        const gml = document.getElementById('gml-modal');
+        if(gml && gml.classList.contains('open')){ gml.classList.remove('open'); const gb = document.getElementById('gml-backdrop'); if(gb) gb.classList.remove('open'); return; }
         if(cheatModal.classList.contains('open')){ closeCheat(); return; }
         if(document.body.classList.contains('tpb-open')){ closePlaybook(); return; }
         const searchEl = document.getElementById('file-search');
