@@ -9614,6 +9614,9 @@ If you want to pause, I will archive your file with the option to pick back up a
     const shownFin = fin || '';
     const shownHoa = hoa || ((raw.pa_hoa === 'yes') ? 'yes' : (raw.pa_hoa === 'no' ? 'no' : ''));
     const shownAssoc = assocType(file) || (hoaApplies(file) ? 'hoa' : '');
+    // Tenant occupied? · asked up front so the under-contract lease task + the
+    // estoppel task only appear when the property actually has a tenant.
+    const shownTenant = (((file.logistics||{}).ctc_tenant_occupied) === 'yes') ? 'yes' : (((file.logistics||{}).ctc_tenant_occupied) === 'no' ? 'no' : '');
     // Financial terms · confirmed against the executed contract in Step 1.
     const priceCents = file.purchase_price_cents || 0;
     const shownPrice = priceCents ? ('$' + (priceCents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) : '';
@@ -9667,7 +9670,8 @@ If you want to pause, I will archive your file with the option to pick back up a
       ctLine('price', 'Purchase price', shownPrice, '<input type="number" id="ct-price" value="' + (priceCents ? (priceCents / 100) : '') + '" placeholder="209999" min="0" step="1" style="border:0.5px solid #d9d4ca;border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit;background:#fff;box-sizing:border-box;width:100%">', (raw.purchase_price && !priceCents) ? ('Agent entered ' + raw.purchase_price) : '', !!raw.purchase_price) +
       ctLine('emd', 'Binder deposit (EMD)', (emdAmt ? esc(emdAmt) : ''), '<input type="text" id="ct-emd" value="' + esc(emdAmt) + '" placeholder="$2,000" style="border:0.5px solid #d9d4ca;border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit;background:#fff;box-sizing:border-box;width:100%">', 'Also feeds the EMD tracker in Your Work.', !!raw.earnest_money) +
       ctLine('fin', 'Financing', (FIN_LABELS[shownFinType] || ''), segN(shownFinType || '', [['cash','Cash'],['conventional','Conv'],['fha','FHA'],['va','VA'],['usda','USDA']], 'fin'), (raw.pa_deal_type ? ('Agent said: ' + raw.pa_deal_type) : ''), !!(raw.pa_financing_type || raw.financing_type || raw.pa_deal_type)) +
-      ctLine('assoc', 'Association', (shownAssoc ? (ASSOC_LABEL[shownAssoc] || '') : ''), segN(shownAssoc || 'none', [['none','None'],['hoa','HOA'],['condo','Condo']], 'assoc'), (raw.pa_hoa && !assocType(file)) ? ('Agent said HOA: ' + raw.pa_hoa) : '', !!raw.pa_hoa);
+      ctLine('assoc', 'Association', (shownAssoc ? (ASSOC_LABEL[shownAssoc] || '') : ''), segN(shownAssoc || 'none', [['none','None'],['hoa','HOA'],['condo','Condo']], 'assoc'), (raw.pa_hoa && !assocType(file)) ? ('Agent said HOA: ' + raw.pa_hoa) : '', !!raw.pa_hoa) +
+      ctLine('tenant', 'Tenant occupied?', (shownTenant === 'yes' ? 'Yes' : (shownTenant === 'no' ? 'No' : '')), segN(shownTenant || '', [['yes','Yes'],['no','No']], 'tenant'), 'If a tenant lives there, the lease + estoppel tasks are added to the checklist.', false);
     const daysBlock = (ct
       ? (dayRows
           ? grp('Contingency days') +
@@ -9822,6 +9826,9 @@ If you want to pause, I will archive your file with the option to pick back up a
     // Financing now captures the loan TYPE; derive cash-vs-financed for deadlines.
     host.querySelectorAll('[data-ct-fin]').forEach(b => b.addEventListener('click', () => { const t = b.getAttribute('data-ct-fin'); ctSave(file, null, { financing_type: t, financing_confirmed: (t === 'cash' ? 'cash' : 'financed') }); }));
     host.querySelectorAll('[data-ct-hoa]').forEach(b => b.addEventListener('click', () => ctSave(file, null, { hoa_applies: b.getAttribute('data-ct-hoa') })));
+    // Tenant occupied? · sets the shared ctc_tenant_occupied flag that gates the
+    // lease task (under contract) and the estoppel task (clear to close).
+    host.querySelectorAll('[data-ct-tenant]').forEach(b => b.addEventListener('click', () => ctSave(file, null, { ctc_tenant_occupied: b.getAttribute('data-ct-tenant') })));
     // Property type picker → drives the association section.
     host.querySelectorAll('[data-ct-assoc]').forEach(b => b.addEventListener('click', () => {
       const t = b.getAttribute('data-ct-assoc');
@@ -11065,7 +11072,8 @@ If you want to pause, I will archive your file with the option to pick back up a
         { id:'uc_title_commitment_reminder', label:'Remind title of the title-commitment due date', dl:'title_commitment',
           softComplete:{ flag:'received', label:'Mark as received', chip:'Received' },
           sub:'Template in &ldquo;What to send next&rdquo; — based on the contract deadline.' },
-        { id:'uc_tenant_lease',      label:'Confirm seller provided lease info — if tenant occupied', dl:'loan_app',
+        { id:'uc_tenant_lease',      label:'Confirm seller provided lease info — tenant occupied', dl:'loan_app',
+          showIf:(f)=>(((f.logistics||{}).ctc_tenant_occupied)==='yes'),
           sub:'Due within 5 days of Effective Date when the property is tenant occupied.' },
         { id:'uc_hoa_followup',      label:'Check HOA document status',
           showIf:(f)=>hoaApplies(f),
@@ -11276,7 +11284,6 @@ If you want to pause, I will archive your file with the option to pick back up a
       return '<button type="button" data-rem-flag="' + key + '" style="border:0.5px solid ' + (on ? '#f0d89a' : '#e8e6e1') + ';background:' + (on ? '#fdf6e3' : '#faf9f7') + ';color:' + (on ? '#9a7c3a' : '#9a9a9a') + ';font-family:inherit;font-size:10px;font-weight:600;border-radius:999px;padding:3px 10px;cursor:pointer;margin:0 6px 6px 0">' + label + ': ' + (on ? 'Yes' : 'No') + ' · tap to change</button>';
     };
     return '<div style="margin-bottom:10px">' +
-      pill('ctc_tenant_occupied', 'Tenant occupied') +
       pill('ctc_entity_buyer', 'Buyer is an entity (LLC/Trust/Corp)') +
       pill('ctc_foreign_seller', 'Seller is a foreign person') +
       pill('ctc_title_exceptions', 'Title exceptions found') +
