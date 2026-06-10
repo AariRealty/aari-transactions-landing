@@ -6053,6 +6053,17 @@ If you want to pause, I will archive your file with the option to pick back up a
         vars.cd_3day_clear_date = d.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
       } catch(_){}
     }
+    // HOA review deadline (Priority 6) — FL: the buyer's 3-day review runs from the
+    // ACTUAL receipt of the association docs, not from Effective. When the TC logs
+    // hoa_docs_received_date, compute receipt + 3 FL business days and override the
+    // engine's Effective-based value.
+    if(lg.hoa_docs_received_date){
+      try {
+        let d = new Date(lg.hoa_docs_received_date + 'T12:00:00');
+        for(let i = 0; i < 3; i++){ d = flBusinessDay(addDays(d, 1)); }
+        vars.hoa_review_deadline = d.toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+      } catch(_){}
+    }
     // HOA / Property Manager
     if(lg.hoa_manager_name){
       vars.hoa_manager_name = lg.hoa_manager_name;
@@ -11419,6 +11430,12 @@ If you want to pause, I will archive your file with the option to pick back up a
       { key:'hoa_manager_email', label:'HOA manager email',   type:'email', ph:'maria@suncoast.com' },
       { key:'hoa_manager_phone', label:'HOA manager phone',   type:'text',  ph:'(239) 555-0100' },
     ],
+    // HOA review clock (Priority 6) — log when the association docs were actually
+    // received; the buyer's 3-day review deadline ({{hoa_review_deadline}}) computes
+    // from this date, not from Effective.
+    uc_hoa_followup: [
+      { key:'hoa_docs_received_date', label:'HOA docs received date', type:'date' },
+    ],
   };
   function logisticsFieldsHtml(file, taskId){
     const fields = LOGISTICS_BY_TASK[taskId];
@@ -11712,8 +11729,21 @@ If you want to pause, I will archive your file with the option to pick back up a
               (d.manual ? '<button type="button" class="ck-dl-reset" data-dl-reset="' + def.key + '" title="Back to auto-calculated">&#8634;</button>' : '') +
             '</span></div>';
         }).join('');
-      allDl = rows
-        ? '<div class="ck-dl-table">' + rows + '</div>'
+      // CFPB 3-business-day clear date (Priority 6) — data-driven from the logged CD
+      // delivery date (cd_received_date), not Effective/Closing, so it lives outside
+      // DEADLINE_DEFS. Shows in the strip once the CD date is logged.
+      let cfpbRow = '';
+      const _cdr = (file.logistics || {}).cd_received_date;
+      if(_cdr){
+        try {
+          let d = new Date(_cdr + 'T12:00:00');
+          for(let i = 0; i < 3; i++){ d = flBusinessDay(addDays(d, 1)); }
+          cfpbRow = '<div class="ck-dl-row"><span>CFPB 3-day clear</span><span class="ck-dl-wrap">' +
+            '<button type="button" class="ck-dl ck-dl-' + dlState(d) + '" disabled title="CD delivery + 3 FL business days">' + fmtDl(d) + '</button></span></div>';
+        } catch(_){}
+      }
+      allDl = (rows || cfpbRow)
+        ? '<div class="ck-dl-table">' + rows + cfpbRow + '</div>'
         : '<div class="ck-dl-table ck-dl-empty-note">Add the Effective + Closing dates to this file to auto-calculate deadlines.</div>';
     }
     // Soft-complete (Section 4 · Items 4 & 5) — a task config'd with `softComplete`
