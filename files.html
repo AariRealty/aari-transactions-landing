@@ -418,6 +418,7 @@
   .tpb-ef-copy{font-size:10px;color:#666;background:transparent;border:0.5px solid rgba(15,15,15,0.18);padding:3px 9px;border-radius:3px;cursor:pointer;white-space:nowrap;flex-shrink:0}
   .tpb-ef-copy:hover{background:#f3f3f1}
   .tpb-ef-copy.copied{color:#2f855a;border-color:#2f855a;background:#f0fdf4}
+  .tpb-review-notice{background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:6px;padding:8px 12px;margin:8px 0 4px;font-size:11.5px;font-weight:600;color:#9a7c3a;line-height:1.4}
   .tpb-ef-body{margin-top:4px}
   .tpb-ef-textarea{width:100%;min-height:160px;font-family:inherit;font-size:12px;line-height:1.5;color:#222;background:#fafaf9;border:0.5px solid rgba(15,15,15,0.12);border-radius:4px;padding:8px 10px;resize:vertical;box-sizing:border-box}
   .tpb-email-actions{display:flex;gap:8px;justify-content:flex-end}
@@ -5748,14 +5749,18 @@ If you want to pause, I will archive your file with the option to pick back up a
       }
     } catch(_){}
     // Google review links — leave as obvious fill-ins until live URLs are wired.
+    // While the link is still a placeholder, drop a manual-paste instruction on
+    // the line below the token. Once the real URL is set on the profile/agent the
+    // sub-line vanishes automatically (the token resolves straight to the link).
     try {
       const prof = (typeof _profile!=='undefined' && _profile) ? _profile : {};
       if(template.indexOf('{{google_review_link_aari}}') !== -1){
-        template = template.split('{{google_review_link_aari}}').join(prof.google_review_link_aari || '[Aari Google review link]');
+        const aariLink = prof.google_review_link_aari;
+        template = template.split('{{google_review_link_aari}}').join(aariLink || '[Aari Google review link]\nCopy and paste your Google review link here before sending.');
       }
       if(template.indexOf('{{google_review_link_agent}}') !== -1){
         const agentLink = (agent && agent.google_review_link) || prof.google_review_link_agent || '';
-        template = template.split('{{google_review_link_agent}}').join(agentLink || '[agent Google review link]');
+        template = template.split('{{google_review_link_agent}}').join(agentLink || "[agent Google review link]\nCopy and paste the agent's Google review link here before sending.");
       }
     } catch(_){}
     // Deadline vars · {{dl_emd_initial}} {{dl_loan_app}} {{dl_emd_additional}}
@@ -10351,6 +10356,18 @@ If you want to pause, I will archive your file with the option to pick back up a
     const filledSubject = fillEmailVars(rawEmailSubject(e, file), file, agent);
     const filledBody = fillEmailVars(rawEmailBody(e, file), file, agent);
     const eid = esc(e.id);
+    // Google review link reminder (Section 15) — if this email carries a review
+    // token whose live URL has not been wired yet, show an action-required notice
+    // above the body so the TC pastes the link before sending. Auto-hides once the
+    // real URL is set on the profile/agent.
+    const _gmlRaw = rawEmailBody(e, file) || '';
+    const _gmlProf = (typeof _profile!=='undefined' && _profile) ? _profile : {};
+    const _reviewNeedsLink =
+      (_gmlRaw.indexOf('{{google_review_link_aari}}') !== -1 && !_gmlProf.google_review_link_aari) ||
+      (_gmlRaw.indexOf('{{google_review_link_agent}}') !== -1 && !((agent && agent.google_review_link) || _gmlProf.google_review_link_agent));
+    const reviewNotice = _reviewNeedsLink
+      ? '<div class="tpb-review-notice">Action required &mdash; paste the Google review link before sending this email.</div>'
+      : '';
     // Missing-field catcher · ask the TC for anything still blank before send.
     const missing = missingFieldsFor(e, file, agent);
     const missingBlock = missing.length
@@ -10375,6 +10392,7 @@ If you want to pause, I will archive your file with the option to pick back up a
         '<div class="tpb-ef-row"><span class="tpb-ef-key">TO</span><span class="tpb-ef-val" data-copy-field="to">'+esc(filledTo)+'</span><button class="tpb-ef-copy" data-copy-target="to" data-eid="'+eid+'">Copy</button></div>' +
         (filledCc ? '<div class="tpb-ef-row"><span class="tpb-ef-key">CC</span><span class="tpb-ef-val" data-copy-field="cc">'+esc(filledCc)+'</span><button class="tpb-ef-copy" data-copy-target="cc" data-eid="'+eid+'">Copy</button></div>' : '') +
         '<div class="tpb-ef-row"><span class="tpb-ef-key">SUBJECT</span><span class="tpb-ef-val" data-copy-field="subject">'+esc(filledSubject)+'</span><button class="tpb-ef-copy" data-copy-target="subject" data-eid="'+eid+'">Copy</button></div>' +
+        reviewNotice +
         '<div class="tpb-ef-body"><textarea class="tpb-ef-textarea" readonly data-copy-field="body">'+esc(filledBody)+'</textarea></div>' +
       '</div>' +
       '<div class="tpb-email-actions">' +
