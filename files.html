@@ -4034,6 +4034,7 @@ They have to clear before reaching the table.
         },
         {
           id:'ctc_cd_confirm',
+          showIf:(f)=>!isCashFile(f),
           task:'ctc_cd_received',
           thread:2,
           label:'Closing disclosure · CFPB 3-day check',
@@ -4267,7 +4268,7 @@ Tell me when the letters will be in hand so I can keep the closing timeline hone
           task:'ctc_fincen',
           thread:3,
           label:'FinCEN report · closing agent (entity buyer)',
-          showIf:(f)=>{ const lg=(f.logistics||{}); if(lg.ctc_entity_buyer==='yes') return true; if(lg.ctc_entity_buyer==='no') return false; const t=((f.raw_form_data||{}).pa_buyer_entity_type)||''; return !!(t && t!=='individual'); },
+          showIf:(f)=>{ if(!isCashFile(f)) return false; const lg=(f.logistics||{}); if(lg.ctc_entity_buyer==='yes') return true; if(lg.ctc_entity_buyer==='no') return false; const t=((f.raw_form_data||{}).pa_buyer_entity_type)||''; return !!(t && t!=='individual'); },
           to:'{{title_closer_name}} <{{title_email}}>',
           cc:'{{agent_name}} <{{agent_email}}>',
           subject:'FinCEN report confirmation · {{street}}',
@@ -6073,18 +6074,18 @@ If you want to pause, I will archive your file with the option to pick back up a
     if(!coAgentName || !String(coAgentName).trim()){
       template = template.replace(/\n\n[^\n]*\{\{co_agent_name\}\}[^\n]*/, '');
     }
-    // Lender recipient (Priority 3) — a cash file has no lender, so strip the
-    // lender from any recipient list ("{{lender_name}} <{{lender_email}}>") so the
-    // email never sends to an empty recipient. Matches the angle-bracket recipient
-    // format ONLY, so the body's "Lender: …" contact line is untouched (handled
-    // separately in Priority 5). Covers wtc_opening_all_parties, wtc_processor_intro,
-    // closed_confirm_parties, ctc_closing_confirm_all, insp_scheduled_master, etc.
+    // Lender on cash files — a cash file has no lender, so strip every lender
+    // reference: the recipient ("{{lender_name}} <{{lender_email}}>", Priority 3)
+    // AND the body contact line ("Lender: {{lender_name}} · …", Priority 5). Covers
+    // wtc_opening_all_parties, wtc_processor_intro, closed_confirm_parties,
+    // ctc_closing_confirm_all, insp_scheduled_master, wtc_escrow_opening, wtc_agent_verify…
     try {
       if(typeof isCashFile === 'function' && isCashFile(file)){
         template = template
-          .replace(/\s*;\s*\{\{lender_name\}\}\s*<\{\{lender_email\}\}>/g, '')   // lender after another recipient
-          .replace(/\{\{lender_name\}\}\s*<\{\{lender_email\}\}>\s*;\s*/g, '')   // lender first in the list
-          .replace(/\{\{lender_name\}\}\s*<\{\{lender_email\}\}>/g, '');         // lender is the only recipient
+          .replace(/\s*;\s*\{\{lender_name\}\}\s*<\{\{lender_email\}\}>/g, '')   // recipient · lender after another
+          .replace(/\{\{lender_name\}\}\s*<\{\{lender_email\}\}>\s*;\s*/g, '')   // recipient · lender first in list
+          .replace(/\{\{lender_name\}\}\s*<\{\{lender_email\}\}>/g, '')          // recipient · lender only
+          .replace(/\n\n[^\n]*Lender:[^\n]*\{\{lender_name\}\}[^\n]*/g, '');     // body · "Lender: {{lender_name}} · …" line + its blank line
       }
     } catch(_){}
     let out = template;
@@ -11111,13 +11112,13 @@ If you want to pause, I will archive your file with the option to pick back up a
         { id:'uc_title_commitment_reminder', label:'Remind title of the title-commitment due date', dl:'title_commitment',
           softComplete:{ flag:'received', label:'Mark as received', chip:'Received' },
           sub:'Template in &ldquo;What to send next&rdquo; — based on the contract deadline.' },
-        { id:'uc_tenant_lease',      label:'Confirm seller provided lease info — tenant occupied', dl:'loan_app',
+        { id:'uc_tenant_lease',      label:'Confirm seller provided lease info — tenant occupied', dl:'tenant_lease',
           showIf:(f)=>(((f.logistics||{}).ctc_tenant_occupied)==='yes'),
           sub:'Due within 5 days of Effective Date when the property is tenant occupied.' },
         { id:'uc_hoa_followup',      label:'Check HOA document status',
           showIf:(f)=>hoaApplies(f),
           sub:'Follow up with the HOA management company on the status of the requested documents.' },
-        { id:'uc_survey_received',   label:'Confirm survey and title policy received from seller',
+        { id:'uc_survey_received',   label:'Confirm survey and title policy received from seller', dl:'survey',
           showIf:(f)=>f.contract_type !== 'builder' && !((f.stage_tasks||{}).wtc_survey_title_request),
           sub:'Confirm the listing agent delivered the existing survey and the seller&rsquo;s owner&rsquo;s title policy.' },
         { id:'uc_missing_info',      label:'Flag any missing information to agent',
@@ -11241,6 +11242,7 @@ If you want to pause, I will archive your file with the option to pick back up a
         { id:'ctc_title_exceptions_resolved', label:'Confirm ALL title exceptions resolved before closing',
           showIf:(f)=>(((f.logistics||{}).ctc_title_exceptions)==='yes') },
         { id:'ctc_cd_received',    label:'Closing disclosure received from lender — confirm CFPB 3-day clock',
+          showIf:(f)=>!isCashFile(f),
           sub:'CFPB requires the BUYER to receive the closing disclosure at least 3 business days before closing. Log the CD delivery date below — the window calculates automatically.' },
         { id:'ctc_closing_confirmed', label:'Closing date, time, and location confirmed with ALL parties',
           emailGate:{ requiresFn:(f,done)=>{ const lg=f.logistics||{}; return !!(f.closing_date && lg.closing_time && lg.closing_location && done['ctc_wire_warning']); }, note:'Enter closing details and send wire fraud warning first.' },
@@ -11252,9 +11254,9 @@ If you want to pause, I will archive your file with the option to pick back up a
         { id:'ctc_estoppels',      label:'Estoppel letters received from all tenants', dl:'estoppel',
           sub:'Due 10 days before closing. Template in &ldquo;What to send next&rdquo;.',
           showIf:(f)=>(((f.logistics||{}).ctc_tenant_occupied)==='yes') },
-        { id:'ctc_fincen',         label:'FinCEN report prepared by closing agent — entity buyer',
+        { id:'ctc_fincen',         label:'FinCEN report prepared by closing agent — entity buyer (cash)',
           sub:'Required as of March 1, 2026 for non-natural-person buyers in cash deals. Filing is the CLOSING AGENT&rsquo;s responsibility — confirm they have the buyer entity&rsquo;s info. Template in &ldquo;What to send next&rdquo;.',
-          showIf:(f)=>(((f.logistics||{}).ctc_entity_buyer)==='yes') },
+          showIf:(f)=>(((f.logistics||{}).ctc_entity_buyer)==='yes') && isCashFile(f) },
         { id:'ctc_firpta',         label:'FIRPTA certification or withholding certificate on file — foreign seller',
           sub:'No non-foreign certification = buyer must withhold up to 15% of the sale price at closing. Confirm with the closing agent. Template in &ldquo;What to send next&rdquo;.',
           showIf:(f)=>(((f.logistics||{}).ctc_foreign_seller)==='yes') },

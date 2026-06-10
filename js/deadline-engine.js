@@ -41,9 +41,10 @@
     { key:'emd_additional',   label:'Additional deposit due',     from:'effective', offset:10 },
     { key:'inspection_end',   label:'Inspection period ends',     from:'effective', offset:15 },
     { key:'loan_approval',    label:'Loan approval deadline',     from:'effective', offset:30 },
+    { key:'tenant_lease',     label:'Tenant lease info due',      from:'effective', offset:5 },
     { key:'title_commitment', label:'Title commitment deadline',  from:'closing',   offset:-15 },
     { key:'estoppel',         label:'Estoppel letter deadline',   from:'closing',   offset:-10 },
-    { key:'survey',           label:'Survey deadline',            from:'closing',   offset:-5 },
+    { key:'survey',           label:'Survey deadline',            from:'effective', offset:5 },
     { key:'walkthrough',      label:'Walk-through',               from:'closing',   offset:-1 },
   ];
   // All FL-rolled deadlines for a file · {} when dates are missing.
