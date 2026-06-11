@@ -3285,6 +3285,9 @@
 
   /* === ADD-PERSON TOGGLE (second buyer / second seller) === */
   .pa-add-person{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;margin-top:16px;padding:11px 14px;background:#faf9f7;border:1.5px dashed #ddd9d0;border-radius:10px;color:#5f5e5a;font-size:12.5px;font-weight:500;cursor:pointer;font-family:inherit;transition:border-color .15s ease,background .15s ease,color .15s ease}
+  .pa-comm-seg{display:inline-flex;background:#f2efe7;border-radius:11px;padding:4px;gap:4px;margin-bottom:18px}
+  .pa-comm-seg-btn{padding:9px 20px;border:0;background:transparent;border-radius:8px;font-family:inherit;font-size:13px;font-weight:600;color:#6b6b6b;cursor:pointer;transition:background .15s ease,color .15s ease}
+  .pa-comm-seg-btn.is-active{background:#0f0f0f;color:#fff}
   .pa-add-person:hover{border-color:#b0aca4;color:#0f0f0f;background:#f3f3f1}
 
   /* === SAVE-CONTACT CHECKBOX + PRIVACY DISCLAIMER (Mockup 2) === */
@@ -6089,8 +6092,12 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           <div class="field" style="margin-top:14px"><label for="paListingPrice">Listing price</label><input type="text" id="paListingPrice" name="pa_listing_price" inputmode="decimal" placeholder="$0,000.00" autocomplete="off"></div>
         </section>
         <section class="pa-step" data-pa-step="listing-comm" hidden>
-          <div class="field"><label for="paCommListPct">Listing side commission %</label><input type="text" id="paCommListPct" name="pa_commission_listing_pct" inputmode="decimal" placeholder="3" autocomplete="off"></div>
-          <div class="field" style="margin-top:14px"><label for="paCommBuyPct">Buying side commission %</label><input type="text" id="paCommBuyPct" name="pa_commission_buying_pct" inputmode="decimal" placeholder="2.5" autocomplete="off"></div>
+          <div class="pa-comm-seg" id="paCommSeg" role="group" aria-label="Commission type">
+            <button type="button" class="pa-comm-seg-btn is-active" data-comm-type="pct">Percentage</button>
+            <button type="button" class="pa-comm-seg-btn" data-comm-type="flat">Flat fee</button>
+          </div>
+          <div class="field"><label for="paCommListPct">Listing side commission <span class="pa-comm-unit">%</span></label><input type="text" id="paCommListPct" name="pa_commission_listing_pct" inputmode="decimal" placeholder="3" autocomplete="off"></div>
+          <div class="field" style="margin-top:14px"><label for="paCommBuyPct">Buying side commission <span class="pa-comm-unit">%</span></label><input type="text" id="paCommBuyPct" name="pa_commission_buying_pct" inputmode="decimal" placeholder="2.5" autocomplete="off"></div>
         </section>
         <section class="pa-step" data-pa-step="listing-setup" hidden>
           <div class="field"><label for="paLeadSource">Lead source</label>
@@ -10842,7 +10849,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       8:  { h:'The <em>other agent?</em>',        s:'The agent on the other side of the deal. Optional — skip if none.' },
       9:  { h:'Drop the <em>contract.</em>',      s:'Executed contract + any addenda · PDF only.' },
       'listing-terms':   { h:'Listing <em>terms?</em>',    s:'Dates + price from the listing agreement.' },
-      'listing-comm':    { h:'<em>Commission?</em>',       s:'If flat fee, enter 0 and add the terms in Commission notes later.' },
+      'listing-comm':    { h:'<em>Commission?</em>',       s:'How the listing agreement is structured.' },
       'listing-setup':   { h:'Your <em>setup?</em>',       s:'Where the lead came from + how you sign.' },
       'listing-updates': { h:'Status <em>updates?</em>',   s:'How often + where you want them.' },
       'listing-mls':     { h:'MLS + <em>showings?</em>',   s:'Setup details for the listing.' },
@@ -11838,8 +11845,12 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         if(!s.data.listingDate) return '';
         return formatDate(s.data.listingDate) + ' → ' + formatDate(s.data.listingExp) + ' · ' + (s.data.listingPrice || '');
       }},
-      { step: 'listing-comm', label: 'Commission %', get: (s) =>
-        (s.data.commListPct === undefined || s.data.commListPct === '') ? '' : ('List ' + s.data.commListPct + '% · Buy ' + s.data.commBuyPct + '%') },
+      { step: 'listing-comm', label: 'Commission', get: (s) => {
+        if(s.data.commListPct === undefined || s.data.commListPct === '') return '';
+        const flat = (s.data.commissionType === 'flat');
+        const pre = flat ? '$' : '', suf = flat ? '' : '%';
+        return 'List ' + pre + s.data.commListPct + suf + ' · Buy ' + pre + s.data.commBuyPct + suf;
+      } },
       { step: 'listing-setup', label: 'Lead · signing', get: (s) =>
         [s.data.leadSource, s.data.signingPlatform].filter(Boolean).join(' · ') },
       { step: 'listing-updates', label: 'Updates', get: (s) =>
@@ -12026,6 +12037,40 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
       inp.addEventListener('input', write);
       inp.addEventListener('change', write); // catches programmatic/combobox fills too
     });
+
+    /* Commission type · Percentage / Flat fee segmented toggle (Option A).
+       Flat fee swaps the two commission fields from % to $0,000.00 and records
+       commission_type, so the TC, MLS input + closing read the right unit —
+       no more "enter 0 + notes" hack writing false data to the file. */
+    function applyCommType(type){
+      type = (type === 'flat') ? 'flat' : 'pct';
+      try { if(state && state.data) state.data.commissionType = type; } catch(_){}
+      const seg = document.getElementById('paCommSeg');
+      if(seg){
+        seg.querySelectorAll('.pa-comm-seg-btn').forEach(function(b){
+          b.classList.toggle('is-active', b.getAttribute('data-comm-type') === type);
+        });
+      }
+      const unit = (type === 'flat') ? '$' : '%';
+      document.querySelectorAll('[data-pa-step="listing-comm"] .pa-comm-unit').forEach(function(s){ s.textContent = unit; });
+      const cl = document.getElementById('paCommListPct');
+      const cb = document.getElementById('paCommBuyPct');
+      if(cl) cl.placeholder = (type === 'flat') ? '$0,000.00' : '3';
+      if(cb) cb.placeholder = (type === 'flat') ? '$0,000.00' : '2.5';
+    }
+    (function(){
+      const seg = document.getElementById('paCommSeg');
+      if(!seg) return;
+      seg.addEventListener('click', function(e){
+        const btn = e.target.closest('.pa-comm-seg-btn');
+        if(!btn) return;
+        applyCommType(btn.getAttribute('data-comm-type'));
+        const anchor = document.getElementById('paCommListPct');
+        try { if(anchor) scheduleAutoSave(anchor); } catch(_){}
+        try { gateStep(); } catch(_){}
+      });
+      try { applyCommType((state && state.data && state.data.commissionType) || 'pct'); } catch(_){}
+    })();
 
     /* Step 2 · auto-save (2s after typing stops) with Saving… / ✓ Saved.
        Persists via AariDraft (js/draft-detection.js): localStorage always,
@@ -12981,6 +13026,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         revealGroupIfData('paBuyer2Toggle',  'paBuyer2Fields',  '− Remove second buyer');
         revealGroupIfData('paSeller2Toggle', 'paSeller2Fields', '− Remove second seller');
         revealGroupIfData('paCoAgentToggle', 'paCoAgentFields', '− Remove co-agent');
+        try { applyCommType(state.data.commissionType || 'pct'); } catch(_){}
         render();
       }catch(e){ console.warn('[path-a] applyDraft failed', e); }
     }
@@ -13501,10 +13547,11 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           const cl = document.getElementById('paCommListPct');
           const cb = document.getElementById('paCommBuyPct');
           let ok = true;
-          if(cl.value.trim() === ''){ paintFieldError(cl, 'Required — enter 0 for flat fee'); ok = false; }
+          if(cl.value.trim() === ''){ paintFieldError(cl, 'Required'); ok = false; }
           if(cb.value.trim() === ''){ paintFieldError(cb, 'Required — enter 0 if none'); ok = false; }
           if(!ok) return false;
           state.data.commListPct = cl.value.trim(); state.data.commBuyPct = cb.value.trim();
+          state.data.commissionType = (state.data.commissionType === 'flat') ? 'flat' : 'pct';
           return true;
         }
         case 'listing-setup': {
@@ -13801,7 +13848,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           pa_agent_name: state.data.agentSelfName || '', pa_agent_email: state.data.agentSelfEmail || '', pa_agent_phone: state.data.agentSelfPhone || '',
           covered_by_membership: (window.__aariCreditCover && window.__aariCreditCover.tier) || '',
           pa_listing_date: state.data.listingDate || '', pa_listing_expiration: state.data.listingExp || '', pa_listing_price: state.data.listingPrice || '',
-          pa_commission_listing_pct: state.data.commListPct || '', pa_commission_buying_pct: state.data.commBuyPct || '',
+          pa_commission_listing_pct: state.data.commListPct || '', pa_commission_buying_pct: state.data.commBuyPct || '', pa_commission_type: state.data.commissionType || 'pct',
           pa_lead_source: state.data.leadSource || '', pa_signing_platform: state.data.signingPlatform || '',
           pa_update_frequency: state.data.updateFreq || '', pa_update_method: state.data.updateMethod || '',
           pa_mls_number: state.data.mlsNumber || '', pa_mls_notes: state.data.mlsNotes || '',
@@ -13987,7 +14034,7 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           pa_other_party_name: state.data.otherPartyName || '',
           pa_agent_name: state.data.agentSelfName || '', pa_agent_email: state.data.agentSelfEmail || '', pa_agent_phone: state.data.agentSelfPhone || '',
           pa_listing_date: state.data.listingDate || '', pa_listing_expiration: state.data.listingExp || '', pa_listing_price: state.data.listingPrice || '',
-          pa_commission_listing_pct: state.data.commListPct || '', pa_commission_buying_pct: state.data.commBuyPct || '',
+          pa_commission_listing_pct: state.data.commListPct || '', pa_commission_buying_pct: state.data.commBuyPct || '', pa_commission_type: state.data.commissionType || 'pct',
           pa_lead_source: state.data.leadSource || '', pa_signing_platform: state.data.signingPlatform || '',
           pa_update_frequency: state.data.updateFreq || '', pa_update_method: state.data.updateMethod || '',
           pa_mls_number: state.data.mlsNumber || '', pa_mls_notes: state.data.mlsNotes || '',
