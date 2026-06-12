@@ -9583,11 +9583,98 @@ If you want to pause, I will archive your file with the option to pick back up a
     try { writeAuditLog('contract_removed', file.id, { path: path || null }); } catch(_){}
     renderPlaybook(file);
   }
+  // Rental details · read-only sheet of everything the agent captured, grouped
+  // the way the ELLA asks for it. The TC reads this and fills the contract by hand.
+  function rentalDetailSections(file){
+    const raw = file.raw_form_data || {};
+    const v = (k) => (raw[k] != null ? String(raw[k]).trim() : '');
+    const term = v('pa_rental_term');
+    const feeBasis = v('pa_rental_fee_basis');
+    const feeTxt = feeBasis === 'month' ? "One month's rent"
+      : feeBasis === 'pct'  ? (v('pa_rental_fee_amount') ? v('pa_rental_fee_amount') + '% of annual' : '')
+      : feeBasis === 'flat' ? (v('pa_rental_fee_amount') ? '$' + v('pa_rental_fee_amount') : '')
+      : v('pa_rental_fee_amount');
+    const owner = [v('pa_seller_name'), v('pa_seller_email'), v('pa_seller_phone')].filter(Boolean).join(' · ');
+    const petLimits = [v('pa_pet_max_weight') && (v('pa_pet_max_weight') + ' lb'),
+                       v('pa_pet_max_num') && (v('pa_pet_max_num') + ' max'),
+                       v('pa_pet_breed')].filter(Boolean).join(' · ');
+    const secs = [
+      ['Owner + property', [
+        ['Owner', owner],
+        ['Property', file.property_address || ''],
+        ['Listing period', [v('pa_listing_period_start'), v('pa_listing_period_end')].filter(Boolean).join(' → ')],
+      ]],
+      (term === 'short'
+        ? ['Rate + availability', [
+            ['Type', 'Short-term'],
+            ['Season rate', v('pa_season_rate') + (v('pa_rate_period') ? (' / ' + v('pa_rate_period').toLowerCase()) : '')],
+            ['Off-season rate', v('pa_off_season_rate')],
+            ['Season window', [v('pa_season_start'), v('pa_season_end')].filter(Boolean).join(' → ')],
+            ['Availability', v('pa_availability')],
+            ['Minimum stay', v('pa_min_stay')],
+          ]]
+        : ['Rate + terms', [
+            ['Type', 'Long-term'],
+            ['Monthly rent', v('pa_rent_monthly')],
+            ['Lease term', v('pa_lease_term')],
+            ['Available', v('pa_available_date')],
+          ]]),
+      ['Deposits + fees', [
+        ['Security deposit', v('pa_security_deposit')],
+        ['Due at signing', v('pa_rent_signing')],
+        ['Held by', v('pa_deposit_holder')],
+        ['Pet deposit', v('pa_pet_deposit')],
+        ['Application fee', v('pa_application_fee')],
+        ['Association app fee', v('pa_association_app_fee')],
+        ['Rental fee to broker', feeTxt],
+      ]],
+      ['Included', [
+        ['In rent', [v('pa_rent_included'), v('pa_rent_included_other')].filter(Boolean).join(', ')],
+        ['Items convey', [v('pa_items_included'), v('pa_items_included_other')].filter(Boolean).join(', ')],
+      ]],
+      ['Pets', [
+        ['Policy', v('pa_pet_policy')],
+        ['Limits', petLimits],
+      ]],
+    ];
+    return secs;
+  }
+  function renderRentalDetails(file, host, meta){
+    if(meta) meta.textContent = 'For the ELLA';
+    const secs = rentalDetailSections(file);
+    let html = '<p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#9a8c6f;margin:0 0 10px">Rental details · fill the ELLA from this</p>';
+    secs.forEach(function(sec){
+      const rows = sec[1].filter(function(r){ return r[1]; });
+      if(!rows.length) return;
+      html += '<div style="padding:9px 0;border-bottom:1px solid #f1efe9">'
+            + '<p style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#b0a98f;margin:0 0 6px">' + esc(sec[0]) + '</p>';
+      rows.forEach(function(r){
+        html += '<div style="display:flex;justify-content:space-between;gap:14px;font-size:12.5px;line-height:1.5;padding:2px 0">'
+              + '<span style="color:#8a8a86">' + esc(r[0]) + '</span>'
+              + '<span style="color:#0f0f0f;font-weight:500;text-align:right">' + esc(r[1]) + '</span></div>';
+      });
+      html += '</div>';
+    });
+    const anyData = secs.some(function(sec){ return sec[1].some(function(r){ return r[1]; }); });
+    if(!anyData) html += '<p class="tpb-empty">No rental details captured yet.</p>';
+    html += '<button type="button" id="rd-copy" style="width:100%;margin-top:14px;border:1px solid #e5e3dc;background:#fff;border-radius:9px;padding:10px;font-size:12.5px;font-weight:600;color:#0f0f0f;cursor:pointer">Copy all</button>';
+    host.innerHTML = html;
+    const btn = document.getElementById('rd-copy');
+    if(btn) btn.addEventListener('click', function(){
+      const txt = secs.map(function(sec){
+        const rows = sec[1].filter(function(r){ return r[1]; });
+        if(!rows.length) return '';
+        return sec[0].toUpperCase() + '\n' + rows.map(function(r){ return r[0] + ': ' + r[1]; }).join('\n');
+      }).filter(Boolean).join('\n\n');
+      try { navigator.clipboard.writeText(txt); btn.textContent = 'Copied ✓'; setTimeout(function(){ btn.textContent = 'Copy all'; }, 1500); } catch(_){ }
+    });
+  }
   function renderContractTerms(file){
     const host = document.getElementById('tpb-terms');
     const meta = document.getElementById('tpb-terms-meta');
     if(!host) return;
     if((file.file_type || 'sale') !== 'sale'){
+      if((file.file_type || '') === 'rental'){ renderRentalDetails(file, host, meta); return; }
       host.innerHTML = '<p class="tpb-empty">Contract terms apply to sale files.</p>';
       if(meta) meta.textContent = '';
       return;
