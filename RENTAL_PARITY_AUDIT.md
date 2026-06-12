@@ -21,7 +21,19 @@
 
 ---
 
-## REMAINING WORK
+## STATUS: ALL ITEMS BELOW ARE DONE ✅ (closed out this session)
+- ✅ #1 Board card — `rentalCertainty` branch drives a rental-relevant action line.
+- ✅ #2 Score — `rentalCertainty` (ELLA missing, unaccepted, listing expiring, lease unsigned, FS 83.49 overdue); badge moves with state.
+- ✅ #3 Leak check — verification panel hidden for all files (`if(k==='vf') p.hidden=true`); no closing-logistics panel exists in the rail.
+- ✅ #4 Email depth — `EMAIL_PLAYBOOK.rental` now 13 emails (added: application received, screening approved/declined, rent setup, move-out + deposit) with version variety.
+- ✅ Save hardened — `rentalSaveField` re-reads the live record before merge.
+- ✅ Acceptance + gates — `rnew_accept` (systemCheck accept) + email gates on Signed stage.
+
+Detail kept below for reference.
+
+---
+
+## REMAINING WORK (now complete — see status above)
 
 ### 1. Board card reads sale triage (`cardAction`)  — files.html ~`function cardAction`
 **Problem:** `cardAction(f)` computes the card's action line + urgency tone from `fileTriage(f)` + `computeClosingCertainty(f)`, both built on **contract deadlines / verifications**. A rental has none, so the action line and color are meaningless/wrong on the board.
