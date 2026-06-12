@@ -628,6 +628,37 @@
         </span>
       </label>
 
+      <div class="goal-group-eb" style="margin-top:6px">Rental defaults</div>
+      <label class="goal-lbl">Cancellation fee
+        <div class="goal-input-row">
+          <input type="text" id="goal-rental-cancel" placeholder="$250 or one month's rent">
+        </div>
+        <span class="goal-helper">Your standard ELLA early-termination fee. Auto-fills on every rental listing.</span>
+      </label>
+      <label class="goal-lbl">Standard rental fee
+        <div class="goal-input-row">
+          <select id="goal-rental-fee-basis">
+            <option value="">Pick one&hellip;</option>
+            <option value="month">One month's rent</option>
+            <option value="pct">% of annual</option>
+            <option value="flat">Flat $</option>
+          </select>
+          <input type="text" id="goal-rental-fee-amt" placeholder="% or $" style="max-width:120px">
+        </div>
+        <span class="goal-helper">Your usual fee for securing a tenant. Amount applies for % or flat.</span>
+      </label>
+      <label class="goal-lbl">Default signing platform
+        <div class="goal-input-row">
+          <select id="goal-signing-platform">
+            <option value="">Pick one&hellip;</option>
+            <option>DocuSign</option>
+            <option>Dotloop</option>
+            <option>Authentisign</option>
+            <option>Other</option>
+          </select>
+        </div>
+      </label>
+
       <div class="goal-status" id="goal-status"></div>
       <button type="button" class="goal-save" id="goal-save">Save</button>
     </div>
@@ -1472,6 +1503,11 @@
       document.getElementById('goal-digest').checked = digestOn;
       const rlEl = document.getElementById('goal-review-link');
       if(rlEl) rlEl.value = (_profile && _profile.google_review_link) ? _profile.google_review_link : '';
+      const _set = (id, v) => { const el = document.getElementById(id); if(el) el.value = v || ''; };
+      _set('goal-rental-cancel',   _profile && _profile.rental_cancellation_fee);
+      _set('goal-rental-fee-basis',_profile && _profile.rental_fee_basis);
+      _set('goal-rental-fee-amt',  _profile && _profile.rental_fee_amount);
+      _set('goal-signing-platform',_profile && _profile.default_signing_platform);
       document.getElementById('goal-status').className = 'goal-status';
       document.getElementById('goal-modal').classList.add('open');
       document.getElementById('goal-back').classList.add('open');
@@ -1512,18 +1548,29 @@
       const reviewLink = reviewLinkEl ? (reviewLinkEl.value.trim() || null) : null;
       save.disabled = true; save.textContent = 'Saving…';
       try {
-        const { error } = await _client.from('agents').update({
+        const _rCancel = (document.getElementById('goal-rental-cancel') || {}).value;
+        const _rBasis  = (document.getElementById('goal-rental-fee-basis') || {}).value;
+        const _rAmt    = (document.getElementById('goal-rental-fee-amt') || {}).value;
+        const _rSign   = (document.getElementById('goal-signing-platform') || {}).value;
+        const rentalDefaults = {
+          rental_cancellation_fee:  (_rCancel || '').trim() || null,
+          rental_fee_basis:         _rBasis || null,
+          rental_fee_amount:        (_rAmt || '').trim() || null,
+          default_signing_platform: _rSign || null,
+        };
+        const { error } = await _client.from('agents').update(Object.assign({
           default_commission_pct: rate,
           monthly_volume_goal_cents: volume != null ? volume * 100 : null,
           weekly_digest_opt_in: digestOn,
           google_review_link: reviewLink,
-        }).eq('id', _profile.id);
+        }, rentalDefaults)).eq('id', _profile.id);
         if(error) throw error;
         // Update local profile + re-render
         _profile.default_commission_pct = rate;
         _profile.monthly_volume_goal_cents = volume != null ? volume * 100 : null;
         _profile.weekly_digest_opt_in = digestOn;
         _profile.google_review_link = reviewLink;
+        Object.assign(_profile, rentalDefaults);
         renderEarnings();
         status.className = 'goal-status show ok';
         status.textContent = '✓ Saved.';
