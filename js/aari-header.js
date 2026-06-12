@@ -405,20 +405,48 @@
     });
   }
 
+  // Small brand-pure confirm so Sign out isn't a one-tap accident.
+  function confirmSignOut(onConfirm) {
+    if (document.getElementById('aari-signout-confirm')) return;
+    var ov = document.createElement('div');
+    ov.id = 'aari-signout-confirm';
+    ov.setAttribute('role', 'dialog');
+    ov.setAttribute('aria-modal', 'true');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:10050;background:rgba(15,15,15,0.45);display:flex;align-items:center;justify-content:center;padding:20px';
+    ov.innerHTML =
+      '<div style="background:#fff;border-radius:12px;max-width:320px;width:100%;padding:22px 22px 18px;box-shadow:0 12px 40px rgba(0,0,0,0.2);font-family:inherit">' +
+        '<p style="font-size:16px;font-weight:600;color:#0f0f0f;margin:0 0 6px">Sign out?</p>' +
+        '<p style="font-size:13px;color:#6f6a61;margin:0 0 18px;line-height:1.45">You’ll need to sign back in to reach your portal.</p>' +
+        '<div style="display:flex;gap:9px;justify-content:flex-end">' +
+          '<button type="button" id="aari-so-cancel" style="background:#fff;color:#0f0f0f;border:0.5px solid #d9d4ca;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">Cancel</button>' +
+          '<button type="button" id="aari-so-go" style="background:#0f0f0f;color:#fff;border:0;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit">Sign out</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    var onKey;
+    var rm = function () { if (ov.parentNode) ov.parentNode.removeChild(ov); document.removeEventListener('keydown', onKey); };
+    onKey = function (e) { if (e.key === 'Escape') rm(); };
+    ov.addEventListener('click', function (e) { if (e.target === ov) rm(); });
+    document.getElementById('aari-so-cancel').addEventListener('click', rm);
+    document.getElementById('aari-so-go').addEventListener('click', function () { rm(); onConfirm(); });
+    document.addEventListener('keydown', onKey);
+  }
   function wireSignOut() {
     var a = document.getElementById('aari-signout');
     if (!a) return;
     a.addEventListener('click', function (e) {
       e.preventDefault();
-      try {
-        if (window.AariAuth && typeof window.AariAuth.signOut === 'function') {
-          Promise.resolve(window.AariAuth.signOut()).finally(function () {
-            window.location.href = '/index.html';
-          });
-          return;
-        }
-      } catch (_) {}
-      window.location.href = '/index.html';
+      confirmSignOut(function () {
+        try {
+          if (window.AariAuth && typeof window.AariAuth.signOut === 'function') {
+            Promise.resolve(window.AariAuth.signOut()).finally(function () {
+              window.location.href = '/index.html';
+            });
+            return;
+          }
+        } catch (_) {}
+        window.location.href = '/index.html';
+      });
     });
   }
 
