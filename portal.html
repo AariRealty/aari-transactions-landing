@@ -693,6 +693,16 @@
     </div>
   </aside>
 
+  <!-- Recent activity modal · deep-linked from the account menu (#recent-activity) -->
+  <div class="goal-back" id="ra-back"></div>
+  <aside class="goal-modal" id="ra-modal" role="dialog" aria-modal="true" aria-label="Recent activity">
+    <div class="goal-head">
+      <div><h3 class="goal-title" style="margin:0">Recent activity</h3></div>
+      <button type="button" class="goal-close" id="ra-close">×</button>
+    </div>
+    <div class="goal-body" id="ra-body" style="max-height:70vh;overflow-y:auto"></div>
+  </aside>
+
   <!-- TRUST STRIP · 3 defensible metrics that prove TC value -->
   <div class="trust-strip">
     <div class="trust-tile">
@@ -976,6 +986,7 @@
     wireClosedToggle();
     wireRefer();
     wireGoalModal();
+    wireRecentActivity();
     forceKanbanLayout();
     await loadAll();
     // Item 1 · live stage updates · agent sees TC moves without refreshing.
@@ -1453,6 +1464,9 @@
     renderClosed();
     renderTeam();
     forceKanbanLayout();
+    // Repopulate the Recent activity feed now that files/sends are loaded (covers a
+    // deep-link from the cockpit menu that opened the modal before data arrived).
+    try { if(document.getElementById('ra-modal') && document.getElementById('ra-modal').classList.contains('open')) renderRecentActivity(); } catch(_){}
   }
 
   // ===== EARNINGS + PIPELINE DASHBOARD =====
@@ -1560,6 +1574,103 @@
         '<button type="button" id="completion-finish-btn" style="width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:8px;padding:10px;font-size:13px;font-weight:500;margin-top:14px;cursor:pointer;font-family:inherit">Finish in settings</button>' +
       '</div>';
     n.style.display = 'block';
+  }
+
+  // ===== RECENT ACTIVITY · account-menu popup (#recent-activity) =====
+  // Day-grouped timeline (Option A). Aggregates from data already in memory:
+  // file submitted (created_at), TC accepted (tc_accepted_at), payment confirmed
+  // (payment_confirmed_at), and emails sent on the agent's files (_sends). Filter
+  // chips appear only when there's volume to filter — staff (TC/broker) or >20 items.
+  let _raFilter = 'all';
+  function raAgo(iso){
+    if(!iso) return '';
+    const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if(mins < 1) return 'now';
+    if(mins < 60) return mins + 'm';
+    const hrs = Math.floor(mins / 60);
+    if(hrs < 24) return hrs + 'h';
+    const days = Math.floor(hrs / 24);
+    if(days < 7) return days + 'd';
+    return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric' });
+  }
+  function raDayBucket(iso){
+    const today = new Date(); today.setHours(0,0,0,0);
+    const d = new Date(iso); d.setHours(0,0,0,0);
+    const days = Math.round((today - d) / 86400000);
+    if(days <= 0) return 'Today';
+    if(days === 1) return 'Yesterday';
+    return 'Earlier';
+  }
+  function raEmailLabel(t){ if(!t) return 'Email'; return String(t).replace(/[_-]+/g, ' ').replace(/\b\w/g, function(c){ return c.toUpperCase(); }); }
+  function buildActivityEvents(){
+    const evs = [];
+    const tcName = function(id){ const t = _tcs[id]; return t && t.first_name ? t.first_name : 'Your TC'; };
+    const addrById = {};
+    (_files || []).forEach(function(f){
+      const addr = f.property_address || 'Your file';
+      addrById[f.id] = addr;
+      if(f.created_at) evs.push({ ts:f.created_at, cat:'file', icon:'ti-file-text', color:'#5f5e5a', text:'File submitted', addr:addr });
+      if(f.tc_accepted_at) evs.push({ ts:f.tc_accepted_at, cat:'file', icon:'ti-user-check', color:'#3e7d57', text: tcName(f.assigned_tc_id) + ' accepted your file', addr:addr });
+      if(f.payment_confirmed_at) evs.push({ ts:f.payment_confirmed_at, cat:'payment', icon:'ti-credit-card', color:'#5f5e5a', text:'Payment confirmed', addr:addr });
+    });
+    (_sends || []).forEach(function(s){
+      if(!s.sent_at) return;
+      evs.push({ ts:s.sent_at, cat:'email', icon:'ti-mail', color:'#5f5e5a', text: raEmailLabel(s.template_id) + ' sent', addr: addrById[s.file_id] || 'Your file' });
+    });
+    evs.sort(function(a,b){ return new Date(b.ts) - new Date(a.ts); });
+    return evs;
+  }
+  function renderRecentActivity(){
+    const body = document.getElementById('ra-body');
+    if(!body) return;
+    let evs = buildActivityEvents();
+    const total = evs.length;
+    const isStaff = _profile && (_profile.role === 'tc' || _profile.role === 'broker');
+    const showChips = isStaff || total > 20;
+    if(_raFilter !== 'all') evs = evs.filter(function(e){ return e.cat === _raFilter; });
+    let html = '';
+    if(showChips){
+      const chip = function(id, lbl){ return '<button type="button" data-ra-filter="' + id + '" style="font-size:11px;border:0;border-radius:20px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (_raFilter === id ? 'background:#0f0f0f;color:#fff' : 'background:#f1ede6;color:#5f5e5a') + '">' + lbl + '</button>'; };
+      html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px">' + chip('all','All') + chip('file','Files') + chip('email','Emails') + chip('payment','Payments') + '</div>';
+    }
+    if(!evs.length){
+      html += '<p style="font-size:13px;color:#8a857c;text-align:center;padding:24px 0 8px">Nothing here yet. Activity on your files will show up as it happens.</p>';
+      body.innerHTML = html; return;
+    }
+    const groups = {};
+    evs.forEach(function(e){ const b = raDayBucket(e.ts); (groups[b] = groups[b] || []).push(e); });
+    ['Today','Yesterday','Earlier'].forEach(function(b){
+      if(!groups[b]) return;
+      html += '<p style="font-size:10px;font-weight:500;letter-spacing:.06em;color:#b3aea5;text-transform:uppercase;margin:0 0 9px">' + b + '</p>';
+      html += '<div style="display:flex;flex-direction:column;gap:13px;margin-bottom:18px">';
+      html += groups[b].map(function(e){
+        return '<div style="display:flex;gap:11px">' +
+          '<i class="ti ' + e.icon + '" style="font-size:17px;color:' + e.color + ';flex:none;margin-top:1px" aria-hidden="true"></i>' +
+          '<div style="flex:1"><p style="font-size:13px;color:#0f0f0f;margin:0;line-height:1.4">' + esc(e.text) + '</p>' +
+          '<p style="font-size:11.5px;color:#8a857c;margin:1px 0 0">' + esc(e.addr) + '</p></div>' +
+          '<span style="font-size:11px;color:#b0aca4;flex:none">' + raAgo(e.ts) + '</span>' +
+        '</div>';
+      }).join('');
+      html += '</div>';
+    });
+    body.innerHTML = html;
+  }
+  function wireRecentActivity(){
+    const openRA = function(){ _raFilter = 'all'; renderRecentActivity(); document.getElementById('ra-modal').classList.add('open'); document.getElementById('ra-back').classList.add('open'); document.body.style.overflow = 'hidden'; };
+    const closeRA = function(){
+      document.getElementById('ra-modal').classList.remove('open');
+      document.getElementById('ra-back').classList.remove('open');
+      document.body.style.overflow = '';
+      if(location.hash === '#recent-activity'){ try { history.replaceState(null, '', location.pathname + location.search); } catch(_){ location.hash = ''; } }
+    };
+    const cl = document.getElementById('ra-close'); if(cl) cl.addEventListener('click', closeRA);
+    const bk = document.getElementById('ra-back'); if(bk) bk.addEventListener('click', closeRA);
+    const hashH = function(){ if(location.hash === '#recent-activity') openRA(); };
+    window.addEventListener('hashchange', hashH); hashH();
+    document.addEventListener('click', function(e){
+      const c = e.target && e.target.closest && e.target.closest('[data-ra-filter]');
+      if(c){ _raFilter = c.getAttribute('data-ra-filter'); renderRecentActivity(); }
+    });
   }
 
   // Wire the goal modal
