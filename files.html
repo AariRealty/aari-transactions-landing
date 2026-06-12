@@ -9992,6 +9992,7 @@ Tell me your planned move-out date and I will set the inspection.`
         return '<div style="background:#f5f0e8;border:0.5px solid #e6ddc9;border-radius:10px;padding:11px 12px;margin:6px 0">'
           + '<span style="font-size:9.5px;color:#6f6a61;text-transform:uppercase;letter-spacing:.04em">' + esc(label) + '</span>'
           + '<div style="margin-top:8px"><input type="text" id="rt-edit-input" value="' + esc(val) + '" style="width:100%;box-sizing:border-box;border:0.5px solid #d9d4ca;border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit;background:#fff"></div>'
+          + (stdProfileColFor(key) ? ('<label style="display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer"><input type="checkbox" id="rt-promote" style="width:15px;height:15px;flex:none"><span style="font-size:11.5px;color:#5f5e5a;line-height:1.4">Also save as ' + esc(stdAgentFirstName(file)) + '’s default for future files</span></label>') : '')
           + '<div style="text-align:right;margin-top:10px"><button type="button" data-rt-lockin="' + esc(key) + '" style="background:#0f0f0f;color:#fff;border:0;border-radius:7px;padding:7px 15px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Lock in</button></div>'
           + '</div>';
       }
@@ -10031,7 +10032,14 @@ Tell me your planned move-out date and I will set the inspection.`
     host.innerHTML = html;
     host.querySelectorAll('[data-rt-edit]').forEach(function(b){ b.addEventListener('click', function(){ _rtEditKey = b.getAttribute('data-rt-edit'); renderPlaybook(file); }); });
     const lk = host.querySelector('[data-rt-lockin]');
-    if(lk) lk.addEventListener('click', function(){ const inp = document.getElementById('rt-edit-input'); rentalSaveField(file, lk.getAttribute('data-rt-lockin'), inp ? inp.value.trim() : ''); });
+    if(lk) lk.addEventListener('click', function(){
+      const inp = document.getElementById('rt-edit-input');
+      const key = lk.getAttribute('data-rt-lockin');
+      const val = inp ? inp.value.trim() : '';
+      const pro = document.getElementById('rt-promote');
+      if(pro && pro.checked && stdProfileColFor(key)){ promoteStandingTerm(file, key, val); }
+      rentalSaveField(file, key, val);
+    });
     const cf = document.getElementById('rental-confirm');
     if(cf) cf.addEventListener('click', function(){
       ctSave(file, {}, { terms_confirmed_at: new Date().toISOString() }).then(function(){ try { renderPlaybook(file); } catch(_){} });
@@ -10227,12 +10235,13 @@ Tell me your planned move-out date and I will set the inspection.`
     const ctLabelFor = function(k){ try { return (ENG && ENG.contractLabel) ? ENG.contractLabel(k) : k; } catch(_){ return k; } };
     // Settled lines stay clean (no icons). Tapping a line opens it in a cream
     // box; the ONE line you're editing gets a single black "Lock in" button.
-    const ctLine = function(key, label, displayVal, controlHtml, note, prov, fromProfile){
+    const ctLine = function(key, label, displayVal, controlHtml, note, prov, fromProfile, promoteHtml){
       if(_ctEditingField === key){
         return '<div style="background:#f5f0e8;border:0.5px solid #e6ddc9;border-radius:10px;padding:11px 12px;margin:6px 0">' +
           '<span style="font-size:9.5px;color:#6f6a61;text-transform:uppercase;letter-spacing:.04em">' + esc(label) + '</span>' +
           '<div style="margin-top:8px">' + controlHtml + '</div>' +
           (note ? '<p style="font-size:10px;color:#8a857c;margin:7px 0 0">' + esc(note) + '</p>' : '') +
+          (promoteHtml || '') +
           '<div style="text-align:right;margin-top:10px"><button type="button" data-ctline-done="' + key + '" style="background:#0f0f0f;color:#fff;border:0;border-radius:7px;padding:7px 15px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Lock in</button></div>' +
         '</div>';
       }
@@ -10283,8 +10292,12 @@ Tell me your planned move-out date and I will set the inspection.`
         + '<span style="font-size:11px;color:#0c447c;line-height:1.35">' + _stdPulled + (_stdPulled === 1 ? ' term' : ' terms') + ' pulled from the agent’s profile defaults &middot; tap any to override on this file</span>'
         + '</div>'
       : '';
+    const _stdAgentFirst = stdAgentFirstName(file);
     const stdLines = grp('Standing terms') + _stdBanner + _stdData.map(function(d, i){
-      return ctLine('std_' + i, d.label, d.value, _stdInput('ct-std-' + i, d.value), d.note, false, d.fromProfile);
+      const promo = stdProfileColFor(d.key)
+        ? '<label style="display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer"><input type="checkbox" id="ct-std-promote-' + i + '" style="width:15px;height:15px;flex:none"><span style="font-size:11.5px;color:#5f5e5a;line-height:1.4">Also save as ' + esc(_stdAgentFirst) + '’s default for future files</span></label>'
+        : '';
+      return ctLine('std_' + i, d.label, d.value, _stdInput('ct-std-' + i, d.value), d.note, false, d.fromProfile, promo);
     }).join('');
     const daysBlock = (ct
       ? (dayRows
@@ -10459,7 +10472,21 @@ Tell me your planned move-out date and I will set the inspection.`
       b.addEventListener('click', function(){ _ctEditingField = b.getAttribute('data-ctline-edit'); renderContractTerms(file); });
     });
     host.querySelectorAll('[data-ctline-done]').forEach(function(b){
-      b.addEventListener('click', function(){ _ctEditingField = null; renderContractTerms(file); });
+      b.addEventListener('click', function(){
+        const k = b.getAttribute('data-ctline-done');
+        const m = /^std_(\d+)$/.exec(k);
+        if(m){
+          // Standing-term rows save on Lock in (not on blur) so the promote checkbox
+          // stays clickable. Save the file override; if checked, also promote to the
+          // agent's profile default.
+          const i = +m[1], d = _stdData[i];
+          const inp = document.getElementById('ct-std-' + i);
+          const pro = document.getElementById('ct-std-promote-' + i);
+          _ctEditingField = null;
+          if(d && inp){ const val = inp.value.trim(); if(pro && pro.checked && stdProfileColFor(d.key)){ promoteStandingTerm(file, d.key, val); } rentalSaveField(file, d.key, val); return; }
+        }
+        _ctEditingField = null; renderContractTerms(file);
+      });
     });
     // Day-row "Lock in" · flush the current box value, then settle the row.
     host.querySelectorAll('[data-ctday-done]').forEach(function(b){
@@ -10484,12 +10511,8 @@ Tell me your planned move-out date and I will set the inspection.`
       const el = document.getElementById('ctd-' + fd.f);
       if(el) el.addEventListener('change', () => ctSaveDays(file, fd.f, el.value));
     });
-    // Standing-term inputs · save the per-file override into raw_form_data (the same
-    // keys the rental panel uses), via the hardened re-read-before-merge save.
-    _stdData.forEach(function(d, i){
-      const el = document.getElementById('ct-std-' + i);
-      if(el) el.addEventListener('change', function(){ _ctEditingField = null; rentalSaveField(file, d.key, el.value.trim()); });
-    });
+    // Standing-term rows save on Lock in (handled in the data-ctline-done block
+    // above) rather than on blur, so the "save to profile" checkbox stays clickable.
     const insW = document.getElementById('ct-inspwaive');
     if(insW) insW.addEventListener('click', () => ctSave(file, null, { inspection_waived: true }));
     const insU = document.getElementById('ct-inspunwaive');
@@ -13444,6 +13467,42 @@ Tell me your planned move-out date and I will set the inspection.`
   // banner). Retained deposit floors at 50%. Transaction-wide terms apply to every
   // file; the ELLA cancellation fee is appended only for rentals. Each panel renders
   // these with its own row renderer but the keys / fallback / floor live ONLY here.
+  // Maps a per-file standing-term key (raw_form_data) → the agent-profile column it
+  // promotes to. Used by the "Also save as [Agent]'s default" checkbox.
+  const STD_PROFILE_MAP = {
+    pa_company_fee:            'company_transaction_fee',
+    pa_retained_deposit:       'retained_deposit_pct',
+    pa_compensation:           'default_compensation',
+    pa_conditional_termination:'conditional_termination',
+    pa_cancellation_fee:       'rental_cancellation_fee'
+  };
+  function stdProfileColFor(key){ return STD_PROFILE_MAP[key] || null; }
+  function stdAgentFirstName(file){ const n = (_agentNameById && _agentNameById[file.agent_id]) || ''; return (n.split(' ')[0] || 'the agent'); }
+  // Promote a per-file standing-term value to the agent's profile so it becomes the
+  // default on every FUTURE file. Broker/TC action (the cockpit is staff-only), and
+  // stamped (who + when + which file) in standing_terms_meta for the audit trail.
+  // Defensive: if the meta column isn't there yet (migration not applied) it retries
+  // writing just the value column, so a missing column never blocks the save.
+  async function promoteStandingTerm(file, rawKey, value){
+    const col = STD_PROFILE_MAP[rawKey];
+    if(!col || !file || !file.agent_id) return;
+    try {
+      let uid = null; try { const u = await _client.auth.getUser(); uid = u && u.data && u.data.user ? u.data.user.id : null; } catch(_){}
+      let meta = {};
+      try { const cur = await _client.from('agents').select('standing_terms_meta').eq('id', file.agent_id).single(); if(cur && cur.data && cur.data.standing_terms_meta) meta = cur.data.standing_terms_meta; } catch(_){}
+      meta = Object.assign({}, meta); meta[col] = { value: value, set_by: uid, set_at: new Date().toISOString(), from_file: file.id };
+      const patch = {}; patch[col] = value;
+      let res = await _client.from('agents').update(Object.assign({}, patch, { standing_terms_meta: meta })).eq('id', file.agent_id).select('id');
+      if(res.error){ res = await _client.from('agents').update(patch).eq('id', file.agent_id).select('id'); } // meta col missing → value only
+      if(res.error) throw res.error;
+      // Keep the cockpit caches in sync so the dot/banner reflect the new default.
+      _agentDefaultsById[file.agent_id] = Object.assign({}, _agentDefaultsById[file.agent_id] || {}, patch);
+      if(_agentCache[file.agent_id]) _agentCache[file.agent_id] = Object.assign({}, _agentCache[file.agent_id], patch);
+    } catch(err){
+      console.warn('[standing] promote to profile failed', err);
+      alert('Saved to this file, but could not update ' + stdAgentFirstName(file) + '’s profile: ' + (err && err.message ? err.message : 'unknown'));
+    }
+  }
   function standingTermsData(file){
     const raw = file.raw_form_data || {};
     const v = function(k){ return (raw[k] != null ? String(raw[k]).trim() : ''); };

@@ -20,8 +20,12 @@ alter table public.agents
   add column if not exists rental_cancellation_fee    text,   -- ELLA early-termination fee · e.g. "$250" or "one month"
   add column if not exists rental_fee_basis           text,   -- month | pct | flat
   add column if not exists rental_fee_amount          text,   -- the % or $ when basis is pct/flat
-  add column if not exists default_signing_platform   text;   -- DocuSign | Dotloop | Authentisign | Other
+  add column if not exists default_signing_platform   text,   -- DocuSign | Dotloop | Authentisign | Other
+  -- Audit stamp when a standing term is promoted FROM a file by a TC/broker:
+  -- { <profile_col>: { value, set_by, set_at, from_file } }
+  add column if not exists standing_terms_meta        jsonb;
 
+comment on column public.agents.standing_terms_meta      is 'Audit trail for standing terms set from a file by a TC/broker: who, when, which file, per profile column.';
 comment on column public.agents.rental_cancellation_fee  is 'Agent standing ELLA cancellation / early-termination fee. Auto-filled into rental files. Null = ask per file.';
 comment on column public.agents.rental_fee_basis         is 'Agent standard rental fee basis: month | pct | flat.';
 comment on column public.agents.rental_fee_amount        is 'Agent standard rental fee amount (% or $) when basis is pct/flat.';
