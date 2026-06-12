@@ -11,10 +11,16 @@
 -- ============================================================================
 
 alter table public.agents
-  add column if not exists rental_cancellation_fee   text,   -- ELLA early-termination fee · e.g. "$250" or "one month"
-  add column if not exists rental_fee_basis          text,   -- month | pct | flat
-  add column if not exists rental_fee_amount         text,   -- the % or $ when basis is pct/flat
-  add column if not exists default_signing_platform  text;   -- DocuSign | Dotloop | Authentisign | Other
+  -- Transaction-wide standing terms (same on every file)
+  add column if not exists company_transaction_fee   text,   -- brokerage admin/transaction fee · e.g. "$395"
+  add column if not exists retained_deposit_pct       text,   -- % of EMD retained on cancellation · blank = 50%
+  add column if not exists conditional_termination    text,   -- standing conditional-termination language
+  add column if not exists default_compensation       text,   -- standard compensation terms · e.g. "3%" or "per MLS"
+  -- Rental-specific standing terms
+  add column if not exists rental_cancellation_fee    text,   -- ELLA early-termination fee · e.g. "$250" or "one month"
+  add column if not exists rental_fee_basis           text,   -- month | pct | flat
+  add column if not exists rental_fee_amount          text,   -- the % or $ when basis is pct/flat
+  add column if not exists default_signing_platform   text;   -- DocuSign | Dotloop | Authentisign | Other
 
 comment on column public.agents.rental_cancellation_fee  is 'Agent standing ELLA cancellation / early-termination fee. Auto-filled into rental files. Null = ask per file.';
 comment on column public.agents.rental_fee_basis         is 'Agent standard rental fee basis: month | pct | flat.';
