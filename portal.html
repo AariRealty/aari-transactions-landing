@@ -1028,6 +1028,9 @@
     }
     bootHide();
     document.getElementById('page-main').style.display = 'block';
+    // Hard SA gate · raise it the instant the profile is known, before any dashboard
+    // data loads, so an unsigned agent never sees the portal behind it.
+    try { renderSaGate(); } catch(_){}
     if(_profile.first_name) document.getElementById('welcome-greet').textContent = 'Welcome back, ' + _profile.first_name;
     document.getElementById('welcome-sub').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
     wireDrawer();
@@ -1518,7 +1521,7 @@
     renderEarnings();
     // Dashboard-top prompts · always run (renderEarnings bails for zero-file agents,
     // who are exactly the new agents these prompts target).
-    renderSaBanner();
+    renderSaGate();
     renderCompletionCard();
     renderTrustStrip();
     renderMyFiles();
@@ -1763,6 +1766,40 @@
     n.style.display = 'block';
     const b = document.getElementById('sa-sign-now');
     if(b) b.addEventListener('click', function(){ window.location.href = '/index.html#onboarding'; });
+  }
+
+  // HARD GATE · an unsigned agent gets a full-screen block over the whole portal —
+  // no dashboard, no files — until the Service Agreement is executed. Supersedes the
+  // soft banner. In Preview-as-Agent it shows as a demo with an "Exit preview" escape
+  // so the broker isn't trapped behind it.
+  function renderSaGate(){
+    const existing = document.getElementById('sa-gate');
+    if(!_profile){ if(existing) existing.remove(); return; }
+    const previewAgent = _viewAs() === 'agent' && (_profile.role === 'broker' || _profile.role === 'tc');
+    const isAgent = previewAgent || !_profile.role || _profile.role === 'agent';
+    const unsigned = previewAgent ? true : !_profile.agreement_signed_at;
+    if(!isAgent || !unsigned){ if(existing) existing.remove(); document.body.style.overflow = ''; return; }
+    if(existing) return; // already up
+    const g = document.createElement('div');
+    g.id = 'sa-gate';
+    g.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#faf7f1;display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto';
+    g.innerHTML =
+      '<div style="max-width:420px;width:100%;text-align:center">' +
+        '<i class="ti ti-file-pencil" style="font-size:30px;color:#b7791f" aria-hidden="true"></i>' +
+        '<h2 style="font-family:\'Playfair Display\',Georgia,serif;font-weight:500;font-size:24px;color:#0f0f0f;margin:14px 0 8px">Sign your Service Agreement to continue</h2>' +
+        '<p style="font-size:13.5px;color:#6f6a61;line-height:1.55;margin:0 0 22px">Your Aari Service Agreement must be executed before you can access your portal or submit files.</p>' +
+        '<button type="button" id="sa-gate-sign" style="background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:13px 26px;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit">Review &amp; sign</button>' +
+        '<p style="margin:18px 0 0">' +
+          (previewAgent
+            ? '<a href="#" id="sa-gate-exitpreview" style="font-size:12px;color:#8a857c;text-decoration:underline;text-underline-offset:2px">Exit preview</a>'
+            : '<a href="#" id="sa-gate-signout" style="font-size:12px;color:#8a857c;text-decoration:underline;text-underline-offset:2px">Sign out</a>') +
+        '</p>' +
+      '</div>';
+    document.body.appendChild(g);
+    document.body.style.overflow = 'hidden';
+    const sn = document.getElementById('sa-gate-sign'); if(sn) sn.addEventListener('click', function(){ window.location.href = '/index.html#onboarding'; });
+    const ep = document.getElementById('sa-gate-exitpreview'); if(ep) ep.addEventListener('click', function(e){ e.preventDefault(); try { sessionStorage.removeItem('aari-view-as'); } catch(_){} location.reload(); });
+    const so = document.getElementById('sa-gate-signout'); if(so) so.addEventListener('click', function(e){ e.preventDefault(); try { if(window.AariAuth && typeof window.AariAuth.signOut === 'function'){ Promise.resolve(window.AariAuth.signOut()).finally(function(){ window.location.href = '/index.html'; }); return; } } catch(_){} window.location.href = '/index.html'; });
   }
   function renderCompletionCard(){
     const n = document.getElementById('completion-card');
