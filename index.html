@@ -14271,23 +14271,28 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
         // uploads from any other submission and makes cleanup easy.
         const submissionId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-' + Date.now() + '-' + Math.random().toString(36).slice(2));
 
-        // --- 3. Upload executed contract (required) to Supabase Storage. ---
+        // --- 3. Upload executed contract IF present. Required ONLY for Transaction
+        // Coordination · listing / rental / add-on services have no executed contract
+        // (the agent is setting up a listing, not coordinating a closed deal). ---
         const contractInput = document.getElementById('paContract');
         const contractFile = contractInput && contractInput.files && contractInput.files[0];
-        if(!contractFile) throw new Error('Executed contract file is missing.');
-        const safeContractName = (contractFile.name || 'contract.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
-        const contractPath = uid + '/' + submissionId + '/' + safeContractName;
-        const { error: contractUpErr } = await supabase.storage
-          .from('transaction-files')
-          .upload(contractPath, contractFile, { upsert: false, contentType: contractFile.type || 'application/octet-stream' });
-        if(contractUpErr) throw new Error('Contract upload failed · ' + contractUpErr.message);
-
-        // Signed URL · valid 7 days (604800 seconds).
-        const { data: contractUrlData, error: contractUrlErr } = await supabase.storage
-          .from('transaction-files')
-          .createSignedUrl(contractPath, 604800);
-        if(contractUrlErr) throw new Error('Could not generate signed URL for contract.');
-        const contractUrl = contractUrlData && contractUrlData.signedUrl ? contractUrlData.signedUrl : '';
+        if(state.data.serviceType === 'tc' && !contractFile) throw new Error('Executed contract file is missing.');
+        let contractUrl = '';
+        let safeContractName = '';
+        if(contractFile){
+          safeContractName = (contractFile.name || 'contract.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+          const contractPath = uid + '/' + submissionId + '/' + safeContractName;
+          const { error: contractUpErr } = await supabase.storage
+            .from('transaction-files')
+            .upload(contractPath, contractFile, { upsert: false, contentType: contractFile.type || 'application/octet-stream' });
+          if(contractUpErr) throw new Error('Contract upload failed · ' + contractUpErr.message);
+          // Signed URL · valid 7 days (604800 seconds).
+          const { data: contractUrlData, error: contractUrlErr } = await supabase.storage
+            .from('transaction-files')
+            .createSignedUrl(contractPath, 604800);
+          if(contractUrlErr) throw new Error('Could not generate signed URL for contract.');
+          contractUrl = contractUrlData && contractUrlData.signedUrl ? contractUrlData.signedUrl : '';
+        }
 
         // --- 4. Upload additional docs (up to 5) ---
         if(submitBtn) submitBtn.innerHTML = 'Uploading additional docs&hellip;';
