@@ -115,6 +115,8 @@
   .goal-back-row { display:inline-flex; align-items:center; gap:4px; border:0; background:none; cursor:pointer; font-family:inherit; font-size:12px; color:#8a857c; padding:0; margin:0 0 14px; }
   .goal-panel { display:flex; flex-direction:column; gap:14px; }
   .goal-panel-h { font-size:15px; font-weight:500; color:#0f0f0f; margin:0; }
+  /* The hidden attribute must beat the display:flex above, or every panel shows at once. */
+  .goal-menu[hidden], .goal-panel[hidden] { display:none; }
   .goal-lbl { display:flex; flex-direction:column; gap:6px; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; font-weight:600; }
   .goal-input-row { display:flex; align-items:center; gap:6px; }
   .goal-input-row input { flex:1; font-family:inherit; font-size:14px; padding:9px 11px; border:0.5px solid var(--line); border-radius:5px; color:var(--ink); text-transform:none; letter-spacing:0; font-weight:400; }
@@ -1592,6 +1594,13 @@
   // settings" button opens the same settings modal. Disappears once all 5 are set —
   // the fields stay editable in Settings forever. Re-renders from renderEarnings()
   // (load + after every settings save).
+  // Preview mode · when a broker/TC picks "Preview as Agent" in the header, the
+  // portal should render the agent experience too (not just the top bar). These
+  // mirror the header's effectiveRole so agent-only prompts show and staff-only
+  // extras hide while previewing.
+  function _viewAs(){ try { return sessionStorage.getItem('aari-view-as') || ''; } catch(_){ return ''; } }
+  function _effRole(){ const v = _viewAs(); const actual = (_profile && _profile.role) || 'agent'; return (v && (actual === 'broker' || actual === 'tc')) ? v : actual; }
+
   // Compliance · an agent with no signed Service Agreement on file gets a firm,
   // non-dismissible banner at the very top until they sign. Routes to the existing
   // signing flow (index.html#onboarding, which has the signature pad). Agent-only —
@@ -1599,8 +1608,12 @@
   function renderSaBanner(){
     const n = document.getElementById('sa-banner');
     if(!n || !_profile) return;
-    const isAgent = !_profile.role || _profile.role === 'agent';
-    if(!isAgent || _profile.agreement_signed_at){ n.style.display = 'none'; return; }
+    // In Preview-as-Agent the banner shows as a demo (so a signed broker can QA it);
+    // for a real agent it shows only when their SA is actually unsigned.
+    const previewAgent = _viewAs() === 'agent' && (_profile.role === 'broker' || _profile.role === 'tc');
+    const isAgent = previewAgent || !_profile.role || _profile.role === 'agent';
+    const unsigned = previewAgent ? true : !_profile.agreement_signed_at;
+    if(!isAgent || !unsigned){ n.style.display = 'none'; return; }
     n.innerHTML =
       '<div style="background:#fdf6ea;border:0.5px solid #ecca7f;border-left:3px solid #b7791f;border-radius:0 10px 10px 0;padding:13px 15px;display:flex;align-items:center;gap:13px">' +
         '<i class="ti ti-alert-triangle" style="font-size:20px;color:#854f0b;flex:none" aria-hidden="true"></i>' +
@@ -1617,7 +1630,7 @@
   function renderCompletionCard(){
     const n = document.getElementById('completion-card');
     if(!n || !_profile) return;
-    if(_profile.role && _profile.role !== 'agent'){ n.style.display = 'none'; return; }
+    if(_effRole() !== 'agent'){ n.style.display = 'none'; return; }
     const items = [
       ['Commission rate', _profile.default_commission_pct],
       ['Retained deposit', _profile.retained_deposit_pct],
@@ -1785,7 +1798,7 @@
       ? ' &middot; <i class="ti ti-paperclip" style="font-size:12px" aria-hidden="true"></i> ' + docs.length + ' <span style="color:' + (expanded ? '#0f0f0f' : '#b0aca4') + '">' + (expanded ? '&#9662;' : '&#9656;') + '</span>'
       : '';
     // Staff (TC/broker) see whose file it is; agents viewing their own don't.
-    const staff = _profile && (_profile.role === 'tc' || _profile.role === 'broker');
+    const staff = _effRole() === 'tc' || _effRole() === 'broker';
     const agentNm = staff && _agentNames[f.agent_id] ? ('<span style="color:#5f5e5a;font-weight:500">' + esc(_agentNames[f.agent_id]) + '</span> &middot; ') : '';
     const inner =
       '<div style="display:flex;justify-content:space-between;gap:10px">' +
@@ -1824,7 +1837,7 @@
     _bdDocs = [];
     const unpaid = files.filter(function(f){ return !bdPaid(f); });
     const paid = files.filter(function(f){ return bdPaid(f); });
-    const isStaff = _profile && (_profile.role === 'tc' || _profile.role === 'broker');
+    const isStaff = _effRole() === 'tc' || _effRole() === 'broker';
     let html = '';
 
     // Staff (TC/broker) glance · how many need payment vs paid across the files
