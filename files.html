@@ -8313,25 +8313,61 @@ The sooner I know, the smoother this goes for everyone.`
   // Rentals run on listing + lease dates, not contract-contingency deadlines.
   function renderRentalDates(file, hostEl, metaEl){
     const raw = file.raw_form_data || {};
+    const lg = file.logistics || {};
     const v = (k) => (raw[k] != null ? String(raw[k]).trim() : '');
     const term = v('pa_rental_term');
-    const range = (a, b) => [v(a), v(b)].filter(Boolean).join(' → ');
-    const rows = [['Listing period', range('pa_listing_period_start', 'pa_listing_period_end')]];
-    if(term === 'short'){
-      rows.push(['Season window', range('pa_season_start', 'pa_season_end')]);
-      rows.push(['Minimum stay', v('pa_min_stay')]);
-    } else {
-      rows.push(['Available / move-in', v('pa_available_date')]);
-      rows.push(['Lease term', v('pa_lease_term')]);
-    }
-    const shown = rows.filter(function(r){ return r[1]; });
     if(metaEl) metaEl.textContent = (term === 'short' ? 'Short-term rental' : 'Long-term rental');
-    if(!shown.length){ hostEl.innerHTML = '<div class="tpb-dl-empty">No rental dates captured yet.</div>'; return; }
-    hostEl.innerHTML = shown.map(function(r){
-      return '<div style="display:flex;justify-content:space-between;gap:14px;padding:8px 0;border-bottom:1px solid #f1efe9;font-size:13px">'
-           + '<span style="color:#8a8a86">' + esc(r[0]) + '</span>'
-           + '<span style="color:#0f0f0f;font-weight:500">' + esc(r[1]) + '</span></div>';
-    }).join('') + '<div class="tpb-vf-section-note">Rentals run on listing + lease dates, not contract contingencies.</div>';
+    // Local date math (no UTC shift) · everything computes from the anchor.
+    const parts = (s) => String(s || '').slice(0,10).split('-');
+    const fmt = (s) => { if(!s) return ''; const p = parts(s); if(p.length < 3) return String(s); try { return new Date(+p[0], +p[1]-1, +p[2]).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }); } catch(_){ return String(s); } };
+    const addMonths = (s, n) => { if(!s || !n) return ''; const p = parts(s); const d = new Date(+p[0], +p[1]-1+n, +p[2]); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
+    const addDays = (s, n) => { if(!s) return ''; const p = parts(s); const d = new Date(+p[0], +p[1]-1, +p[2]+n); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
+    const rel = (s) => { if(!s) return ''; const p = parts(s); const d = new Date(+p[0], +p[1]-1, +p[2]); const now = new Date(); now.setHours(0,0,0,0); d.setHours(0,0,0,0); const days = Math.round((d - now) / 86400000); if(days < 0) return 'past'; if(days === 0) return 'today'; if(days < 60) return 'In ' + days + 'd'; return 'In ' + Math.round(days/30) + ' mo'; };
+    const termMonths = (function(){ const m = String(v('pa_lease_term')).match(/(\d+)/); return m ? parseInt(m[1], 10) : null; })();
+    const anchor = (term === 'short') ? v('pa_season_start') : (lg.rental_move_in || v('pa_available_date'));
+    const leaseEnd = (term === 'short') ? v('pa_season_end') : (anchor && termMonths ? addDays(addMonths(anchor, termMonths), -1) : '');
+    const renewal = leaseEnd ? addDays(leaseEnd, -60) : '';
+    const listingEnd = v('pa_listing_period_end');
+    const depReceived = lg.rental_deposit_received_date || '';
+    const discDue = depReceived ? addDays(depReceived, 30) : '';
+    const confirmed = !!lg.rental_dates_confirmed_at;
+    if(!anchor && !listingEnd){ hostEl.innerHTML = '<div class="tpb-dl-empty">No rental dates captured yet.</div>'; return; }
+    const cell = 'text-align:right;font-size:13px;padding:13px 0;border-bottom:0.5px solid #f4f1eb;color:#8a857c';
+    const labelCell = 'font-size:13.5px;padding:13px 0;border-bottom:0.5px solid #f4f1eb;color:#0f0f0f';
+    const tag = (t) => ' <span style="font-size:9.5px;font-weight:600;color:#9a7c2e;background:#faeeda;border-radius:8px;padding:2px 7px;margin-left:6px">' + t + '</span>';
+    const row = (label, date, result, extra) => '<tr><td style="' + labelCell + '">' + esc(label) + (extra || '') + '</td><td style="' + cell + '">' + (date ? esc(fmt(date)) : '—') + '</td><td style="' + cell + '">' + esc(result) + '</td></tr>';
+    let html = '';
+    if(anchor && !confirmed){
+      html += '<div style="background:#faf2e0;border-radius:10px;padding:14px 16px;margin-bottom:14px">'
+        + '<p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#9a7c2e;margin:0 0 4px">Confirm</p>'
+        + '<p style="font-size:14.5px;font-weight:600;color:#0f0f0f;margin:0 0 4px">Move-in / lease start &middot; ' + esc(fmt(anchor)) + '</p>'
+        + '<p style="font-size:12px;color:#6b6b6b;margin:0 0 10px;line-height:1.4">Confirm it matches the signed lease &mdash; the rest of the timeline computes from it.</p>'
+        + '<div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">'
+          + '<button type="button" id="rd-anchor-ok" style="background:#0f0f0f;color:#fff;border:0;border-radius:8px;padding:9px 16px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit">Matches lease &check;</button>'
+          + '<input type="date" id="rd-anchor-edit" value="' + esc((anchor || '').slice(0,10)) + '" style="border:1px solid #e0dcd3;border-radius:8px;padding:8px 10px;font-size:12.5px;font-family:inherit">'
+        + '</div></div>';
+    }
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;background:#f3f1ec;border-radius:8px;padding:11px 14px;margin-bottom:8px">'
+      + '<span style="font-size:13px"><span style="color:#3b7d4f;font-weight:600">On track</span> &nbsp;<span style="color:#8a857c">No dates met yet</span></span></div>';
+    html += '<table style="width:100%;border-collapse:collapse">'
+      + '<tr><th style="text-align:left;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#b0a98f;padding:10px 0 8px;border-bottom:0.5px solid #efece4">Key date</th>'
+      + '<th style="text-align:right;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#b0a98f;padding:10px 0 8px;border-bottom:0.5px solid #efece4">Due</th>'
+      + '<th style="text-align:right;font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#b0a98f;padding:10px 0 8px;border-bottom:0.5px solid #efece4">Status</th></tr>';
+    if(listingEnd) html += row('ELLA / listing expires', listingEnd, rel(listingEnd));
+    if(anchor){ html += row('Available / move-in', anchor, rel(anchor)); html += row('Lease start', anchor, rel(anchor)); html += row('First rent due', anchor, rel(anchor)); }
+    html += '<tr><td style="' + labelCell + '">Deposit disclosure' + tag('FS 83.49 · 30d') + '</td>'
+      + '<td style="text-align:right;padding:13px 0;border-bottom:0.5px solid #f4f1eb">' + (discDue ? ('<span style="font-size:13px;color:#8a857c">' + esc(fmt(discDue)) + '</span>') : '<button type="button" id="rd-disc-set" style="border:0;background:none;color:#185FA5;font-size:13px;cursor:pointer;font-family:inherit">+ deposit in</button>') + '</td>'
+      + '<td style="' + cell + '">' + (discDue ? esc(rel(discDue)) : 'at deposit') + '</td></tr>';
+    if(leaseEnd) html += row('Lease ends', leaseEnd, rel(leaseEnd));
+    if(renewal) html += row('Renewal notice', renewal, rel(renewal), tag('60d prior'));
+    html += '</table>';
+    hostEl.innerHTML = html;
+    const ok = document.getElementById('rd-anchor-ok');
+    if(ok) ok.addEventListener('click', function(){ ctSave(file, {}, { rental_dates_confirmed_at: new Date().toISOString() }).then(function(){ try { renderPlaybook(file); } catch(_){} }); });
+    const ed = document.getElementById('rd-anchor-edit');
+    if(ed) ed.addEventListener('change', function(){ if(ed.value) ctSave(file, {}, { rental_move_in: ed.value }).then(function(){ try { renderPlaybook(file); } catch(_){} }); });
+    const ds = document.getElementById('rd-disc-set');
+    if(ds) ds.addEventListener('click', function(){ ctSave(file, {}, { rental_deposit_received_date: new Date().toISOString().slice(0,10) }).then(function(){ try { renderPlaybook(file); } catch(_){} }); });
   }
   function renderDeadlinesForFile(file){
     const hostEl = document.getElementById('tpb-dl-body');
