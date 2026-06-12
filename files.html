@@ -9799,24 +9799,68 @@ The sooner I know, the smoother this goes for everyone.`
     return secs;
   }
   function renderRentalDetails(file, host, meta){
-    if(meta) meta.textContent = 'For the ELLA';
-    const secs = rentalDetailSections(file);
-    let html = '<p style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#9a8c6f;margin:0 0 10px">Rental details · fill the ELLA from this</p>';
-    secs.forEach(function(sec){
-      const rows = sec[1].filter(function(r){ return r[1]; });
-      if(!rows.length) return;
-      html += '<div style="padding:9px 0;border-bottom:1px solid #f1efe9">'
-            + '<p style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#b0a98f;margin:0 0 6px">' + esc(sec[0]) + '</p>';
-      rows.forEach(function(r){
-        html += '<div style="display:flex;justify-content:space-between;gap:14px;font-size:12.5px;line-height:1.5;padding:2px 0">'
-              + '<span style="color:#8a8a86">' + esc(r[0]) + '</span>'
-              + '<span style="color:#0f0f0f;font-weight:500;text-align:right">' + esc(r[1]) + '</span></div>';
-      });
-      html += '</div>';
-    });
-    const anyData = secs.some(function(sec){ return sec[1].some(function(r){ return r[1]; }); });
-    if(!anyData) html += '<p class="tpb-empty">No rental details captured yet.</p>';
+    if(meta) meta.textContent = 'Rental terms';
+    const raw = file.raw_form_data || {};
+    const v = (k) => (raw[k] != null ? String(raw[k]).trim() : '');
+    const term = v('pa_rental_term');
+    const feeBasis = v('pa_rental_fee_basis');
+    const feeTxt = feeBasis === 'month' ? "One month's rent"
+      : feeBasis === 'pct'  ? (v('pa_rental_fee_amount') ? v('pa_rental_fee_amount') + '% of annual' : '')
+      : feeBasis === 'flat' ? (v('pa_rental_fee_amount') ? '$' + v('pa_rental_fee_amount') : '')
+      : v('pa_rental_fee_amount');
+    const owner = [v('pa_seller_name'), v('pa_seller_email'), v('pa_seller_phone')].filter(Boolean).join(' · ');
+    const petLimits = [v('pa_pet_max_weight') && (v('pa_pet_max_weight') + ' lb'),
+                       v('pa_pet_max_num') && (v('pa_pet_max_num') + ' max'),
+                       v('pa_pet_breed')].filter(Boolean).join(' · ');
+    const rows = [
+      ['Type', term === 'short' ? 'Short-term rental' : 'Long-term rental'],
+      ['Owner', owner],
+      ['Property', file.property_address || ''],
+      ['Listing period', [v('pa_listing_period_start'), v('pa_listing_period_end')].filter(Boolean).join(' → ')]
+    ];
+    if(term === 'short'){
+      rows.push(['Season rate', v('pa_season_rate') + (v('pa_rate_period') ? (' / ' + v('pa_rate_period').toLowerCase()) : '')]);
+      rows.push(['Off-season rate', v('pa_off_season_rate')]);
+      rows.push(['Availability', v('pa_availability')]);
+      rows.push(['Minimum stay', v('pa_min_stay')]);
+    } else {
+      rows.push(['Monthly rent', v('pa_rent_monthly')]);
+      rows.push(['Lease term', v('pa_lease_term')]);
+      rows.push(['Available / move-in', v('pa_available_date')]);
+    }
+    rows.push(['Security deposit', v('pa_security_deposit')]);
+    rows.push(['Due at signing', v('pa_rent_signing')]);
+    rows.push(['Deposit held by', v('pa_deposit_holder')]);
+    rows.push(['Pet deposit', v('pa_pet_deposit')]);
+    rows.push(['Application fee', v('pa_application_fee')]);
+    rows.push(['Association app fee', v('pa_association_app_fee')]);
+    rows.push(['Rental fee to broker', feeTxt]);
+    rows.push(['Included in rent', [v('pa_rent_included'), v('pa_rent_included_other')].filter(Boolean).join(', ')]);
+    rows.push(['Items convey', [v('pa_items_included'), v('pa_items_included_other')].filter(Boolean).join(', ')]);
+    rows.push(['Pet policy', v('pa_pet_policy')]);
+    rows.push(['Pet limits', petLimits]);
+    const shown = rows.filter(function(r){ return r[1]; });
+    const confirmed = !!((file.logistics || {}).terms_confirmed_at);
+    let html = '<p style="font-size:11px;color:#8a857c;margin:0 0 4px">Pre-filled from the agent’s submission. Glance, then confirm it matches the ELLA.</p>';
+    html += shown.map(function(r){
+      const pill = confirmed ? '' : ' <span style="color:#854f0b;background:#faeeda;border-radius:9px;padding:1px 7px;font-size:9px;text-transform:none;letter-spacing:0">from agent</span>';
+      return '<div style="padding:11px 2px;border-top:0.5px solid #f1ede6">'
+           + '<span style="font-size:9.5px;color:#6f6a61;text-transform:uppercase;letter-spacing:.04em">' + esc(r[0]) + pill + '</span>'
+           + '<p style="font-size:13.5px;color:#0f0f0f;font-weight:500;margin:3px 0 0">' + esc(r[1]) + '</p></div>';
+    }).join('');
+    if(!shown.length) html += '<p class="tpb-empty">No rental details captured yet.</p>';
+    if(confirmed){
+      html += '<p style="font-size:10.5px;color:#a39e95;margin:13px 2px 0">&#10003; Confirmed'
+            + (((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '') + '</p>';
+    } else {
+      html += '<button type="button" id="rental-confirm" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:12px;text-align:center;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;margin:14px 0 2px">&check; Confirm &amp; unlock my work</button>'
+            + '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Confirm these match the ELLA. Stamps it with your name + date.</p>';
+    }
     host.innerHTML = html;
+    const cf = document.getElementById('rental-confirm');
+    if(cf) cf.addEventListener('click', function(){
+      ctSave(file, {}, { terms_confirmed_at: new Date().toISOString() }).then(function(){ try { renderPlaybook(file); } catch(_){} });
+    });
   }
   // Rental left pane · the ELLA (then the executed lease) · NOT a deed. Reuses the
   // same upload/view mechanism as the sale contract pane, so the rental file gets
@@ -12288,8 +12332,11 @@ The sooner I know, the smoother this goes for everyone.`
     const archiveBlock = archive
       ? '<details class="ck-archive-wrap"><summary>Earlier stages</summary>' + archive + '</details>'
       : '';
-    const gate = (!termsAttested(file) && (file.file_type || 'sale') === 'sale')
-      ? '<div class="ct-locknote">Confirm the contract terms in Step 1 first. The dates, tasks, and emails below tailor to what you set there.</div>'
+    const _gateFt = file.file_type || 'sale';
+    const gate = (!termsAttested(file) && (_gateFt === 'sale' || _gateFt === 'rental'))
+      ? '<div class="ct-locknote">' + (_gateFt === 'rental'
+          ? 'Confirm the rental terms above first. The tasks and emails below tailor to what you confirm.'
+          : 'Confirm the contract terms in Step 1 first. The dates, tasks, and emails below tailor to what you set there.') + '</div>'
       : '';
     // SA lock · agent has not signed the Service Agreement → no work on this file.
     const saLock = saUnsigned(file);
