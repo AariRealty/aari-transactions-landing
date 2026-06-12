@@ -78,10 +78,18 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ received: true, matched: false }), { status: 200 });
   }
 
+  // Stripe gives amount_total in the smallest currency unit (cents for USD).
+  // Capture it so the agent's Billing view can show the real amount charged.
+  const amountTotal = typeof session.amount_total === "number" ? session.amount_total : null;
+
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
   const upd = await supabase
     .from("files")
-    .update({ payment_pending: false, payment_confirmed: true })
+    .update({
+      payment_pending: false,
+      payment_confirmed: true,
+      ...(amountTotal != null ? { amount_paid_cents: amountTotal } : {}),
+    })
     .eq("id", fileId)
     .select("id, assigned_tc_id, property_address")
     .maybeSingle();
