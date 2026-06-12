@@ -703,6 +703,16 @@
     <div class="goal-body" id="ra-body" style="max-height:70vh;overflow-y:auto"></div>
   </aside>
 
+  <!-- Billing & documents modal · deep-linked from the account menu (#billing-documents) -->
+  <div class="goal-back" id="bd-back"></div>
+  <aside class="goal-modal" id="bd-modal" role="dialog" aria-modal="true" aria-label="Billing and documents">
+    <div class="goal-head">
+      <div><h3 class="goal-title" style="margin:0">Billing &amp; documents</h3></div>
+      <button type="button" class="goal-close" id="bd-close">×</button>
+    </div>
+    <div class="goal-body" id="bd-body" style="max-height:70vh;overflow-y:auto"></div>
+  </aside>
+
   <!-- TRUST STRIP · 3 defensible metrics that prove TC value -->
   <div class="trust-strip">
     <div class="trust-tile">
@@ -987,6 +997,7 @@
     wireRefer();
     wireGoalModal();
     wireRecentActivity();
+    wireBillingDocuments();
     forceKanbanLayout();
     await loadAll();
     // Item 1 · live stage updates · agent sees TC moves without refreshing.
@@ -1467,6 +1478,7 @@
     // Repopulate the Recent activity feed now that files/sends are loaded (covers a
     // deep-link from the cockpit menu that opened the modal before data arrived).
     try { if(document.getElementById('ra-modal') && document.getElementById('ra-modal').classList.contains('open')) renderRecentActivity(); } catch(_){}
+    try { if(document.getElementById('bd-modal') && document.getElementById('bd-modal').classList.contains('open')) renderBillingDocuments(); } catch(_){}
   }
 
   // ===== EARNINGS + PIPELINE DASHBOARD =====
@@ -1670,6 +1682,105 @@
     document.addEventListener('click', function(e){
       const c = e.target && e.target.closest && e.target.closest('[data-ra-filter]');
       if(c){ _raFilter = c.getAttribute('data-ra-filter'); renderRecentActivity(); }
+    });
+  }
+
+  // ===== BILLING & DOCUMENTS · account-menu popup (#billing-documents) =====
+  // Option A · two sections (billing first, then documents). Billing shows payment
+  // STATUS + date per file (no dollar amount is stored — see the Stripe-capture
+  // follow-up). Documents reuses the per-file mfDocList/mfDocUrl plumbing plus the
+  // account-level signed service agreement.
+  const _BD_FT_LABEL = { sale:'TC Coordination', rental:'Rental Coordination', listing:'Listing Coordinator', buyer_rep:'Buyer-Rep Coordination' };
+  const _BD_ST_LABEL = { tc:'TC Coordination', listing:'Listing Coordinator', addons:'Add-on service', rental:'Rental Coordination' };
+  function bdServiceLabel(f){
+    const st = (f.service_type || '').toLowerCase(); if(_BD_ST_LABEL[st]) return _BD_ST_LABEL[st];
+    const ft = (f.file_type || '').toLowerCase(); if(_BD_FT_LABEL[ft]) return _BD_FT_LABEL[ft];
+    return 'Coordination service';
+  }
+  function bdPaid(f){ return !!(f.payment_confirmed || f.payment_confirmed_at); }
+  function bdFmtDate(iso){ if(!iso) return ''; try { return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } }
+  let _bdDocs = [];   // flat doc list for View/Download by index
+  function renderBillingDocuments(){
+    const body = document.getElementById('bd-body');
+    if(!body) return;
+    const files = _files || [];
+    let html = '';
+
+    // --- Billing ---
+    html += '<p style="font-size:10px;font-weight:500;letter-spacing:.06em;color:#b3aea5;text-transform:uppercase;margin:0 0 9px">Billing</p>';
+    if(!files.length){
+      html += '<p style="font-size:12.5px;color:#8a857c;margin:0 0 6px">No files yet.</p>';
+    } else {
+      html += files.map(function(f){
+        const paid = bdPaid(f);
+        const badge = paid
+          ? '<span style="font-size:10.5px;color:#3e7d57;background:#e8f3ec;border-radius:7px;padding:2px 8px">Paid</span>'
+          : '<span style="font-size:10.5px;color:#854f0b;background:#faeeda;border-radius:7px;padding:2px 8px">Pending</span>';
+        const date = paid && f.payment_confirmed_at ? ('<p style="font-size:10.5px;color:#b0aca4;margin:3px 0 0">' + bdFmtDate(f.payment_confirmed_at) + '</p>') : '';
+        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-top:0.5px solid #f1ede6">' +
+          '<div style="flex:1;min-width:0"><p style="font-size:12.5px;color:#0f0f0f;margin:0">' + esc(bdServiceLabel(f)) + '</p>' +
+          '<p style="font-size:11px;color:#8a857c;margin:1px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.property_address || 'Untitled file') + '</p></div>' +
+          '<div style="text-align:right;flex:none">' + badge + date + '</div>' +
+        '</div>';
+      }).join('');
+      html += '<p style="font-size:10px;color:#b0aca4;margin:8px 2px 0;line-height:1.4">Amounts aren’t shown here yet. This reflects payment status on each file.</p>';
+    }
+
+    // --- Documents ---
+    _bdDocs = [];
+    html += '<p style="font-size:10px;font-weight:500;letter-spacing:.06em;color:#b3aea5;text-transform:uppercase;margin:20px 0 9px">Documents</p>';
+    const docRow = function(name, sub, idx, sa){
+      return '<div style="display:flex;align-items:center;gap:9px;padding:8px 0;border-top:0.5px solid #f1ede6">' +
+        '<i class="ti ti-file" style="font-size:15px;color:#8a857c;flex:none" aria-hidden="true"></i>' +
+        '<span style="flex:1;min-width:0;font-size:12.5px;color:#0f0f0f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(name) + (sub ? ' <span style="font-size:11px;color:#b0aca4">' + esc(sub) + '</span>' : '') + '</span>' +
+        '<button type="button" ' + (sa ? 'data-bd-sa="1"' : ('data-bd-view="' + idx + '"')) + ' style="border:0;background:#e6f1fb;color:#185FA5;font-size:11px;border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;flex:none">View</button>' +
+        (sa ? '' : '<button type="button" data-bd-dl="' + idx + '" style="border:0;background:#f3f3f1;color:#888;font-size:11px;border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;flex:none">Download</button>') +
+      '</div>';
+    };
+    let docHtml = '';
+    // Account-level signed service agreement (separate bucket · View only).
+    if(_profile && _profile.agreement_pdf_path){
+      docHtml += '<p style="font-size:11px;color:#8a857c;margin:0 0 2px">Your account</p>';
+      docHtml += docRow('Service agreement.pdf', (_profile.agreement_version || ''), -1, true);
+    }
+    files.forEach(function(f){
+      const docs = (typeof mfDocList === 'function') ? mfDocList(f) : [];
+      if(!docs.length) return;
+      docHtml += '<p style="font-size:11px;color:#8a857c;margin:14px 0 2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.property_address || 'Untitled file') + '</p>';
+      docs.forEach(function(d){ const idx = _bdDocs.push(d) - 1; docHtml += docRow(d.name, d.date, idx, false); });
+    });
+    html += docHtml || '<p style="font-size:12.5px;color:#8a857c;margin:0">No documents yet. They’ll appear here as your files move forward.</p>';
+
+    body.innerHTML = html;
+  }
+  function wireBillingDocuments(){
+    const open = function(){ renderBillingDocuments(); document.getElementById('bd-modal').classList.add('open'); document.getElementById('bd-back').classList.add('open'); document.body.style.overflow = 'hidden'; };
+    const close = function(){
+      document.getElementById('bd-modal').classList.remove('open');
+      document.getElementById('bd-back').classList.remove('open');
+      document.body.style.overflow = '';
+      if(location.hash === '#billing-documents'){ try { history.replaceState(null, '', location.pathname + location.search); } catch(_){ location.hash = ''; } }
+    };
+    const cl = document.getElementById('bd-close'); if(cl) cl.addEventListener('click', close);
+    const bk = document.getElementById('bd-back'); if(bk) bk.addEventListener('click', close);
+    const hashH = function(){ if(location.hash === '#billing-documents') open(); };
+    window.addEventListener('hashchange', hashH); hashH();
+    document.addEventListener('click', async function(e){
+      const t = e.target; if(!t || !t.closest) return;
+      const vb = t.closest('[data-bd-view]'); const db = t.closest('[data-bd-dl]'); const sa = t.closest('[data-bd-sa]');
+      if(sa){
+        if(!(_profile && _profile.agreement_pdf_path)) return;
+        sa.disabled = true;
+        try { const { data, error } = await _client.storage.from('signed-agreements').createSignedUrl(_profile.agreement_pdf_path, 3600); if(!error && data && data.signedUrl) window.open(data.signedUrl, '_blank', 'noopener'); } catch(_){}
+        sa.disabled = false; return;
+      }
+      if(vb || db){
+        const idx = +(vb || db).getAttribute(vb ? 'data-bd-view' : 'data-bd-dl');
+        const doc = _bdDocs[idx]; if(!doc) return;
+        const btn = vb || db; btn.disabled = true;
+        try { const url = await mfDocUrl(doc, !!db); if(url){ if(db){ const a = document.createElement('a'); a.href = url; a.download = doc.name || ''; document.body.appendChild(a); a.click(); a.remove(); } else { window.open(url, '_blank', 'noopener'); } } } catch(_){}
+        btn.disabled = false;
+      }
     });
   }
 
