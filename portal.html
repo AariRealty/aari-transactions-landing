@@ -940,6 +940,7 @@
       .sort((a,b) => a.ms - b.ms);
   }
   let _tcs = {};
+  let _agentNames = {}; // { agent_id: 'First Last' } · for the staff Billing view
   let _replyStats = { avgMinutes: null, onTimePct: null, sampleSize: 0 };
 
   async function init(){
@@ -1444,6 +1445,15 @@
       const { data: tcs } = await _client.from('agents').select('id, first_name, last_name, email, phone').in('id', tcIds);
       (tcs || []).forEach(t => { _tcs[t.id] = t; });
     }
+    // Agent names for the staff (TC/broker) Billing view · which file belongs to
+    // whom. RLS-safe: an agent only resolves their own row, staff see the rest.
+    const agentIds = Array.from(new Set(_files.map(f => f.agent_id).filter(Boolean)));
+    if(agentIds.length){
+      try {
+        const { data: ags } = await _client.from('agents').select('id, first_name, last_name').in('id', agentIds);
+        (ags || []).forEach(function(a){ _agentNames[a.id] = ((a.first_name || '') + ' ' + (a.last_name || '')).trim(); });
+      } catch(_){}
+    }
     // SLA STATS · pull replied agent messages from the last 30 days
     // Defensible: actual timestamps, not claims. RLS scopes to the agent's own files.
     try {
@@ -1724,11 +1734,14 @@
     const clip = hasDocs
       ? ' &middot; <i class="ti ti-paperclip" style="font-size:12px" aria-hidden="true"></i> ' + docs.length + ' <span style="color:' + (expanded ? '#0f0f0f' : '#b0aca4') + '">' + (expanded ? '&#9662;' : '&#9656;') + '</span>'
       : '';
+    // Staff (TC/broker) see whose file it is; agents viewing their own don't.
+    const staff = _profile && (_profile.role === 'tc' || _profile.role === 'broker');
+    const agentNm = staff && _agentNames[f.agent_id] ? ('<span style="color:#5f5e5a;font-weight:500">' + esc(_agentNames[f.agent_id]) + '</span> &middot; ') : '';
     const inner =
       '<div style="display:flex;justify-content:space-between;gap:10px">' +
         '<div style="flex:1;min-width:0">' +
           '<p style="font-size:12.5px;font-weight:500;color:#0f0f0f;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.property_address || 'Untitled file') + '</p>' +
-          '<p style="font-size:11px;color:#8a857c;margin:1px 0 0">' + esc(bdServiceLabel(f)) + clip + '</p>' +
+          '<p style="font-size:11px;color:#8a857c;margin:1px 0 0">' + agentNm + esc(bdServiceLabel(f)) + clip + '</p>' +
         '</div>' +
         '<div style="text-align:right;flex:none">' + right + '</div>' +
       '</div>';
@@ -1761,7 +1774,16 @@
     _bdDocs = [];
     const unpaid = files.filter(function(f){ return !bdPaid(f); });
     const paid = files.filter(function(f){ return bdPaid(f); });
+    const isStaff = _profile && (_profile.role === 'tc' || _profile.role === 'broker');
     let html = '';
+
+    // Staff (TC/broker) glance · how many need payment vs paid across the files
+    // they can see. Agents don't get this line.
+    if(isStaff && files.length){
+      html += '<p style="font-size:12px;color:#5f5e5a;margin:2px 2px 6px">' +
+        '<span style="color:#854f0b;font-weight:500">' + unpaid.length + '</span> need payment &nbsp;&middot;&nbsp; ' +
+        '<span style="color:#3e7d57;font-weight:500">' + paid.length + '</span> paid</p>';
+    }
 
     // 1 · Your account · the signed service agreement (View only).
     if(_profile && _profile.agreement_pdf_path){
