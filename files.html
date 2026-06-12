@@ -9978,30 +9978,11 @@ Tell me your planned move-out date and I will set the inspection.`
     rows.push(['Items convey', [v('pa_items_included'), v('pa_items_included_other')].filter(Boolean).join(', '), null]);
     rows.push(['Pet policy', v('pa_pet_policy'), 'pa_pet_policy']);
     rows.push(['Pet limits', petLimits, null]);
-    // ===== Standing terms · pulled from the agent's profile defaults (Option C) =====
-    // Same on every one of this agent's files (set once at portal.html#profile),
-    // so they auto-fill here. A file value always wins; a blank file falls back to
-    // the profile default and gets a dot + the top banner. Editable per file.
-    const adState = _agentDefaultsById[file.agent_id];
-    const adf = (adState && adState !== null) ? adState : {};
-    if(file.agent_id && adState === undefined){
-      loadAgentDefaults(file.agent_id, function(){ try { renderPlaybook(file); } catch(_){} });
-    }
-    const stdRow = function(label, fileKey, profVal){
-      const fv = v(fileKey);
-      if(fv) return [label, fv, fileKey, false];           // file value wins · no dot
-      if(profVal) return [label, String(profVal), fileKey, true]; // pulled from profile · dot
-      return [label, '', fileKey, false];                  // blank · editable, no dot
-    };
-    const retainedDef = (adf.retained_deposit_pct ? String(adf.retained_deposit_pct).replace(/%\s*$/, '').trim() : '50') + '%';
-    const stdRows = [
-      stdRow('Company transaction fee', 'pa_company_fee', adf.company_transaction_fee || ''),
-      // Retained deposit always resolves · blank profile → the 50% floor.
-      (function(){ const fv = v('pa_retained_deposit'); return fv ? ['Retained deposit on cancel', fv, 'pa_retained_deposit', false] : ['Retained deposit on cancel', retainedDef, 'pa_retained_deposit', true]; })(),
-      stdRow('Compensation', 'pa_compensation', adf.default_compensation || ''),
-      stdRow('Conditional termination', 'pa_conditional_termination', adf.conditional_termination || ''),
-      stdRow('ELLA cancellation fee', 'pa_cancellation_fee', adf.rental_cancellation_fee || '')
-    ];
+    // Standing terms (company fee, retained deposit→50%, compensation, conditional
+    // termination, + ELLA cancellation fee for rentals) come from the SHARED
+    // standingTermsData() so sale + rental never diverge. A file value wins; a
+    // blank falls back to the agent profile default with a dot + the banner.
+    const stdRows = standingTermsData(file).map(function(d){ return [d.label, d.value, d.key, d.fromProfile]; });
     const shown = rows.filter(function(r){ return r[1] || r[2]; });
     const pulledCount = stdRows.filter(function(r){ return r[3]; }).length;
     const confirmed = !!((file.logistics || {}).terms_confirmed_at);
@@ -10246,7 +10227,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const ctLabelFor = function(k){ try { return (ENG && ENG.contractLabel) ? ENG.contractLabel(k) : k; } catch(_){ return k; } };
     // Settled lines stay clean (no icons). Tapping a line opens it in a cream
     // box; the ONE line you're editing gets a single black "Lock in" button.
-    const ctLine = function(key, label, displayVal, controlHtml, note, prov){
+    const ctLine = function(key, label, displayVal, controlHtml, note, prov, fromProfile){
       if(_ctEditingField === key){
         return '<div style="background:#f5f0e8;border:0.5px solid #e6ddc9;border-radius:10px;padding:11px 12px;margin:6px 0">' +
           '<span style="font-size:9.5px;color:#6f6a61;text-transform:uppercase;letter-spacing:.04em">' + esc(label) + '</span>' +
@@ -10262,10 +10243,11 @@ Tell me your planned move-out date and I will set the inspection.`
             ? '<span style="flex:none;font-size:10px;color:#2f855a">&#10003; confirmed</span>'
             : '<span style="flex:none;font-size:10px;color:#854f0b;background:#faeeda;border-radius:9px;padding:2px 8px">agent &middot; confirm</span>')
         : '';
+      const stDot = fromProfile ? '<span title="From the agent’s profile defaults" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#378add;margin-right:6px;vertical-align:middle"></span>' : '';
       return '<button type="button" data-ctline-edit="' + key + '" style="width:100%;display:block;padding:12px 2px;border:0;border-top:0.5px solid #f1ede6;background:none;cursor:pointer;font-family:inherit;text-align:left">' +
         '<span style="display:block;font-size:9.5px;color:#a39e95;text-transform:uppercase;letter-spacing:.04em">' + esc(label) + '</span>' +
         '<span style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
-          '<span style="font-size:13.5px;font-weight:600;color:' + (displayVal ? '#0f0f0f' : '#c2bdb4') + '">' + esc(displayVal || 'Not set') + '</span>' +
+          '<span style="font-size:13.5px;font-weight:600;color:' + (displayVal ? '#0f0f0f' : '#c2bdb4') + '">' + stDot + esc(displayVal || 'Not set') + '</span>' +
           provPill +
         '</span>' +
       '</button>';
@@ -10289,6 +10271,21 @@ Tell me your planned move-out date and I will set the inspection.`
       ctLine('fin', 'Financing', (FIN_LABELS[shownFinType] || ''), segN(shownFinType || '', [['cash','Cash'],['conventional','Conv'],['fha','FHA'],['va','VA'],['usda','USDA']], 'fin'), (raw.pa_deal_type ? ('Agent said: ' + raw.pa_deal_type) : ''), !!(raw.pa_financing_type || raw.financing_type || raw.pa_deal_type)) +
       ctLine('assoc', 'Association', (shownAssoc ? (ASSOC_LABEL[shownAssoc] || '') : ''), segN(shownAssoc || 'none', [['none','None'],['hoa','HOA'],['condo','Condo']], 'assoc'), (raw.pa_hoa && !assocType(file)) ? ('Agent said HOA: ' + raw.pa_hoa) : '', !!raw.pa_hoa) +
       ctLine('tenant', 'Tenant occupied?', (shownTenant === 'yes' ? 'Yes' : (shownTenant === 'no' ? 'No' : '')), segN(shownTenant || '', [['yes','Yes'],['no','No']], 'tenant'), 'If a tenant lives there, the lease + estoppel tasks are added to the checklist.', false);
+    // Standing terms · pulled from the agent profile defaults (shared with rental).
+    // These are the SAME on every one of the agent's files, so they auto-fill here;
+    // a file value wins, a blank falls back to the profile default (dot + banner).
+    const _stdData = standingTermsData(file);
+    const _stdInput = function(id, val){ return '<input type="text" id="' + id + '" value="' + esc(val) + '" style="border:0.5px solid #d9d4ca;border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit;background:#fff;box-sizing:border-box;width:100%">'; };
+    const _stdPulled = _stdData.filter(function(d){ return d.fromProfile; }).length;
+    const _stdBanner = _stdPulled > 0
+      ? '<div style="display:flex;align-items:center;gap:7px;background:#e6f1fb;border:0.5px solid #cfe2f5;border-radius:9px;padding:9px 11px;margin:6px 0 4px">'
+        + '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#378add;flex:none"></span>'
+        + '<span style="font-size:11px;color:#0c447c;line-height:1.35">' + _stdPulled + (_stdPulled === 1 ? ' term' : ' terms') + ' pulled from the agent’s profile defaults &middot; tap any to override on this file</span>'
+        + '</div>'
+      : '';
+    const stdLines = grp('Standing terms') + _stdBanner + _stdData.map(function(d, i){
+      return ctLine('std_' + i, d.label, d.value, _stdInput('ct-std-' + i, d.value), d.note, false, d.fromProfile);
+    }).join('');
     const daysBlock = (ct
       ? (dayRows
           ? grp('Contingency days') +
@@ -10324,11 +10321,11 @@ Tell me your planned move-out date and I will set the inspection.`
           (_pillHtml ? ('<div style="display:flex;flex-wrap:wrap;gap:5px">' + _pillHtml + '</div>') : '') +
         '</button>';
       termsBody = termsSummary +
-        (_ctTermsExpanded ? ('<div style="margin:0 0 12px">' + ctLines + daysBlock + dlStrip + assocBlock + '</div>') : '') +
+        (_ctTermsExpanded ? ('<div style="margin:0 0 12px">' + ctLines + stdLines + daysBlock + dlStrip + assocBlock + '</div>') : '') +
         contactsTaskHtml(file);
     } else if(confirmed){
       // Terms step (confirmed) · full terms, then the "Next" CTA at the very end.
-      termsBody = ctLines +
+      termsBody = ctLines + stdLines +
         '<p style="font-size:10.5px;color:#a39e95;margin:13px 2px 0">&#10003; Confirmed' + (((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '') + '</p>' +
         daysBlock + dlStrip + assocBlock +
         '<button type="button" data-ct-next-contacts="1" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:11px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;margin:16px 0 2px">Next: confirm all contacts &rarr;</button>';
@@ -10338,7 +10335,7 @@ Tell me your planned move-out date and I will set the inspection.`
             '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Stamps it with your name + date and records agent-submitted vs confirmed</p>'
         : '<div style="display:block;width:100%;background:#efece6;color:#a39e95;border:0;border-radius:9px;padding:12px;text-align:center;font-size:13.5px;font-weight:600;font-family:inherit;margin:14px 0 2px">Confirm &amp; unlock my work</div>' +
             '<p style="text-align:center;font-size:10px;color:#a39e95;margin:8px 0 0">Set contract type, both dates, and financing above to confirm</p>';
-      termsBody = ctLines + confirmBlock + daysBlock + dlStrip + assocBlock;
+      termsBody = ctLines + stdLines + confirmBlock + daysBlock + dlStrip + assocBlock;
     }
     // D · swap the drawer header to reflect the active step (only when this is the
     // open section). Contacts step → "Confirm contacts" + a "Contract terms" back.
@@ -13434,6 +13431,43 @@ Tell me your planned move-out date and I will set the inspection.`
       .eq('id', agentId).single()
       .then(function(r){ _agentDefaultsById[agentId] = (r && r.data) || {}; if(cb) cb(_agentDefaultsById[agentId]); })
       .catch(function(){ _agentDefaultsById[agentId] = {}; if(cb) cb({}); }); // missing columns → empty, graceful
+  }
+  // SINGLE SOURCE OF TRUTH for the standing-terms pull-in (sale + listing + rental
+  // all call this). Returns resolved rows: a file value always wins; a blank file
+  // falls back to the agent's profile default and is tagged fromProfile (dot +
+  // banner). Retained deposit floors at 50%. Transaction-wide terms apply to every
+  // file; the ELLA cancellation fee is appended only for rentals. Each panel renders
+  // these with its own row renderer but the keys / fallback / floor live ONLY here.
+  function standingTermsData(file){
+    const raw = file.raw_form_data || {};
+    const v = function(k){ return (raw[k] != null ? String(raw[k]).trim() : ''); };
+    const adState = _agentDefaultsById[file.agent_id];
+    const adf = (adState && adState !== null) ? adState : {};
+    if(file.agent_id && adState === undefined){
+      loadAgentDefaults(file.agent_id, function(){ try { renderPlaybook(file); } catch(_){} });
+    }
+    const res = function(label, key, prof, note){
+      const fv = v(key);
+      if(fv) return { label:label, key:key, value:fv, fromProfile:false, note:note || '' };
+      if(prof) return { label:label, key:key, value:String(prof), fromProfile:true, note:note || '' };
+      return { label:label, key:key, value:'', fromProfile:false, note:note || '' };
+    };
+    const rows = [
+      res('Company transaction fee', 'pa_company_fee', adf.company_transaction_fee || '', 'Same on every file · from the agent profile.'),
+      (function(){
+        const fv = v('pa_retained_deposit');
+        const def = (adf.retained_deposit_pct ? String(adf.retained_deposit_pct).replace(/%\s*$/, '').trim() : '50') + '%';
+        return fv
+          ? { label:'Retained deposit on cancel', key:'pa_retained_deposit', value:fv, fromProfile:false, note:'Defaults to 50% when blank.' }
+          : { label:'Retained deposit on cancel', key:'pa_retained_deposit', value:def, fromProfile:true, note:'Defaults to 50% when blank.' };
+      })(),
+      res('Compensation', 'pa_compensation', adf.default_compensation || '', ''),
+      res('Conditional termination', 'pa_conditional_termination', adf.conditional_termination || '', '')
+    ];
+    if((file.file_type || '') === 'rental'){
+      rows.push(res('ELLA cancellation fee', 'pa_cancellation_fee', adf.rental_cancellation_fee || '', ''));
+    }
+    return rows;
   }
   async function loadAgentForFile(agentId){
     if(!agentId) return null;
