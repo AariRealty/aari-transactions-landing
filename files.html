@@ -9941,17 +9941,26 @@ The sooner I know, the smoother this goes for everyone.`
       ctSave(file, {}, { terms_confirmed_at: new Date().toISOString() }).then(function(){ try { renderPlaybook(file); } catch(_){} });
     });
   }
-  function rentalSaveField(file, key, val){
-    const raw = Object.assign({}, file.raw_form_data || {});
-    raw[key] = val;
-    file.raw_form_data = raw;
-    if(typeof _currentFile !== 'undefined' && _currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = raw;
-    try { const ff = (_files || []).find(function(x){ return x.id === file.id; }); if(ff) ff.raw_form_data = raw; } catch(_){}
-    _rtEditKey = null;
-    _client.from('files').update({ raw_form_data: raw }).eq('id', file.id).then(function(r){
-      if(r && r.error){ alert('Not saved — the database rejected the change (RLS).'); }
+  async function rentalSaveField(file, key, val){
+    try {
+      // Re-read the LIVE record first so a stale in-memory copy can never drop
+      // other fields — editing one line only ever changes that one key.
+      let base = file.raw_form_data || {};
+      try { const cur = await _client.from('files').select('raw_form_data').eq('id', file.id).single(); if(cur && cur.data && cur.data.raw_form_data) base = cur.data.raw_form_data; } catch(_){}
+      const raw = Object.assign({}, base);
+      raw[key] = val;
+      const { data, error } = await _client.from('files').update({ raw_form_data: raw }).eq('id', file.id).select('id');
+      if(error) throw error;
+      if(!data || !data.length){ alert('Not saved — the database rejected the change (RLS).'); return; }
+      file.raw_form_data = raw;
+      if(typeof _currentFile !== 'undefined' && _currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = raw;
+      try { const ff = (_files || []).find(function(x){ return x.id === file.id; }); if(ff) ff.raw_form_data = raw; } catch(_){}
+      _rtEditKey = null;
       try { renderPlaybook(file); } catch(_){}
-    });
+    } catch(err){
+      console.warn('[rental] save field failed', err);
+      alert('Save failed: ' + (err && err.message ? err.message : 'unknown'));
+    }
   }
   // Rental left pane · the ELLA (then the executed lease) · NOT a deed. Reuses the
   // same upload/view mechanism as the sale contract pane, so the rental file gets
