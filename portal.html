@@ -1616,10 +1616,33 @@
   function aaFmtDate(iso){ if(!iso) return ''; try { return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } }
   async function loadAgentAgreements(){
     try {
-      const { data } = await _client.from('agents')
-        .select('id, first_name, last_name, email, role, agreement_signed_at, agreement_pdf_path, agreement_version, created_at')
-        .order('created_at', { ascending: false });
-      _aaAgents = (data || []).filter(function(a){ return (a.role || 'agent') === 'agent'; });
+      const [agRes, sigRes] = await Promise.all([
+        _client.from('agents')
+          .select('id, first_name, last_name, email, role, agreement_signed_at, agreement_pdf_path, agreement_version, created_at')
+          .order('created_at', { ascending: false }),
+        _client.from('agreement_signatures')
+          .select('agent_id, signed_agreement_pdf_url, signed_at')
+          .eq('agreement_type', 'service_agreement')
+          .order('signed_at', { ascending: false })
+      ]);
+      // Actual executed PDF lives in agreement_signatures (source of truth); the
+      // agents.agreement_pdf_path pointer is often null on older signings. Take the
+      // latest stored PDF per agent.
+      const pdfByAgent = {};
+      (sigRes.data || []).forEach(function(s){ if(s.agent_id && pdfByAgent[s.agent_id] === undefined && s.signed_agreement_pdf_url) pdfByAgent[s.agent_id] = s.signed_agreement_pdf_url; });
+      const broker = _profile || {};
+      const brokerName = ((broker.first_name || '') + ' ' + (broker.last_name || '')).trim().toLowerCase();
+      _aaAgents = (agRes.data || [])
+        .filter(function(a){ return (a.role || 'agent') === 'agent'; })
+        .filter(function(a){
+          if(a.id === broker.id) return false;                      // the broker themselves
+          const nm = (((a.first_name || '') + ' ' + (a.last_name || '')).trim()).toLowerCase();
+          const em = (a.email || '').toLowerCase();
+          if(brokerName && nm === brokerName) return false;          // broker's own self-signups / dupes
+          if(/\b(test|smoke|demo)\b/.test(nm) || /(test|smoke|demo|\+)/.test(em)) return false; // obvious test rows
+          return true;
+        })
+        .map(function(a){ a._sa_pdf = pdfByAgent[a.id] || a.agreement_pdf_path || null; return a; });
     } catch(_){ _aaAgents = []; }
   }
   function renderAgentAgreements(){
@@ -1649,8 +1672,8 @@
       const list = _aaShowAllSigned ? signed : signed.slice(0, cap);
       html += list.map(function(a){
         const sub = 'Signed ' + aaFmtDate(a.agreement_signed_at) + (a.agreement_version ? ' &middot; ' + esc(a.agreement_version) : '');
-        const acts = a.agreement_pdf_path
-          ? '<span style="display:flex;gap:12px;flex:none"><button type="button" data-aa-view="' + esc(a.agreement_pdf_path) + '" style="border:0;background:none;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit">View</button><button type="button" data-aa-dl="' + esc(a.agreement_pdf_path) + '" data-aa-fn="' + esc(aaName(a)) + '" style="border:0;background:none;color:#b0aca4;font-size:11px;cursor:pointer;font-family:inherit">Download</button></span>'
+        const acts = a._sa_pdf
+          ? '<span style="display:flex;gap:12px;flex:none"><button type="button" data-aa-view="' + esc(a._sa_pdf) + '" style="border:0;background:none;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit">View</button><button type="button" data-aa-dl="' + esc(a._sa_pdf) + '" data-aa-fn="' + esc(aaName(a)) + '" style="border:0;background:none;color:#b0aca4;font-size:11px;cursor:pointer;font-family:inherit">Download</button></span>'
           : '<span style="font-size:10.5px;color:#b0aca4;flex:none">Copy emailed at signing</span>';
         return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-top:0.5px solid #f1ede6">' +
           '<div style="min-width:0"><p style="font-size:12.5px;color:#0f0f0f;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(aaName(a)) + '</p>' +
