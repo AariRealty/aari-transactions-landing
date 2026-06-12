@@ -1699,67 +1699,105 @@
   }
   function bdPaid(f){ return !!(f.payment_confirmed || f.payment_confirmed_at); }
   function bdFmtDate(iso){ if(!iso) return ''; try { return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } }
-  let _bdDocs = [];   // flat doc list for View/Download by index
+  let _bdDocs = [];          // flat doc list for View/Download by index
+  let _bdExpanded = {};      // { fileId: true } · which file's docs are open
+  let _bdShowAllPaid = false;// "Show all paid" expander
+  const _BD_PAID_CAP = 5;
+  function bdHeader(t, color){ return '<p style="font-size:10px;font-weight:500;letter-spacing:.06em;color:' + (color || '#b3aea5') + ';text-transform:uppercase;margin:16px 2px 6px">' + t + '</p>'; }
+  // One dense row per file · billing on the line, documents folded behind a tap.
+  function bdFileRow(f, amber){
+    const docs = (typeof mfDocList === 'function') ? mfDocList(f) : [];
+    const hasDocs = docs.length > 0;
+    const expanded = !!_bdExpanded[f.id];
+    const paid = bdPaid(f);
+    let right;
+    if(paid){
+      const amt = (f.amount_paid_cents != null) ? ('$' + (Number(f.amount_paid_cents) / 100).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 })) : '';
+      const dt = f.payment_confirmed_at ? bdFmtDate(f.payment_confirmed_at) : '';
+      const sub = dt ? ('Paid ' + dt) : 'Paid';
+      right = amt
+        ? '<p style="font-size:12.5px;font-weight:500;color:#0f0f0f;margin:0">' + amt + '</p><p style="font-size:10.5px;color:#3e7d57;margin:1px 0 0">' + sub + '</p>'
+        : '<p style="font-size:11px;color:#3e7d57;margin:0">' + sub + '</p>';
+    } else {
+      right = '<span style="font-size:10.5px;color:#854f0b;background:#faeeda;border-radius:7px;padding:2px 8px">Pending</span>';
+    }
+    const clip = hasDocs
+      ? ' &middot; <i class="ti ti-paperclip" style="font-size:12px" aria-hidden="true"></i> ' + docs.length + ' <span style="color:' + (expanded ? '#0f0f0f' : '#b0aca4') + '">' + (expanded ? '&#9662;' : '&#9656;') + '</span>'
+      : '';
+    const inner =
+      '<div style="display:flex;justify-content:space-between;gap:10px">' +
+        '<div style="flex:1;min-width:0">' +
+          '<p style="font-size:12.5px;font-weight:500;color:#0f0f0f;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.property_address || 'Untitled file') + '</p>' +
+          '<p style="font-size:11px;color:#8a857c;margin:1px 0 0">' + esc(bdServiceLabel(f)) + clip + '</p>' +
+        '</div>' +
+        '<div style="text-align:right;flex:none">' + right + '</div>' +
+      '</div>';
+    const cursor = hasDocs ? 'pointer' : 'default';
+    const wrapStyle = amber
+      ? 'display:block;width:100%;text-align:left;font-family:inherit;border:0.5px solid #f2e2c4;background:#fdf6ea;border-radius:8px;padding:9px 11px;margin:6px 0;cursor:' + cursor
+      : 'display:block;width:100%;text-align:left;font-family:inherit;border:0;border-top:0.5px solid #f1ede6;background:none;padding:9px 0;cursor:' + cursor;
+    let html = hasDocs
+      ? '<button type="button" data-bd-file="' + esc(f.id) + '" style="' + wrapStyle + '">' + inner + '</button>'
+      : '<div style="' + wrapStyle + '">' + inner + '</div>';
+    if(hasDocs && expanded){
+      html += '<div style="padding:0 0 6px ' + (amber ? '11px' : '4px') + '">';
+      docs.forEach(function(d){
+        const idx = _bdDocs.push(d) - 1;
+        html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0">' +
+          '<i class="ti ti-file" style="font-size:14px;color:#8a857c;flex:none" aria-hidden="true"></i>' +
+          '<span style="flex:1;min-width:0;font-size:12px;color:#0f0f0f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(d.name) + '</span>' +
+          '<button type="button" data-bd-view="' + idx + '" style="border:0;background:#e6f1fb;color:#185FA5;font-size:11px;border-radius:6px;padding:3px 9px;cursor:pointer;font-family:inherit;flex:none">View</button>' +
+          '<button type="button" data-bd-dl="' + idx + '" style="border:0;background:#f3f3f1;color:#888;font-size:11px;border-radius:6px;padding:3px 9px;cursor:pointer;font-family:inherit;flex:none">Download</button>' +
+        '</div>';
+      });
+      html += '</div>';
+    }
+    return html;
+  }
   function renderBillingDocuments(){
     const body = document.getElementById('bd-body');
     if(!body) return;
     const files = _files || [];
+    _bdDocs = [];
+    const unpaid = files.filter(function(f){ return !bdPaid(f); });
+    const paid = files.filter(function(f){ return bdPaid(f); });
     let html = '';
 
-    // --- Billing ---
-    html += '<p style="font-size:10px;font-weight:500;letter-spacing:.06em;color:#b3aea5;text-transform:uppercase;margin:0 0 9px">Billing</p>';
-    if(!files.length){
-      html += '<p style="font-size:12.5px;color:#8a857c;margin:0 0 6px">No files yet.</p>';
-    } else {
-      html += files.map(function(f){
-        const paid = bdPaid(f);
-        let rightHtml;
-        if(paid){
-          const amt = (f.amount_paid_cents != null) ? ('$' + (Number(f.amount_paid_cents) / 100).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 })) : '';
-          const sub = 'Paid' + (f.payment_confirmed_at ? ' · ' + bdFmtDate(f.payment_confirmed_at) : '');
-          rightHtml = amt
-            ? '<p style="font-size:13.5px;font-weight:500;color:#0f0f0f;margin:0">' + amt + '</p><p style="font-size:10.5px;color:#3e7d57;margin:2px 0 0">' + sub + '</p>'
-            : '<p style="font-size:11px;color:#3e7d57;margin:0">' + sub + '</p>';
-        } else {
-          rightHtml = '<span style="font-size:10.5px;color:#854f0b;background:#faeeda;border-radius:7px;padding:2px 8px">Pending</span>';
-        }
-        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-top:0.5px solid #f1ede6">' +
-          '<div style="flex:1;min-width:0"><p style="font-size:12.5px;color:#0f0f0f;margin:0">' + esc(bdServiceLabel(f)) + '</p>' +
-          '<p style="font-size:11px;color:#8a857c;margin:1px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.property_address || 'Untitled file') + '</p></div>' +
-          '<div style="text-align:right;flex:none">' + rightHtml + '</div>' +
-        '</div>';
-      }).join('');
-    }
-
-    // --- Documents ---
-    _bdDocs = [];
-    html += '<p style="font-size:10px;font-weight:500;letter-spacing:.06em;color:#b3aea5;text-transform:uppercase;margin:20px 0 9px">Documents</p>';
-    const docRow = function(name, sub, idx, sa){
-      return '<div style="display:flex;align-items:center;gap:9px;padding:8px 0;border-top:0.5px solid #f1ede6">' +
-        '<i class="ti ti-file" style="font-size:15px;color:#8a857c;flex:none" aria-hidden="true"></i>' +
-        '<span style="flex:1;min-width:0;font-size:12.5px;color:#0f0f0f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(name) + (sub ? ' <span style="font-size:11px;color:#b0aca4">' + esc(sub) + '</span>' : '') + '</span>' +
-        '<button type="button" ' + (sa ? 'data-bd-sa="1"' : ('data-bd-view="' + idx + '"')) + ' style="border:0;background:#e6f1fb;color:#185FA5;font-size:11px;border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;flex:none">View</button>' +
-        (sa ? '' : '<button type="button" data-bd-dl="' + idx + '" style="border:0;background:#f3f3f1;color:#888;font-size:11px;border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;flex:none">Download</button>') +
-      '</div>';
-    };
-    let docHtml = '';
-    // Account-level signed service agreement (separate bucket · View only).
+    // 1 · Your account · the signed service agreement (View only).
     if(_profile && _profile.agreement_pdf_path){
-      docHtml += '<p style="font-size:11px;color:#8a857c;margin:0 0 2px">Your account</p>';
-      docHtml += docRow('Service agreement.pdf', (_profile.agreement_version || ''), -1, true);
+      html += bdHeader('Your account');
+      html += '<div style="display:flex;align-items:center;gap:9px;padding:8px 0 10px;border-top:0.5px solid #f1ede6">' +
+        '<i class="ti ti-file-certificate" style="font-size:15px;color:#8a857c;flex:none" aria-hidden="true"></i>' +
+        '<span style="flex:1;min-width:0;font-size:12.5px;color:#0f0f0f">Service agreement.pdf' + (_profile.agreement_version ? ' <span style="font-size:11px;color:#b0aca4">' + esc(_profile.agreement_version) + '</span>' : '') + '</span>' +
+        '<button type="button" data-bd-sa="1" style="border:0;background:#e6f1fb;color:#185FA5;font-size:11px;border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;flex:none">View</button>' +
+      '</div>';
     }
-    files.forEach(function(f){
-      const docs = (typeof mfDocList === 'function') ? mfDocList(f) : [];
-      if(!docs.length) return;
-      docHtml += '<p style="font-size:11px;color:#8a857c;margin:14px 0 2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.property_address || 'Untitled file') + '</p>';
-      docs.forEach(function(d){ const idx = _bdDocs.push(d) - 1; docHtml += docRow(d.name, d.date, idx, false); });
-    });
-    html += docHtml || '<p style="font-size:12.5px;color:#8a857c;margin:0">No documents yet. They’ll appear here as your files move forward.</p>';
 
+    // 2 · Needs payment · unpaid files, surfaced above the paid history.
+    if(unpaid.length){
+      html += bdHeader('Needs payment', '#854f0b');
+      html += unpaid.map(function(f){ return bdFileRow(f, true); }).join('');
+    }
+
+    // 3 · Paid · dense, capped, with "Show all".
+    html += bdHeader('Paid');
+    if(!paid.length){
+      html += '<p style="font-size:12.5px;color:#8a857c;margin:4px 2px">No paid files yet.</p>';
+    } else {
+      const list = _bdShowAllPaid ? paid : paid.slice(0, _BD_PAID_CAP);
+      html += list.map(function(f){ return bdFileRow(f, false); }).join('');
+      if(paid.length > _BD_PAID_CAP && !_bdShowAllPaid){
+        html += '<p style="text-align:center;margin:11px 0 2px"><a href="#" data-bd-showall="1" style="font-size:11.5px;color:#185FA5;text-decoration:none">Show all ' + paid.length + ' paid</a></p>';
+      }
+    }
+
+    if(!files.length && !(_profile && _profile.agreement_pdf_path)){
+      html = '<p style="font-size:12.5px;color:#8a857c;margin:0">Nothing here yet. Billing and documents will show up as your files move forward.</p>';
+    }
     body.innerHTML = html;
   }
   function wireBillingDocuments(){
-    const open = function(){ renderBillingDocuments(); document.getElementById('bd-modal').classList.add('open'); document.getElementById('bd-back').classList.add('open'); document.body.style.overflow = 'hidden'; };
+    const open = function(){ _bdExpanded = {}; _bdShowAllPaid = false; renderBillingDocuments(); document.getElementById('bd-modal').classList.add('open'); document.getElementById('bd-back').classList.add('open'); document.body.style.overflow = 'hidden'; };
     const close = function(){
       document.getElementById('bd-modal').classList.remove('open');
       document.getElementById('bd-back').classList.remove('open');
@@ -1785,7 +1823,12 @@
         const btn = vb || db; btn.disabled = true;
         try { const url = await mfDocUrl(doc, !!db); if(url){ if(db){ const a = document.createElement('a'); a.href = url; a.download = doc.name || ''; document.body.appendChild(a); a.click(); a.remove(); } else { window.open(url, '_blank', 'noopener'); } } } catch(_){}
         btn.disabled = false;
+        return;
       }
+      const sh = t.closest('[data-bd-showall]');
+      if(sh){ e.preventDefault(); _bdShowAllPaid = true; renderBillingDocuments(); return; }
+      const fb = t.closest('[data-bd-file]');
+      if(fb){ const id = fb.getAttribute('data-bd-file'); _bdExpanded[id] = !_bdExpanded[id]; renderBillingDocuments(); return; }
     });
   }
 
