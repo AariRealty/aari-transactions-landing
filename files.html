@@ -10497,8 +10497,36 @@ The sooner I know, the smoother this goes for everyone.`
   //   90-100 · Green  · Clean. On track.
   //   70-89  · Yellow · Watch. Couple of items.
   //   0-69   · Red    · Focus today. Something is off.
+  // Rental health score · same 0-100 shape as the sale, but deductions are the
+  // things that actually risk a rental: no ELLA, unaccepted, listing expiring,
+  // lease unsigned, FS 83.49 disclosure overdue. Drives the badge + card action.
+  function rentalCertainty(file){
+    let score = 100;
+    const reasons = [];
+    const raw = file.raw_form_data || {};
+    const lg = file.logistics || {};
+    const stage = deriveStage(file);
+    const done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    const dleft = (iso) => { if(!iso) return null; const p = String(iso).slice(0,10).split('-'); if(p.length < 3) return null; const d = new Date(+p[0], +p[1]-1, +p[2]); const now = new Date(); now.setHours(0,0,0,0); d.setHours(0,0,0,0); return Math.round((d - now) / 86400000); };
+    if(!contractUrlOf(file)){ score -= 20; reasons.push({ amt:-20, label:'ELLA not on file' }); }
+    if(!file.tc_accepted_at && stage !== 'new'){ score -= 10; reasons.push({ amt:-10, label:'File not accepted yet' }); }
+    const lp = dleft(raw.pa_listing_period_end);
+    if(lp != null && (stage === 'new' || stage === 'active')){
+      if(lp < 0){ score -= 15; reasons.push({ amt:-15, label:'Listing period expired' }); }
+      else if(lp <= 14){ score -= 10; reasons.push({ amt:-10, label:'Listing period ends in ' + lp + 'd' }); }
+    }
+    if((stage === 'signed' || stage === 'occupied') && !done['rsgn_lease_executed']){ score -= 15; reasons.push({ amt:-15, label:'Lease not executed' }); }
+    if(stage === 'occupied' && lg.rental_deposit_received_date && !done['rocc_deposit_notice']){
+      const due = dleft((function(){ const p = String(lg.rental_deposit_received_date).slice(0,10).split('-'); const d = new Date(+p[0], +p[1]-1, +p[2]+30); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })());
+      if(due != null && due < 0){ score -= 15; reasons.push({ amt:-15, label:'FS 83.49 disclosure overdue' }); }
+    }
+    if(score < 0) score = 0;
+    const bucket = score >= 80 ? 'green' : (score >= 55 ? 'yellow' : 'red');
+    return { score: score, bucket: bucket, reasons: reasons };
+  }
   function computeClosingCertainty(file){
     if(!file) return { score: 100, bucket: 'green', reasons: [] };
+    if((file.file_type || 'sale') === 'rental') return rentalCertainty(file);
     let score = 100;
     const reasons = [];
     const verifs = _verifByFile[file.id] || {};
