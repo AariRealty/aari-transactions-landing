@@ -1014,6 +1014,7 @@
       <div class="tpb-footlinks" id="tpb-reflinks"></div>
       <span class="tpb-headscore rail-bar-score" id="rail-bar-score" hidden></span>
       <button type="button" class="rail-pdf-toggle" id="rail-pdf-toggle">View contract</button>
+      <button type="button" class="rail-pdf-toggle" id="rail-request-agent">Request from agent</button>
       <button type="button" class="rail-close" id="rail-close" aria-label="Close">&times;</button>
     </div>
     <div class="rail-grid" id="rail-grid">
@@ -13839,6 +13840,132 @@ Tell me your planned move-out date and I will set the inspection.`
   // ============== UTIL ==============
   function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
   function fmtDate(d){ try { const dt = new Date(String(d).length===10?(d+'T12:00:00'):d); return dt.toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(_){ return ''; } }
+
+  // ============================================================================
+  // REQUEST FROM AGENT · raises a file_agent_actions row → drives the agent
+  // portal's black "Action needed" hero. Self-contained modal (no pop/hub deps).
+  // ============================================================================
+  (function requestFromAgent(){
+    var modal = null;
+    function buildModal(){
+      if(modal) return modal;
+      modal = document.createElement('div');
+      modal.id = 'faa-modal';
+      modal.style.cssText = 'display:none;position:fixed;inset:0;z-index:11000;background:rgba(15,15,15,0.5);align-items:center;justify-content:center;padding:20px';
+      modal.innerHTML =
+        '<div style="background:#fff;border-radius:14px;width:min(460px,94vw);max-height:90vh;overflow:auto;font-family:inherit;box-shadow:0 14px 44px rgba(0,0,0,0.25)">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:18px 20px;border-bottom:0.5px solid rgba(15,15,15,0.1)">' +
+            '<div><p style="font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:600;margin:0 0 3px">Request from agent</p>' +
+            '<h3 id="faa-addr" style="font-family:\'Playfair Display\',Georgia,serif;font-size:17px;font-weight:500;margin:0"></h3></div>' +
+            '<button type="button" id="faa-x" style="background:none;border:0;font-size:24px;color:#8a857c;cursor:pointer;line-height:1">&times;</button>' +
+          '</div>' +
+          '<div style="padding:18px 20px">' +
+            '<div id="faa-open" style="margin-bottom:14px"></div>' +
+            '<label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8a857c;font-weight:600;margin-bottom:5px">What do you need?</label>' +
+            '<select id="faa-type" style="width:100%;font-family:inherit;font-size:13px;padding:9px 11px;border:0.5px solid rgba(15,15,15,0.18);border-radius:7px;margin-bottom:12px">' +
+              '<option value="sign">Sign a document</option>' +
+              '<option value="upload">Upload / send a document</option>' +
+              '<option value="confirm">Confirm a detail</option>' +
+              '<option value="review">Review &amp; approve</option>' +
+            '</select>' +
+            '<label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8a857c;font-weight:600;margin-bottom:5px">Label the agent sees</label>' +
+            '<input id="faa-label" type="text" placeholder="e.g. Inspection addendum" style="width:100%;font-family:inherit;font-size:13px;padding:9px 11px;border:0.5px solid rgba(15,15,15,0.18);border-radius:7px;margin-bottom:12px">' +
+            '<label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8a857c;font-weight:600;margin-bottom:5px">Detail <span style="text-transform:none;font-weight:400;color:#b0aca4">(optional)</span></label>' +
+            '<textarea id="faa-detail" rows="2" placeholder="One line of context for the agent" style="width:100%;font-family:inherit;font-size:13px;padding:9px 11px;border:0.5px solid rgba(15,15,15,0.18);border-radius:7px;margin-bottom:12px;resize:vertical"></textarea>' +
+            '<label style="display:block;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8a857c;font-weight:600;margin-bottom:5px">Due date <span style="text-transform:none;font-weight:400;color:#b0aca4">(optional)</span></label>' +
+            '<input id="faa-due" type="date" style="width:100%;font-family:inherit;font-size:13px;padding:9px 11px;border:0.5px solid rgba(15,15,15,0.18);border-radius:7px;margin-bottom:14px">' +
+            '<div id="faa-status" style="font-size:12px;padding:8px 10px;border-radius:6px;margin-bottom:10px;display:none"></div>' +
+            '<button type="button" id="faa-send" style="width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:8px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Send to agent</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(modal);
+      modal.addEventListener('click', function(e){ if(e.target === modal) close(); });
+      modal.querySelector('#faa-x').addEventListener('click', close);
+      modal.querySelector('#faa-send').addEventListener('click', submit);
+      modal.querySelector('#faa-open').addEventListener('click', onOpenListClick);
+      return modal;
+    }
+    function setStatus(msg, ok){
+      var s = modal.querySelector('#faa-status');
+      s.style.display = 'block';
+      s.textContent = msg;
+      s.style.background = ok ? '#e8f5ed' : '#fdecea';
+      s.style.color = ok ? '#5a9e72' : '#c96b6b';
+    }
+    async function currentUid(){
+      try { var r = await _client.auth.getSession(); return r && r.data && r.data.session && r.data.session.user ? r.data.session.user.id : null; } catch(_){ return null; }
+    }
+    async function renderOpen(){
+      var host = modal.querySelector('#faa-open');
+      host.innerHTML = '';
+      if(!_currentFile) return;
+      try {
+        var res = await _client.from('file_agent_actions')
+          .select('id, action_type, label, due_date, status, created_at')
+          .eq('file_id', _currentFile.id).eq('status','open')
+          .order('created_at', { ascending: false });
+        var rows = res.data || [];
+        if(!rows.length) return;
+        host.innerHTML = '<p style="font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#854f0b;font-weight:600;margin:0 0 6px">Open requests &middot; ' + rows.length + '</p>' +
+          rows.map(function(r){
+            var due = r.due_date ? ' &middot; by ' + new Date(r.due_date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
+            return '<div style="background:#fdf6ea;border:0.5px solid #f2e2c4;border-radius:8px;padding:9px 11px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;gap:10px">' +
+              '<div style="min-width:0"><p style="font-size:12.5px;font-weight:500;margin:0">' + esc(r.label) + '</p>' +
+              '<p style="font-size:10.5px;color:#8a857c;margin:1px 0 0;text-transform:capitalize">' + esc(r.action_type) + due + '</p></div>' +
+              '<span style="display:flex;gap:8px;flex:none">' +
+                '<button type="button" data-faa-done="' + esc(r.id) + '" style="border:0;background:#0f0f0f;color:#fff;font-size:10.5px;font-weight:600;border-radius:6px;padding:5px 10px;cursor:pointer;font-family:inherit">Mark done</button>' +
+                '<button type="button" data-faa-cancel="' + esc(r.id) + '" style="border:0.5px solid rgba(15,15,15,0.18);background:#fff;color:#8a857c;font-size:10.5px;border-radius:6px;padding:5px 10px;cursor:pointer;font-family:inherit">Cancel</button>' +
+              '</span></div>';
+          }).join('');
+      } catch(_){ /* table may not be applied yet */ }
+    }
+    async function onOpenListClick(e){
+      var d = e.target.closest && e.target.closest('[data-faa-done]');
+      var c = e.target.closest && e.target.closest('[data-faa-cancel]');
+      if(!d && !c) return;
+      var id = (d || c).getAttribute(d ? 'data-faa-done' : 'data-faa-cancel');
+      (d || c).disabled = true;
+      var uid = await currentUid();
+      var patch = d ? { status:'done', resolved_at:new Date().toISOString(), resolved_by:uid } : { status:'cancelled', resolved_at:new Date().toISOString(), resolved_by:uid };
+      var res = await _client.from('file_agent_actions').update(patch).eq('id', id);
+      if(res.error){ setStatus('Could not update: ' + res.error.message, false); (d||c).disabled = false; }
+      else { renderOpen(); }
+    }
+    async function submit(){
+      if(!_currentFile){ return; }
+      var type = modal.querySelector('#faa-type').value;
+      var label = modal.querySelector('#faa-label').value.trim();
+      var detail = modal.querySelector('#faa-detail').value.trim();
+      var due = modal.querySelector('#faa-due').value || null;
+      if(!label){ setStatus('Add a label so the agent knows what you need.', false); return; }
+      var sendBtn = modal.querySelector('#faa-send');
+      sendBtn.disabled = true; sendBtn.textContent = 'Sending…';
+      var uid = await currentUid();
+      var res = await _client.from('file_agent_actions').insert({
+        file_id: _currentFile.id, action_type: type, label: label,
+        detail: detail || null, due_date: due, status: 'open', created_by: uid
+      });
+      sendBtn.disabled = false; sendBtn.textContent = 'Send to agent';
+      if(res.error){ setStatus('Could not send: ' + res.error.message, false); return; }
+      modal.querySelector('#faa-label').value = '';
+      modal.querySelector('#faa-detail').value = '';
+      modal.querySelector('#faa-due').value = '';
+      setStatus('Sent — the agent will see this at the top of their file.', true);
+      renderOpen();
+    }
+    function open(){
+      if(!_currentFile){ alert('Open a file first, then request something from the agent.'); return; }
+      buildModal();
+      modal.querySelector('#faa-addr').textContent = _currentFile.property_address || 'This file';
+      modal.querySelector('#faa-status').style.display = 'none';
+      modal.style.display = 'flex';
+      renderOpen();
+    }
+    function close(){ if(modal) modal.style.display = 'none'; }
+    document.addEventListener('click', function(e){
+      if(e.target && e.target.closest && e.target.closest('#rail-request-agent')){ e.preventDefault(); open(); }
+    });
+  })();
 
   // Boot when auth.js is ready
   function boot(){
