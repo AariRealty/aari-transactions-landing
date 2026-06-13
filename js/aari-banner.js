@@ -33,7 +33,8 @@
     // "My files" removed — the agent is already on /portal looking at their files, so it was a dead card.
     { id:'submit',   label:'Submit a file',  href:'/index.html?modal-only=1#apply',   icon:iconUpload(),match:['/agent-submit','/index.html#services'], roles:['agent'], primary:true },
     { id:'contacts', label:'My contacts',    href:'/my-contacts.html',    icon:iconBook(),  match:['/my-contacts'],                    roles:['agent'] },
-    { id:'refer',    label:'Refer an agent', href:'/portal.html#refer',   icon:iconHandshake(), match:[],                              roles:['agent'] },
+    // 'Refer an agent' removed from the rib · the richer two-path Refer section on the
+    // home (Aari Transactions / Aari Realty) is the single entry point. No duplication.
   ];
 
   // ----- Inline SVG icons (no external font dependency) -----
