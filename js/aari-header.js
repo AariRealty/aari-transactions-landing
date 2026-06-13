@@ -292,9 +292,10 @@
   function renderBell() {
     var wrap = document.getElementById('aari-hdr-bell-wrap');
     if (!wrap) return;
-    // Bell visible to broker + TC · agent role hides bell (no inbound items)
+    // Bell visible to broker + TC + agent (agents now get TC replies, new docs,
+    // action requests as inbound notifications).
     var role = effectiveRole(currentProfile);
-    if (role !== 'broker' && role !== 'tc') {
+    if (role !== 'broker' && role !== 'tc' && role !== 'agent') {
       wrap.innerHTML = '';
       return;
     }

@@ -2478,6 +2478,41 @@
   }
 
   function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  // US phone → (XXX) XXX-XXXX · leaves anything non-10-digit as-is.
+  function fmtPhone(p){
+    const d = String(p||'').replace(/\D/g,'');
+    const n = (d.length === 11 && d[0] === '1') ? d.slice(1) : d;
+    return n.length === 10 ? ('(' + n.slice(0,3) + ') ' + n.slice(3,6) + '-' + n.slice(6)) : (p || '');
+  }
+  // ===== Calendar export · build an .ics of a file's upcoming deadlines (ADHD: externalize dates) =====
+  function _icsEsc(s){ return String(s||'').replace(/([,;\\])/g,'\\$1').replace(/\r?\n/g,'\\n'); }
+  function _icsDay(d){ const x = new Date(d); const p = n => String(n).padStart(2,'0'); return x.getFullYear() + p(x.getMonth()+1) + p(x.getDate()); }
+  function _icsStamp(){ const x = new Date(); const p = n => String(n).padStart(2,'0'); return x.getUTCFullYear()+p(x.getUTCMonth()+1)+p(x.getUTCDate())+'T'+p(x.getUTCHours())+p(x.getUTCMinutes())+p(x.getUTCSeconds())+'Z'; }
+  function buildFileIcs(f, dls){
+    let ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Aari Transactions//Portal//EN\r\nCALSCALE:GREGORIAN\r\n';
+    const stamp = _icsStamp();
+    (dls||[]).forEach((d, i) => {
+      const start = _icsDay(d.date);
+      const endD = new Date(d.date); endD.setDate(endD.getDate() + 1);
+      ics += 'BEGIN:VEVENT\r\n' +
+        'UID:' + esc(f.id) + '-' + (d.deadline_key || i) + '@aaritransactions.com\r\n' +
+        'DTSTAMP:' + stamp + '\r\n' +
+        'DTSTART;VALUE=DATE:' + start + '\r\n' +
+        'DTEND;VALUE=DATE:' + _icsDay(endD) + '\r\n' +
+        'SUMMARY:' + _icsEsc((d.label || 'Deadline') + ' · ' + (f.property_address || '')) + '\r\n' +
+        'DESCRIPTION:' + _icsEsc('Aari Transactions deadline · ' + (f.property_address || '')) + '\r\n' +
+        'END:VEVENT\r\n';
+    });
+    return ics + 'END:VCALENDAR\r\n';
+  }
+  function downloadIcs(f, dls){
+    const blob = new Blob([buildFileIcs(f, dls)], { type: 'text/calendar' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = ((f.property_address || 'aari-deadlines').replace(/[^a-zA-Z0-9]+/g,'-').slice(0,40)) + '.ics';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
 
   // ===== PORTAL TABS · move the metrics into a "My business" tab so home stays calm =====
   // Moving nodes preserves each section's own show/hide logic (zero-file gating, etc.).
@@ -3102,7 +3137,7 @@
         '<div class="team-name">'+esc(name)+'<span class="team-role"> · Transaction Coordinator</span></div>' +
         '<div class="team-contacts">' +
           '<a href="mailto:'+esc(email)+'">'+esc(email)+'</a>' +
-          (tc.phone?'<span>'+esc(tc.phone)+'</span>':'') +
+          (tc.phone?'<a href="tel:'+esc(String(tc.phone).replace(/[^0-9+]/g,''))+'">'+esc(fmtPhone(tc.phone))+'</a>':'') +
           '<span>'+counts[id]+' of your files</span>' +
         '</div>' +
       '</div>';
@@ -3378,9 +3413,16 @@
       '<span style="display:flex;align-items:center;gap:8px">' + msgHint + '<span class="chev">›</span></span></summary>' +
       '<div class="tx-fold-body" style="padding-top:4px">' + thread + mtc + '</div></details>';
 
+    // Add-to-calendar · only when the file has upcoming deadlines.
+    const calExport = (fileDls && fileDls.length)
+      ? '<button type="button" id="cal-export" style="display:flex;align-items:center;justify-content:center;gap:7px;width:100%;margin:2px 0 6px;background:#fff;border:0.5px solid var(--line);border-radius:9px;padding:10px;font-size:12px;font-weight:600;color:var(--ink);cursor:pointer;font-family:inherit">&#128197; Add deadlines to my calendar</button>'
+      : '';
+
     document.getElementById('el-body').innerHTML =
-      stagePill + hero + timelineBlock + submissionFold + requestFold + shareFold + verifBlock + messagesBlock;
+      stagePill + hero + timelineBlock + calExport + submissionFold + requestFold + shareFold + verifBlock + messagesBlock;
     renderShareSection(f);
+    const _calBtn = document.getElementById('cal-export');
+    if(_calBtn) _calBtn.onclick = function(){ downloadIcs(f, fileDls); };
     document.getElementById('mtc-send').addEventListener('click', () => sendMsg(f, tc));
 
     // ===== Request a change · agent → TC structured request (direction='to_tc') =====
