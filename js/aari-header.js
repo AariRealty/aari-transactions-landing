@@ -229,6 +229,7 @@
       previewItems,
       previewItems ? '<div class="menu-sep"></div>' : '',
       '<a href="/portal.html#recent-activity" role="menuitem">Recent activity</a>',
+      '<a href="/portal.html#membership" role="menuitem">Membership</a>',
       '<a href="/portal.html#billing-documents" role="menuitem">Billing &amp; Documents</a>',
       (actualRole === 'broker' ? '<a href="/portal.html#agent-agreements" role="menuitem">Agent agreements</a>' : ''),
       '<a href="/portal.html#profile" role="menuitem">Settings</a>',
