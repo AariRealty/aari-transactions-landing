@@ -65,6 +65,8 @@
     .awb-card{background:#fff;border:1px solid var(--awb-line);border-radius:12px;padding:18px 10px 16px;display:flex;flex-direction:column;align-items:center;gap:8px;text-decoration:none;color:var(--awb-ink);transition:border-color 0.15s ease,transform 0.12s ease,background 0.15s ease;cursor:pointer;-webkit-tap-highlight-color:transparent}
     .awb-card:hover{border-color:var(--awb-ink);transform:translateY(-1px)}
     .awb-card.active{background:var(--awb-ink);color:#fff;border-color:var(--awb-ink)}
+    .awb-card.awb-card-primary{background:var(--awb-ink);color:#fff;border-color:var(--awb-ink)}
+    .awb-card.awb-card-primary:hover{background:#222;color:#fff}
     .awb-card.muted{opacity:0.4;cursor:not-allowed;pointer-events:none}
     .awb-card-ic{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;color:inherit}
     .awb-card-lbl{font-size:12.5px;font-weight:500;line-height:1.25;letter-spacing:0.1px;text-align:center}
@@ -86,6 +88,7 @@
       const isActive = c.match.some(m => url.indexOf(m) === 0 || url.indexOf(m) >= 0);
       const cls = ['awb-card'];
       if(isActive) cls.push('active');
+      if(c.primary) cls.push('awb-card-primary');
       const intakeAttr = c.intake ? ' data-aw-intake="true"' : '';
       return `<a class="${cls.join(' ')}" href="${c.href}"${intakeAttr}>
         <span class="awb-card-ic">${c.icon}</span>
@@ -148,7 +151,11 @@
     const existing = document.getElementById('aari-banner');
     if(existing) existing.remove();
     // Resolve role + render
-    const { actual, viewing } = await resolveRole();
+    let { actual, viewing } = await resolveRole();
+    // Page-scope override · the agent portal is the AGENT product, so it always shows the
+    // agent rib (Submit · Contacts · Refer) — even when a broker/TC opens it. Keeps the
+    // operator command center off the agent's screen.
+    if((window.location.pathname || '').indexOf('/portal') >= 0){ viewing = 'agent'; }
     // Self-reference check (May 2026): if the role's only visible card points to the current page,
     // the banner is dead weight (no nav value, just chrome). Skip mounting entirely.
     const visibleCards = CARDS.filter(c => !c.roles || c.roles.indexOf(viewing) >= 0);
