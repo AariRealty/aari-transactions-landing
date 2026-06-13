@@ -29,9 +29,9 @@
     // Quality dashboard self-scopes to TC's own SLA stats when role === 'tc'.
     { id:'quality',  label:'Service quality', href:'/files-sla.html',     icon:iconChart(), match:['/files-sla'],                       roles:['tc','broker'] },
     { id:'compliance', label:'Defend the audit', href:'/files-compliance.html', icon:iconShield(), match:['/files-compliance'],          roles:['broker'] },
-    // Agent-side hub · what an agent actually needs from a navigation rib.
-    { id:'portal',   label:'My files',       href:'/portal.html',         icon:iconFolder(),match:['/portal'],                          roles:['agent'] },
-    { id:'submit',   label:'Submit a file',  href:'/index.html?modal-only=1#apply',   icon:iconUpload(),match:['/agent-submit','/index.html#services'], roles:['agent'] },
+    // Agent-side rib · "what actually matters" (A · June 2026): Submit (primary) · Contacts · Refer.
+    // "My files" removed — the agent is already on /portal looking at their files, so it was a dead card.
+    { id:'submit',   label:'Submit a file',  href:'/index.html?modal-only=1#apply',   icon:iconUpload(),match:['/agent-submit','/index.html#services'], roles:['agent'], primary:true },
     { id:'contacts', label:'My contacts',    href:'/my-contacts.html',    icon:iconBook(),  match:['/my-contacts'],                    roles:['agent'] },
     { id:'refer',    label:'Refer an agent', href:'/portal.html#refer',   icon:iconHandshake(), match:[],                              roles:['agent'] },
   ];
