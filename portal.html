@@ -2981,7 +2981,7 @@
     try {
       const { data } = await _client.from('file_agent_actions')
         .select('id, action_type, label, detail, due_date, status')
-        .eq('file_id', f.id).eq('status', 'open')
+        .eq('file_id', f.id).eq('status', 'open').eq('direction', 'to_agent')
         .order('created_at', { ascending: true }).limit(1);
       agentAction = (data && data[0]) || null;
     } catch(_){ /* file_agent_actions may not exist yet · ignore */ }
@@ -3006,7 +3006,7 @@
     let hero;
     if(agentAction){
       // ACTION NEEDED · the whole hero goes black (V1). Verb + button adapt to type.
-      const VERB = { sign:'Review & sign', upload:'Upload now', confirm:'Confirm now', review:'Review & approve' };
+      const VERB = { sign:'Mark as signed', upload:'Upload now', confirm:'Confirm now', review:'Mark reviewed' };
       const btnLabel = (VERB[agentAction.action_type] || 'Open') + ' →';
       const dueTxt = agentAction.due_date
         ? ' — by ' + new Date(agentAction.due_date + 'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})
@@ -3047,7 +3047,25 @@
       (svc ? '<div class="tx-fact"><span class="k">Service</span><span class="v" style="text-transform:capitalize">' + esc(svc) + '</span></div>' : '') +
       '<div class="tx-fact"><span class="k">Submitted</span><span class="v">' + esc(submittedOn) + '</span></div>' +
       '<div class="tx-fact"><span class="k">Closing</span><span class="v">' + esc(closingOn) + '</span></div>' +
-      '<div class="tx-foldnote">Need a change to your submission? Message ' + esc(tcName) + ' below and we’ll update the file.</div>' +
+      '<div class="tx-foldnote">Need a change? Use “Request a change” below — your TC handles the update.</div>' +
+    '</div></details>';
+
+    // ===== REQUEST A CHANGE · agent → TC structured request (native dropdown, no free text) =====
+    const _rqInput = 'width:100%;font-family:inherit;font-size:13px;padding:9px 11px;border:0.5px solid rgba(15,15,15,0.18);border-radius:8px;background:#fff;color:#0f0f0f';
+    const _rqLbl = 'display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#6b6862;font-weight:600;margin:0 0 5px';
+    const requestFold = '<details class="tx-fold" id="tx-req-fold"><summary><span>Request a change</span><span class="chev">›</span></summary><div class="tx-fold-body">' +
+      '<div id="req-open"></div>' +
+      '<label style="' + _rqLbl + '">What do you need?</label>' +
+      '<select id="req-type" style="' + _rqInput + '">' +
+        '<option value="extend_date">Extend a date</option>' +
+        '<option value="addendum">Add / send an addendum</option>' +
+        '<option value="adjust_term">Adjust a term</option>' +
+        '<option value="cancel">Cancel / terminate</option>' +
+        '<option value="other">Something else</option>' +
+      '</select>' +
+      '<div id="req-extra" style="margin-top:10px"></div>' +
+      '<div id="req-status" style="font-size:12px;padding:8px 10px;border-radius:6px;margin-top:10px;display:none"></div>' +
+      '<button type="button" id="req-send" style="width:100%;margin-top:10px;background:#0f0f0f;color:#fff;border:0;border-radius:8px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Send to TC</button>' +
     '</div></details>';
 
     // ===== VERIFICATION CHECKLIST · what TC has confirmed on this file =====
@@ -3144,19 +3162,57 @@
       '<div class="tx-fold-body" style="padding-top:4px">' + thread + mtc + '</div></details>';
 
     document.getElementById('el-body').innerHTML =
-      stagePill + hero + timelineBlock + submissionFold + verifBlock + messagesBlock;
+      stagePill + hero + timelineBlock + submissionFold + requestFold + verifBlock + messagesBlock;
     document.getElementById('mtc-send').addEventListener('click', () => sendMsg(f, tc));
     // Action-needed button (v1) · open the message composer prefilled so the agent can
     // respond to the TC's ask. Type-specific flows (native e-sign, upload, one-tap confirm)
     // are the next iteration once the TC trigger is live.
     const txActBtn = document.getElementById('tx-act-btn');
     if(txActBtn && agentAction){
-      txActBtn.addEventListener('click', () => {
-        const fold = document.getElementById('tx-msg-fold');
-        if(fold){ fold.open = true; fold.scrollIntoView({ behavior:'smooth', block:'center' }); }
-        const ta = document.getElementById('mtc-text');
-        if(ta){ if(!ta.value){ ta.value = 'Re: ' + (agentAction.label || 'your request') + ' — '; } ta.focus(); }
-      });
+      const actType = agentAction.action_type || 'review';
+      // Mark this action done · agent has RLS to resolve actions on their own file.
+      const resolveAction = async function(){
+        const uid = (_profile && _profile.id) || null;
+        return await _client.from('file_agent_actions')
+          .update({ status:'done', resolved_at:new Date().toISOString(), resolved_by:uid })
+          .eq('id', agentAction.id);
+      };
+      if(actType === 'upload'){
+        // UPLOAD · agent's own folder in the file-documents bucket, then record + resolve.
+        txActBtn.addEventListener('click', () => {
+          const inp = document.createElement('input');
+          inp.type = 'file'; inp.style.display = 'none';
+          document.body.appendChild(inp);
+          inp.addEventListener('change', async () => {
+            const file = inp.files && inp.files[0];
+            inp.remove();
+            if(!file) return;
+            txActBtn.disabled = true; txActBtn.textContent = 'Uploading…';
+            const uid = (_profile && _profile.id) || null;
+            const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+            const path = uid + '/' + f.id + '/' + Date.now() + '-' + safe;
+            const up = await _client.storage.from('file-documents').upload(path, file, { contentType: file.type || 'application/octet-stream', upsert:false });
+            if(up.error){ txActBtn.disabled = false; txActBtn.textContent = 'Upload now →'; alert('Upload failed: ' + up.error.message); return; }
+            try { await _client.from('file_documents').insert({ file_id:f.id, uploaded_by:uid, filename:file.name, storage_path:path, content_type:file.type || null }); } catch(_){}
+            const res = await resolveAction();
+            if(res.error){ alert('Uploaded — but could not close the request automatically. Your TC can clear it.'); }
+            openDrawer(f); // re-render → calm hero
+          });
+          inp.click();
+        });
+      } else {
+        // ONE-TAP ACKNOWLEDGE · confirm / sign / review. Signing happens OUTSIDE the
+        // tracker (Dotloop/Authentisign/etc.) — here the agent just marks it done.
+        const VERB_PAST = { sign:'signed', review:'reviewed', confirm:'done' };
+        txActBtn.addEventListener('click', async () => {
+          if(!confirm('Mark "' + (agentAction.label||'this') + '" as ' + (VERB_PAST[actType]||'done') + '? Your TC will see it.')) return;
+          const orig = txActBtn.textContent;
+          txActBtn.disabled = true; txActBtn.textContent = 'Saving…';
+          const res = await resolveAction();
+          if(res.error){ txActBtn.disabled = false; txActBtn.textContent = orig; alert('Could not update: ' + res.error.message); return; }
+          openDrawer(f); // re-render → calm hero
+        });
+      }
     }
     // Verification "Show more" toggle
     const vToggle = document.getElementById('verif-toggle-'+f.id);
