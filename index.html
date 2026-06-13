@@ -14163,8 +14163,20 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
             window.__aariPayFlow = false;
             const cfid = window.__aariLastSubmission && window.__aariLastSubmission.id;
             if(window.__aariFileSubmitted && cfid){
-              await recordCreditUse(cfid, credit);
-              renderCreditDone(credit);
+              const recorded = await recordCreditUse(cfid, credit);
+              if(recorded){
+                renderCreditDone(credit);
+                window.__aariCreditCover = null;
+                return;
+              }
+              // Ledger write failed · do NOT let the file go through free.
+              // Flip it to payment so the credit isn't silently spent unrecorded.
+              window.__aariCreditCover = null;
+              await revertCoverToPayment(cfid);
+              const staffFb = state.profile && (state.profile.role === 'tc' || state.profile.role === 'broker');
+              if(staffFb){ renderTcPayLink(cfid); }
+              else { state.step = 'pay-summary'; render(); renderPaySummary(); }
+              return;
             }
             window.__aariCreditCover = null;
             return;
@@ -14679,8 +14691,20 @@ The Parties have executed this Agreement as of the date(s) set forth below. Elec
           file_id: fileId,
           service_id: state.data.servicePackage || ''
         });
-        if(r && r.error) console.warn('[credits] ledger insert failed (file is confirmed regardless)', r.error.message);
-      }catch(e){ console.warn('[credits] ledger insert threw', e); }
+        if(r && r.error){ console.warn('[credits] ledger insert failed · reverting file to payment', r.error.message); return false; }
+        return true;
+      }catch(e){ console.warn('[credits] ledger insert threw · reverting file to payment', e); return false; }
+    }
+    /* If the credit ledger write fails, the file must NOT go through free.
+       Flip it back to payment_pending so the credit isn't spent unrecorded. */
+    async function revertCoverToPayment(fileId){
+      try{
+        const client = await window.AariAuth.ensureClient();
+        await client.from('files').update({
+          payment_pending: true,
+          payment_confirmed: false
+        }).eq('id', fileId);
+      }catch(e){ console.warn('[credits] revert-to-payment failed', e); }
     }
     function renderCreditDone(credit){
       const head = document.getElementById('paCreditHead');
