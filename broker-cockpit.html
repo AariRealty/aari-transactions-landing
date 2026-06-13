@@ -683,6 +683,15 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     <div class="sa-list" id="sa-list"></div>
   </section>
 
+  <!-- ============ MEMBERSHIP REQUESTS · agent pause/downgrade/cancel inbox ============ -->
+  <section class="sa-panel" id="mr-panel" style="display:none">
+    <div class="sa-head">
+      <p class="sa-eb">Membership requests · agents asking to pause / downgrade / cancel</p>
+      <span class="sa-meta" id="mr-meta">&nbsp;</span>
+    </div>
+    <div class="sa-list" id="mr-list"></div>
+  </section>
+
   <!-- ============ LAST 5 CLOSINGS · recent wins ============ -->
   <section class="lc-panel" id="lc-panel" style="display:none">
     <div class="lc-head">
@@ -964,6 +973,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 
     // SECTION · Signed agreements audit trail
     loadAndRenderSignedAgreements(byId);
+    loadAndRenderMembershipRequests(byId);
 
     // SECTION · "Since you were last here" engagement summary
     loadAndRenderSinceLastVisit(files);
@@ -977,6 +987,43 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
   // written AFTER pills are computed, so each pill shows exactly once;
   // clicking View PDF also clears that row's pill immediately.
   // Powers the broker-side "I need a copy" requirement and FREC audit defense.
+  // ============ MEMBERSHIP REQUESTS · broker inbox for agent pause/downgrade/cancel ============
+  async function loadAndRenderMembershipRequests(byId){
+    const panel = document.getElementById('mr-panel');
+    const list = document.getElementById('mr-list');
+    const meta = document.getElementById('mr-meta');
+    if(!panel || !list) return;
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { data: reqs } = await client.from('membership_change_requests')
+        .select('id, agent_id, request_type, reason, created_at, status')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if(!reqs || !reqs.length){ panel.style.display = 'none'; return; }
+      panel.style.display = 'block';
+      if(meta) meta.textContent = reqs.length + ' pending';
+      const LABEL = { pause_1:'Pause · 1 month', pause_2:'Pause · 2 months', pause_3:'Pause · 3 months', downgrade:'Downgrade to Starter', upgrade:'Upgrade to Producer', cancel:'Cancel', pay_per_file:'Switch to pay-per-file' };
+      list.innerHTML = reqs.map(function(r){
+        const a = byId && byId[r.agent_id];
+        const name = (a ? ((a.first_name||'') + ' ' + (a.last_name||'')).trim() : '') || 'Agent';
+        const when = new Date(r.created_at).toLocaleDateString('en-US', { month:'short', day:'numeric' });
+        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 2px;border-top:0.5px solid #f1ede6">' +
+          '<div style="min-width:0"><p style="font-size:13px;font-weight:600;margin:0">' + esc(name) + ' &mdash; ' + esc(LABEL[r.request_type] || r.request_type) + '</p>' +
+          '<p style="font-size:11.5px;color:#8a857c;margin:2px 0 0">' + (r.reason ? esc(r.reason) + ' &middot; ' : '') + when + '</p></div>' +
+          '<button type="button" data-mr-done="' + esc(r.id) + '" style="border:0;background:#0f0f0f;color:#fff;font-size:11px;font-weight:600;border-radius:6px;padding:6px 12px;cursor:pointer;font-family:inherit;flex:none">Mark handled</button>' +
+        '</div>';
+      }).join('');
+      list.querySelectorAll('[data-mr-done]').forEach(function(b){
+        b.addEventListener('click', async function(){
+          b.disabled = true;
+          try { await client.from('membership_change_requests').update({ status:'done', resolved_at:new Date().toISOString() }).eq('id', b.getAttribute('data-mr-done')); } catch(_){}
+          loadAndRenderMembershipRequests(byId);
+        });
+      });
+    } catch(_){ panel.style.display = 'none'; }
+  }
+
   async function loadAndRenderSignedAgreements(byId){
     const panel = document.getElementById('sa-panel');
     const list = document.getElementById('sa-list');

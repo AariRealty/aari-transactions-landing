@@ -9687,27 +9687,32 @@ Tell me your planned move-out date and I will set the inspection.`
     if(uid){
       try {
         const { data: objs } = await _client.storage.from('transaction-files').list(uid + '/' + file.id + '/additional');
-        if(objs && objs.length) docs = objs.filter(o => o.name).map(o => ({ name: o.name, path: uid + '/' + file.id + '/additional/' + o.name }));
+        if(objs && objs.length) docs = objs.filter(o => o.name).map(o => ({ name: o.name, path: uid + '/' + file.id + '/additional/' + o.name, bucket: 'transaction-files' }));
       } catch(_){}
       if(!docs.length && Array.isArray(raw.additional_docs)){
-        docs = raw.additional_docs.filter(d => d && d.filename).map(d => ({ name: d.filename, path: uid + '/' + file.id + '/additional/' + d.filename }));
+        docs = raw.additional_docs.filter(d => d && d.filename).map(d => ({ name: d.filename, path: uid + '/' + file.id + '/additional/' + d.filename, bucket: 'transaction-files' }));
       }
     }
+    // Agent action-uploads land in the file-documents bucket + file_documents table.
+    try {
+      const { data: fd } = await _client.from('file_documents').select('filename, storage_path, uploaded_at').eq('file_id', file.id).order('uploaded_at', { ascending: false });
+      (fd || []).forEach(function(d){ if(d.storage_path) docs.push({ name: d.filename || 'Document', path: d.storage_path, bucket: 'file-documents' }); });
+    } catch(_){}
     if(!docs.length){ hostD.innerHTML = ''; return; }
     hostD.innerHTML = '<p class="rail-docs-eb">Addenda &amp; docs from the agent &middot; ' + docs.length + '</p>' +
       docs.map(function(d){
         return '<div class="rail-doc-row">' +
           '<span class="rail-doc-name">&#128196; ' + esc(d.name) + '</span>' +
           '<span style="flex:none;display:inline-flex;gap:10px">' +
-            '<button type="button" class="rail-doc-view" data-doc-view="' + esc(d.path) + '">View here</button>' +
-            '<button type="button" class="rail-doc-tab" data-doc-tab="' + esc(d.path) + '">Open in tab</button>' +
+            '<button type="button" class="rail-doc-view" data-doc-view="' + esc(d.path) + '" data-doc-bucket="' + esc(d.bucket || 'transaction-files') + '">View here</button>' +
+            '<button type="button" class="rail-doc-tab" data-doc-tab="' + esc(d.path) + '" data-doc-bucket="' + esc(d.bucket || 'transaction-files') + '">Open in tab</button>' +
           '</span></div>';
       }).join('') +
       '<button type="button" class="rail-doc-backct" id="rail-doc-backct" style="display:none">&larr; Back to the contract</button>';
     hostD.querySelectorAll('[data-doc-view]').forEach(function(b){
       b.addEventListener('click', async function(){
         try {
-          const { data } = await _client.storage.from('transaction-files').createSignedUrl(b.getAttribute('data-doc-view'), 3600);
+          const { data } = await _client.storage.from(b.getAttribute('data-doc-bucket') || 'transaction-files').createSignedUrl(b.getAttribute('data-doc-view'), 3600);
           const fr = document.getElementById('ct-pdfframe');
           if(data && data.signedUrl && fr){ fr.src = data.signedUrl; const bk = document.getElementById('rail-doc-backct'); if(bk) bk.style.display = 'inline-block'; }
         } catch(_){}
@@ -9718,7 +9723,7 @@ Tell me your planned move-out date and I will set the inspection.`
         const w = window.open('about:blank', '_blank');
         (async function(){
           try {
-            const { data } = await _client.storage.from('transaction-files').createSignedUrl(b.getAttribute('data-doc-tab'), 3600);
+            const { data } = await _client.storage.from(b.getAttribute('data-doc-bucket') || 'transaction-files').createSignedUrl(b.getAttribute('data-doc-tab'), 3600);
             if(data && data.signedUrl){ w.location = data.signedUrl; return; }
           } catch(_){}
           try { w.close(); } catch(_){}
