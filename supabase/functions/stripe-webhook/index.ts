@@ -74,8 +74,29 @@ Deno.serve(async (req) => {
   const fileId = meta.file_id || (session.client_reference_id as string | undefined) || "";
 
   if (!fileId) {
-    // Payment with no file reference (e.g., membership subscription) · acknowledge.
-    return new Response(JSON.stringify({ received: true, matched: false }), { status: 200 });
+    // No file → likely a MEMBERSHIP subscription checkout (Become a Starter/Producer).
+    // Capture the Stripe customer + subscription id onto the agent's membership so
+    // self-serve management (pause/cancel/downgrade) can act on the right subscription.
+    const subscription = (session.subscription as string | undefined) || "";
+    const customer = (session.customer as string | undefined) || "";
+    const details = (session.customer_details ?? {}) as Record<string, unknown>;
+    const email = (details.email as string | undefined) || (session.customer_email as string | undefined) || "";
+    if (subscription && email) {
+      try {
+        const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+        const ag = await supabase.from("agents").select("id").ilike("email", email).maybeSingle();
+        const agentId = ag.data?.id;
+        if (agentId) {
+          await supabase.from("memberships")
+            .update({ stripe_subscription_id: subscription, stripe_customer_id: customer || null })
+            .eq("agent_id", agentId)
+            .in("status", ["active", "paused"]);
+        }
+      } catch (e) {
+        console.warn("[stripe-webhook] membership id capture failed", e);
+      }
+    }
+    return new Response(JSON.stringify({ received: true, matched: false, membership: !!subscription }), { status: 200 });
   }
 
   // Stripe gives amount_total in the smallest currency unit (cents for USD).
