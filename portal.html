@@ -3115,6 +3115,49 @@
     document.getElementById('el-back').addEventListener('click', closeDrawer);
     document.addEventListener('keydown', (e) => { if(e.key==='Escape') closeDrawer(); });
   }
+  // SHARE WITH CLIENT · generate / show / revoke a read-only status link for a file.
+  async function renderShareSection(f){
+    const host = document.getElementById('share-body'); if(!host) return;
+    let link = null;
+    try {
+      const { data } = await _client.from('file_share_links')
+        .select('id, token, revoked, expires_at')
+        .eq('file_id', f.id).eq('revoked', false)
+        .order('created_at', { ascending: false }).limit(1);
+      link = (data && data[0]) || null;
+    } catch(_){ /* table may not be applied yet */ }
+
+    if(link){
+      const url = window.location.origin + '/status.html?token=' + link.token;
+      const sms = 'sms:?&body=' + encodeURIComponent('Here’s your transaction status: ' + url);
+      host.innerHTML =
+        '<p style="font-size:11.5px;color:#6b6862;margin:0 0 9px">A read-only page your client can check anytime — milestones + next date, nothing private.</p>' +
+        '<div style="display:flex;gap:7px;margin-bottom:8px"><input id="share-url" readonly value="' + esc(url) + '" style="flex:1;min-width:0;font-family:inherit;font-size:11.5px;padding:8px 10px;border:0.5px solid rgba(15,15,15,0.18);border-radius:7px;background:#faf9f6;color:#6b6862"><button type="button" id="share-copy" style="background:#0f0f0f;color:#fff;border:0;border-radius:7px;padding:8px 12px;font-size:11.5px;font-weight:600;cursor:pointer;flex:none">Copy</button></div>' +
+        '<div style="display:flex;gap:7px"><a href="' + sms + '" style="flex:1;text-align:center;background:#0f0f0f;color:#fff;text-decoration:none;border-radius:7px;padding:9px;font-size:12px;font-weight:600">Text it to your client →</a><button type="button" id="share-revoke" style="background:#fff;color:#9a958c;border:0.5px solid rgba(15,15,15,0.18);border-radius:7px;padding:9px 12px;font-size:11.5px;cursor:pointer;flex:none">Revoke</button></div>' +
+        '<p style="font-size:10px;color:#b3aea5;margin:8px 0 0">Read-only · milestones only · revoke anytime.</p>';
+      const copyBtn = document.getElementById('share-copy');
+      if(copyBtn) copyBtn.onclick = function(){ try { navigator.clipboard.writeText(url); copyBtn.textContent = 'Copied'; setTimeout(function(){ copyBtn.textContent = 'Copy'; }, 1500); } catch(_){ const i = document.getElementById('share-url'); if(i){ i.select(); try { document.execCommand('copy'); } catch(_e){} } } };
+      const rev = document.getElementById('share-revoke');
+      if(rev) rev.onclick = async function(){ if(!confirm('Revoke this link? Your client will no longer be able to view the status.')) return; rev.disabled = true; try { await _client.from('file_share_links').update({ revoked: true }).eq('id', link.id); } catch(_){} renderShareSection(f); };
+    } else {
+      host.innerHTML =
+        '<p style="font-size:11.5px;color:#6b6862;margin:0 0 10px">Give your client a clean, read-only page to follow this transaction — milestones + next date, nothing private.</p>' +
+        '<button type="button" id="share-create" style="width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:8px;padding:10px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit">Create a status link</button>';
+      const c = document.getElementById('share-create');
+      if(c) c.onclick = async function(){
+        c.disabled = true; c.textContent = 'Creating…';
+        const token = (window.crypto && crypto.randomUUID) ? crypto.randomUUID().replace(/-/g,'') : (Date.now().toString(36) + Math.random().toString(36).slice(2, 12));
+        const uid = (_profile && _profile.id) || null;
+        let expires;
+        if(f.closing_date){ const d = new Date(f.closing_date + 'T00:00:00'); d.setDate(d.getDate() + 7); expires = d.toISOString(); }
+        else { const d = new Date(); d.setDate(d.getDate() + 120); expires = d.toISOString(); }
+        const res = await _client.from('file_share_links').insert({ file_id: f.id, token: token, created_by: uid, expires_at: expires });
+        if(res.error){ c.disabled = false; c.textContent = 'Create a status link'; alert('Could not create link: ' + res.error.message); return; }
+        renderShareSection(f);
+      };
+    }
+  }
+
   function closeDrawer(){
     document.getElementById('el-drawer').classList.remove('open');
     document.getElementById('el-back').classList.remove('open');
@@ -3238,6 +3281,10 @@
       '<button type="button" id="req-send" style="width:100%;margin-top:10px;background:#0f0f0f;color:#fff;border:0;border-radius:8px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Send to TC</button>' +
     '</div></details>';
 
+    // ===== SHARE WITH CLIENT · read-only status link (populated by renderShareSection) =====
+    const shareFold = '<details class="tx-fold" id="tx-share-fold"><summary><span>Share with your client</span><span class="chev">›</span></summary>' +
+      '<div class="tx-fold-body" id="share-body"><p style="font-size:12px;color:#9a958c;margin:0">Loading…</p></div></details>';
+
     // ===== VERIFICATION CHECKLIST · what TC has confirmed on this file =====
     const fileVerifs = _verifs.filter(v => v.file_id === f.id);
     let verifBlock = '';
@@ -3332,7 +3379,8 @@
       '<div class="tx-fold-body" style="padding-top:4px">' + thread + mtc + '</div></details>';
 
     document.getElementById('el-body').innerHTML =
-      stagePill + hero + timelineBlock + submissionFold + requestFold + verifBlock + messagesBlock;
+      stagePill + hero + timelineBlock + submissionFold + requestFold + shareFold + verifBlock + messagesBlock;
+    renderShareSection(f);
     document.getElementById('mtc-send').addEventListener('click', () => sendMsg(f, tc));
 
     // ===== Request a change · agent → TC structured request (direction='to_tc') =====
