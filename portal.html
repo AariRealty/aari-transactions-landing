@@ -1058,7 +1058,16 @@
         const tier = String(mem.data.tier).toLowerCase();
         const allowance = tier === 'producer' ? 4 : (tier === 'starter' ? 2 : 0);
         if(!allowance) return;
-        const m0 = new Date(); m0.setDate(1); m0.setHours(0,0,0,0);
+        // Credit window = the agent's billing period (anchored to next_renewal_at),
+        // NOT the calendar 1st — so credits reset when they're billed, and a
+        // cancel-and-rejoin can't farm a second free allowance mid-month.
+        let m0;
+        const _renew = mem.data.next_renewal_at ? new Date(mem.data.next_renewal_at) : null;
+        if(_renew && !isNaN(_renew.getTime())){
+          const _now = new Date(); let _g = 0;
+          while(_renew <= _now && _g < 60){ _renew.setMonth(_renew.getMonth()+1); _g++; }
+          m0 = new Date(_renew); m0.setMonth(m0.getMonth()-1);
+        } else { m0 = new Date(); m0.setDate(1); m0.setHours(0,0,0,0); }
         const used = await _client.from('membership_credit_uses')
           .select('id', { count: 'exact', head: true })
           .eq('agent_id', uid).gte('used_at', m0.toISOString());
