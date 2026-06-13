@@ -2179,7 +2179,7 @@
   // ===== MANAGE MEMBERSHIP · account menu (#membership) · plan + credits bar + save flow =====
   // Final actions are REQUEST-based: they log to membership_change_requests + notify the
   // broker (who actions Stripe). The UI never claims billing changed on its own.
-  let _msStep = 'manage', _msReason = '', _msPause = 2;
+  let _msStep = 'manage', _msReason = '', _msPause = 2, _msExecuted = false;
   function msSeg(){
     if(!_membership) return '';
     const used = Math.max(0, _membership.allowance - _membership.left);
@@ -2262,16 +2262,25 @@
         btn('manage','Keep my membership','ink') +
         '<p style="font-size:10px;color:#b3aea5;font-style:italic;margin-top:6px">Request goes to the Aari team to finalize in billing.</p>';
     } else if(_msStep === 'done'){
-      body.innerHTML = '<div style="text-align:center;padding:24px 10px"><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:18px;margin-bottom:6px">Got it — request sent.</div><div style="font-size:12.5px;color:#6b6862">The Aari team will confirm by email shortly. Nothing changes on your billing until then.</div></div>';
+      body.innerHTML = _msExecuted
+        ? '<div style="text-align:center;padding:24px 10px"><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:18px;margin-bottom:6px">All set — it\'s applied.</div><div style="font-size:12.5px;color:#6b6862">Your change is live and a confirmation is on its way by email.</div></div>'
+        : '<div style="text-align:center;padding:24px 10px"><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:18px;margin-bottom:6px">Got it — request sent.</div><div style="font-size:12.5px;color:#6b6862">The Aari team will confirm by email shortly. Nothing changes on your billing until then.</div></div>';
     }
   }
   async function msSubmit(type){
     const uid = (_profile && _profile.id) || null;
     if(!uid) return;
+    // Try real self-serve via Stripe first; fall back to a logged request the Aari team actions.
+    let executed = false;
     try {
-      await _client.from('membership_change_requests').insert({ agent_id: uid, request_type: type, reason: _msReason || null });
-      try { await _client.functions.invoke('send-membership-event', { body: { event_type: 'change_request', request_type: type, agent_id: uid, reason: _msReason || null } }); } catch(_){}
+      const r = await _client.functions.invoke('manage-subscription', { body: { action: type } });
+      if(r && r.data && r.data.ok) executed = true;
+    } catch(_){ /* function not deployed / no sub on file → fall back */ }
+    try {
+      await _client.from('membership_change_requests').insert({ agent_id: uid, request_type: type, reason: _msReason || null, status: executed ? 'done' : 'pending', note: executed ? 'auto-applied via Stripe' : null });
+      try { await _client.functions.invoke('send-membership-event', { body: { event_type: 'change_request', request_type: type, agent_id: uid, reason: _msReason || null, executed: executed } }); } catch(_){}
     } catch(_){ /* table may not be applied yet */ }
+    _msExecuted = executed;
     _msStep = 'done'; renderMembership();
   }
   function wireMembership(){
