@@ -261,6 +261,11 @@ interface SaPayload {
   agreement_version?: string;
   user_agent?: string;
   locale?: string;
+  // Backfill mode · build + store the PDF for an ALREADY-signed agent, then
+  // UPDATE their existing agreement_signatures row (no email, no SMS, no new
+  // signature row). signature_id targets the exact row to stamp.
+  store_only?: boolean;
+  signature_id?: string;
 }
 
 function jsonResponse(payload: Record<string, unknown>, status = 200): Response {
@@ -734,33 +739,49 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 4. Insert into agreement_signatures so the Documents tab can show it.
+    // 4. agreement_signatures · INSERT for a new signing, UPDATE for a backfill.
     if (supabaseAdmin && agentId) {
       try {
-        const { error: insErr } = await supabaseAdmin
-          .from("agreement_signatures")
-          .insert({
-            agent_id: agentId,
-            file_id: null, // SA gate is account-level, not file-level
-            agreement_type: "service_agreement",
-            agreement_version: payload.agreement_version || "v4.7",
-            typed_full_name: payload.agent_name || "",
-            drawn_signature_data: payload.signature_data_url || null,
-            signature_image_url: null,
-            ip_address: ipAddress,
-            user_agent: payload.user_agent || null,
-            signed_at: payload.signed_at_iso || new Date().toISOString(),
-            signed_agreement_pdf_url: signedAgreementPdfUrl,
-            pdf_generation_status: signedAgreementPdfUrl ? "succeeded" : "failed",
-          });
-        if (insErr) {
-          console.warn("[aari-sa-pdf-email] agreement_signatures insert failed:", insErr);
+        if (payload.store_only) {
+          // Backfill: stamp the URL onto the agent's existing signature row(s).
+          let q = supabaseAdmin
+            .from("agreement_signatures")
+            .update({ signed_agreement_pdf_url: signedAgreementPdfUrl, pdf_generation_status: signedAgreementPdfUrl ? "succeeded" : "failed" });
+          if (payload.signature_id) q = q.eq("id", payload.signature_id);
+          else q = q.eq("agent_id", agentId).eq("agreement_type", "service_agreement").is("signed_agreement_pdf_url", null);
+          const { error: updErr } = await q;
+          if (updErr) console.warn("[aari-sa-pdf-email] backfill update failed:", updErr);
+        } else {
+          const { error: insErr } = await supabaseAdmin
+            .from("agreement_signatures")
+            .insert({
+              agent_id: agentId,
+              file_id: null, // SA gate is account-level, not file-level
+              agreement_type: "service_agreement",
+              agreement_version: payload.agreement_version || "v4.7",
+              typed_full_name: payload.agent_name || "",
+              drawn_signature_data: payload.signature_data_url || null,
+              signature_image_url: null,
+              ip_address: ipAddress,
+              user_agent: payload.user_agent || null,
+              signed_at: payload.signed_at_iso || new Date().toISOString(),
+              signed_agreement_pdf_url: signedAgreementPdfUrl,
+              pdf_generation_status: signedAgreementPdfUrl ? "succeeded" : "failed",
+            });
+          if (insErr) {
+            console.warn("[aari-sa-pdf-email] agreement_signatures insert failed:", insErr);
+          }
         }
       } catch (dbErr) {
-        console.warn("[aari-sa-pdf-email] agreement_signatures insert threw:", dbErr);
+        console.warn("[aari-sa-pdf-email] agreement_signatures write threw:", dbErr);
       }
     } else if (!agentId) {
-      console.warn("[aari-sa-pdf-email] no agent_id found for email; skipping DB insert");
+      console.warn("[aari-sa-pdf-email] no agent_id found for email; skipping DB write");
+    }
+
+    // Backfill mode stops here · no broker SMS, no email (the agent already signed).
+    if (payload.store_only) {
+      return jsonResponse({ ok: true, bytes: pdfBytes.length, filename, storage_path: signedAgreementPdfUrl, agent_id: agentId, store_only: true });
     }
 
     // 4.5. Notify the broker(s) by SMS · works today even with Resend domain unverified.
