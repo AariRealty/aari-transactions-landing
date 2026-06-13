@@ -3164,6 +3164,63 @@
     document.getElementById('el-body').innerHTML =
       stagePill + hero + timelineBlock + submissionFold + requestFold + verifBlock + messagesBlock;
     document.getElementById('mtc-send').addEventListener('click', () => sendMsg(f, tc));
+
+    // ===== Request a change · agent → TC structured request (direction='to_tc') =====
+    (function wireRequestChange(){
+      const typeSel = document.getElementById('req-type');
+      const extra = document.getElementById('req-extra');
+      const sendBtn = document.getElementById('req-send');
+      const statusEl = document.getElementById('req-status');
+      const openHost = document.getElementById('req-open');
+      if(!typeSel || !extra || !sendBtn) return;
+      const LBL = 'display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#6b6862;font-weight:600;margin:8px 0 5px';
+      const INP = 'width:100%;font-family:inherit;font-size:13px;padding:9px 11px;border:0.5px solid rgba(15,15,15,0.18);border-radius:8px;background:#fff;color:#0f0f0f';
+      function extraHtml(t){
+        if(t==='extend_date') return '<label style="'+LBL+'">Which date</label><select id="req-a" style="'+INP+'"><option>Closing</option><option>Inspection</option><option>Financing</option><option>Appraisal</option></select><label style="'+LBL+'">New date</label><input id="req-b" type="date" style="'+INP+'">';
+        if(t==='addendum') return '<label style="'+LBL+'">Type of addendum</label><select id="req-a" style="'+INP+'"><option>Repair / remedy</option><option>Extension</option><option>Price change</option><option>Other</option></select>';
+        if(t==='adjust_term') return '<label style="'+LBL+'">Which term</label><select id="req-a" style="'+INP+'"><option>Price</option><option>Credits</option><option>Parties / names</option><option>Other</option></select>';
+        if(t==='cancel') return '<label style="'+LBL+'">Reason</label><select id="req-a" style="'+INP+'"><option>Buyer decision</option><option>Financing fell through</option><option>Inspection</option><option>Appraisal</option><option>Other</option></select>';
+        return '<label style="'+LBL+'">Briefly, what do you need?</label><input id="req-a" type="text" maxlength="140" placeholder="One line" style="'+INP+'">';
+      }
+      extra.innerHTML = extraHtml(typeSel.value);
+      typeSel.addEventListener('change', function(){ extra.innerHTML = extraHtml(typeSel.value); });
+      function setStatus(msg, ok){ statusEl.style.display='block'; statusEl.textContent=msg; statusEl.style.background=ok?'#e8f5ed':'#fdecea'; statusEl.style.color=ok?'#5a9e72':'#c96b6b'; }
+      function fmtD(d){ try { return new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(_){ return d; } }
+      async function loadOpen(){
+        if(!openHost) return;
+        try {
+          const res = await _client.from('file_agent_actions').select('id,label,status,created_at').eq('file_id', f.id).eq('direction','to_tc').eq('status','open').order('created_at',{ascending:false});
+          const rows = res.data || [];
+          openHost.innerHTML = rows.length ? ('<p style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#854f0b;font-weight:600;margin:0 0 6px">Pending with your TC · '+rows.length+'</p>' + rows.map(function(r){ return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;background:#fdf6ea;border:0.5px solid #f2e2c4;border-radius:8px;padding:8px 11px;margin-bottom:6px"><span style="font-size:12px">'+esc(r.label)+'</span><button type="button" data-req-withdraw="'+esc(r.id)+'" style="border:0;background:none;color:#9a958c;font-size:11px;cursor:pointer;font-family:inherit">Withdraw</button></div>'; }).join('') + '<div style="height:6px"></div>') : '';
+        } catch(_){ }
+      }
+      openHost && openHost.addEventListener('click', async function(e){
+        const w = e.target.closest && e.target.closest('[data-req-withdraw]'); if(!w) return;
+        w.disabled = true;
+        await _client.from('file_agent_actions').update({ status:'cancelled', resolved_at:new Date().toISOString() }).eq('id', w.getAttribute('data-req-withdraw'));
+        loadOpen();
+      });
+      sendBtn.addEventListener('click', async function(){
+        const t = typeSel.value;
+        const a = document.getElementById('req-a'); const b = document.getElementById('req-b');
+        const aVal = a ? (a.value||'').trim() : '';
+        let label = '', due = null;
+        if(t==='extend_date'){ due = (b && b.value) ? b.value : null; label = 'Extend ' + (aVal||'date') + (due ? (' → ' + fmtD(due)) : ''); }
+        else if(t==='addendum'){ label = 'Addendum: ' + (aVal||'—'); }
+        else if(t==='adjust_term'){ label = 'Adjust: ' + (aVal||'—'); }
+        else if(t==='cancel'){ label = 'Cancel/terminate: ' + (aVal||'—'); }
+        else { if(!aVal){ setStatus('Add a line so your TC knows what you need.', false); return; } label = aVal; }
+        sendBtn.disabled = true; sendBtn.textContent = 'Sending…';
+        const uid = (_profile && _profile.id) || null;
+        const res = await _client.from('file_agent_actions').insert({ file_id:f.id, direction:'to_tc', action_type:t, label:label, due_date:due, status:'open', created_by:uid });
+        sendBtn.disabled = false; sendBtn.textContent = 'Send to TC';
+        if(res.error){ setStatus('Could not send: ' + res.error.message, false); return; }
+        setStatus('Sent — your TC will pick this up.', true);
+        if(b) b.value = ''; if(a && a.type==='text') a.value = '';
+        loadOpen();
+      });
+      loadOpen();
+    })();
     // Action-needed button (v1) · open the message composer prefilled so the agent can
     // respond to the TC's ask. Type-specific flows (native e-sign, upload, one-tap confirm)
     // are the next iteration once the TC trigger is live.
