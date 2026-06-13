@@ -764,11 +764,55 @@
     }
   }
 
+  // Relative time for notifications (now / 12m / 5h / 3d / Jun 6).
+  function _ntRel(iso) {
+    if (!iso) return '';
+    var m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (m < 1) return 'now';
+    if (m < 60) return m + 'm';
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + 'h';
+    var d = Math.floor(h / 24);
+    if (d < 7) return d + 'd';
+    try { return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); } catch (_) { return d + 'd'; }
+  }
+  // Agent notifications · aggregate TC/broker replies, new docs, and action requests.
+  function refreshAgentNotifications() {
+    if (!window.AariAuth || typeof window.AariAuth.ensureClient !== 'function') { notifLoadError = true; renderNotifPanel(); return; }
+    var uid = (currentProfile && currentProfile.id) || null;
+    Promise.resolve(window.AariAuth.ensureClient()).then(function (client) {
+      if (!client || !client.from) { notifLoadError = true; renderNotifPanel(); return; }
+      var pMsg = client.from('file_messages').select('id,file_id,sender_role,sent_at').in('sender_role', ['tc', 'broker']).order('sent_at', { ascending: false }).limit(20).then(function (r) { return r; }, function () { return { data: [] }; });
+      var pDoc = client.from('file_documents').select('id,file_id,filename,uploaded_by,uploaded_at').order('uploaded_at', { ascending: false }).limit(20).then(function (r) { return r; }, function () { return { data: [] }; });
+      var pAct = client.from('file_agent_actions').select('id,file_id,label,created_at,status,direction').eq('status', 'open').eq('direction', 'to_agent').order('created_at', { ascending: false }).limit(20).then(function (r) { return r; }, function () { return { data: [] }; });
+      Promise.all([pMsg, pDoc, pAct]).then(function (res) {
+        var msgs = (res[0] && !res[0].error && res[0].data) || [];
+        var docs = ((res[1] && !res[1].error && res[1].data) || []).filter(function (d) { return d.uploaded_by !== uid; });
+        var acts = (res[2] && !res[2].error && res[2].data) || [];
+        var idSet = {}; msgs.concat(docs, acts).forEach(function (x) { if (x.file_id) idSet[x.file_id] = 1; });
+        var ids = Object.keys(idSet); var addrOf = {};
+        function build() {
+          var items = [];
+          acts.forEach(function (a) { items.push({ id: 'faa-' + a.id, href: '/portal.html', icon: '&#9998;', title: 'Action needed: ' + (a.label || 'open item'), subtitle: addrOf[a.file_id] || '', time: _ntRel(a.created_at), _ts: new Date(a.created_at).getTime() }); });
+          msgs.forEach(function (m) { items.push({ id: 'fm-' + m.id, href: '/portal.html', icon: '&#128172;', title: (m.sender_role === 'broker' ? 'Your broker' : 'Your TC') + ' replied', subtitle: addrOf[m.file_id] || '', time: _ntRel(m.sent_at), _ts: new Date(m.sent_at).getTime() }); });
+          docs.forEach(function (d) { items.push({ id: 'doc-' + d.id, href: '/portal.html', icon: '&#128206;', title: 'New document · ' + (d.filename || 'file'), subtitle: addrOf[d.file_id] || '', time: _ntRel(d.uploaded_at), _ts: new Date(d.uploaded_at).getTime() }); });
+          items.sort(function (a, b) { return (b._ts || 0) - (a._ts || 0); });
+          notifLoadError = false; notifications = items; renderNotifPanel();
+        }
+        if (ids.length) {
+          client.from('files').select('id,property_address').in('id', ids).then(function (fr) {
+            if (fr && !fr.error && fr.data) fr.data.forEach(function (f) { addrOf[f.id] = f.property_address || ''; });
+            build();
+          }, build);
+        } else { build(); }
+      }, function () { notifLoadError = true; notifications = []; renderNotifPanel(); });
+    }, function () { notifLoadError = true; renderNotifPanel(); });
+  }
+
   function refreshNotifications() {
     var role = effectiveRole(currentProfile);
-    // Agent role gets file_messages only (their own outbound, no bell items here)
-    // TC role gets file_messages (agent → TC)
-    // Broker role gets bd_contacts + file_messages
+    if (role === 'agent') { refreshAgentNotifications(); return; }
+    // TC role gets file_messages (agent → TC) · Broker gets bd_contacts + file_messages
     if (role !== 'broker' && role !== 'tc') return;
     if (!window.AariAuth || typeof window.AariAuth.ensureClient !== 'function') {
       notifLoadError = true;
