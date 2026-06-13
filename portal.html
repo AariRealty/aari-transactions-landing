@@ -1051,6 +1051,7 @@
     return { text:'due ' + date.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}), urgent:false };
   }
   let _tcs = {};
+  let _membership = null; // { tier, allowance, left, renews } · rendered in Billing & documents
   let _agentNames = {}; // { agent_id: 'First Last' } · for the staff Billing view
   let _replyStats = { avgMinutes: null, onTimePct: null, sampleSize: 0 };
 
@@ -1081,17 +1082,13 @@
           .eq('agent_id', uid).gte('used_at', m0.toISOString());
         const usedCount = (used && typeof used.count === 'number') ? used.count : 0;
         const left = Math.max(0, allowance - usedCount);
-        const card = document.getElementById('memCreditCard');
-        const t = document.getElementById('memTier');
-        const c = document.getElementById('memCredits');
-        const r = document.getElementById('memRenews');
-        if(t) t.textContent = 'Aari ' + tier.charAt(0).toUpperCase() + tier.slice(1);
-        if(c) c.textContent = left + ' of ' + allowance + ' credits left this month';
+        // Membership lives in Billing & documents (account menu) · the only thing the
+        // agent needs in-the-moment (credits left) is the hint by the Submit button.
+        _membership = { tier: tier, allowance: allowance, left: left, renews: mem.data.next_renewal_at || null };
         const hint = document.getElementById('submit-credit-hint');
         if(hint){ hint.innerHTML = '<b>' + left + (left===1?' credit':' credits') + '</b> left this month'; hint.hidden = false; }
-        if(r && mem.data.next_renewal_at) r.textContent = 'Renews ' + new Date(mem.data.next_renewal_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        if(card) card.hidden = false;
-      }catch(e){ console.warn('[portal] membership card failed', e); }
+        try { if(document.getElementById('bd-modal') && document.getElementById('bd-modal').classList.contains('open')) renderBillingDocuments(); } catch(_){}
+      }catch(e){ console.warn('[portal] membership load failed', e); }
     })();
     _profile = await window.AariAuth.getAgentProfile();
     if(!_profile){ return showGate('Profile missing','Contact hello@aaritransactions.com.',null); }
@@ -2111,6 +2108,21 @@
         '<span style="color:#3e7d57;font-weight:500">' + paid.length + '</span> paid</p>';
     }
 
+    // 0 · Membership · plan + credits (moved here from the dashboard · account info).
+    if(_membership){
+      const m = _membership;
+      const tierName = 'Aari ' + m.tier.charAt(0).toUpperCase() + m.tier.slice(1);
+      const renews = m.renews ? (' · renews ' + new Date(m.renews).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})) : '';
+      html += bdHeader('Membership');
+      html += '<div style="padding:8px 0 10px;border-top:0.5px solid #f1ede6">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">' +
+          '<span style="font-size:12.5px;font-weight:600;color:#0f0f0f">' + esc(tierName) + '</span>' +
+          '<span style="font-size:12.5px;color:#3e7d57;font-weight:600">' + m.left + ' of ' + m.allowance + ' credits left</span>' +
+        '</div>' +
+        '<p style="font-size:11px;color:#9a958c;margin:4px 0 0">Credits cover: Offer Prep · Basic, Listing Docs, File Organization' + renews + '</p>' +
+      '</div>';
+    }
+
     // 1 · Your account · the signed service agreement (View only).
     if(_profile && _profile.agreement_pdf_path){
       html += bdHeader('Your account');
@@ -2139,7 +2151,7 @@
       }
     }
 
-    if(!files.length && !(_profile && _profile.agreement_pdf_path)){
+    if(!files.length && !(_profile && _profile.agreement_pdf_path) && !_membership){
       html = '<p style="font-size:12.5px;color:#8a857c;margin:0">Nothing here yet. Billing and documents will show up as your files move forward.</p>';
     }
     body.innerHTML = html;
@@ -2357,8 +2369,6 @@
     const trust = page.querySelector('#tc-line');
     if(earn) tabBiz.appendChild(earn);
     if(trust) tabBiz.appendChild(trust);
-    const mem = document.getElementById('memCreditCard');
-    if(mem){ mem.style.margin = '4px 0 0'; tabBiz.appendChild(mem); }   // membership = account info → Business tab
     // Files pane · everything else home, in display order. Modals stay as overlays.
     ['welcome-card','today-card','sa-banner','completion-card','myfilesSection','weeklySection','myAgreementSection'].forEach(function(id){
       const el = document.getElementById(id); if(el) tabFiles.appendChild(el);
