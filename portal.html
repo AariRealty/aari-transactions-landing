@@ -3690,16 +3690,6 @@
     dls.forEach(d => events.push({when:d.completed_at, type:'dl', label:'Deadline met: '+(d.deadline_key||'').replace(/_/g,' '), detail:''}));
     events.sort((a,b) => new Date(b.when) - new Date(a.when));
 
-    // ===== MESSAGE THREAD · pull chronological history for this file =====
-    let messages = [];
-    try {
-      const { data } = await _client.from('file_messages')
-        .select('id, sender_role, message, sent_at, replied_at, parent_message_id')
-        .eq('file_id', f.id)
-        .order('sent_at', { ascending: true });
-      messages = data || [];
-    } catch(_){ /* file_messages may not exist · ignore */ }
-
     // Open agent-action request · drives the black "Action needed" hero (V1).
     // Safe if the table doesn't exist yet → no action → calm hero.
     let agentAction = null;
@@ -3710,14 +3700,6 @@
         .order('created_at', { ascending: true }).limit(1);
       agentAction = (data && data[0]) || null;
     } catch(_){ /* file_agent_actions may not exist yet · ignore */ }
-
-    // Composer · no wrapper card / no heading (the collapsed fold's summary is the heading).
-    const mtc = '<textarea class="mtc-text" id="mtc-text" placeholder="Quick question for '+esc(tcName)+' about '+esc(f.property_address||'this file')+'..."></textarea>' +
-      '<div class="mtc-actions">' +
-        '<span class="mtc-hint">Your TC and broker both get notified. Reply time tracked.</span>' +
-        '<button type="button" class="mtc-send" id="mtc-send">Send to TC</button>' +
-      '</div>' +
-      '<div class="mtc-status" id="mtc-status"></div>';
 
     // ===== A · NEXT ACTION FIRST · stage pill + "Next up" hero =====
     const now = Date.now();
@@ -3882,29 +3864,6 @@
     } else {
       verifBlock = '<details class="tx-fold" open><summary><span>What we’ve verified</span><span class="chev">›</span></summary>' +
         '<div class="tx-fold-body"><div class="verif-empty">Your TC is reviewing this file · checklist will populate once items are run.</div></div></details>';
-    }
-
-    let thread = '';
-    if(messages.length){
-      const threadHtml = messages.map(m => {
-        const when = new Date(m.sent_at).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
-        const role = m.sender_role === 'agent' ? 'agent' : (m.sender_role === 'broker' ? 'broker' : 'tc');
-        let awaitingHint = '';
-        if(m.sender_role === 'agent' && !m.replied_at){
-          const mins = Math.floor((Date.now() - new Date(m.sent_at).getTime()) / 60000);
-          const ageLbl = mins < 60 ? mins+'m' : Math.floor(mins/60)+'h';
-          awaitingHint = '<div class="msg-awaiting">Awaiting TC reply · '+ageLbl+'</div>';
-        }
-        return '<div class="msg-row from-'+role+'">' +
-          '<div class="msg-bubble">' + esc(m.message) + '</div>' +
-          '<div class="msg-meta">' + esc(when) + '</div>' +
-          awaitingHint +
-        '</div>';
-      }).join('');
-      thread = '<div class="thread">' +
-        '<div class="thread-head"><span class="thread-eb">Message history</span><span class="thread-meta">'+messages.length+' message'+(messages.length===1?'':'s')+'</span></div>' +
-        '<div class="thread-list">'+threadHtml+'</div>' +
-      '</div>';
     }
 
     // ===== "What's happened" · M3 vertical timeline (live item on top, done muted) =====
