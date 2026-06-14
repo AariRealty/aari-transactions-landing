@@ -1765,6 +1765,7 @@
     renderKanban();
     renderClosed();
     renderTeam();
+    renderSoloProduction();
     loadTeamLead();
     forceKanbanLayout();
     // Repopulate the Recent activity feed now that files/sends are loaded (covers a
@@ -3589,6 +3590,42 @@
     if(n >= 1e3) return '$' + (n/1e3).toFixed(1) + 'K';
     return '$' + Math.round(n).toLocaleString('en-US');
   }
+  // "Your production this month" · the agent's own numbers, styled (used by BOTH
+  // the solo Production tab and the top of a lead's Production/Team view).
+  function buildYourProduction(){
+    const myFiles = _files.filter(f => !isClosed(f));
+    const myPipe = myFiles.reduce((s,f) => s + teamPrice(f), 0);
+    const myRate = (_profile && _profile.default_commission_pct != null) ? Number(_profile.default_commission_pct) : 0;
+    const myBuckets = { started:0, progress:0, final:0 };
+    myFiles.forEach(f => { myBuckets[txBucket(f)] = (myBuckets[txBucket(f)]||0) + 1; });
+    const myMaxB = Math.max(1, myBuckets.started, myBuckets.progress, myBuckets.final);
+    const bar = function(n, lbl){ return '<div class="tv-vbar"><div class="num">'+n+'</div><div class="col" style="height:'+Math.round((n/myMaxB)*100)+'%"></div><div class="lbl">'+lbl+'</div></div>'; };
+    const commCell = myRate
+      ? '<div class="cell"><div class="v">'+teamFmt(myPipe*(myRate/100))+'</div><div class="k">Est. commission</div></div>'
+      : '<div class="cell"><div class="v">—</div><div class="k">Est. commission</div><a class="tv-setrate" href="#" id="tv-setrate">Set rate →</a></div>';
+    return '<div class="tv-sechead">Your production this month</div>' +
+      '<div class="tv-roll">' +
+        '<div class="cell"><div class="v">'+_files.length+'</div><div class="k">Files submitted</div></div>' +
+        '<div class="cell"><div class="v">'+teamFmt(myPipe)+'</div><div class="k">Active pipeline</div></div>' +
+        commCell +
+      '</div>' +
+      '<div class="tv-charts" style="grid-template-columns:1fr">' +
+        '<div class="tv-chart"><div class="ch-t">Your pipeline by stage</div><div class="tv-vbars">' +
+          bar(myBuckets.started,'Just started') + bar(myBuckets.progress,'In progress') + bar(myBuckets.final,'Final stretch') +
+        '</div></div>' +
+      '</div>';
+  }
+  // Solo Production tab · render the SAME styled "Your production" block (replaces
+  // the old plain KPI tiles). Leads use the Team-fold view instead (business tab hidden).
+  function renderSoloProduction(){
+    const host = document.getElementById('tab-business'); if(!host) return;
+    let prod = document.getElementById('solo-production');
+    if(!prod){ prod = document.createElement('div'); prod.id = 'solo-production'; host.insertBefore(prod, host.firstChild); }
+    prod.innerHTML = buildYourProduction();
+    const es = document.getElementById('earn-section'); if(es) es.style.display = 'none';
+    const sr = document.getElementById('tv-setrate');
+    if(sr) sr.addEventListener('click', function(e){ e.preventDefault(); const b = document.getElementById('earn-goal-btn'); if(b) b.click(); });
+  }
   function renderTeamView(){
     const host = document.getElementById('tab-team'); if(!host) return;
     const files = _teamFiles || [];
@@ -3622,31 +3659,8 @@
       }).join('');
       return '<div class="tv-agh"><div class="nm">'+esc(teamAgentName(id))+'</div><div class="stat"><b>'+af.length+'</b> file'+(af.length===1?'':'s')+' · <b>'+teamFmt(pipe)+'</b></div></div>' + rows;
     }).join('');
-    // ===== YOUR BUSINESS (folded in for leads · their own numbers, same style) =====
-    const myFiles = _files.filter(f => !isClosed(f));
-    const myPipe = myFiles.reduce((s,f) => s + teamPrice(f), 0);
-    const myRate = (_profile && _profile.default_commission_pct != null) ? Number(_profile.default_commission_pct) : 0;
-    const myBuckets = { started:0, progress:0, final:0 };
-    myFiles.forEach(f => { myBuckets[txBucket(f)] = (myBuckets[txBucket(f)]||0) + 1; });
-    const myMaxB = Math.max(1, myBuckets.started, myBuckets.progress, myBuckets.final);
-    const myStageBar = function(n, lbl){ return '<div class="tv-vbar"><div class="num">'+n+'</div><div class="col" style="height:'+Math.round((n/myMaxB)*100)+'%"></div><div class="lbl">'+lbl+'</div></div>'; };
-    const myCommCell = myRate
-      ? '<div class="cell"><div class="v">'+teamFmt(myPipe*(myRate/100))+'</div><div class="k">Est. commission</div></div>'
-      : '<div class="cell"><div class="v">—</div><div class="k">Est. commission</div><a class="tv-setrate" href="#" id="tv-setrate">Set rate →</a></div>';
-    const myBusiness =
-      '<div class="tv-sechead">Your business this month</div>' +
-      '<div class="tv-roll">' +
-        '<div class="cell"><div class="v">'+_files.length+'</div><div class="k">Files submitted</div></div>' +
-        '<div class="cell"><div class="v">'+teamFmt(myPipe)+'</div><div class="k">Active pipeline</div></div>' +
-        myCommCell +
-      '</div>' +
-      '<div class="tv-charts" style="grid-template-columns:1fr">' +
-        '<div class="tv-chart"><div class="ch-t">Your pipeline by stage</div><div class="tv-vbars">' +
-          myStageBar(myBuckets.started,'Just started') + myStageBar(myBuckets.progress,'In progress') + myStageBar(myBuckets.final,'Final stretch') +
-        '</div></div>' +
-      '</div>';
     host.innerHTML =
-      myBusiness +
+      buildYourProduction() +
       '<div class="tv-sechead team">Your team</div>' +
       '<div class="tv-roll">' +
         '<div class="cell"><div class="v">'+files.length+'</div><div class="k">Active · team</div></div>' +
