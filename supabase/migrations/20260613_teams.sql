@@ -25,11 +25,14 @@ create index if not exists idx_teams_lead on public.teams(lead_agent_id);
 alter table public.teams enable row level security;
 alter table public.team_members enable row level security;
 
--- A lead or a member can read their team row.
+-- A lead can read their team row.
+-- IMPORTANT: do NOT reference team_members here. team_members_read references
+-- teams, so a teams policy that references team_members creates an infinite
+-- RLS recursion (teams ↔ team_members) that makes ANY select on files 500
+-- once files_team_lead_read joins them. Keep this one-directional.
 drop policy if exists teams_read on public.teams;
 create policy teams_read on public.teams for select using (
   lead_agent_id = auth.uid()
-  or id in (select team_id from public.team_members where agent_id = auth.uid())
 );
 
 -- Members readable by the team lead and by the members themselves.
