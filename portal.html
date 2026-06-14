@@ -3158,6 +3158,75 @@
       return '<div class="tx-col"><div class="tx-colhead"><span class="h">'+label+'</span><span class="n">'+list.length+'</span></div>'+cards+'</div>';
     }).join('');
     wireKanbanDnD();
+    renderCalendar();
+  }
+
+  // ===== DEADLINES CALENDAR · grid + agenda · every deadline across all active files =====
+  let _calMonth = null; let _calWired = false;
+  function _calAll(){
+    const now = Date.now(); const out = [];
+    _files.filter(f => !isClosed(f)).forEach(f => {
+      openDeadlinesForFile(f, now).forEach(d => {
+        if(d.date instanceof Date && !isNaN(d.date.getTime())) out.push({ date:d.date, key:d.deadline_key, label:d.label, address:f.property_address || '', fileId:f.id });
+      });
+    });
+    out.sort((a,b) => a.date - b.date);
+    return out;
+  }
+  function buildAllIcs(){
+    const now = Date.now();
+    let s = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Aari Transactions//Portal//EN\r\n';
+    _files.filter(f => !isClosed(f)).forEach(f => {
+      openDeadlinesForFile(f, now).forEach(d => {
+        s += 'BEGIN:VEVENT\r\nUID:' + _icsEsc(f.id + '-' + d.deadline_key) + '@aaritransactions\r\nDTSTAMP:' + _icsStamp() +
+          '\r\nDTSTART;VALUE=DATE:' + _icsDay(d.date) + '\r\nSUMMARY:' + _icsEsc((d.label || 'Deadline') + ' · ' + (f.property_address || '')) + '\r\nEND:VEVENT\r\n';
+      });
+    });
+    return s + 'END:VCALENDAR';
+  }
+  function renderCalendar(){
+    const sec = document.getElementById('cal-section'); if(!sec) return;
+    const all = _calAll();
+    if(!all.length){ sec.hidden = true; return; }
+    sec.hidden = false;
+    const today = new Date(); today.setHours(0,0,0,0);
+    const upcoming = all.filter(d => { const x = new Date(d.date.getTime()); x.setHours(0,0,0,0); return x >= today; });
+    const anchor = upcoming.length ? upcoming[0].date : all[all.length-1].date;
+    if(!_calMonth) _calMonth = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+    const Y = _calMonth.getFullYear(), M = _calMonth.getMonth();
+    const mEl = document.getElementById('cal-month'); if(mEl) mEl.textContent = _calMonth.toLocaleDateString('en-US',{month:'long',year:'numeric'});
+    const soonest = upcoming.length ? upcoming[0].date : null;
+    const soonestKey = soonest ? (soonest.getFullYear()+'-'+soonest.getMonth()+'-'+soonest.getDate()) : '';
+    const dayHas = {};
+    all.forEach(d => { if(d.date.getFullYear()===Y && d.date.getMonth()===M) dayHas[d.date.getDate()] = true; });
+    const startDow = new Date(Y, M, 1).getDay();
+    const daysInMonth = new Date(Y, M+1, 0).getDate();
+    const prevDays = new Date(Y, M, 0).getDate();
+    let cells = [];
+    for(let i=startDow-1; i>=0; i--) cells.push({ n: prevDays-i, mute:true });
+    for(let d=1; d<=daysInMonth; d++){ const key = Y+'-'+M+'-'+d; cells.push({ n:d, has:!!dayHas[d], urgent:(key===soonestKey) }); }
+    let trail = 1; while(cells.length % 7 !== 0) cells.push({ n: trail++, mute:true });
+    const grid = document.getElementById('cal-grid');
+    if(grid) grid.innerHTML = cells.map(c => {
+      const cls = 'cal-d' + (c.mute?' mute':'') + (c.urgent?' urgent':(c.has?' has':''));
+      const dot = (!c.mute && (c.urgent || c.has)) ? '<span class="cal-dot"></span>' : '';
+      return '<div class="'+cls+'">'+c.n+dot+'</div>';
+    }).join('');
+    const list = (upcoming.length ? upcoming : all).slice(0, 5);
+    const agEl = document.getElementById('cal-agenda-list');
+    if(agEl) agEl.innerHTML = list.length ? list.map((d,i) => {
+      const mo = d.date.toLocaleDateString('en-US',{month:'short'}); const dy = d.date.getDate();
+      const urg = (i===0 && upcoming.length>0);
+      return '<div class="cal-ag"><div class="cal-chip'+(urg?' urgent':'')+'"><div class="mo">'+esc(mo)+'</div><div class="dy">'+dy+'</div></div>' +
+        '<div style="min-width:0"><div class="cal-ag-lab">'+esc(d.label)+'</div>'+(d.address?'<div class="cal-ag-adr">'+esc(d.address)+'</div>':'')+'</div></div>';
+    }).join('') : '<div class="cal-ag-empty">No upcoming deadlines.</div>';
+    if(!_calWired){
+      _calWired = true;
+      const prev = document.getElementById('cal-prev'), next = document.getElementById('cal-next'), sync = document.getElementById('cal-sync');
+      if(prev) prev.onclick = function(){ _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth()-1, 1); renderCalendar(); };
+      if(next) next.onclick = function(){ _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth()+1, 1); renderCalendar(); };
+      if(sync) sync.onclick = function(e){ e.preventDefault(); const blob = new Blob([buildAllIcs()], { type:'text/calendar' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'aari-deadlines.ics'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); };
+    }
   }
 
   // ===== KANBAN CLICK HANDLER · READ-ONLY =====
