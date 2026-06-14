@@ -371,6 +371,35 @@
 
   /* Team + Refer split */
   .team-refer-row { display:grid; grid-template-columns:1fr; gap:18px; margin-bottom:32px; }
+  /* ===== TEAM-LEAD VIEW · pulse + per-agent rows (mock A) ===== */
+  .tv-roll { display:grid; grid-template-columns:repeat(3,1fr); border:0.5px solid var(--line); border-radius:12px; overflow:hidden; margin-bottom:16px; }
+  .tv-roll .cell { padding:14px 18px; } .tv-roll .cell + .cell { border-left:0.5px solid var(--soft); }
+  .tv-roll .v { font-family:'Playfair Display',Georgia,serif; font-size:21px; font-weight:600; line-height:1; }
+  .tv-roll .k { font-size:9px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:700; margin-top:5px; }
+  .tv-charts { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:18px; }
+  .tv-chart { border:0.5px solid var(--line); border-radius:12px; padding:15px 17px; }
+  .tv-chart .ch-t { font-size:9px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:700; margin-bottom:13px; }
+  .tv-vbars { display:flex; align-items:flex-end; gap:14px; height:96px; }
+  .tv-vbar { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; }
+  .tv-vbar .col { width:100%; max-width:46px; background:var(--ink); border-radius:5px 5px 0 0; min-height:3px; }
+  .tv-vbar .lbl { font-size:9.5px; color:var(--muted); margin-top:7px; text-align:center; }
+  .tv-vbar .num { font-size:11px; font-weight:600; margin-bottom:5px; }
+  .tv-hbars { display:flex; flex-direction:column; gap:11px; }
+  .tv-hbar .top { display:flex; justify-content:space-between; font-size:11.5px; margin-bottom:4px; }
+  .tv-hbar .top .n { font-weight:600; }
+  .tv-hbar .track { height:8px; background:var(--cream2,#f3eee3); border:0.5px solid var(--line); border-radius:999px; overflow:hidden; }
+  .tv-hbar .fill { height:100%; background:var(--ink); border-radius:999px; }
+  .tv-agh { display:flex; align-items:baseline; justify-content:space-between; padding:8px 0 6px; border-bottom:0.5px solid var(--line); margin-top:8px; }
+  .tv-agh .nm { font-family:'Playfair Display',Georgia,serif; font-size:14px; font-weight:600; }
+  .tv-agh .stat { font-size:10.5px; color:var(--muted); } .tv-agh .stat b { color:var(--ink); font-weight:600; }
+  .tv-frow { display:grid; grid-template-columns:2fr 1.4fr 1fr 1fr; gap:12px; align-items:center; padding:8px 0; font-size:12px; border-top:0.5px solid var(--soft); }
+  .tv-frow:first-of-type { border-top:0; }
+  .tv-frow .adr { font-family:'Playfair Display',Georgia,serif; font-weight:600; font-size:12.5px; }
+  .tv-frow .mid { color:var(--muted); font-size:11px; }
+  .tv-frow .mny { text-align:right; font-weight:600; }
+  .tv-frow .mny .kk { font-size:8px; text-transform:uppercase; letter-spacing:.4px; color:var(--faint); font-weight:600; display:block; }
+  .tv-note { font-size:10.5px; color:#9a958c; margin:14px 0 0; }
+  @media (max-width:760px){ .tv-charts { grid-template-columns:1fr; } .tv-roll { grid-template-columns:1fr; } .tv-frow { grid-template-columns:1fr 1fr; } }
   /* Team pill (identity bar) · opens the team popup · faces + label */
   .team-pill { display:inline-flex; align-items:center; gap:8px; background:#fff; border:0.5px solid var(--line); border-radius:999px; padding:6px 13px 6px 8px; font-size:12px; font-weight:600; color:var(--ink); cursor:pointer; font-family:inherit; }
   .team-pill:hover { border-color:var(--ink); }
@@ -3499,6 +3528,92 @@
         '</div>' +
       '</div>';
     }).join('');
+  }
+
+  // ===== TEAM-LEAD VIEW · pulse + per-agent rows (full financials) =====
+  let _team = null, _teamFiles = [], _teamAgents = {};
+  async function loadTeamLead(){
+    try {
+      if(!_profile || !_profile.id) return;
+      const t = await _client.from('teams').select('id, name').eq('lead_agent_id', _profile.id).order('created_at',{ascending:true}).limit(1).maybeSingle();
+      if(!t || !t.data) return; // not a team lead · tab stays hidden
+      _team = t.data;
+      const mem = await _client.from('team_members').select('agent_id').eq('team_id', _team.id);
+      const ids = (mem.data || []).map(m => m.agent_id);
+      if(!ids.length) return;
+      const ag = await _client.from('agents').select('id, first_name, last_name, default_commission_pct').in('id', ids);
+      _teamAgents = {}; (ag.data || []).forEach(a => { _teamAgents[a.id] = a; });
+      const fl = await _client.from('files').select('*').in('agent_id', ids);
+      _teamFiles = (fl.data || []).filter(f => !isClosed(f));
+      const tabBtn = document.getElementById('ptab-team'); if(tabBtn) tabBtn.hidden = false;
+      renderTeamView();
+    } catch(e){ console.warn('[team] load failed', e); }
+  }
+  function teamAgentName(id){ const a = _teamAgents[id]; return a ? (((a.first_name||'')+' '+(a.last_name||'')).trim() || 'Agent') : 'Agent'; }
+  function teamPrice(f){
+    if(f.purchase_price_cents) return f.purchase_price_cents/100;
+    const raw = f.raw_form_data || {};
+    const n = Number(String(raw.purchase_price || raw.pa_offer_price || raw.pa_listing_price || '').replace(/[^0-9.]/g,''));
+    return n || 0;
+  }
+  function teamComm(f){
+    const a = _teamAgents[f.agent_id];
+    const rate = (a && a.default_commission_pct != null) ? Number(a.default_commission_pct) : 0;
+    return teamPrice(f) * (rate/100);
+  }
+  function teamFmt(n){
+    if(!n) return '$0';
+    if(n >= 1e6) return '$' + (n/1e6).toFixed(2) + 'M';
+    if(n >= 1e3) return '$' + (n/1e3).toFixed(1) + 'K';
+    return '$' + Math.round(n).toLocaleString('en-US');
+  }
+  function renderTeamView(){
+    const host = document.getElementById('tab-team'); if(!host) return;
+    const files = _teamFiles || [];
+    if(!files.length){ host.innerHTML = '<div class="tx-empty">No active team files yet.</div>'; return; }
+    const totalPipe = files.reduce((s,f) => s + teamPrice(f), 0);
+    const totalComm = files.reduce((s,f) => s + teamComm(f), 0);
+    // Pipeline by stage
+    const buckets = { started:0, progress:0, final:0 };
+    files.forEach(f => { const b = txBucket(f); buckets[b] = (buckets[b]||0) + 1; });
+    const maxB = Math.max(1, buckets.started, buckets.progress, buckets.final);
+    const stageBar = function(n, lbl){ return '<div class="tv-vbar"><div class="num">'+n+'</div><div class="col" style="height:'+Math.round((n/maxB)*100)+'%"></div><div class="lbl">'+lbl+'</div></div>'; };
+    // Commission by agent
+    const byAgent = {}; files.forEach(f => { byAgent[f.agent_id] = (byAgent[f.agent_id]||0) + teamComm(f); });
+    const agentIds = Object.keys(byAgent).sort((a,b) => byAgent[b] - byAgent[a]);
+    const maxC = Math.max(1, ...agentIds.map(id => byAgent[id]));
+    const commBars = agentIds.map(id => '<div class="tv-hbar"><div class="top"><span class="n">'+esc(teamAgentName(id))+'</span><span>'+teamFmt(byAgent[id])+'</span></div><div class="track"><div class="fill" style="width:'+Math.round((byAgent[id]/maxC)*100)+'%"></div></div></div>').join('');
+    // Per-agent file rows
+    const groups = agentIds.map(id => {
+      const af = files.filter(f => f.agent_id === id);
+      const pipe = af.reduce((s,f) => s + teamPrice(f), 0);
+      const rows = af.map(f => {
+        const track = txTrack(f); const total = track.length;
+        const idx = Math.max(0, Math.min(txStageIdx(f), total-1));
+        const isList = (txSvc(f)==='lc' || txSvc(f)==='listing' || txSvc(f)==='listing_docs' || txSvc(f)==='mls_setup');
+        return '<div class="tv-frow">' +
+          '<span class="adr">'+esc(f.property_address || 'Untitled')+'</span>' +
+          '<span class="mid">'+esc(track[idx])+' · '+(idx+1)+'/'+total+'</span>' +
+          '<span class="mny"><span class="kk">'+(isList?'List':'Price')+'</span>'+teamFmt(teamPrice(f))+'</span>' +
+          '<span class="mny"><span class="kk">Est. comm</span>'+teamFmt(teamComm(f))+'</span>' +
+        '</div>';
+      }).join('');
+      return '<div class="tv-agh"><div class="nm">'+esc(teamAgentName(id))+'</div><div class="stat"><b>'+af.length+'</b> file'+(af.length===1?'':'s')+' · <b>'+teamFmt(pipe)+'</b></div></div>' + rows;
+    }).join('');
+    host.innerHTML =
+      '<div class="tv-roll">' +
+        '<div class="cell"><div class="v">'+files.length+'</div><div class="k">Active · team</div></div>' +
+        '<div class="cell"><div class="v">'+teamFmt(totalPipe)+'</div><div class="k">Team pipeline</div></div>' +
+        '<div class="cell"><div class="v">'+teamFmt(totalComm)+'</div><div class="k">Est. commission</div></div>' +
+      '</div>' +
+      '<div class="tv-charts">' +
+        '<div class="tv-chart"><div class="ch-t">Pipeline by stage</div><div class="tv-vbars">' +
+          stageBar(buckets.started,'Just started') + stageBar(buckets.progress,'In progress') + stageBar(buckets.final,'Final stretch') +
+        '</div></div>' +
+        '<div class="tv-chart"><div class="ch-t">Est. commission by agent</div><div class="tv-hbars">' + commBars + '</div></div>' +
+      '</div>' +
+      groups +
+      '<p class="tv-note">Estimates use each agent’s stored commission rate. View only · Aari does not calculate or process commissions.</p>';
   }
 
   // ===== Drawer + Message TC =====
