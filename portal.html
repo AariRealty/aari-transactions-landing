@@ -554,6 +554,11 @@
   .tx-fact { display:flex; justify-content:space-between; gap:14px; padding:8px 0; border-top:0.5px solid var(--soft); font-size:12.5px; }
   .tx-fact:first-child { border-top:0; }
   .tx-fact .k { color:var(--muted); } .tx-fact .v { font-weight:500; text-align:right; }
+  /* Fuller deal facts (mock A · 2-col grid) */
+  .tx-dgrid { display:grid; grid-template-columns:1fr 1fr; gap:11px 12px; }
+  .tx-dgrid .dk { font-size:8.5px; text-transform:uppercase; letter-spacing:.4px; color:#9a958c; font-weight:700; }
+  .tx-dgrid .dv { font-size:12.5px; font-weight:600; margin-top:1px; }
+  .tx-dgrid .dv.cap { text-transform:capitalize; }
   .tx-foldnote { font-size:11px; color:#9a958c; margin-top:10px; line-height:1.45; }
   /* Contacts card (mock B · two-line rows) · display-only deal directory */
   .tx-con { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 0; border-top:0.5px solid var(--soft); }
@@ -3459,19 +3464,39 @@
     }
 
     // ===== "What you submitted" · read-only file facts (edit routes via TC for now) =====
+    const _raw = (f.raw_form_data && typeof f.raw_form_data === 'object') ? f.raw_form_data : {};
     const svc = (f.service_type || '').replace(/_/g,' ');
-    const submittedOn = f.created_at ? new Date(f.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—';
-    const closingOn = f.closing_date ? new Date(f.closing_date).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : 'Not set';
+    const submittedOn = f.created_at ? new Date(f.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '';
+    // Fuller deal facts (mock A · 2-col grid) · only non-empty fields shown.
+    const _commType = String(_raw.pa_commission_type || '').toLowerCase();
+    const _comm = function(v){ if(v==null) return ''; const s = String(v).trim(); if(!s) return ''; return _commType==='flat' ? txMoney(s) : (s.replace(/%/g,'')+'%'); };
+    const _repr = _raw.pa_representation || (f.client_type ? (String(f.client_type).charAt(0).toUpperCase()+String(f.client_type).slice(1)) : '');
+    const _price = f.purchase_price_cents ? ('$'+(f.purchase_price_cents/100).toLocaleString('en-US')) : txMoney(_raw.purchase_price || _raw.pa_offer_price);
+    const _emd = txMoney(_raw.earnest_money || _raw.contractEscrowAmount);
+    const _eff = (f.effective_date || _raw.effective_date) ? txDate(f.effective_date || _raw.effective_date) : '';
+    const _commL = _comm(_raw.pa_commission_listing_pct), _commB = _comm(_raw.pa_commission_buying_pct);
+    const _df = [];
+    const _pushFact = function(k,v){ if(v!=null && v!=='' && v!=='—') _df.push([k,v]); };
+    if(svc) _df.push(['Service', svc]);
+    _pushFact('Representation', _repr);
+    _pushFact('Financing', _raw.pa_financing_type);
+    _pushFact('Purchase price', _price==='—'?'':_price);
+    _pushFact('Earnest money', _emd==='—'?'':_emd);
+    _pushFact('MLS #', _raw.pa_mls_number);
+    _pushFact('Mutual acceptance', _eff);
+    _pushFact('Closing', f.closing_date ? txDate(f.closing_date) : '');
+    if(submittedOn) _df.push(['Submitted', submittedOn]);
+    _pushFact('Listing commission', _commL);
+    _pushFact('Buyer-side commission', _commB);
+    const _hasComm = !!(_commL || _commB);
     const submissionFold = '<details class="tx-fold"><summary>What you submitted <span class="chev">›</span></summary><div class="tx-fold-body">' +
-      '<div class="tx-fact"><span class="k">Property</span><span class="v">' + esc(f.property_address || '—') + '</span></div>' +
-      (svc ? '<div class="tx-fact"><span class="k">Service</span><span class="v" style="text-transform:capitalize">' + esc(svc) + '</span></div>' : '') +
-      '<div class="tx-fact"><span class="k">Submitted</span><span class="v">' + esc(submittedOn) + '</span></div>' +
-      '<div class="tx-fact"><span class="k">Closing</span><span class="v">' + esc(closingOn) + '</span></div>' +
+      '<div class="tx-dgrid">' + _df.map(function(c){ return '<div><div class="dk">'+esc(c[0])+'</div><div class="dv'+(c[0]==='Service'?' cap':'')+'">'+esc(c[1])+'</div></div>'; }).join('') + '</div>' +
+      (_hasComm ? '<div class="tx-foldnote">Commission shown is the figure you entered · Aari does not calculate or process commissions.</div>' : '') +
       '<div class="tx-foldnote">Need a change? Use “Request a change” below — your TC handles the update.</div>' +
     '</div></details>';
 
     // ===== CONTACTS · everyone on the deal (display-only · data from intake) =====
-    const _raw = (f.raw_form_data && typeof f.raw_form_data === 'object') ? f.raw_form_data : {};
+    // (_raw defined above with the deal facts)
     function _con(role, name, company, phone, email){
       name = (name||'').trim(); company = (company||'').trim();
       if(!name && !company) return null;
