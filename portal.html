@@ -370,7 +370,23 @@
   }
 
   /* Team + Refer split */
-  .team-refer-row { display:grid; grid-template-columns:1.6fr 1fr; gap:18px; margin-bottom:32px; }
+  .team-refer-row { display:grid; grid-template-columns:1fr; gap:18px; margin-bottom:32px; }
+  /* Team pill (identity bar) · opens the team popup · faces + label */
+  .team-pill { display:inline-flex; align-items:center; gap:8px; background:#fff; border:0.5px solid var(--line); border-radius:999px; padding:6px 13px 6px 8px; font-size:12px; font-weight:600; color:var(--ink); cursor:pointer; font-family:inherit; }
+  .team-pill:hover { border-color:var(--ink); }
+  .team-faces { display:flex; }
+  .team-faces .tf { width:24px; height:24px; border-radius:50%; background:var(--cream); border:1.5px solid #fff; outline:0.5px solid var(--line); font-family:'Playfair Display',Georgia,serif; font-size:10px; font-weight:600; display:flex; align-items:center; justify-content:center; }
+  .team-faces .tf + .tf { margin-left:-9px; }
+  /* Team popup · centered modal */
+  .team-back { position:fixed; inset:0; background:rgba(15,15,15,0.18); z-index:1200; display:none; }
+  .team-back.open { display:block; }
+  .team-modal { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:380px; max-width:calc(100vw - 32px); background:#fff; border:0.5px solid var(--line); border-radius:14px; box-shadow:0 14px 40px rgba(0,0,0,0.18); z-index:1201; display:none; overflow:hidden; }
+  .team-modal.open { display:block; }
+  .team-modal-head { display:flex; align-items:center; justify-content:space-between; padding:15px 17px; border-bottom:0.5px solid var(--line); }
+  .team-modal-t { font-family:'Playfair Display',Georgia,serif; font-size:16px; font-weight:600; }
+  .team-modal-x { font-size:18px; color:var(--faint); cursor:pointer; background:0; border:0; line-height:1; font-family:inherit; }
+  .team-modal-body { padding:8px 17px 16px; }
+  .team-modal-meta { font-size:10.5px; color:#9a958c; margin:6px 0 2px; }
   @media (max-width: 900px) { .team-refer-row { grid-template-columns:1fr; } }
   .team-section { min-width:0; }
   .refer-section { min-width:0; }
@@ -651,6 +667,7 @@
       </div>
     </div>
     <div class="submit-wrap">
+      <button type="button" class="team-pill" id="team-pill" hidden><span class="team-faces" id="team-faces"></span><span>Your Aari team</span></button>
       <a class="btn-submit" href="/index.html?modal-only=1#apply" data-intake-open>+ Submit a new file</a>
       <span class="credit-hint" id="submit-credit-hint" hidden></span>
     </div>
@@ -983,16 +1000,14 @@
   </div>
 
   <!-- Team + Refer split · 2-col on desktop, stacked on mobile -->
+  <!-- Team popup · opened by the team pill in the identity bar -->
+  <div class="team-back" id="team-back"></div>
+  <div class="team-modal" id="team-modal" role="dialog" aria-modal="true" aria-label="Your Aari team">
+    <div class="team-modal-head"><span class="team-modal-t">Your Aari team</span><button type="button" class="team-modal-x" id="team-modal-x" aria-label="Close">&times;</button></div>
+    <div class="team-modal-body"><p class="team-modal-meta">Direct line · M–F 9am–5pm ET</p><div class="team" id="team-list" style="border:0"><div class="team-empty">No TC assigned yet.</div></div></div>
+  </div>
+
   <div class="team-refer-row">
-    <div class="team-section">
-      <div class="section-head">
-        <p class="section-eb">Your Aari team</p>
-        <span class="section-meta">Direct line · M–F 9am–5pm ET</span>
-      </div>
-      <div class="team" id="team-list">
-        <div class="team-empty">No TC assigned yet.</div>
-      </div>
-    </div>
     <div class="refer-section">
       <p class="section-eb" style="margin-bottom:10px">Refer an agent</p>
       <div class="refer-card">
@@ -3434,12 +3449,37 @@
     });
   }
 
+  let _teamWired = false;
+  function wireTeamModal(){
+    if(_teamWired) return; _teamWired = true;
+    const pill = document.getElementById('team-pill');
+    const back = document.getElementById('team-back');
+    const modal = document.getElementById('team-modal');
+    const x = document.getElementById('team-modal-x');
+    const open = function(){ if(back) back.classList.add('open'); if(modal) modal.classList.add('open'); };
+    const close = function(){ if(back) back.classList.remove('open'); if(modal) modal.classList.remove('open'); };
+    if(pill) pill.addEventListener('click', open);
+    if(x) x.addEventListener('click', close);
+    if(back) back.addEventListener('click', close);
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape') close(); });
+  }
   function renderTeam(){
+    wireTeamModal();
     const host = document.getElementById('team-list');
+    const pill = document.getElementById('team-pill');
+    const faces = document.getElementById('team-faces');
     const counts = {};
     _files.forEach(f => { if(f.assigned_tc_id && !isClosed(f)) counts[f.assigned_tc_id] = (counts[f.assigned_tc_id]||0)+1; });
     const ids = Object.keys(counts);
-    if(!ids.length){ host.innerHTML = '<div class="team-empty">No TC assigned yet.</div>'; return; }
+    if(!ids.length){ if(host) host.innerHTML = '<div class="team-empty">No TC assigned yet.</div>'; if(pill) pill.hidden = true; return; }
+    // Pill faces · up to 3 TC monograms.
+    if(faces) faces.innerHTML = ids.slice(0,3).map(id => {
+      const tc = _tcs[id];
+      const initials = tc ? ((tc.first_name||' ').charAt(0) + (tc.last_name||' ').charAt(0)).toUpperCase() : '··';
+      return '<span class="tf">'+esc(initials)+'</span>';
+    }).join('');
+    if(pill) pill.hidden = false;
+    if(!host) return;
     host.innerHTML = ids.map(id => {
       const tc = _tcs[id];
       if(!tc) return '';
