@@ -258,6 +258,28 @@
   .kc-days { color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .kc-tasks { color:var(--muted); font-weight:500; white-space:nowrap; }
 
+  /* ===== ACTIVE BOARD · service-aware data cards (mock A · 2x2 grid) ===== */
+  .tx-deck { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+  .tx-empty { grid-column:1/-1; padding:26px; text-align:center; color:var(--muted); font-size:13px; border:0.5px dashed var(--line); border-radius:12px; }
+  .tx-card { border:0.5px solid var(--line); border-radius:12px; padding:15px; background:#fff; cursor:pointer; transition:transform .12s,border-color .12s,box-shadow .12s; }
+  .tx-card:hover { transform:translateY(-1px); border-color:var(--ink); box-shadow:0 4px 12px rgba(0,0,0,0.05); }
+  .tx-card.hot { border-color:var(--ink); }
+  .tx-chead { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+  .tx-addr { font-family:'Playfair Display',Georgia,serif; font-weight:600; line-height:1.15; font-size:14.5px; color:var(--ink); }
+  .tx-cust { font-size:11px; color:var(--muted); margin-top:1px; }
+  .tx-badge { font-size:8.5px; text-transform:uppercase; letter-spacing:.4px; font-weight:700; color:var(--muted); background:var(--cream); border:0.5px solid var(--line); border-radius:999px; padding:3px 9px; white-space:nowrap; flex:none; }
+  .tx-seg { display:flex; gap:3px; margin-top:12px; }
+  .tx-seg span { height:6px; flex:1; border-radius:3px; background:var(--cream2,#f3eee3); border:0.5px solid var(--line); }
+  .tx-seg span.done { background:var(--ink); border-color:var(--ink); }
+  .tx-seg span.now { background:var(--ink); border-color:var(--ink); box-shadow:0 0 0 2px rgba(15,15,15,0.12); }
+  .tx-sl { display:flex; align-items:baseline; justify-content:space-between; margin-top:8px; }
+  .tx-cur { font-size:11.5px; font-weight:600; color:var(--ink); }
+  .tx-cnt { font-size:10px; color:var(--muted); }
+  .tx-grid { margin-top:12px; padding-top:11px; border-top:0.5px solid rgba(15,15,15,0.06); display:grid; grid-template-columns:1fr 1fr; gap:9px 10px; }
+  .tx-grid .txk { font-size:8.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); font-weight:600; }
+  .tx-grid .txv { font-size:12px; font-weight:600; margin-top:1px; color:var(--ink); }
+  @media (max-width:900px){ .tx-deck { grid-template-columns:1fr; } }
+
   /* Mobile: stack lanes only on real phones */
   @media (max-width: 640px) {
     .kanban { grid-template-columns: 1fr !important; }
@@ -871,34 +893,9 @@
   <div class="kanban-section">
     <div class="section-head">
       <p class="section-eb">Active transactions</p>
-      <span class="section-meta" id="active-meta">Your TC moves cards as the deal progresses · click any card for the file detail</span>
+      <span class="section-meta" id="active-meta">Every file, with where it stands · click any card for the detail</span>
     </div>
-    <div class="kanban" id="kanban">
-      <div class="lane" data-stage="new">
-        <div class="lane-head"><span class="lane-name">New</span><span class="lane-count" id="cnt-new">0</span></div>
-        <div class="lane-body" id="lane-new"></div>
-      </div>
-      <div class="lane" data-stage="under_contract">
-        <div class="lane-head"><span class="lane-name">Under contract</span><span class="lane-count" id="cnt-uc">0</span></div>
-        <div class="lane-body" id="lane-uc"></div>
-      </div>
-      <div class="lane" data-stage="inspection">
-        <div class="lane-head"><span class="lane-name">Inspection</span><span class="lane-count" id="cnt-insp">0</span></div>
-        <div class="lane-body" id="lane-insp"></div>
-      </div>
-      <div class="lane" data-stage="remedy">
-        <div class="lane-head"><span class="lane-name">Remedy</span><span class="lane-count" id="cnt-rem">0</span></div>
-        <div class="lane-body" id="lane-rem"></div>
-      </div>
-      <div class="lane" data-stage="appraisal">
-        <div class="lane-head"><span class="lane-name">Appraisal</span><span class="lane-count" id="cnt-appr">0</span></div>
-        <div class="lane-body" id="lane-appr"></div>
-      </div>
-      <div class="lane" data-stage="ctc">
-        <div class="lane-head"><span class="lane-name">Clear to close</span><span class="lane-count" id="cnt-ctc">0</span></div>
-        <div class="lane-body" id="lane-ctc"></div>
-      </div>
-    </div>
+    <div class="tx-deck" id="tx-deck"></div>
   </div>
 
   <!-- Team + Refer split · 2-col on desktop, stacked on mobile -->
@@ -2952,26 +2949,126 @@
       '</div>';
     }).join('');
   }
+  // ===== SERVICE-AWARE STAGE TRACKS (agent active board · mock A data card) =====
+  // Each service has its own ordered stage track. TC files carry a real
+  // transaction_stage pipeline (TC-attested on /files.html), so their position
+  // is exact. Non-TC services don't track sub-stages in the data yet, so we
+  // show an HONEST coarse position (Received / In progress / Delivered) derived
+  // from payment + closed state — never a fabricated precise stage.
+  // FOLLOW-UP: add a `service_stage` field the TC advances to give non-TC
+  // services true multi-stage tracking.
+  const TX_TRACKS = {
+    tc_one_side:       ['Under contract','Inspection','Remedy','Appraisal','Clear to close','Closed'],
+    tc_both_sides:     ['Under contract','Inspection','Remedy','Appraisal','Clear to close','Closed'],
+    tc:                ['Under contract','Inspection','Remedy','Appraisal','Clear to close','Closed'],
+    lc:                ['Intake','Docs','MLS Live','Under contract','Closed'],
+    listing:           ['Intake','Docs','MLS Live','Under contract','Closed'],
+    listing_docs:      ['Received','Package prep','Signed & reviewed'],
+    mls_setup:         ['Received','MLS input','Live'],
+    op_basic:          ['Received','Drafting','Delivered'],
+    op_complete:       ['Received','Drafting','Counter','Executed'],
+    file_org:          ['Received','Uploading','Broker review'],
+    standalone_review: ['Received','Audit','Archived'],
+    rental:            ['Application','Approved','Signed','Move-in'],
+    addons:            ['Received','In progress','Delivered']
+  };
+  const TX_DEFAULT_TRACK = ['Received','In progress','Complete'];
+  const TX_BADGE = {
+    tc_one_side:'Contract to Close', tc_both_sides:'Contract to Close', tc:'Contract to Close',
+    lc:'Listing Coordinator', listing:'Listing Coordinator', listing_docs:'Listing Docs', mls_setup:'MLS Setup',
+    op_basic:'Offer Prep · Basic', op_complete:'Offer Prep · Complete', file_org:'File Organization',
+    standalone_review:'Standalone Review', rental:'Rental', addons:'Add-on'
+  };
+  function txSvc(f){ return String(f.service_type||'').toLowerCase(); }
+  function txIsTc(f){ const s = txSvc(f); return s==='tc' || s.indexOf('tc_')===0 || (!s && (f.file_type||'sale')==='sale'); }
+  function txTrack(f){ return TX_TRACKS[txSvc(f)] || TX_DEFAULT_TRACK; }
+  function txBadge(f){ return TX_BADGE[txSvc(f)] || 'Coordination'; }
+  function txStageIdx(f){
+    const track = txTrack(f);
+    if(txIsTc(f)){
+      const map = { under_contract:0, inspection:1, remedy:2, appraisal:3, ctc:4, closed:5 };
+      const st = mfStageOf(f); // new / waiting_for_tc / under_contract / ... / closed
+      return Object.prototype.hasOwnProperty.call(map, st) ? map[st] : 0;
+    }
+    // Non-TC · coarse but honest.
+    if(isClosed(f)) return track.length - 1;
+    if(f.payment_confirmed || f.payment_confirmed_at) return Math.min(1, track.length - 1);
+    return 0;
+  }
+  function txMoney(v){
+    if(v==null || v==='') return '—';
+    const n = Number(String(v).replace(/[^0-9.]/g,''));
+    if(!n) return '—';
+    return '$' + n.toLocaleString('en-US');
+  }
+  function txDate(iso){
+    if(!iso) return '—';
+    try { const s = String(iso); return new Date(s.length<=10 ? s+'T00:00:00' : s).toLocaleDateString('en-US',{month:'short',day:'numeric'}); }
+    catch(_){ return '—'; }
+  }
+  function txNextDeadline(f){
+    const eng = window.AariDeadlineEngine;
+    const raw = f.raw_form_data || {};
+    if(!eng || (f.file_type && f.file_type !== 'sale')){
+      if(raw.pa_listing_expiration) return 'Expires ' + txDate(raw.pa_listing_expiration);
+      return '—';
+    }
+    try {
+      const dls = eng.fileDeadlines(f); const today = new Date(); today.setHours(0,0,0,0);
+      let next = null;
+      Object.keys(dls).forEach(k => { const e = dls[k]; const d = new Date(e.date.getTime()); d.setHours(0,0,0,0); if(d>=today && (!next || d<next.d)) next = { d, e }; });
+      if(next) return next.e.label + ' ' + eng.fmtDl(next.e.date);
+    } catch(_){}
+    const d = daysToClose(f);
+    if(d!=null) return d<0 ? Math.abs(d)+'d late' : (d===0 ? 'Closing today' : d+'d to close');
+    return '—';
+  }
+  function txCells(f){
+    const raw = f.raw_form_data || {};
+    const ct = String(f.client_type||'').toLowerCase();
+    const side = ct==='buyer' ? 'Buyer' : (ct==='seller' ? 'Seller' : '');
+    const cust = [side||null, f.client_name].filter(Boolean).join(' · ') || (f.client_name||'');
+    const s = txSvc(f); let cells;
+    if(txIsTc(f)){
+      const price = f.purchase_price_cents ? ('$' + (f.purchase_price_cents/100).toLocaleString('en-US')) : txMoney(raw.purchase_price || raw.pa_offer_price);
+      cells = [{k:'Purchase',v:price},{k:'Closing',v:txDate(f.closing_date)},{k:'Next deadline',v:txNextDeadline(f)},{k:'Side',v:side||'—'}];
+    } else if(s==='lc'||s==='listing'||s==='listing_docs'||s==='mls_setup'){
+      cells = [{k:'List price',v:txMoney(raw.pa_listing_price || raw.listing_price)},{k:'Listed',v:txDate(raw.pa_listing_date || f.created_at)},{k:'Next deadline',v:txNextDeadline(f)},{k:'Side',v:'Seller'}];
+    } else if(s==='op_basic'||s==='op_complete'){
+      cells = [{k:'Offer',v:txMoney(raw.pa_offer_price || raw.offer_price)},{k:'Submitted',v:txDate(f.created_at)},{k:'Status',v:isClosed(f)?'Delivered':(f.payment_confirmed?'In progress':'Received')},{k:'Side',v:'Buyer'}];
+    } else {
+      cells = [{k:'Service',v:txBadge(f)},{k:'Submitted',v:txDate(f.created_at)},{k:'Status',v:isClosed(f)?'Complete':(f.payment_confirmed?'In progress':'Received')},{k:'Side',v:side||'—'}];
+    }
+    return { cust, cells };
+  }
+  function txCardHtml(f){
+    const track = txTrack(f);
+    const total = track.length;
+    const idx = Math.max(0, Math.min(txStageIdx(f), total-1));
+    const cur = track[idx];
+    const { cust, cells } = txCells(f);
+    const d = daysToClose(f);
+    const hot = (d!=null && d<=7);
+    let seg = '';
+    for(let i=0;i<total;i++){ const cls = i<idx ? 'done' : (i===idx ? 'now' : ''); seg += '<span class="'+cls+'"></span>'; }
+    const grid = cells.map(c => '<div><div class="txk">'+esc(c.k)+'</div><div class="txv">'+esc(c.v)+'</div></div>').join('');
+    return '<div class="tx-card'+(hot?' hot':'')+'" data-file-id="'+esc(f.id)+'">' +
+      '<div class="tx-chead"><div style="min-width:0"><div class="tx-addr">'+esc(f.property_address || 'Untitled file')+'</div>' +
+        (cust ? '<div class="tx-cust">'+esc(cust)+'</div>' : '') + '</div>' +
+        '<span class="tx-badge">'+esc(txBadge(f))+'</span></div>' +
+      '<div class="tx-seg">'+seg+'</div>' +
+      '<div class="tx-sl"><span class="tx-cur">'+esc(cur)+'</span><span class="tx-cnt">'+(idx+1)+' of '+total+'</span></div>' +
+      '<div class="tx-grid">'+grid+'</div>' +
+    '</div>';
+  }
   function renderKanban(){
-    forceKanbanLayout(); // final safety net before render
+    const deck = document.getElementById('tx-deck');
     const active = _files.filter(f => !isClosed(f));
-    document.getElementById('active-meta').textContent = active.length + ' active file' + (active.length===1?'':'s');
-    const buckets = { new:[], under_contract:[], inspection:[], remedy:[], appraisal:[], ctc:[] };
-    active.forEach(f => { const l = laneFor(f); if(l && buckets[l]) buckets[l].push(f); });
-    Object.keys(buckets).forEach(k => buckets[k].sort((a,b) => {
-      const da = daysToClose(a), db = daysToClose(b);
-      return (da==null?9999:da) - (db==null?9999:db);
-    }));
-    const map = { new:'lane-new', under_contract:'lane-uc', inspection:'lane-insp', remedy:'lane-rem', appraisal:'lane-appr', ctc:'lane-ctc' };
-    const cmap = { new:'cnt-new', under_contract:'cnt-uc', inspection:'cnt-insp', remedy:'cnt-rem', appraisal:'cnt-appr', ctc:'cnt-ctc' };
-    Object.keys(map).forEach(stage => {
-      const list = buckets[stage];
-      const body = document.getElementById(map[stage]);
-      const cnt = document.getElementById(cmap[stage]);
-      if(cnt) cnt.textContent = list.length;
-      if(!body) return;
-      body.innerHTML = list.length ? list.map(kcardHtml).join('') : '<div class="lane-empty">None</div>';
-    });
+    const meta = document.getElementById('active-meta');
+    if(meta) meta.textContent = active.length + ' active file' + (active.length===1?'':'s');
+    if(!deck) return;
+    active.sort((a,b) => { const da = daysToClose(a), db = daysToClose(b); return (da==null?9999:da) - (db==null?9999:db); });
+    deck.innerHTML = active.length ? active.map(txCardHtml).join('') : '<div class="tx-empty">No active files yet.</div>';
     wireKanbanDnD();
   }
 
