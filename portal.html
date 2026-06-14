@@ -399,6 +399,9 @@
   .tv-frow .mny { text-align:right; font-weight:600; }
   .tv-frow .mny .kk { font-size:8px; text-transform:uppercase; letter-spacing:.4px; color:var(--faint); font-weight:600; display:block; }
   .tv-note { font-size:10.5px; color:#9a958c; margin:14px 0 0; }
+  .tv-sechead { font-family:'Playfair Display',Georgia,serif; font-size:16px; font-weight:600; margin:6px 0 12px; }
+  .tv-sechead.team { margin-top:26px; padding-top:18px; border-top:0.5px solid var(--soft); }
+  .tv-setrate { font-size:10px; color:var(--ink); border-bottom:1px solid var(--line); display:inline-block; margin-top:5px; }
   @media (max-width:760px){ .tv-charts { grid-template-columns:1fr; } .tv-roll { grid-template-columns:1fr; } .tv-frow { grid-template-columns:1fr 1fr; } }
   /* Team pill (identity bar) · opens the team popup · faces + label */
   .team-pill { display:inline-flex; align-items:center; gap:8px; background:#fff; border:0.5px solid var(--line); border-radius:999px; padding:6px 13px 6px 8px; font-size:12px; font-weight:600; color:var(--ink); cursor:pointer; font-family:inherit; }
@@ -3557,6 +3560,8 @@
       const fl = await _client.from('files').select('*').in('agent_id', ids);
       _teamFiles = (fl.data || []).filter(f => !isClosed(f));
       const tabBtn = document.getElementById('ptab-team'); if(tabBtn) tabBtn.hidden = false;
+      // Lead view folds "My business" into the Team tab · hide the standalone business tab.
+      const bizTab = document.querySelector('.ptab[data-ptab="business"]'); if(bizTab) bizTab.hidden = true;
       renderTeamView();
     } catch(e){ console.warn('[team] load failed', e); }
   }
@@ -3611,7 +3616,32 @@
       }).join('');
       return '<div class="tv-agh"><div class="nm">'+esc(teamAgentName(id))+'</div><div class="stat"><b>'+af.length+'</b> file'+(af.length===1?'':'s')+' · <b>'+teamFmt(pipe)+'</b></div></div>' + rows;
     }).join('');
+    // ===== YOUR BUSINESS (folded in for leads · their own numbers, same style) =====
+    const myFiles = _files.filter(f => !isClosed(f));
+    const myPipe = myFiles.reduce((s,f) => s + teamPrice(f), 0);
+    const myRate = (_profile && _profile.default_commission_pct != null) ? Number(_profile.default_commission_pct) : 0;
+    const myBuckets = { started:0, progress:0, final:0 };
+    myFiles.forEach(f => { myBuckets[txBucket(f)] = (myBuckets[txBucket(f)]||0) + 1; });
+    const myMaxB = Math.max(1, myBuckets.started, myBuckets.progress, myBuckets.final);
+    const myStageBar = function(n, lbl){ return '<div class="tv-vbar"><div class="num">'+n+'</div><div class="col" style="height:'+Math.round((n/myMaxB)*100)+'%"></div><div class="lbl">'+lbl+'</div></div>'; };
+    const myCommCell = myRate
+      ? '<div class="cell"><div class="v">'+teamFmt(myPipe*(myRate/100))+'</div><div class="k">Est. commission</div></div>'
+      : '<div class="cell"><div class="v">—</div><div class="k">Est. commission</div><a class="tv-setrate" href="#" id="tv-setrate">Set rate →</a></div>';
+    const myBusiness =
+      '<div class="tv-sechead">Your business this month</div>' +
+      '<div class="tv-roll">' +
+        '<div class="cell"><div class="v">'+_files.length+'</div><div class="k">Files submitted</div></div>' +
+        '<div class="cell"><div class="v">'+teamFmt(myPipe)+'</div><div class="k">Active pipeline</div></div>' +
+        myCommCell +
+      '</div>' +
+      '<div class="tv-charts" style="grid-template-columns:1fr">' +
+        '<div class="tv-chart"><div class="ch-t">Your pipeline by stage</div><div class="tv-vbars">' +
+          myStageBar(myBuckets.started,'Just started') + myStageBar(myBuckets.progress,'In progress') + myStageBar(myBuckets.final,'Final stretch') +
+        '</div></div>' +
+      '</div>';
     host.innerHTML =
+      myBusiness +
+      '<div class="tv-sechead team">Your team</div>' +
       '<div class="tv-roll">' +
         '<div class="cell"><div class="v">'+files.length+'</div><div class="k">Active · team</div></div>' +
         '<div class="cell"><div class="v">'+teamFmt(totalPipe)+'</div><div class="k">Team pipeline</div></div>' +
@@ -3625,6 +3655,8 @@
       '</div>' +
       groups +
       '<p class="tv-note">Estimates use each agent’s stored commission rate. View only · Aari does not calculate or process commissions.</p>';
+    const sr = document.getElementById('tv-setrate');
+    if(sr) sr.addEventListener('click', function(e){ e.preventDefault(); const b = document.getElementById('earn-goal-btn'); if(b) b.click(); });
   }
 
   // ===== Drawer + Message TC =====
