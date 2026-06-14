@@ -11110,9 +11110,56 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){ el.style.display = 'none'; }
   }
 
+  // ===== SERVICE STAGE · non-TC files · TC advances the stage the agent sees =====
+  const TC_SVC_TRACKS = {
+    lc: ['Intake','Docs','MLS Live','Under contract','Closed'],
+    listing: ['Intake','Docs','MLS Live','Under contract','Closed'],
+    listing_docs: ['Received','Package prep','Signed & reviewed'],
+    mls_setup: ['Received','MLS input','Live'],
+    op_basic: ['Received','Drafting','Delivered'],
+    op_complete: ['Received','Drafting','Counter','Executed'],
+    file_org: ['Received','Uploading','Broker review'],
+    standalone_review: ['Received','Audit','Archived'],
+    rental: ['Application','Approved','Signed','Move-in']
+  };
+  function tcSvcIsTc(f){ const s = String(f.service_type||'').toLowerCase(); return s==='tc' || s.indexOf('tc_')===0 || (!s && (f.file_type||'sale')==='sale'); }
+  function renderServiceStage(){
+    const right = document.getElementById('rail-right'); if(!right || !_currentFile) return;
+    const f = _currentFile;
+    let el = document.getElementById('rail-service-stage');
+    const track = TC_SVC_TRACKS[String(f.service_type||'').toLowerCase()];
+    if(tcSvcIsTc(f) || !track){ if(el) el.style.display = 'none'; return; } // TC files use the transaction_stage pipeline
+    if(!el){
+      el = document.createElement('div'); el.id = 'rail-service-stage';
+      const after = document.getElementById('rail-agent-requests');
+      if(after && after.nextSibling) right.insertBefore(el, after.nextSibling);
+      else right.insertBefore(el, right.firstChild);
+    }
+    el.style.display = 'block';
+    const cur = f.service_stage || track[0];
+    el.innerHTML = '<div style="background:#fff;border:1px solid #ece8e0;border-radius:10px;padding:12px 14px;margin:0 0 14px">' +
+      '<p style="font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#8a857c;font-weight:700;margin:0 0 8px">Service stage · the agent sees this</p>' +
+      '<select id="svc-stage-sel" style="width:100%;font-family:inherit;font-size:13px;padding:9px 11px;border:1px solid rgba(15,15,15,0.18);border-radius:8px;background:#fff;color:#0f0f0f">' +
+        track.map(function(s){ return '<option' + (s===cur ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') +
+      '</select>' +
+      '<div id="svc-stage-msg" style="font-size:11px;margin-top:7px;display:none"></div>' +
+    '</div>';
+    const sel = document.getElementById('svc-stage-sel');
+    if(sel) sel.addEventListener('change', async function(){
+      const v = sel.value; f.service_stage = v;
+      const msg = document.getElementById('svc-stage-msg');
+      try {
+        const r = await _client.from('files').update({ service_stage: v }).eq('id', f.id);
+        if(r && r.error){ if(msg){ msg.style.color = '#c0392b'; msg.textContent = 'Not saved (RLS).'; msg.style.display = 'block'; } }
+        else { if(msg){ msg.style.color = '#5a9e72'; msg.textContent = 'Saved · the agent now sees this stage.'; msg.style.display = 'block'; } }
+      } catch(_){ if(msg){ msg.style.color = '#c0392b'; msg.textContent = 'Not saved.'; msg.style.display = 'block'; } }
+    });
+  }
+
   function openPlaybook(file){
     _currentFile = file;
     renderAgentRequestsBanner();
+    renderServiceStage();
     _openPopKey = null;
     _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null;
     document.body.classList.add('tpb-open');
