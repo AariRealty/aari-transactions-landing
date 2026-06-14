@@ -174,6 +174,9 @@
             agreement_signed_at: profile.agreementSignedAt || null,
             agreement_version: profile.agreementVersion || null,
             agreement_typed_name: profile.agreementTypedName || null,
+            // Team capture · the agent names their team lead (consent direction).
+            // Broker confirms before any access is granted.
+            team_lead_email: profile.teamLeadEmail || null,
           },
         },
       },

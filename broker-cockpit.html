@@ -692,6 +692,15 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     <div class="sa-list" id="mr-list"></div>
   </section>
 
+  <!-- ============ TEAM REQUESTS · agents who named a lead at signup ============ -->
+  <section class="sa-panel" id="tr-panel" style="display:none">
+    <div class="sa-head">
+      <p class="sa-eb">Team requests · agents who named a team lead at signup</p>
+      <span class="sa-meta" id="tr-meta">&nbsp;</span>
+    </div>
+    <div class="sa-list" id="tr-list"></div>
+  </section>
+
   <!-- ============ LAST 5 CLOSINGS · recent wins ============ -->
   <section class="lc-panel" id="lc-panel" style="display:none">
     <div class="lc-head">
@@ -974,6 +983,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     // SECTION · Signed agreements audit trail
     loadAndRenderSignedAgreements(byId);
     loadAndRenderMembershipRequests(byId);
+    loadAndRenderTeamRequests(byId);
 
     // SECTION · "Since you were last here" engagement summary
     loadAndRenderSinceLastVisit(files);
@@ -1019,6 +1029,61 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
           b.disabled = true;
           try { await client.from('membership_change_requests').update({ status:'done', resolved_at:new Date().toISOString() }).eq('id', b.getAttribute('data-mr-done')); } catch(_){}
           loadAndRenderMembershipRequests(byId);
+        });
+      });
+    } catch(_){ panel.style.display = 'none'; }
+  }
+
+  // ===== TEAM REQUESTS · agents who named a team lead at signup, not yet linked =====
+  async function loadAndRenderTeamRequests(byId){
+    const panel = document.getElementById('tr-panel');
+    const list = document.getElementById('tr-list');
+    const meta = document.getElementById('tr-meta');
+    if(!panel || !list) return;
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const { data: cand } = await client.from('agents').select('id, first_name, last_name, email, team_lead_email').not('team_lead_email', 'is', null);
+      const { data: members } = await client.from('team_members').select('agent_id');
+      const linked = new Set((members || []).map(m => m.agent_id));
+      const pending = (cand || []).filter(a => a.team_lead_email && !linked.has(a.id));
+      if(!pending.length){ panel.style.display = 'none'; return; }
+      panel.style.display = 'block';
+      if(meta) meta.textContent = pending.length + ' to link';
+      const byEmail = {}; Object.values(byId || {}).forEach(a => { if(a.email) byEmail[String(a.email).toLowerCase()] = a; });
+      list.innerHTML = pending.map(function(a){
+        const name = ((a.first_name||'') + ' ' + (a.last_name||'')).trim() || 'Agent';
+        const lead = byEmail[String(a.team_lead_email||'').toLowerCase()];
+        const leadLabel = lead ? (((lead.first_name||'') + ' ' + (lead.last_name||'')).trim() || lead.email) : (a.team_lead_email + ' — not found');
+        const action = lead
+          ? '<button type="button" data-tr-link="' + esc(a.id) + '" data-tr-lead="' + esc(lead.id) + '" style="border:0;background:#0f0f0f;color:#fff;font-size:11px;font-weight:600;border-radius:6px;padding:6px 12px;cursor:pointer;font-family:inherit;flex:none">Create team link</button>'
+          : '<span style="font-size:11px;color:#b91c1c;flex:none">Lead not found</span>';
+        return '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 2px;border-top:0.5px solid #f1ede6">' +
+          '<div style="min-width:0"><p style="font-size:13px;font-weight:600;margin:0">' + esc(name) + '</p>' +
+          '<p style="font-size:11.5px;color:#8a857c;margin:2px 0 0">Lead: ' + esc(leadLabel) + '</p></div>' + action +
+        '</div>';
+      }).join('');
+      list.querySelectorAll('[data-tr-link]').forEach(function(b){
+        b.addEventListener('click', async function(){
+          b.disabled = true; b.textContent = 'Linking…';
+          try {
+            const agentId = b.getAttribute('data-tr-link');
+            const leadId = b.getAttribute('data-tr-lead');
+            const lead = byId[leadId];
+            const leadName = lead ? (((lead.first_name||'') + ' ' + (lead.last_name||'')).trim() || 'Team') : 'Team';
+            let teamId = null;
+            const t = await client.from('teams').select('id').eq('lead_agent_id', leadId).limit(1).maybeSingle();
+            if(t && t.data){ teamId = t.data.id; }
+            else {
+              const ins = await client.from('teams').insert({ name: leadName + ' team', lead_agent_id: leadId }).select('id').single();
+              teamId = ins.data && ins.data.id;
+            }
+            if(teamId){
+              // Lead is a member too (so their own files show in the team rollup), then the agent.
+              await client.from('team_members').upsert({ team_id: teamId, agent_id: leadId }, { onConflict: 'team_id,agent_id' });
+              await client.from('team_members').upsert({ team_id: teamId, agent_id: agentId }, { onConflict: 'team_id,agent_id' });
+            }
+          } catch(e){ console.warn('[team] link failed', e); }
+          loadAndRenderTeamRequests(byId);
         });
       });
     } catch(_){ panel.style.display = 'none'; }
