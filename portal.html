@@ -343,6 +343,17 @@
   .pv-modal .b1{background:#161310;color:#fff;border:0;font-size:11px;font-weight:700;padding:8px 15px;border-radius:30px;cursor:pointer;}
   .pv-modal .b2{background:#fff;border:1px solid var(--line);color:#3A352E;font-size:11px;font-weight:700;padding:8px 15px;border-radius:30px;cursor:pointer;}
   .pv-modal .regen{margin-top:16px;width:100%;background:#161310;color:#fff;border:0;font-size:12px;font-weight:700;padding:11px;border-radius:30px;cursor:pointer;}
+  .pv-charts{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  @media(max-width:560px){.pv-charts{grid-template-columns:1fr}}
+  .pv-chart{border:1px solid var(--line);border-radius:13px;padding:13px;}
+  .pv-chart .ct{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#A99B7E;font-weight:700;margin-bottom:10px;}
+  .pv-vbars{display:flex;align-items:flex-end;gap:12px;height:90px;}
+  .pv-vbar{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;}
+  .pv-vbar .vn{font-size:13px;font-weight:700;} .pv-vbar .vc{width:100%;max-width:40px;background:#161310;border-radius:5px 5px 0 0;min-height:3px;margin-top:4px;} .pv-vbar .vl{font-size:9px;color:var(--muted);margin-top:5px;text-align:center;}
+  .pv-lb{margin-bottom:9px;} .pv-lb .t{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:4px;} .pv-lb .t span:first-child{font-weight:600;} .pv-lb .tk{height:7px;background:#F4EFE6;border-radius:5px;overflow:hidden;} .pv-lb .fl{display:block;height:100%;background:#3A352E;border-radius:5px;}
+  .pv-pgrp{border:1px dashed var(--line2);border-radius:13px;padding:11px 13px;margin-bottom:9px;background:#FCFAF6;}
+  .pv-pgrp .ph{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;} .pv-pgrp .ph .nm{font-weight:660;font-size:13px;} .pv-pgrp .ph .badge{font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:#A99B7E;font-weight:700;background:#F1EADD;border-radius:20px;padding:3px 9px;}
+  .pv-prow{display:flex;justify-content:space-between;font-size:12px;color:#3A352E;padding:4px 0;border-top:1px solid var(--line);} .pv-prow:first-of-type{border-top:0;} .pv-prow .mny{color:var(--muted);font-weight:600;}
   .tx-sl { display:flex; align-items:baseline; justify-content:space-between; margin-top:7px; }
   .tx-cur { font-size:10.5px; font-weight:600; color:var(--ink); }
   .tx-cnt { font-size:9px; color:var(--muted); }
@@ -3606,7 +3617,7 @@
   }
 
   // ===== TEAM-LEAD VIEW · pulse + per-agent rows (full financials) =====
-  let _team = null, _teamFiles = [], _teamAgents = {}, _fgNames = {};
+  let _team = null, _teamFiles = [], _teamAgents = {}, _fgNames = {}, _pendingFiles = [];
   async function loadTeamLead(){
     try {
       if(!_profile || !_profile.id) return;
@@ -3627,6 +3638,12 @@
         const fg = await _client.from('agents').select('id, first_name, last_name').in('id', fgIds);
         (fg.data || []).forEach(a => { _fgNames[a.id] = ((a.first_name||'').trim() || 'TC'); });
       }
+      // Pending (ownerless) imported files — broker can read all; show them under
+      // their intended owner until that agent creates an account.
+      try {
+        const pf = await _client.from('files').select('*').is('agent_id', null);
+        _pendingFiles = (pf.data || []).filter(f => !isClosed(f) && f.pending_agent_email);
+      } catch(_e){ _pendingFiles = []; }
       const tabBtn = document.getElementById('ptab-team'); if(tabBtn) tabBtn.hidden = false;
       // Lead view folds "My business" into the Team tab · hide the standalone business tab.
       const bizTab = document.querySelector('.ptab[data-ptab="business"]'); if(bizTab) bizTab.hidden = true;
@@ -3742,10 +3759,34 @@
       ? fgIds.map(id => '<div class="pv-fgrow"><span class="bl">'+esc(_fgNames[id]||'TC')+'</span><span class="bt"><span class="bf" style="width:'+Math.round(fgCount[id]/fgMax*100)+'%"></span></span><span class="bv">'+fgCount[id]+'</span></div>').join('')
       : '<div style="font-size:11px;color:var(--muted);margin-top:6px">No File-Org files yet.</div>';
 
+    // Graphics · stage funnel bars + commission leaderboard
+    const fMax = Math.max(1, buckets.started, buckets.progress, buckets.final);
+    const vbar = function(n,l){ return '<div class="pv-vbar"><span class="vn">'+n+'</span><span class="vc" style="height:'+Math.round(n/fMax*100)+'%"></span><span class="vl">'+l+'</span></div>'; };
+    const cMax = Math.max.apply(null, [1].concat(agentIds.map(id=>byAgent[id])));
+    const lbBars = agentIds.length
+      ? agentIds.map(id => '<div class="pv-lb"><div class="t"><span>'+esc(teamAgentName(id))+'</span><span>'+teamFmt(byAgent[id])+'</span></div><div class="tk"><span class="fl" style="width:'+Math.round((byAgent[id]/cMax)*100)+'%"></span></div></div>').join('')
+      : '<div style="font-size:11px;color:var(--muted)">Set commission rates to see this.</div>';
+
+    // Pending · ownerless imported files grouped by intended owner
+    const PENDING_NAMES = { 'rooseveltsanchezrealestate@gmail.com':'Roosevelt Sanchez', 'flaviamaguilera@gmail.com':'Flavia Aguilera', 'machuca.alied@gmail.com':'Alied Machuca', 'puentesana99@gmail.com':'Ana Puentes' };
+    const pend = {}; (_pendingFiles||[]).forEach(f => { const k = f.pending_agent_email || 'unassigned'; (pend[k] = pend[k] || []).push(f); });
+    const pendKeys = Object.keys(pend);
+    const pendPipe = (_pendingFiles||[]).reduce((s,f)=>s+teamPrice(f),0);
+    const pendHtml = pendKeys.length
+      ? ('<div class="pv-eyebrow">Pending sign-up &middot; auto-attaches when they create their account</div>' + pendKeys.map(function(k){
+          const nm = PENDING_NAMES[k] || k;
+          const fl = pend[k];
+          const rows = fl.map(function(f){ return '<div class="pv-prow"><span>'+esc(f.property_address || f.client_name || 'File')+'</span><span class="mny">'+teamFmt(teamPrice(f))+'</span></div>'; }).join('');
+          return '<div class="pv-pgrp"><div class="ph"><span class="nm">'+esc(nm)+'</span><span class="badge">'+fl.length+' file'+(fl.length===1?'':'s')+' &middot; pending</span></div>'+rows+'</div>';
+        }).join(''))
+      : '';
+    const allActive = files.length + (_pendingFiles ? _pendingFiles.length : 0);
+    const allPipe = totalPipe + pendPipe;
+
     host.innerHTML =
       '<div class="pv-gauge"><svg width="200" height="106" viewBox="0 0 200 110"><path d="M10,100 A90,90 0 0,1 190,100" fill="none" stroke="#EFE7D7" stroke-width="13" stroke-linecap="round"/>'+gPath+'</svg>' +
         '<div class="cap"><div class="v">'+teamFmt(heroVal)+'</div><div class="k">of '+teamFmt(goal)+' '+(heroComm?'GCI goal':'pipeline goal')+'</div></div></div>' +
-      '<div class="pv-goalrow"><span><b>'+files.length+'</b> active</span><span><b>'+teamFmt(totalPipe)+'</b> pipeline</span><span><b>'+teamFmt(totalComm)+'</b> est. GCI</span></div>' +
+      '<div class="pv-goalrow"><span><b>'+allActive+'</b> active</span><span><b>'+teamFmt(allPipe)+'</b> pipeline</span><span><b>'+teamFmt(totalComm)+'</b> est. GCI</span></div>' +
       '<div class="pv-eyebrow">The numbers</div>' +
       '<div class="pv-bento">' +
         '<div class="pv-tile"><div class="tl">Just started</div><div class="tn">'+buckets.started+'</div></div>' +
@@ -3755,12 +3796,18 @@
         '<div class="pv-tile"><div class="tl">Avg sale</div><div class="tn">'+teamFmt(avgP)+'</div></div>' +
         '<div class="pv-tile"><div class="tl">High</div><div class="tn">'+teamFmt(maxP)+'</div></div>' +
         '<div class="pv-tile"><div class="tl">Low</div><div class="tn">'+teamFmt(minP)+'</div></div>' +
-        '<div class="pv-tile"><div class="tl">Agents</div><div class="tn">'+agentIds.length+'</div></div>' +
+        '<div class="pv-tile"><div class="tl">Agents</div><div class="tn">'+(agentIds.length + pendKeys.length)+'</div></div>' +
         '<div class="pv-tile h2"><div class="tl">File Organization load</div>'+fgBars+'</div>' +
-        '<div class="pv-tile h2"><div class="tl">Pipeline value</div><div class="tn">'+teamFmt(totalPipe)+'</div><div style="font-size:10px;color:var(--muted)">across '+files.length+' active files</div></div>' +
+        '<div class="pv-tile h2"><div class="tl">Pipeline value</div><div class="tn">'+teamFmt(allPipe)+'</div><div style="font-size:10px;color:var(--muted)">across '+allActive+' active files</div></div>' +
+      '</div>' +
+      '<div class="pv-eyebrow">Pipeline &amp; commission</div>' +
+      '<div class="pv-charts">' +
+        '<div class="pv-chart"><div class="ct">Pipeline by stage</div><div class="pv-vbars">'+vbar(buckets.started,'Just started')+vbar(buckets.progress,'In progress')+vbar(buckets.final,'Final')+'</div></div>' +
+        '<div class="pv-chart"><div class="ct">Est. commission by agent</div>'+lbBars+'</div>' +
       '</div>' +
       '<div class="pv-eyebrow">By agent &middot; reach out</div>' +
       agentRows +
+      pendHtml +
       '<p class="pv-note">Estimates use each agent&rsquo;s stored commission rate. View only &middot; Aari does not calculate or process commissions.</p>';
     host.querySelectorAll('.pv-text').forEach(b => b.addEventListener('click', function(){ teamNudge(this.getAttribute('data-nudge')); }));
   }
