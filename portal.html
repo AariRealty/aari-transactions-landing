@@ -361,6 +361,27 @@
   .pv-flat{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 2px;border-bottom:1px solid var(--line);font-size:12.5px;}
   .pv-flat .a{font-weight:560;flex:1;} .pv-flat .st{color:var(--muted);font-size:11px;white-space:nowrap;} .pv-flat .mny{font-weight:600;color:var(--muted);min-width:48px;text-align:right;}
   .pv-split{display:inline-block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#6B5B3E;background:#EFE7D7;border-radius:20px;padding:1px 7px;margin-left:6px;vertical-align:middle;}
+  /* ===== Reach-out strip + Scoreboard ===== */
+  .pv-av{border-radius:50%;background:#EFE7D7;color:#6B5B3E;font-weight:800;display:inline-flex;align-items:center;justify-content:center;flex:none;background-size:cover;background-position:center;font-size:11px;}
+  .pv-carou{display:flex;gap:9px;overflow-x:auto;padding-bottom:4px;}
+  .pv-rcard{flex:none;width:174px;border:1px solid var(--line);border-radius:13px;padding:12px;background:#F4EFE6;}
+  .pv-rcard .pv-av{margin-bottom:8px;} .pv-rcard .nm{font-weight:660;font-size:13px;} .pv-rcard .rs{font-size:10.5px;color:var(--muted);margin:5px 0 9px;line-height:1.35;}
+  .reason{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;border-radius:20px;padding:2px 8px;display:inline-block;}
+  .reason.top{background:#EFE7D7;color:#6B5B3E;} .reason.quiet{background:#161310;color:#fff;} .reason.due{background:#F0E8D8;color:#6B5B3E;}
+  .pv-inv{font-size:10.5px;font-weight:700;border:1px solid #161310;border-radius:30px;padding:5px 12px;background:#161310;color:#fff;cursor:pointer;}
+  .pv-search{display:flex;border:1px solid var(--line);border-radius:30px;padding:0 13px;margin-bottom:8px;background:#fff;}
+  .pv-search input{border:0;outline:0;background:none;padding:9px 0;font-size:12.5px;width:100%;color:#161310;font-family:inherit;}
+  .pv-board .pv-sb.beyond{display:none;} .pv-board.showall .pv-sb.beyond{display:block;}
+  .pv-sb{border-bottom:1px solid var(--line);}
+  .pv-srow{display:flex;align-items:center;gap:11px;padding:9px 2px;cursor:pointer;}
+  .pv-srow .rk{width:18px;text-align:center;font-weight:800;font-size:13px;color:var(--muted);flex:none;}
+  .pv-board .pv-sb:nth-child(-n+3) .rk{color:#161310;}
+  .pv-srow .nmwrap{flex:1;min-width:0;display:flex;flex-direction:column;} .pv-srow .nm{font-weight:650;font-size:13px;} .pv-srow .meta{font-size:10.5px;color:var(--muted);}
+  .pv-srow .comm{text-align:right;} .pv-srow .comm .v{font-weight:700;font-size:14px;} .pv-srow .comm .k{font-size:8px;color:var(--muted);text-transform:uppercase;display:block;}
+  .qflag{font-size:8px;font-weight:700;text-transform:uppercase;background:#161310;color:#fff;border-radius:20px;padding:2px 6px;margin-left:6px;vertical-align:middle;}
+  .pv-sbdeals{display:none;padding:0 2px 10px 30px;} .pv-sb.open .pv-sbdeals{display:block;} .pv-sb.open .pv-chev{transform:rotate(180deg);}
+  .pv-sbact{display:flex;gap:7px;padding:7px 0;}
+  .pv-showall{width:100%;margin-top:10px;background:#fff;border:1px solid var(--line);border-radius:30px;padding:9px;font-size:12px;font-weight:700;color:#3A352E;cursor:pointer;}
   .pv-rank{display:flex;flex-direction:column;gap:7px;}
   .pv-rrow{display:flex;align-items:baseline;font-size:12.5px;}
   .pv-rrow .nm{color:#3A352E;white-space:nowrap;} .pv-rrow.top .nm{font-weight:700;color:#161310;}
@@ -3689,7 +3710,7 @@
       const mem = await _client.from('team_members').select('agent_id').eq('team_id', _team.id);
       const ids = (mem.data || []).map(m => m.agent_id);
       if(!ids.length) return;
-      const ag = await _client.from('agents').select('id, first_name, last_name, default_commission_pct, agreement_signed_at').in('id', ids);
+      const ag = await _client.from('agents').select('id, first_name, last_name, default_commission_pct, agreement_signed_at, headshot_url').in('id', ids);
       _teamAgents = {}; (ag.data || []).forEach(a => { _teamAgents[a.id] = a; });
       const fl = await _client.from('files').select('*').in('agent_id', ids);
       _teamFiles = (fl.data || []).filter(f => !isClosed(f));
@@ -3860,19 +3881,37 @@
         '<span class="prog"><span class="pbar2"><span class="pf2" style="width:'+Math.round((idx+1)/total*100)+'%"></span></span><span class="pst2">'+esc(track[idx])+'</span></span>' +
         '<span class="mny2">'+teamFmt(price)+'</span></div>';
     };
+    // ===== Scoreboard groups (sorted by commission waiting) + reach-out picks =====
+    const nowMs = Date.now();
+    const staleDays = function(items){ var mx=0; items.forEach(function(it){ var c=it.f.created_at?new Date(it.f.created_at).getTime():0; if(c>mx)mx=c; }); return mx? Math.floor((nowMs-mx)/864e5) : 999; };
+    const avatarHtml = function(g, sz){ if(g.photo) return '<span class="pv-av" style="width:'+sz+'px;height:'+sz+'px;background-image:url(\''+g.photo+'\')"></span>'; return '<span class="pv-av" style="width:'+sz+'px;height:'+sz+'px">'+esc(g.ini)+'</span>'; };
     const groupsArr = [];
-    Object.keys(agentMap).forEach(function(id){ var m=agentMap[id]; groupsArr.push({ id:id, name:teamAgentName(id), ini:agInitials(id), items:m.items, pipe:m.pipe, gci:m.gci, pending:false, rate:(_teamAgents[id]&&_teamAgents[id].default_commission_pct!=null)?_teamAgents[id].default_commission_pct:null }); });
-    pendKeys.forEach(function(k){ var fl=pend[k]; var nm=PENDING_NAMES[k]||k; groupsArr.push({ id:null, name:nm, ini:(nm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase(), items:fl.map(function(f){return {f:f,pct:100,sps:[{agent_id:null,pct:100}]};}), pipe:fl.reduce(function(s,f){return s+teamPrice(f);},0), gci:0, pending:true }); });
-    groupsArr.sort(function(a,b){ return (a.pending-b.pending) || (b.pipe-a.pipe); });
-    const agentRows = groupsArr.map(function(g){
-      var meta = g.items.length+' &middot; '+teamFmt(g.pipe)+(g.pending?' &middot; pending sign-up':(g.gci?(' &middot; '+teamFmt(g.gci)+' GCI'):''));
+    Object.keys(agentMap).forEach(function(id){ var m=agentMap[id]; groupsArr.push({ id:id, name:teamAgentName(id), ini:agInitials(id), photo:(_teamAgents[id]&&_teamAgents[id].headshot_url)||'', items:m.items, deals:m.items.length, pipe:m.pipe, gci:m.gci, pending:false, rate:(_teamAgents[id]&&_teamAgents[id].default_commission_pct!=null)?_teamAgents[id].default_commission_pct:null }); });
+    pendKeys.forEach(function(k){ var fl=pend[k]; var nm=PENDING_NAMES[k]||k; groupsArr.push({ id:null, name:nm, ini:(nm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase(), photo:'', items:fl.map(function(f){return {f:f,pct:100,sps:[{agent_id:null,pct:100}]};}), deals:fl.length, pipe:fl.reduce(function(s,f){return s+teamPrice(f);},0), gci:0, pending:true }); });
+    groupsArr.forEach(function(g){ g.quiet = (g.deals<=1) || (staleDays(g.items)>21); });
+    groupsArr.sort(function(a,b){ return (b.gci-a.gci) || (b.pipe-a.pipe); });
+    // Reach-out picks: top earner · a quiet agent · a deadline this week
+    var reachPicks=[], seen={};
+    var topG = groupsArr.filter(function(g){return !g.pending && g.pipe>0;})[0] || groupsArr[0];
+    if(topG){ reachPicks.push({g:topG, kls:'top', label:'Top earner', reason:(topG.gci?teamFmt(topG.gci)+' waiting — feed leads':'Your top producer — recognize')}); seen[topG.id]=1; }
+    var quietG = groupsArr.filter(function(g){return g.quiet && !seen[g.id];})[0];
+    if(quietG){ reachPicks.push({g:quietG, kls:'quiet', label:'Quiet', reason:(quietG.deals<=1?'Few active deals — check in':'No new file in '+staleDays(quietG.items)+'d — check in')}); seen[quietG.id]=1; }
+    var dueFile=null,dueG=null,wkk=7*864e5;
+    groupsArr.some(function(g){ return g.items.some(function(it){ var s=it.f.closing_date?(''+it.f.closing_date).slice(0,10):''; var d=s?new Date(s+'T00:00:00').getTime():0; if(d&&(d-nowMs)<wkk&&(d-nowMs)>-(45*864e5)&&!seen[g.id]){ dueFile=it.f;dueG=g;return true; } return false; }); });
+    if(dueG&&dueFile){ reachPicks.push({g:dueG, kls:'due', label:'Closing soon', reason:fileLabel(dueFile)+' — '+txDate(dueFile.closing_date)}); seen[dueG.id]=1; }
+    const reachStrip = reachPicks.length ? ('<div class="pv-eyebrow">Reach out today</div><div class="pv-carou">'+reachPicks.map(function(p){ return '<div class="pv-rcard">'+avatarHtml(p.g,38)+'<div class="nm">'+esc(p.g.name)+'</div><div class="rs"><span class="reason '+p.kls+'">'+p.label+'</span><br>'+esc(p.reason)+'</div>'+(p.g.id?'<button class="pv-text" data-nudge="'+esc(p.g.id)+'">Text &rarr;</button>':'<button class="pv-inv">Invite &rarr;</button>')+'</div>'; }).join('')+'</div>') : '';
+    // Scoreboard rows (ranked, top 10 default, drill-down)
+    const sbRows = groupsArr.map(function(g, i){
+      var rank=i+1;
       var actions = g.pending ? '' : ('<button class="pv-rate'+(g.rate==null?' empty':'')+'" data-rate="'+esc(g.id)+'">'+(g.rate!=null?(g.rate+'%'):'Set rate')+'</button><button class="pv-text" data-nudge="'+esc(g.id)+'">Text &rarr;</button>');
-      return '<div class="pv-ag'+(g.pending?' pending':'')+'">' +
-        '<div class="pv-ahdr" data-agtoggle><span class="mono">'+esc(g.ini)+'</span><span class="nm">'+esc(g.name)+'</span><span class="meta">'+meta+'</span>'+actions+'<span class="pv-chev">&#9652;</span></div>' +
-        '<div class="pv-aglist">'+g.items.map(function(it){ return flatRowFor(it, g.id); }).join('')+'</div>' +
+      var flag = g.pending ? '<span class="qflag">pending</span>' : (g.quiet?'<span class="qflag">quiet</span>':'');
+      return '<div class="pv-sb'+(rank>10?' beyond':'')+'" data-name="'+esc(g.name.toLowerCase())+'">' +
+        '<div class="pv-srow" data-sbtoggle><span class="rk">'+rank+'</span>'+avatarHtml(g,30)+'<span class="nmwrap"><span class="nm">'+esc(g.name)+flag+'</span><span class="meta">'+g.deals+' deals &middot; '+teamFmt(g.pipe)+'</span></span><span class="comm"><span class="v">'+teamFmt(g.gci)+'</span><span class="k">waiting</span></span><span class="pv-chev">&#9662;</span></div>' +
+        '<div class="pv-sbdeals">'+(actions?'<div class="pv-sbact">'+actions+'</div>':'')+g.items.map(function(it){ return flatRowFor(it, g.id); }).join('')+'</div>' +
       '</div>';
     }).join('');
-    const pendBanner = pendKeys.length ? ('<div class="pv-pban"><div class="t"><b>'+pendKeys.length+' agent'+(pendKeys.length===1?'':'s')+'</b> not joined yet &middot; their deals auto-attach when they sign up</div><button class="pv-inviteall">Invite all</button></div>') : '';
+    const showAllBtn = groupsArr.length>10 ? '<button class="pv-showall" data-showall>Show all '+groupsArr.length+' agents</button>' : '';
+    const agentRows = '<div class="pv-search"><input type="text" placeholder="Search agents…" data-sbsearch></div><div class="pv-board">'+sbRows+'</div>'+showAllBtn;
     const allActive = files.length + (_pendingFiles ? _pendingFiles.length : 0);
     const allPipe = totalPipe + pendPipe;
     // Price bands (histogram) — priced files only
@@ -3908,14 +3947,16 @@
         '<div><div class="pv-eyebrow">Service</div>'+mixBars(svcMap)+'</div>' +
         '<div><div class="pv-eyebrow">FG load</div>'+fgBars+'</div>' +
       '</div>' +
-      '<div class="pv-eyebrow">By agent &middot; every transaction</div>' +
-      pendBanner +
+      reachStrip +
+      '<div class="pv-eyebrow">Scoreboard &middot; commission waiting</div>' +
       agentRows +
       '<p class="pv-note">Estimates use each agent&rsquo;s stored commission rate. View only &middot; Aari does not calculate or process commissions.</p>';
     host.querySelectorAll('.pv-text').forEach(b => b.addEventListener('click', function(e){ e.stopPropagation(); teamNudge(this.getAttribute('data-nudge')); }));
     host.querySelectorAll('.pv-rate').forEach(b => b.addEventListener('click', function(e){ e.stopPropagation(); setAgentRate(this.getAttribute('data-rate')); }));
-    host.querySelectorAll('[data-agtoggle]').forEach(function(h){ h.addEventListener('click', function(e){ if(e.target.closest('.pv-text')||e.target.closest('.pv-rate')) return; this.parentNode.classList.toggle('collapsed'); }); });
-    var _ia = host.querySelector('.pv-inviteall'); if(_ia) _ia.addEventListener('click', function(){ alert('Sends each pending agent their sign-up link once your SMS/email connector is on. For now, share the register link manually.'); });
+    host.querySelectorAll('[data-sbtoggle]').forEach(function(h){ h.addEventListener('click', function(e){ if(e.target.closest('.pv-text')||e.target.closest('.pv-rate')) return; this.parentNode.classList.toggle('open'); }); });
+    var _sa=host.querySelector('[data-showall]'); if(_sa) _sa.addEventListener('click', function(){ var b=host.querySelector('.pv-board'); if(b)b.classList.add('showall'); this.style.display='none'; });
+    var _si=host.querySelector('[data-sbsearch]'); if(_si) _si.addEventListener('input', function(){ var q=this.value.toLowerCase().trim(); host.querySelectorAll('.pv-sb').forEach(function(r){ if(!q){ r.style.display=''; } else { r.style.display = r.getAttribute('data-name').indexOf(q)>=0 ? 'block' : 'none'; } }); });
+    host.querySelectorAll('.pv-inv').forEach(function(b){ b.addEventListener('click', function(){ alert('Invite sends their sign-up link once your SMS/email connector is on. For now, share the register link manually.'); }); });
   }
 
   // Set/update an agent's commission rate from the Production tab.
