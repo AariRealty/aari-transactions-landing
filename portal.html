@@ -351,6 +351,15 @@
   .pv-drow .pbar2{height:6px;background:#F4EFE6;border-radius:5px;overflow:hidden;} .pv-drow .pf2{display:block;height:100%;background:#161310;border-radius:5px;}
   .pv-drow .pst2{font-size:8.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;}
   .pv-drow .mny2{text-align:right;font-weight:680;}
+  .pv-dterms{background:#fff;border:1px solid var(--line);border-radius:10px;padding:11px 13px;margin:4px 0 10px;}
+  .pv-dterms .dt-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+  .pv-dterms label{font-size:11px;color:var(--muted);display:flex;flex-direction:column;gap:3px;}
+  .pv-dterms input[type=text]{font-size:13px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;width:100%;}
+  .pv-dterms .dt-chk{flex-direction:row;align-items:center;gap:6px;grid-column:1 / -1;font-size:12px;color:var(--ink);}
+  .pv-dterms .dt-foot{display:flex;justify-content:space-between;align-items:center;margin-top:11px;}
+  .pv-dterms .dt-cut{font-size:13px;font-weight:600;}
+  .pv-dterms .dt-cancel{background:none;border:1px solid var(--line);border-radius:20px;padding:5px 13px;font-size:11.5px;margin-right:6px;cursor:pointer;}
+  .pv-dterms .dt-save{background:var(--ink);color:#fff;border:0;border-radius:20px;padding:6px 15px;font-size:11.5px;font-weight:600;cursor:pointer;}
   .pv-ahdr .nm{font-weight:660;font-size:13px;} .pv-ahdr .meta{font-size:11px;color:var(--muted);flex:1;}
   .pv-ahdr .pv-chev{color:var(--muted);font-size:10px;transition:transform .15s;}
   .pv-ag.collapsed .pv-chev{transform:rotate(180deg);} .pv-ag.collapsed .pv-aglist{display:none;}
@@ -3794,8 +3803,12 @@
   const DEFAULT_COMM_PCT = 2.5; // used until an agent's real rate is set
   function teamComm(f){
     const a = _teamAgents[f.agent_id];
-    const rate = (a && a.default_commission_pct != null) ? Number(a.default_commission_pct) : DEFAULT_COMM_PCT;
-    return teamPrice(f) * (rate/100);
+    // Per-deal rate override wins; else the agent's stored rate; else the 2.5% default.
+    const rate = (f.commission_pct != null && f.commission_pct !== '') ? Number(f.commission_pct)
+               : (a && a.default_commission_pct != null) ? Number(a.default_commission_pct)
+               : DEFAULT_COMM_PCT;
+    const bonus = f.commission_bonus_cents ? Number(f.commission_bonus_cents)/100 : 0;
+    return teamPrice(f) * (rate/100) + bonus;  // bonus rides along, then any split is applied by the caller
   }
   // Comp model · agent 80 / company 20; team lead = 10% OF the company split (carved out); + per-file transaction fee.
   const COMPANY_SPLIT_PCT = 20, TEAM_LEAD_PCT = 10;
@@ -3931,7 +3944,7 @@
         var others = item.sps.filter(function(s){return s.agent_id!==selfId;}).map(function(s){ return esc(splitName(s.agent_id).split(' ')[0]); });
         note = ' <span class="pv-split">'+item.pct+'% &middot; w/ '+others.join(', ')+'</span>';
       }
-      return '<div class="pv-drow"><span class="adr">'+esc(fileLabel(f))+note+'</span>' +
+      return '<div class="pv-drow" data-dealedit="'+esc(f.id)+'" style="cursor:pointer" title="Tap to edit price &amp; commission"><span class="adr">'+esc(fileLabel(f))+note+'</span>' +
         '<span class="prog"><span class="pbar2"><span class="pf2" style="width:'+Math.round((idx+1)/total*100)+'%"></span></span><span class="pst2">'+esc(track[idx])+'</span></span>' +
         '<span class="mny2">'+teamFmt(price)+'</span></div>';
     };
@@ -4024,6 +4037,7 @@
     var _sa=host.querySelector('[data-showall]'); if(_sa) _sa.addEventListener('click', function(){ var b=host.querySelector('.pv-board'); if(b)b.classList.add('showall'); this.style.display='none'; });
     var _si=host.querySelector('[data-sbsearch]'); if(_si) _si.addEventListener('input', function(){ var q=this.value.toLowerCase().trim(); var w=host.querySelector('.pv-sbwrap'); if(w) w.classList.toggle('searching', !!q); host.querySelectorAll('.pv-sb').forEach(function(r){ if(!q){ r.style.display=''; } else { r.style.display = r.getAttribute('data-name').indexOf(q)>=0 ? 'block' : 'none'; } }); });
     host.querySelectorAll('[data-grptoggle]').forEach(function(h){ h.addEventListener('click', function(){ this.parentNode.classList.toggle('open'); }); });
+    host.querySelectorAll('[data-dealedit]').forEach(function(r){ r.addEventListener('click', function(e){ e.stopPropagation(); editDealTerms(this.getAttribute('data-dealedit'), this); }); });
     host.querySelectorAll('.pv-inv').forEach(function(b){ b.addEventListener('click', function(){ alert('Invite sends their sign-up link once your SMS/email connector is on. For now, share the register link manually.'); }); });
     host.querySelectorAll('.pv-face[data-reach]').forEach(function(f){ f.addEventListener('click', function(){ host.querySelectorAll('.pv-face').forEach(function(x){x.classList.remove('on');}); this.classList.add('on'); renderReachDetail(this.getAttribute('data-reach')); }); });
     host.querySelectorAll('.pv-face[data-invite]').forEach(function(f){ f.addEventListener('click', function(){ alert('Invite sends their sign-up link once your SMS/email connector is on.'); }); });
@@ -4044,6 +4058,39 @@
       if(_teamAgents[agentId]) _teamAgents[agentId].default_commission_pct = n;
       renderTeamView();
     } catch(e){ alert('Could not save the rate.'); }
+  }
+
+  // Inline per-deal commission editor · price + rate override + bonus + company-lead 50/50.
+  function editDealTerms(fileId, rowEl){
+    var f=null; (_teamFiles||[]).forEach(function(x){ if(String(x.id)===String(fileId)) f=x; });
+    if(!f){ alert('Deal not found.'); return; }
+    var nxt=rowEl.nextSibling;
+    if(nxt && nxt.className==='pv-dterms'){ nxt.parentNode.removeChild(nxt); return; }
+    var price=teamPrice(f);
+    var pct=(f.commission_pct!=null && f.commission_pct!=='')?f.commission_pct:'';
+    var bonus=f.commission_bonus_cents?Number(f.commission_bonus_cents)/100:'';
+    var isLead=!!(Array.isArray(f.splits) && f.splits.length>1);
+    var box=document.createElement('div'); box.className='pv-dterms';
+    box.innerHTML='<div class="dt-grid">'+
+      '<label>Sale price<input type="text" id="dt-price" value="'+(price||'')+'"></label>'+
+      '<label>Commission %<input type="text" id="dt-pct" value="'+pct+'" placeholder="2.5"></label>'+
+      '<label>Bonus $<input type="text" id="dt-bonus" value="'+bonus+'"></label>'+
+      '<label class="dt-chk"><input type="checkbox" id="dt-lead"'+(isLead?' checked':'')+'> Company lead (50/50 w/ Aari)</label>'+
+    '</div><div class="dt-foot"><span id="dt-cut" class="dt-cut"></span><span><button class="dt-cancel" type="button">Cancel</button><button class="dt-save" type="button">Save</button></span></div>';
+    rowEl.parentNode.insertBefore(box, rowEl.nextSibling);
+    function num(id){ return parseFloat(String(document.getElementById(id).value).replace(/[^0-9.]/g,'')); }
+    function calc(){ var p=num('dt-price')||0, r=num('dt-pct'); if(isNaN(r)) r=DEFAULT_COMM_PCT; var b=num('dt-bonus')||0; var lead=document.getElementById('dt-lead').checked; var total=p*(r/100)+b; var cut=lead?total/2:total; document.getElementById('dt-cut').textContent='Agent cut '+teamFmt(cut)+(lead?' (50/50)':''); }
+    box.addEventListener('input', calc); calc();
+    box.querySelector('.dt-cancel').addEventListener('click', function(){ box.parentNode.removeChild(box); });
+    box.querySelector('.dt-save').addEventListener('click', async function(){
+      var p=num('dt-price')||0, rRaw=String(document.getElementById('dt-pct').value).replace(/[^0-9.]/g,''), b=num('dt-bonus')||0, lead=document.getElementById('dt-lead').checked;
+      var payload={ purchase_price_cents: Math.round(p*100), commission_pct: rRaw===''?null:Number(rRaw), commission_bonus_cents: Math.round(b*100) };
+      if(lead && _profile && _profile.id && f.agent_id){ payload.splits=[{agent_id:f.agent_id,pct:50},{agent_id:_profile.id,pct:50}]; }
+      else if(!lead){ payload.splits=null; }
+      this.disabled=true; this.textContent='Saving…';
+      try{ var res=await _client.from('files').update(payload).eq('id', f.id); if(res.error){ alert('Could not save: '+res.error.message); this.disabled=false; this.textContent='Save'; return; } Object.assign(f,payload); renderTeamView(); }
+      catch(e){ alert('Could not save the deal terms.'); this.disabled=false; this.textContent='Save'; }
+    });
   }
 
   // ===== Bilingual commission nudge · fresh each time, EN + ES =====
