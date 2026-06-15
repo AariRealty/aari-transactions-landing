@@ -385,6 +385,21 @@
   .pv-line .pv-face{margin-left:-16px;cursor:pointer;border-radius:50%;display:inline-flex;box-shadow:0 0 0 3px #fff, 0 1px 4px rgba(0,0,0,.1);}
   .pv-line .pv-face:first-child{margin-left:0;}
   .pv-line .pv-face.on{box-shadow:0 0 0 3px #fff, 0 0 0 6px #161310;position:relative;z-index:3;}
+  .pv-rlist{display:flex;flex-direction:column;}
+  .pv-rrow{display:flex;align-items:center;gap:11px;padding:11px 2px;border-top:1px solid var(--line);}
+  .pv-rrow:first-child{border-top:0;}
+  .pv-rrow.done{opacity:.5;}
+  .pv-rrow .rr-tap{display:flex;align-items:center;gap:11px;flex:1;min-width:0;cursor:pointer;}
+  .pv-rrow .rr-av .pv-av{width:34px;height:34px;}
+  .pv-rrow .rr-main{display:flex;flex-direction:column;min-width:0;}
+  .pv-rrow .rr-nm{font-size:13.5px;font-weight:550;}
+  .pv-rrow.done .rr-nm{text-decoration:line-through;}
+  .pv-rrow .rr-rs{font-size:11px;color:var(--muted);}
+  .pv-rrow .rr-acts{display:flex;gap:5px;flex:none;}
+  .pv-mbtn{font-size:11px;border:1px solid var(--line);background:#fff;border-radius:20px;padding:4px 10px;cursor:pointer;color:var(--ink);white-space:nowrap;}
+  .pv-mbtn:hover{background:var(--soft);}
+  .pv-rrow .rr-stamp{font-size:11px;font-weight:600;background:var(--ink);color:#fff;border-radius:20px;padding:4px 11px;flex:none;white-space:nowrap;}
+  .pv-rrow.sel{background:var(--soft);border-radius:10px;}
   .pv-rdetail{border-top:1px solid var(--line);margin-top:14px;padding-top:14px;}
   .pv-rdetail .rdh{display:flex;align-items:center;gap:11px;}
   .pv-rdetail .rdmeta{display:flex;flex-direction:column;} .pv-rdetail .rdn{font-weight:680;font-size:15px;} .pv-rdetail .rdr{font-size:12px;color:var(--muted);}
@@ -3814,8 +3829,13 @@
   const COMPANY_SPLIT_PCT = 20, TEAM_LEAD_PCT = 10;
   function fileFee(f){ var ft=String(f.file_type||'').toLowerCase(); if(ft==='rental') return 299; if(String(f.property_type||'').toLowerCase()==='land') return 299; return 499; }
   function yourCutOf(items){
-    var fee=0, gross=0; (items||[]).forEach(function(it){ var f=it.f||it; fee+=fileFee(f); gross+=teamComm(f); });
-    var company=gross*(COMPANY_SPLIT_PCT/100); var team=company*(TEAM_LEAD_PCT/100); var companyNet=company-team;
+    var fee=0, gross=0, company=0, team=0;
+    (items||[]).forEach(function(it){ var f=it.f||it; var g=teamComm(f);
+      var bsp=(f.brokerage_split_pct!=null&&f.brokerage_split_pct!=='')?Number(f.brokerage_split_pct):COMPANY_SPLIT_PCT;
+      var tsp=(f.team_split_pct!=null&&f.team_split_pct!=='')?Number(f.team_split_pct):TEAM_LEAD_PCT;
+      var comp=g*(bsp/100); fee+=fileFee(f); gross+=g; company+=comp; team+=comp*(tsp/100);
+    });
+    var companyNet=company-team;
     return { fee:fee, gross:gross, company:company, team:team, companyNet:companyNet, total: fee+company };
   }
   function teamFmt(n){
@@ -3959,21 +3979,26 @@
     pendKeys.forEach(function(k){ var fl=pend[k]; var nm=PENDING_NAMES[k]||k; groupsArr.push({ id:null, name:nm, ini:(nm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase(), photo:photoFor(nm), items:fl.map(function(f){return {f:f,pct:100,sps:[{agent_id:null,pct:100}]};}), deals:fl.length, pipe:fl.reduce(function(s,f){return s+teamPrice(f);},0), gci:0, pending:true }); });
     groupsArr.forEach(function(g){ g.quiet = (g.deals<=1) || (staleDays(g.items)>21); });
     groupsArr.sort(function(a,b){ return (b.gci-a.gci) || (b.pipe-a.pipe); });
-    // Reach-out picks: top earner · a quiet agent · a deadline this week
-    var reachPicks=[], seen={};
+    // Method-aware reach-out · ALL agents, mark reached (text / call / in person), resets daily.
     var _meId = _profile && _profile.id;
-    var topG = groupsArr.filter(function(g){return !g.pending && g.pipe>0 && g.id!==_meId;})[0];
-    if(topG){ reachPicks.push({g:topG, kls:'top', label:'Top earner', reason:(topG.gci?teamFmt(topG.gci)+' waiting — feed leads':'Your top producer — recognize')}); seen[topG.id]=1; }
-    var quietG = groupsArr.filter(function(g){return g.quiet && !seen[g.id] && g.id!==_meId;})[0];
-    if(quietG){ reachPicks.push({g:quietG, kls:'quiet', label:'Quiet', reason:(quietG.deals<=1?'Few active deals — check in':'No new file in '+staleDays(quietG.items)+'d — check in')}); seen[quietG.id]=1; }
-    var dueFile=null,dueG=null,wkk=7*864e5;
-    groupsArr.some(function(g){ return g.items.some(function(it){ var s=it.f.closing_date?(''+it.f.closing_date).slice(0,10):''; var d=s?new Date(s+'T00:00:00').getTime():0; if(d&&(d-nowMs)<wkk&&(d-nowMs)>-(45*864e5)&&!seen[g.id]&&g.id!==_meId){ dueFile=it.f;dueG=g;return true; } return false; }); });
-    if(dueG&&dueFile){ reachPicks.push({g:dueG, kls:'due', label:'Closing soon', reason:fileLabel(dueFile)+' — '+txDate(dueFile.closing_date)}); seen[dueG.id]=1; }
-    _reachGroups = {}; reachPicks.forEach(function(p){ if(p.g.id) _reachGroups[p.g.id] = p; });
-    const reachStrip = reachPicks.length ? ('<div class="pv-eyebrow">Reach out today &middot; tap a face</div><div class="pv-line">'+reachPicks.map(function(p,i){ return '<span class="pv-face'+(i===0?' on':'')+'" '+(p.g.id?('data-reach="'+esc(p.g.id)+'"'):'data-invite="1"')+' title="'+esc(p.g.name)+'">'+avatarHtml(p.g,74)+'</span>'; }).join('')+'</div><div id="pv-reach-detail"></div>') : '';
+    var _today = (function(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); })();
+    var _reached = {}; try { _reached = JSON.parse(localStorage.getItem('aari-reached-'+_today)||'{}'); } catch(_e){ _reached={}; }
+    var _soon = {}; groupsArr.forEach(function(g){ var best=null; (g.items||[]).forEach(function(it){ var s=it.f.closing_date?(''+it.f.closing_date).slice(0,10):''; var d=s?new Date(s+'T00:00:00').getTime():0; if(d&&(d-nowMs)<7*864e5&&(d-nowMs)>-(45*864e5)&&(best===null||d<best)) best=d; }); if(best) _soon[g.id||g.name]=best; });
+    var reachReason = function(g){ var k=g.id||g.name; if(_soon[k]) return 'Closing '+txDate(new Date(_soon[k]).toISOString().slice(0,10)); if(g.pending) return 'New agent — welcome'; if(g.deals===0) return 'No deals yet — check in'; if(g.quiet) return 'Quiet — check in'; if(g.gci>0) return teamFmt(g.gci)+' waiting'; return g.deals+' active deal'+(g.deals===1?'':'s'); };
+    var reachList = groupsArr.filter(function(g){ return (g.id||g.name) && g.id!==_meId; });
+    _reachGroups = {}; reachList.forEach(function(g){ if(g.id) _reachGroups[g.id] = {g:g, label:reachReason(g), reason:reachReason(g)}; });
+    var reachedCount = reachList.filter(function(g){ return _reached[g.id||g.name]; }).length;
+    var reachRows = reachList.map(function(g){ var key=g.id||g.name; var r=_reached[key]; var av=avatarHtml(g,34);
+      if(r){ return '<div class="pv-rrow done"><span class="rr-av">'+av+'</span><span class="rr-main"><span class="rr-nm">'+esc(g.name)+'</span></span><span class="rr-stamp">'+esc(r.label)+' &middot; '+esc(r.time)+'</span></div>'; }
+      var dr = g.id ? (' data-reach="'+esc(g.id)+'"') : '';
+      return '<div class="pv-rrow" data-key="'+esc(key)+'"'+(g.id?(' data-aid="'+esc(g.id)+'"'):'')+'>'+
+        '<span class="rr-tap"'+dr+'><span class="rr-av">'+av+'</span><span class="rr-main"><span class="rr-nm">'+esc(g.name)+(g.pending?' <span class="qflag">pending</span>':'')+'</span><span class="rr-rs">'+esc(reachReason(g))+'</span></span></span>'+
+        '<span class="rr-acts"><button class="pv-mbtn" data-m="text" data-ml="Texted">Text</button><button class="pv-mbtn" data-m="call" data-ml="Called">Call</button><button class="pv-mbtn" data-m="person" data-ml="In&nbsp;person">In&nbsp;person</button></span>'+
+      '</div>'; }).join('');
+    const reachStrip = reachList.length ? ('<div class="pv-eyebrow" style="display:flex;justify-content:space-between;align-items:center"><span>Reach out today</span><span id="pv-reachcount" style="text-transform:none;letter-spacing:0;font-weight:600;color:var(--ink)">'+reachedCount+' of '+reachList.length+' reached</span></div><div class="pv-rlist">'+reachRows+'</div><div id="pv-reach-detail"></div>') : '';
     // Scoreboard · C grouped (Producers ranked + Needs attention + New · no deals)
     const sbRowHtml = function(g, rank, beyond){
-      var actions = g.pending ? '' : ('<button class="pv-rate'+(g.rate==null?' empty':'')+'" data-rate="'+esc(g.id)+'">'+(g.rate!=null?(g.rate+'%'):'Set rate')+'</button><button class="pv-text" data-nudge="'+esc(g.id)+'">Text &rarr;</button>');
+      var actions = g.pending ? '' : ('<button class="pv-text" data-nudge="'+esc(g.id)+'">Text &rarr;</button>');
       var flag = g.pending ? '<span class="qflag">pending</span>' : '';
       return '<div class="pv-sb'+(beyond?' beyond':'')+'" data-name="'+esc(g.name.toLowerCase())+'">' +
         '<div class="pv-srow" data-sbtoggle><span class="rk">'+(rank||'·')+'</span>'+avatarHtml(g,30)+'<span class="nmwrap"><span class="nm">'+esc(g.name)+flag+'</span><span class="meta">'+g.deals+' deals &middot; '+teamFmt(g.pipe)+'</span></span><span class="comm"><span class="v">'+teamFmt(g.gci)+'</span><span class="k">waiting</span></span><span class="pv-chev">&#9662;</span></div>' +
@@ -4039,9 +4064,9 @@
     host.querySelectorAll('[data-grptoggle]').forEach(function(h){ h.addEventListener('click', function(){ this.parentNode.classList.toggle('open'); }); });
     host.querySelectorAll('[data-dealedit]').forEach(function(r){ r.addEventListener('click', function(e){ e.stopPropagation(); editDealTerms(this.getAttribute('data-dealedit'), this); }); });
     host.querySelectorAll('.pv-inv').forEach(function(b){ b.addEventListener('click', function(){ alert('Invite sends their sign-up link once your SMS/email connector is on. For now, share the register link manually.'); }); });
-    host.querySelectorAll('.pv-face[data-reach]').forEach(function(f){ f.addEventListener('click', function(){ host.querySelectorAll('.pv-face').forEach(function(x){x.classList.remove('on');}); this.classList.add('on'); renderReachDetail(this.getAttribute('data-reach')); }); });
-    host.querySelectorAll('.pv-face[data-invite]').forEach(function(f){ f.addEventListener('click', function(){ alert('Invite sends their sign-up link once your SMS/email connector is on.'); }); });
-    var _rd0 = host.querySelector('.pv-face[data-reach]'); if(_rd0) renderReachDetail(_rd0.getAttribute('data-reach'));
+    host.querySelectorAll('.rr-tap[data-reach]').forEach(function(f){ f.addEventListener('click', function(){ var id=this.getAttribute('data-reach'); host.querySelectorAll('.pv-rrow').forEach(function(x){x.classList.remove('sel');}); var row=this.closest('.pv-rrow'); if(row) row.classList.add('sel'); renderReachDetail(id); }); });
+    host.querySelectorAll('.pv-rrow .pv-mbtn').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); var row=this.closest('.pv-rrow'); var key=row.getAttribute('data-key'); var aid=row.getAttribute('data-aid'); markReached(key, this.getAttribute('data-ml')); if(this.getAttribute('data-m')==='text' && aid) teamNudge(aid); }); });
+    var _rd0 = host.querySelector('.rr-tap[data-reach]'); if(_rd0) renderReachDetail(_rd0.getAttribute('data-reach'));
   }
 
   // Set/update an agent's commission rate from the Production tab.
@@ -4060,6 +4085,16 @@
     } catch(e){ alert('Could not save the rate.'); }
   }
 
+  // Mark an agent reached today (text / call / in person). Resets daily, persists via localStorage.
+  function markReached(key, label){
+    var d=new Date(); var today=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+    var k='aari-reached-'+today; var map={}; try{ map=JSON.parse(localStorage.getItem(k)||'{}'); }catch(_e){ map={}; }
+    var t=d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}).replace(/\s/g,'').toLowerCase();
+    map[key]={label:(label||'Reached').replace('&nbsp;',' '), time:t};
+    try{ localStorage.setItem(k, JSON.stringify(map)); }catch(_e){}
+    renderTeamView();
+  }
+
   // Inline per-deal commission editor · price + rate override + bonus + company-lead 50/50.
   function editDealTerms(fileId, rowEl){
     var f=null; (_teamFiles||[]).forEach(function(x){ if(String(x.id)===String(fileId)) f=x; });
@@ -4069,23 +4104,30 @@
     var price=teamPrice(f);
     var pct=(f.commission_pct!=null && f.commission_pct!=='')?f.commission_pct:'';
     var bonus=f.commission_bonus_cents?Number(f.commission_bonus_cents)/100:'';
+    var bspl=(f.brokerage_split_pct!=null && f.brokerage_split_pct!=='')?f.brokerage_split_pct:'';
+    var tspl=(f.team_split_pct!=null && f.team_split_pct!=='')?f.team_split_pct:'';
     var isLead=!!(Array.isArray(f.splits) && f.splits.length>1);
     var box=document.createElement('div'); box.className='pv-dterms';
     box.innerHTML='<div class="dt-grid">'+
       '<label>Sale price<input type="text" id="dt-price" value="'+(price||'')+'"></label>'+
       '<label>Commission %<input type="text" id="dt-pct" value="'+pct+'" placeholder="2.5"></label>'+
       '<label>Bonus $<input type="text" id="dt-bonus" value="'+bonus+'"></label>'+
+      '<label>Brokerage split %<input type="text" id="dt-bspl" value="'+bspl+'" placeholder="20"></label>'+
+      '<label>Team split %<input type="text" id="dt-tspl" value="'+tspl+'" placeholder="10"></label>'+
       '<label class="dt-chk"><input type="checkbox" id="dt-lead"'+(isLead?' checked':'')+'> Company lead (50/50 w/ Aari)</label>'+
     '</div><div class="dt-foot"><span id="dt-cut" class="dt-cut"></span><span><button class="dt-cancel" type="button">Cancel</button><button class="dt-save" type="button">Save</button></span></div>';
     rowEl.parentNode.insertBefore(box, rowEl.nextSibling);
     function num(id){ return parseFloat(String(document.getElementById(id).value).replace(/[^0-9.]/g,'')); }
-    function calc(){ var p=num('dt-price')||0, r=num('dt-pct'); if(isNaN(r)) r=DEFAULT_COMM_PCT; var b=num('dt-bonus')||0; var lead=document.getElementById('dt-lead').checked; var total=p*(r/100)+b; var cut=lead?total/2:total; document.getElementById('dt-cut').textContent='Agent cut '+teamFmt(cut)+(lead?' (50/50)':''); }
-    box.addEventListener('input', calc); calc();
+    function calc(){ var p=num('dt-price')||0, r=num('dt-pct'); if(isNaN(r)) r=DEFAULT_COMM_PCT; var b=num('dt-bonus')||0; var bsp=num('dt-bspl'); if(isNaN(bsp)) bsp=COMPANY_SPLIT_PCT; var tsp=num('dt-tspl'); if(isNaN(tsp)) tsp=TEAM_LEAD_PCT; var gross=p*(r/100)+b; var you=gross*(bsp/100); var team=you*(tsp/100); var agent=gross-you; document.getElementById('dt-cut').innerHTML='Agent <b>'+teamFmt(agent)+'</b> &middot; You <b>'+teamFmt(you)+'</b> &middot; Team <b>'+teamFmt(team)+'</b>'; }
+    box.addEventListener('input', calc);
+    var leadCb=box.querySelector('#dt-lead'); if(leadCb) leadCb.addEventListener('change', function(){ if(this.checked) document.getElementById('dt-bspl').value='50'; calc(); });
+    calc();
     box.querySelector('.dt-cancel').addEventListener('click', function(){ box.parentNode.removeChild(box); });
     box.querySelector('.dt-save').addEventListener('click', async function(){
       var p=num('dt-price')||0, rRaw=String(document.getElementById('dt-pct').value).replace(/[^0-9.]/g,''), b=num('dt-bonus')||0, lead=document.getElementById('dt-lead').checked;
-      var payload={ purchase_price_cents: Math.round(p*100), commission_pct: rRaw===''?null:Number(rRaw), commission_bonus_cents: Math.round(b*100) };
-      if(lead && _profile && _profile.id && f.agent_id){ payload.splits=[{agent_id:f.agent_id,pct:50},{agent_id:_profile.id,pct:50}]; }
+      var bsRaw=String(document.getElementById('dt-bspl').value).replace(/[^0-9.]/g,''), tsRaw=String(document.getElementById('dt-tspl').value).replace(/[^0-9.]/g,'');
+      var payload={ purchase_price_cents: Math.round(p*100), commission_pct: rRaw===''?null:Number(rRaw), commission_bonus_cents: Math.round(b*100), brokerage_split_pct: bsRaw===''?null:Number(bsRaw), team_split_pct: tsRaw===''?null:Number(tsRaw) };
+      if(lead && _profile && _profile.id && f.agent_id){ payload.splits=[{agent_id:f.agent_id,pct:50},{agent_id:_profile.id,pct:50}]; if(payload.brokerage_split_pct==null) payload.brokerage_split_pct=50; }
       else if(!lead){ payload.splits=null; }
       this.disabled=true; this.textContent='Saving…';
       try{ var res=await _client.from('files').update(payload).eq('id', f.id); if(res.error){ alert('Could not save: '+res.error.message); this.disabled=false; this.textContent='Save'; return; } Object.assign(f,payload); renderTeamView(); }
