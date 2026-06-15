@@ -318,6 +318,8 @@
   .pv-goalrow b{color:#161310;}
   .pv-eyebrow{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:#A99B7E;margin:16px 0 9px;}
   .pv-bento{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;}
+  .pv-strip{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;}
+  @media(max-width:560px){.pv-strip{grid-template-columns:repeat(2,1fr);}}
   .pv-tile{background:#F4EFE6;border:1px solid var(--line);border-radius:13px;padding:12px;}
   .pv-tile.h2{grid-column:span 2;background:#fff;}
   .pv-tile.dark{background:#161310;color:#fff;border-color:#161310;}
@@ -3781,18 +3783,10 @@
       ? fgIds.map(id => '<div class="pv-fgrow"><span class="bl">'+esc(_fgNames[id]||'TC')+'</span><span class="bt"><span class="bf" style="width:'+Math.round(fgCount[id]/fgMax*100)+'%"></span></span><span class="bv">'+fgCount[id]+'</span></div>').join('')
       : '<div style="font-size:11px;color:var(--muted);margin-top:6px">No File-Org files yet.</div>';
 
-    // Graphics · stage funnel bars + agent bars (commission if rates set, else pipeline)
-    const fMax = Math.max(1, buckets.started, buckets.progress, buckets.final);
-    const vbar = function(n,l){ return '<div class="pv-vbar"><span class="vn">'+n+'</span><span class="vc" style="height:'+Math.round(n/fMax*100)+'%"></span><span class="vl">'+l+'</span></div>'; };
-    const cMax = Math.max.apply(null, [1].concat(agentIds.map(id=>byAgent[id])));
-    const agentPipe = {}; agentIds.forEach(id => { agentPipe[id] = files.filter(f=>f.agent_id===id).reduce((s,f)=>s+teamPrice(f),0); });
-    const pMax = Math.max.apply(null, [1].concat(agentIds.map(id=>agentPipe[id])));
-    const ratesSet = cMax > 1;
-    const agentBars = agentIds.map(id => {
-      const val = ratesSet ? byAgent[id] : agentPipe[id];
-      const mx = ratesSet ? cMax : pMax;
-      return '<div class="pv-lb"><div class="t"><span>'+esc(teamAgentName(id))+'</span><span>'+teamFmt(val)+'</span></div><div class="tk"><span class="fl" style="width:'+Math.round((val/mx)*100)+'%"></span></div></div>';
-    }).join('');
+    // Mix · representation (client_type) + service (service_type) — real data
+    const repMap = {}; files.forEach(function(f){ var t=(f.client_type||'').toLowerCase(); var lbl = t==='buyer'?'Buyer':t==='seller'?'Seller':t==='tenant'?'Tenant':t==='landlord'?'Landlord':(t?(t.charAt(0).toUpperCase()+t.slice(1)):'Other'); repMap[lbl]=(repMap[lbl]||0)+1; });
+    const svcMap = {}; files.forEach(function(f){ var s=txSvc(f); var lbl=(s==='tc'||s.indexOf('tc_')===0)?'Contract to Close':(s==='lc'||s==='listing'||s==='listing_docs'||s==='mls_setup')?'Listing':(s.indexOf('op_')===0)?'Offer Prep':(s==='file_org')?'File Organization':(s==='standalone_review')?'Review':(s==='rental')?'Rental':'Other'; svcMap[lbl]=(svcMap[lbl]||0)+1; });
+    const mixBars = function(map){ var ks=Object.keys(map).sort(function(a,b){return map[b]-map[a];}); var mx=Math.max.apply(null,[1].concat(ks.map(function(k){return map[k];}))); return ks.map(function(k){ return '<div class="pv-fgrow"><span class="bl">'+esc(k)+'</span><span class="bt"><span class="bf" style="width:'+Math.round(map[k]/mx*100)+'%"></span></span><span class="bv">'+map[k]+'</span></div>'; }).join(''); };
 
     // Pending · ownerless imported files grouped by intended owner
     const PENDING_NAMES = { 'rooseveltsanchezrealestate@gmail.com':'Roosevelt Sanchez', 'flaviamaguilera@gmail.com':'Flavia Aguilera', 'machuca.alied@gmail.com':'Alied Machuca', 'puentesana99@gmail.com':'Ana Puentes' };
@@ -3814,22 +3808,24 @@
       '<div class="pv-gauge"><svg width="200" height="106" viewBox="0 0 200 110"><path d="M10,100 A90,90 0 0,1 190,100" fill="none" stroke="#EFE7D7" stroke-width="13" stroke-linecap="round"/>'+gPath+'</svg>' +
         '<div class="cap"><div class="v">'+teamFmt(heroVal)+'</div><div class="k">of '+teamFmt(goal)+' '+(heroComm?'GCI goal':'pipeline goal')+'</div></div></div>' +
       '<div class="pv-goalrow"><span><b>'+allActive+'</b> active</span><span><b>'+teamFmt(allPipe)+'</b> pipeline</span><span><b>'+(heroComm?teamFmt(totalComm):'set rates')+'</b> est. GCI</span></div>' +
-      '<div class="pv-charts">' +
-        '<div class="pv-chart"><div class="ct">Pipeline by stage</div><div class="pv-vbars">'+vbar(buckets.started,'Just started')+vbar(buckets.progress,'In progress')+vbar(buckets.final,'Final')+'</div></div>' +
-        '<div class="pv-chart"><div class="ct">'+(ratesSet?'Est. commission by agent':'Pipeline by agent')+'</div>'+agentBars+'</div>' +
+      '<div class="pv-eyebrow">Price</div>' +
+      '<div class="pv-strip">' +
+        '<div class="pv-tile"><div class="tl">Avg sale</div><div class="tn">'+teamFmt(avgP)+'</div></div>' +
+        '<div class="pv-tile"><div class="tl">High</div><div class="tn">'+teamFmt(maxP)+'</div></div>' +
+        '<div class="pv-tile"><div class="tl">Low</div><div class="tn">'+teamFmt(minP)+'</div></div>' +
+        '<div class="pv-tile"><div class="tl">Active files</div><div class="tn">'+allActive+'</div></div>' +
+        '<div class="pv-tile dark"><div class="tl">Watch</div><div class="tn">'+closingSoon+'</div><div style="font-size:9px;color:#C9BFA8">closing &lt;7d &middot; '+unsigned+' unsigned SA</div></div>' +
       '</div>' +
       '<div class="pv-eyebrow">The numbers</div>' +
       '<div class="pv-bento">' +
         '<div class="pv-tile"><div class="tl">Just started</div><div class="tn">'+buckets.started+'</div></div>' +
         '<div class="pv-tile"><div class="tl">In progress</div><div class="tn">'+buckets.progress+'</div></div>' +
         '<div class="pv-tile"><div class="tl">Final stretch</div><div class="tn">'+buckets.final+'</div></div>' +
-        '<div class="pv-tile dark"><div class="tl">Watch</div><div class="tn">'+closingSoon+'</div><div style="font-size:9.5px;color:#C9BFA8">closing &lt;7d &middot; '+unsigned+' unsigned SA</div></div>' +
-        '<div class="pv-tile"><div class="tl">Avg sale</div><div class="tn">'+teamFmt(avgP)+'</div></div>' +
-        '<div class="pv-tile"><div class="tl">High</div><div class="tn">'+teamFmt(maxP)+'</div></div>' +
-        '<div class="pv-tile"><div class="tl">Low</div><div class="tn">'+teamFmt(minP)+'</div></div>' +
-        '<div class="pv-tile"><div class="tl">Agents</div><div class="tn">'+(agentIds.length + pendKeys.length)+'</div></div>' +
-        '<div class="pv-tile h2"><div class="tl">File Organization load</div>'+fgBars+'</div>' +
-        '<div class="pv-tile h2"><div class="tl">Pipeline value</div><div class="tn">'+teamFmt(allPipe)+'</div><div style="font-size:10px;color:var(--muted)">across '+allActive+' active files</div></div>' +
+        '<div class="pv-tile"><div class="tl">Pipeline</div><div class="tn">'+teamFmt(allPipe)+'</div></div>' +
+        '<div class="pv-tile h2"><div class="tl">Representation</div><div style="margin-top:8px">'+mixBars(repMap)+'</div></div>' +
+        '<div class="pv-tile h2"><div class="tl">Service mix</div><div style="margin-top:8px">'+mixBars(svcMap)+'</div></div>' +
+        '<div class="pv-tile h2"><div class="tl">File Organization load</div><div style="margin-top:8px">'+fgBars+'</div></div>' +
+        '<div class="pv-tile h2"><div class="tl">Agents</div><div class="tn">'+(agentIds.length + pendKeys.length)+'</div><div style="font-size:10px;color:var(--muted)">'+agentIds.length+' active &middot; '+pendKeys.length+' pending</div></div>' +
       '</div>' +
       '<div class="pv-eyebrow">By agent &middot; every transaction</div>' +
       agentRows +
