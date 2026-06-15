@@ -3808,23 +3808,7 @@
     const agInitials = function(id){ var nm=teamAgentName(id); return (nm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase(); };
     const fileLabel = function(f){ var a=f.property_address||''; var hasAddr = a && a.indexOf('Buyer representation')!==0; return hasAddr ? a : (f.client_name || a || 'File'); };
     const flatRow = function(f){ var track=txTrack(f), total=track.length; var idx=Math.max(0,Math.min(txStageIdx(f),total-1)); return '<div class="pv-flat"><span class="a">'+esc(fileLabel(f))+'</span><span class="st">'+esc(track[idx])+'</span><span class="mny">'+teamFmt(teamPrice(f))+'</span></div>'; };
-    const agentRows = agentIds.map(id => {
-      const af = files.filter(f => f.agent_id === id);
-      const pipe = af.reduce((s,f)=>s+teamPrice(f),0);
-      const gci = byAgent[id];
-      const rate = (_teamAgents[id] && _teamAgents[id].default_commission_pct != null) ? _teamAgents[id].default_commission_pct : null;
-      return '<div class="pv-ag">' +
-        '<div class="pv-ahdr" data-agtoggle>' +
-          '<span class="mono">'+esc(agInitials(id))+'</span>' +
-          '<span class="nm">'+esc(teamAgentName(id))+'</span>' +
-          '<span class="meta">'+af.length+' &middot; '+teamFmt(pipe)+(gci?(' &middot; '+teamFmt(gci)+' GCI'):'')+'</span>' +
-          '<button class="pv-rate'+(rate==null?' empty':'')+'" data-rate="'+esc(id)+'">'+(rate!=null?(rate+'%'):'Set rate')+'</button>' +
-          '<button class="pv-text" data-nudge="'+esc(id)+'">Text &rarr;</button>' +
-          '<span class="pv-chev">&#9652;</span>' +
-        '</div>' +
-        '<div class="pv-aglist">'+af.map(flatRow).join('')+'</div>' +
-      '</div>';
-    }).join('');
+    // agentRows is built below (after pending groups are known) so real + pending agents render in ONE unified list under their names.
     const fgBars = fgIds.length
       ? ('<div class="pv-rank">'+fgIds.map(function(id,i){ var pc=Math.round(fgCount[id]/(files.length||1)*100); return '<div class="pv-rrow'+(i===0?' top':'')+'"><span class="nm">'+esc(_fgNames[id]||'TC')+'</span><span class="ld"></span><span class="vv">'+fgCount[id]+'</span><span class="pc">'+pc+'%</span></div>'; }).join('')+'</div>')
       : '<div style="font-size:11px;color:var(--muted);margin-top:6px">No File-Org files yet.</div>';
@@ -3839,17 +3823,20 @@
     const pend = {}; (_pendingFiles||[]).forEach(f => { const k = f.pending_agent_email || 'unassigned'; (pend[k] = pend[k] || []).push(f); });
     const pendKeys = Object.keys(pend);
     const pendPipe = (_pendingFiles||[]).reduce((s,f)=>s+teamPrice(f),0);
-    const pendHtml = pendKeys.length
-      ? ('<div class="pv-eyebrow">Pending sign-up &middot; auto-attaches when they create their account</div>' +
-         '<div class="pv-pban"><div class="t"><b>'+pendKeys.length+' agent'+(pendKeys.length===1?'':'s')+'</b> not joined &middot; <b>'+(_pendingFiles?_pendingFiles.length:0)+' deal'+((_pendingFiles&&_pendingFiles.length===1)?'':'s')+'</b> waiting to attach</div><button class="pv-inviteall">Invite all</button></div>' +
-         pendKeys.map(function(k){
-          const nm = PENDING_NAMES[k] || k;
-          const fl = pend[k];
-          const p = fl.reduce(function(s,f){ return s + teamPrice(f); }, 0);
-          var ini=(nm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase();
-          return '<div class="pv-ag pending"><div class="pv-ahdr" data-agtoggle><span class="mono">'+esc(ini)+'</span><span class="nm">'+esc(nm)+'</span><span class="meta">'+fl.length+' &middot; '+teamFmt(p)+' &middot; pending</span><span class="pv-chev">&#9652;</span></div><div class="pv-aglist">'+fl.map(flatRow).join('')+'</div></div>';
-        }).join(''))
-      : '';
+    // Unified agent groups · real (with accounts) + pending (no account yet) — all under their name.
+    const groupsArr = [];
+    agentIds.forEach(function(id){ var af=files.filter(function(f){return f.agent_id===id;}); groupsArr.push({ name:teamAgentName(id), ini:agInitials(id), files:af, pipe:af.reduce(function(s,f){return s+teamPrice(f);},0), gci:byAgent[id], pending:false, agentId:id, rate:(_teamAgents[id]&&_teamAgents[id].default_commission_pct!=null)?_teamAgents[id].default_commission_pct:null }); });
+    pendKeys.forEach(function(k){ var fl=pend[k]; var nm=PENDING_NAMES[k]||k; groupsArr.push({ name:nm, ini:(nm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase(), files:fl, pipe:fl.reduce(function(s,f){return s+teamPrice(f);},0), gci:0, pending:true }); });
+    groupsArr.sort(function(a,b){ return (a.pending-b.pending) || (b.pipe-a.pipe); });
+    const agentRows = groupsArr.map(function(g){
+      var meta = g.files.length+' &middot; '+teamFmt(g.pipe)+(g.pending?' &middot; pending sign-up':(g.gci?(' &middot; '+teamFmt(g.gci)+' GCI'):''));
+      var actions = g.pending ? '' : ('<button class="pv-rate'+(g.rate==null?' empty':'')+'" data-rate="'+esc(g.agentId)+'">'+(g.rate!=null?(g.rate+'%'):'Set rate')+'</button><button class="pv-text" data-nudge="'+esc(g.agentId)+'">Text &rarr;</button>');
+      return '<div class="pv-ag'+(g.pending?' pending':'')+'">' +
+        '<div class="pv-ahdr" data-agtoggle><span class="mono">'+esc(g.ini)+'</span><span class="nm">'+esc(g.name)+'</span><span class="meta">'+meta+'</span>'+actions+'<span class="pv-chev">&#9652;</span></div>' +
+        '<div class="pv-aglist">'+g.files.map(flatRow).join('')+'</div>' +
+      '</div>';
+    }).join('');
+    const pendBanner = pendKeys.length ? ('<div class="pv-pban"><div class="t"><b>'+pendKeys.length+' agent'+(pendKeys.length===1?'':'s')+'</b> not joined yet &middot; their deals auto-attach when they sign up</div><button class="pv-inviteall">Invite all</button></div>') : '';
     const allActive = files.length + (_pendingFiles ? _pendingFiles.length : 0);
     const allPipe = totalPipe + pendPipe;
     // Price bands (histogram) — priced files only
@@ -3886,8 +3873,8 @@
         '<div><div class="pv-eyebrow">FG load</div>'+fgBars+'</div>' +
       '</div>' +
       '<div class="pv-eyebrow">By agent &middot; every transaction</div>' +
+      pendBanner +
       agentRows +
-      pendHtml +
       '<p class="pv-note">Estimates use each agent&rsquo;s stored commission rate. View only &middot; Aari does not calculate or process commissions.</p>';
     host.querySelectorAll('.pv-text').forEach(b => b.addEventListener('click', function(e){ e.stopPropagation(); teamNudge(this.getAttribute('data-nudge')); }));
     host.querySelectorAll('.pv-rate').forEach(b => b.addEventListener('click', function(e){ e.stopPropagation(); setAgentRate(this.getAttribute('data-rate')); }));
