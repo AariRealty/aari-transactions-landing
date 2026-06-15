@@ -366,6 +366,8 @@
   .pv-frow .pbar{height:6px;background:#F4EFE6;border-radius:5px;overflow:hidden;} .pv-frow .pfill{display:block;height:100%;background:#161310;border-radius:5px;}
   .pv-frow .pst{font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;}
   .pv-frow .mny{text-align:right;color:var(--muted);font-weight:600;white-space:nowrap;}
+  .pv-rate{font-size:11px;font-weight:700;border:1px solid var(--line2);border-radius:30px;padding:5px 11px;background:#fff;color:#3A352E;cursor:pointer;white-space:nowrap;}
+  .pv-rate.empty{border-style:dashed;color:#A99B7E;}
   .tx-sl { display:flex; align-items:baseline; justify-content:space-between; margin-top:7px; }
   .tx-cur { font-size:10.5px; font-weight:600; color:var(--ink); }
   .tx-cnt { font-size:9px; color:var(--muted); }
@@ -3768,8 +3770,10 @@
       const pipe = af.reduce((s,f)=>s+teamPrice(f),0);
       const gci = byAgent[id];
       const avg = af.length ? gci/af.length : 0;
+      const rate = (_teamAgents[id] && _teamAgents[id].default_commission_pct != null) ? _teamAgents[id].default_commission_pct : null;
       return '<div class="pv-agrp"><div class="agh"><div class="nm">'+esc(teamAgentName(id))+'</div>' +
         '<div class="meta"><b>'+af.length+'</b> file'+(af.length===1?'':'s')+' &middot; <b>'+teamFmt(pipe)+'</b>'+(gci?(' &middot; '+teamFmt(avg)+'/deal &middot; '+teamFmt(gci)+' GCI'):'')+'</div>' +
+        '<button class="pv-rate'+(rate==null?' empty':'')+'" data-rate="'+esc(id)+'">'+(rate!=null?(rate+'% comm'):'Set rate')+'</button>' +
         '<button class="pv-text" data-nudge="'+esc(id)+'">Text &rarr;</button></div>' +
         af.map(fileRow).join('') + '</div>';
     }).join('');
@@ -3832,6 +3836,23 @@
       pendHtml +
       '<p class="pv-note">Estimates use each agent&rsquo;s stored commission rate. View only &middot; Aari does not calculate or process commissions.</p>';
     host.querySelectorAll('.pv-text').forEach(b => b.addEventListener('click', function(){ teamNudge(this.getAttribute('data-nudge')); }));
+    host.querySelectorAll('.pv-rate').forEach(b => b.addEventListener('click', function(){ setAgentRate(this.getAttribute('data-rate')); }));
+  }
+
+  // Set/update an agent's commission rate from the Production tab.
+  async function setAgentRate(agentId){
+    const a = _teamAgents[agentId]; const name = teamAgentName(agentId);
+    const cur = (a && a.default_commission_pct != null) ? a.default_commission_pct : '';
+    const v = window.prompt('Commission rate % for '+name+'  (e.g. 3 or 2.5)', cur);
+    if(v === null) return;
+    const n = parseFloat(String(v).replace(/[^0-9.]/g,''));
+    if(isNaN(n) || n < 0 || n > 100){ alert('Enter a number between 0 and 100.'); return; }
+    try {
+      const { error } = await _client.from('agents').update({ default_commission_pct: n }).eq('id', agentId);
+      if(error){ alert('Could not save the rate: '+error.message); return; }
+      if(_teamAgents[agentId]) _teamAgents[agentId].default_commission_pct = n;
+      renderTeamView();
+    } catch(e){ alert('Could not save the rate.'); }
   }
 
   // ===== Bilingual commission nudge · fresh each time, EN + ES =====
