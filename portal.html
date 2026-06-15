@@ -3710,7 +3710,7 @@
   }
 
   // ===== TEAM-LEAD VIEW · pulse + per-agent rows (full financials) =====
-  let _team = null, _teamFiles = [], _teamAgents = {}, _fgNames = {}, _pendingFiles = [];
+  let _team = null, _teamFiles = [], _teamAgents = {}, _fgNames = {}, _pendingFiles = [], _reachGroups = {};
   async function loadTeamLead(){
     try {
       if(!_profile || !_profile.id) return;
@@ -3761,6 +3761,14 @@
     const a = _teamAgents[f.agent_id];
     const rate = (a && a.default_commission_pct != null) ? Number(a.default_commission_pct) : DEFAULT_COMM_PCT;
     return teamPrice(f) * (rate/100);
+  }
+  // Comp model · agent 80 / company 20; team lead = 10% OF the company split (carved out); + per-file transaction fee.
+  const COMPANY_SPLIT_PCT = 20, TEAM_LEAD_PCT = 10;
+  function fileFee(f){ var ft=String(f.file_type||'').toLowerCase(); if(ft==='rental') return 299; if(String(f.property_type||'').toLowerCase()==='land') return 299; return 499; }
+  function yourCutOf(items){
+    var fee=0, gross=0; (items||[]).forEach(function(it){ var f=it.f||it; fee+=fileFee(f); gross+=teamComm(f); });
+    var company=gross*(COMPANY_SPLIT_PCT/100); var team=company*(TEAM_LEAD_PCT/100); var companyNet=company-team;
+    return { fee:fee, gross:gross, company:company, team:team, companyNet:companyNet, total: fee+company };
   }
   function teamFmt(n){
     if(!n) return '$0';
@@ -3910,7 +3918,8 @@
     var dueFile=null,dueG=null,wkk=7*864e5;
     groupsArr.some(function(g){ return g.items.some(function(it){ var s=it.f.closing_date?(''+it.f.closing_date).slice(0,10):''; var d=s?new Date(s+'T00:00:00').getTime():0; if(d&&(d-nowMs)<wkk&&(d-nowMs)>-(45*864e5)&&!seen[g.id]){ dueFile=it.f;dueG=g;return true; } return false; }); });
     if(dueG&&dueFile){ reachPicks.push({g:dueG, kls:'due', label:'Closing soon', reason:fileLabel(dueFile)+' — '+txDate(dueFile.closing_date)}); seen[dueG.id]=1; }
-    const reachStrip = reachPicks.length ? ('<div class="pv-eyebrow">Reach out today</div><div class="pv-rlist">'+reachPicks.map(function(p){ var mode=p.kls==='top'?'keep':p.kls==='quiet'?'checkin':'push'; var cls=p.kls==='top'?'celebrate':p.kls==='quiet'?'checkin':'due'; var act=p.g.id?('data-nudge="'+esc(p.g.id)+'" data-mode="'+mode+'"'):'data-invite="1"'; return '<div class="pv-brow '+cls+'" '+act+'>'+avatarHtml(p.g,36)+'<span class="main"><span class="nm">'+esc(p.g.name)+'</span><span class="rs">'+esc(p.label)+' &middot; '+esc(p.reason)+'</span></span><span class="go">'+(p.g.id?'tap to text &rarr;':'tap to invite &rarr;')+'</span></div>'; }).join('')+'</div>') : '';
+    _reachGroups = {}; reachPicks.forEach(function(p){ if(p.g.id) _reachGroups[p.g.id] = p; });
+    const reachStrip = reachPicks.length ? ('<div class="pv-eyebrow">Reach out today &middot; tap a face</div><div class="pv-line">'+reachPicks.map(function(p,i){ return '<span class="pv-face'+(i===0?' on':'')+'" '+(p.g.id?('data-reach="'+esc(p.g.id)+'"'):'data-invite="1"')+' title="'+esc(p.g.name)+'">'+avatarHtml(p.g,74)+'</span>'; }).join('')+'</div><div id="pv-reach-detail"></div>') : '';
     // Scoreboard · C grouped (Producers ranked + Needs attention + New · no deals)
     const sbRowHtml = function(g, rank, beyond){
       var actions = g.pending ? '' : ('<button class="pv-rate'+(g.rate==null?' empty':'')+'" data-rate="'+esc(g.id)+'">'+(g.rate!=null?(g.rate+'%'):'Set rate')+'</button><button class="pv-text" data-nudge="'+esc(g.id)+'">Text &rarr;</button>');
