@@ -341,9 +341,16 @@
   .pv-mixcols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:4px;}
   @media(max-width:560px){.pv-mixcols{grid-template-columns:1fr;gap:0;} .pv-mixcols>div{margin-bottom:6px;}}
   /* Section 4 · agent flat rows + toggle */
-  .pv-ag{margin-bottom:8px;}
-  .pv-ahdr{display:flex;align-items:center;gap:9px;padding:9px 2px;border-bottom:1px solid var(--line);cursor:pointer;}
-  .pv-ahdr .mono{width:22px;height:22px;border-radius:50%;background:#EFE7D7;color:#6B5B3E;font-size:10px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;flex:none;}
+  .pv-ag{background:#fff;border:1px solid var(--line);border-radius:14px;padding:0 14px;margin-bottom:10px;}
+  .pv-ag.pending{border-style:dashed;background:#FCFAF6;}
+  .pv-ahdr{display:flex;align-items:center;gap:10px;padding:11px 0 9px;border-bottom:1px solid var(--line);cursor:pointer;}
+  .pv-ahdr .mono{width:28px;height:28px;border-radius:50%;background:#EFE7D7;color:#6B5B3E;font-size:11px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;flex:none;}
+  .pv-drow{display:grid;grid-template-columns:minmax(0,1fr) 96px 66px;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line);font-size:12.5px;}
+  .pv-drow .adr{font-weight:550;min-width:0;}
+  .pv-drow .prog{display:flex;flex-direction:column;gap:3px;}
+  .pv-drow .pbar2{height:6px;background:#F4EFE6;border-radius:5px;overflow:hidden;} .pv-drow .pf2{display:block;height:100%;background:#161310;border-radius:5px;}
+  .pv-drow .pst2{font-size:8.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;}
+  .pv-drow .mny2{text-align:right;font-weight:680;}
   .pv-ahdr .nm{font-weight:660;font-size:13px;} .pv-ahdr .meta{font-size:11px;color:var(--muted);flex:1;}
   .pv-ahdr .pv-chev{color:var(--muted);font-size:10px;transition:transform .15s;}
   .pv-ag.collapsed .pv-chev{transform:rotate(180deg);} .pv-ag.collapsed .pv-aglist{display:none;}
@@ -353,6 +360,7 @@
   .pv-inviteall{font-size:11px;font-weight:700;background:#161310;color:#fff;border:0;border-radius:30px;padding:7px 13px;white-space:nowrap;cursor:pointer;}
   .pv-flat{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 2px;border-bottom:1px solid var(--line);font-size:12.5px;}
   .pv-flat .a{font-weight:560;flex:1;} .pv-flat .st{color:var(--muted);font-size:11px;white-space:nowrap;} .pv-flat .mny{font-weight:600;color:var(--muted);min-width:48px;text-align:right;}
+  .pv-split{display:inline-block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#6B5B3E;background:#EFE7D7;border-radius:20px;padding:1px 7px;margin-left:6px;vertical-align:middle;}
   .pv-rank{display:flex;flex-direction:column;gap:7px;}
   .pv-rrow{display:flex;align-items:baseline;font-size:12.5px;}
   .pv-rrow .nm{color:#3A352E;white-space:nowrap;} .pv-rrow.top .nm{font-weight:700;color:#161310;}
@@ -3823,17 +3831,45 @@
     const pend = {}; (_pendingFiles||[]).forEach(f => { const k = f.pending_agent_email || 'unassigned'; (pend[k] = pend[k] || []).push(f); });
     const pendKeys = Object.keys(pend);
     const pendPipe = (_pendingFiles||[]).reduce((s,f)=>s+teamPrice(f),0);
-    // Unified agent groups · real (with accounts) + pending (no account yet) — all under their name.
+    // Split-aware attribution · a file credits its split agents (or primary 100%).
+    const fileSplits = function(f){ var sp=f.splits; if(Array.isArray(sp)&&sp.length) return sp; return [{agent_id:f.agent_id, pct:100}]; };
+    const splitName = function(id){ return teamAgentName(id); };
+    const agentMap = {};
+    files.forEach(function(f){
+      var sps = fileSplits(f);
+      var primRate = (_teamAgents[f.agent_id] && _teamAgents[f.agent_id].default_commission_pct!=null) ? Number(_teamAgents[f.agent_id].default_commission_pct) : 0;
+      var dealGci = teamPrice(f) * (primRate/100);
+      sps.forEach(function(s){
+        var id=s.agent_id, pct=Number(s.pct)||0;
+        if(!agentMap[id]) agentMap[id]={items:[],pipe:0,gci:0};
+        agentMap[id].items.push({f:f, pct:pct, sps:sps});
+        agentMap[id].pipe += teamPrice(f)*(pct/100);
+        agentMap[id].gci  += dealGci*(pct/100);
+      });
+    });
+    const flatRowFor = function(item, selfId){
+      var f=item.f, track=txTrack(f), total=track.length, idx=Math.max(0,Math.min(txStageIdx(f),total-1));
+      var isSplit = item.sps.length>1;
+      var price = isSplit ? teamPrice(f)*(item.pct/100) : teamPrice(f);
+      var note = '';
+      if(isSplit){
+        var others = item.sps.filter(function(s){return s.agent_id!==selfId;}).map(function(s){ return esc(splitName(s.agent_id).split(' ')[0]); });
+        note = ' <span class="pv-split">'+item.pct+'% &middot; w/ '+others.join(', ')+'</span>';
+      }
+      return '<div class="pv-drow"><span class="adr">'+esc(fileLabel(f))+note+'</span>' +
+        '<span class="prog"><span class="pbar2"><span class="pf2" style="width:'+Math.round((idx+1)/total*100)+'%"></span></span><span class="pst2">'+esc(track[idx])+'</span></span>' +
+        '<span class="mny2">'+teamFmt(price)+'</span></div>';
+    };
     const groupsArr = [];
-    agentIds.forEach(function(id){ var af=files.filter(function(f){return f.agent_id===id;}); groupsArr.push({ name:teamAgentName(id), ini:agInitials(id), files:af, pipe:af.reduce(function(s,f){return s+teamPrice(f);},0), gci:byAgent[id], pending:false, agentId:id, rate:(_teamAgents[id]&&_teamAgents[id].default_commission_pct!=null)?_teamAgents[id].default_commission_pct:null }); });
-    pendKeys.forEach(function(k){ var fl=pend[k]; var nm=PENDING_NAMES[k]||k; groupsArr.push({ name:nm, ini:(nm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase(), files:fl, pipe:fl.reduce(function(s,f){return s+teamPrice(f);},0), gci:0, pending:true }); });
+    Object.keys(agentMap).forEach(function(id){ var m=agentMap[id]; groupsArr.push({ id:id, name:teamAgentName(id), ini:agInitials(id), items:m.items, pipe:m.pipe, gci:m.gci, pending:false, rate:(_teamAgents[id]&&_teamAgents[id].default_commission_pct!=null)?_teamAgents[id].default_commission_pct:null }); });
+    pendKeys.forEach(function(k){ var fl=pend[k]; var nm=PENDING_NAMES[k]||k; groupsArr.push({ id:null, name:nm, ini:(nm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase(), items:fl.map(function(f){return {f:f,pct:100,sps:[{agent_id:null,pct:100}]};}), pipe:fl.reduce(function(s,f){return s+teamPrice(f);},0), gci:0, pending:true }); });
     groupsArr.sort(function(a,b){ return (a.pending-b.pending) || (b.pipe-a.pipe); });
     const agentRows = groupsArr.map(function(g){
-      var meta = g.files.length+' &middot; '+teamFmt(g.pipe)+(g.pending?' &middot; pending sign-up':(g.gci?(' &middot; '+teamFmt(g.gci)+' GCI'):''));
-      var actions = g.pending ? '' : ('<button class="pv-rate'+(g.rate==null?' empty':'')+'" data-rate="'+esc(g.agentId)+'">'+(g.rate!=null?(g.rate+'%'):'Set rate')+'</button><button class="pv-text" data-nudge="'+esc(g.agentId)+'">Text &rarr;</button>');
+      var meta = g.items.length+' &middot; '+teamFmt(g.pipe)+(g.pending?' &middot; pending sign-up':(g.gci?(' &middot; '+teamFmt(g.gci)+' GCI'):''));
+      var actions = g.pending ? '' : ('<button class="pv-rate'+(g.rate==null?' empty':'')+'" data-rate="'+esc(g.id)+'">'+(g.rate!=null?(g.rate+'%'):'Set rate')+'</button><button class="pv-text" data-nudge="'+esc(g.id)+'">Text &rarr;</button>');
       return '<div class="pv-ag'+(g.pending?' pending':'')+'">' +
         '<div class="pv-ahdr" data-agtoggle><span class="mono">'+esc(g.ini)+'</span><span class="nm">'+esc(g.name)+'</span><span class="meta">'+meta+'</span>'+actions+'<span class="pv-chev">&#9652;</span></div>' +
-        '<div class="pv-aglist">'+g.files.map(flatRow).join('')+'</div>' +
+        '<div class="pv-aglist">'+g.items.map(function(it){ return flatRowFor(it, g.id); }).join('')+'</div>' +
       '</div>';
     }).join('');
     const pendBanner = pendKeys.length ? ('<div class="pv-pban"><div class="t"><b>'+pendKeys.length+' agent'+(pendKeys.length===1?'':'s')+'</b> not joined yet &middot; their deals auto-attach when they sign up</div><button class="pv-inviteall">Invite all</button></div>') : '';
