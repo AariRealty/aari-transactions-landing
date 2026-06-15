@@ -354,6 +354,18 @@
   .pv-pgrp{border:1px dashed var(--line2);border-radius:13px;padding:11px 13px;margin-bottom:9px;background:#FCFAF6;}
   .pv-pgrp .ph{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;} .pv-pgrp .ph .nm{font-weight:660;font-size:13px;} .pv-pgrp .ph .badge{font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:#A99B7E;font-weight:700;background:#F1EADD;border-radius:20px;padding:3px 9px;}
   .pv-prow{display:flex;justify-content:space-between;font-size:12px;color:#3A352E;padding:4px 0;border-top:1px solid var(--line);} .pv-prow:first-of-type{border-top:0;} .pv-prow .mny{color:var(--muted);font-weight:600;}
+  .pv-agrp{border:1px solid var(--line);border-radius:14px;padding:13px 14px;margin-bottom:10px;}
+  .pv-agrp.pending{border-style:dashed;background:#FCFAF6;}
+  .pv-agrp .agh{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
+  .pv-agrp .agh .nm{font-weight:660;font-size:14px;}
+  .pv-agrp .agh .meta{font-size:11.5px;color:var(--muted);flex:1;} .pv-agrp .agh .meta b{color:#161310;}
+  .pv-frow{display:grid;grid-template-columns:1.5fr 1.3fr auto;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line);font-size:12px;}
+  .pv-frow:first-of-type{border-top:0;}
+  .pv-frow .adr{font-weight:560;color:#161310;}
+  .pv-frow .prog{display:flex;flex-direction:column;gap:3px;}
+  .pv-frow .pbar{height:6px;background:#F4EFE6;border-radius:5px;overflow:hidden;} .pv-frow .pfill{display:block;height:100%;background:#161310;border-radius:5px;}
+  .pv-frow .pst{font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;}
+  .pv-frow .mny{text-align:right;color:var(--muted);font-weight:600;white-space:nowrap;}
   .tx-sl { display:flex; align-items:baseline; justify-content:space-between; margin-top:7px; }
   .tx-cur { font-size:10.5px; font-weight:600; color:var(--ink); }
   .tx-cnt { font-size:9px; color:var(--muted); }
@@ -3734,7 +3746,7 @@
     const unsigned = Object.keys(_teamAgents).filter(id => !_teamAgents[id].agreement_signed_at).length;
     // Hero gauge · GCI to goal (falls back to pipeline if no commission rates set)
     const heroComm = totalComm > 0;
-    const heroVal = heroComm ? totalComm : totalPipe;
+    const heroVal = heroComm ? totalComm : (totalPipe + (_pendingFiles||[]).reduce(function(s,f){ return s + teamPrice(f); }, 0));
     const unit = heroComm ? 25000 : 250000;
     const goal = Math.max(unit, Math.ceil(heroVal/unit + 0.5) * unit);
     const pct = Math.max(0, Math.min(100, goal ? heroVal/goal*100 : 0));
@@ -3744,28 +3756,39 @@
     // Per-agent
     const byAgent = {}; files.forEach(f => { byAgent[f.agent_id] = (byAgent[f.agent_id]||0) + teamComm(f); });
     const agentIds = Object.keys(byAgent).sort((a,b)=>byAgent[b]-byAgent[a]);
+    const fileRow = function(f){
+      const track = txTrack(f), total = track.length;
+      const idx = Math.max(0, Math.min(txStageIdx(f), total-1));
+      return '<div class="pv-frow"><span class="adr">'+esc(f.property_address || f.client_name || 'File')+'</span>' +
+        '<span class="prog"><span class="pbar"><span class="pfill" style="width:'+Math.round((idx+1)/total*100)+'%"></span></span><span class="pst">'+esc(track[idx])+' &middot; '+(idx+1)+'/'+total+'</span></span>' +
+        '<span class="mny">'+teamFmt(teamPrice(f))+'</span></div>';
+    };
     const agentRows = agentIds.map(id => {
       const af = files.filter(f => f.agent_id === id);
+      const pipe = af.reduce((s,f)=>s+teamPrice(f),0);
       const gci = byAgent[id];
       const avg = af.length ? gci/af.length : 0;
-      return '<div class="pv-arow">' +
-        '<span class="nm">'+esc(teamAgentName(id))+'</span>' +
-        '<span class="c"><span class="k">Avg/deal</span>'+teamFmt(avg)+'</span>' +
-        '<span class="c"><span class="k">GCI</span>'+teamFmt(gci)+'</span>' +
-        '<button class="pv-text" data-nudge="'+esc(id)+'">Text &rarr;</button>' +
-      '</div>';
+      return '<div class="pv-agrp"><div class="agh"><div class="nm">'+esc(teamAgentName(id))+'</div>' +
+        '<div class="meta"><b>'+af.length+'</b> file'+(af.length===1?'':'s')+' &middot; <b>'+teamFmt(pipe)+'</b>'+(gci?(' &middot; '+teamFmt(avg)+'/deal &middot; '+teamFmt(gci)+' GCI'):'')+'</div>' +
+        '<button class="pv-text" data-nudge="'+esc(id)+'">Text &rarr;</button></div>' +
+        af.map(fileRow).join('') + '</div>';
     }).join('');
     const fgBars = fgIds.length
       ? fgIds.map(id => '<div class="pv-fgrow"><span class="bl">'+esc(_fgNames[id]||'TC')+'</span><span class="bt"><span class="bf" style="width:'+Math.round(fgCount[id]/fgMax*100)+'%"></span></span><span class="bv">'+fgCount[id]+'</span></div>').join('')
       : '<div style="font-size:11px;color:var(--muted);margin-top:6px">No File-Org files yet.</div>';
 
-    // Graphics · stage funnel bars + commission leaderboard
+    // Graphics · stage funnel bars + agent bars (commission if rates set, else pipeline)
     const fMax = Math.max(1, buckets.started, buckets.progress, buckets.final);
     const vbar = function(n,l){ return '<div class="pv-vbar"><span class="vn">'+n+'</span><span class="vc" style="height:'+Math.round(n/fMax*100)+'%"></span><span class="vl">'+l+'</span></div>'; };
     const cMax = Math.max.apply(null, [1].concat(agentIds.map(id=>byAgent[id])));
-    const lbBars = agentIds.length
-      ? agentIds.map(id => '<div class="pv-lb"><div class="t"><span>'+esc(teamAgentName(id))+'</span><span>'+teamFmt(byAgent[id])+'</span></div><div class="tk"><span class="fl" style="width:'+Math.round((byAgent[id]/cMax)*100)+'%"></span></div></div>').join('')
-      : '<div style="font-size:11px;color:var(--muted)">Set commission rates to see this.</div>';
+    const agentPipe = {}; agentIds.forEach(id => { agentPipe[id] = files.filter(f=>f.agent_id===id).reduce((s,f)=>s+teamPrice(f),0); });
+    const pMax = Math.max.apply(null, [1].concat(agentIds.map(id=>agentPipe[id])));
+    const ratesSet = cMax > 1;
+    const agentBars = agentIds.map(id => {
+      const val = ratesSet ? byAgent[id] : agentPipe[id];
+      const mx = ratesSet ? cMax : pMax;
+      return '<div class="pv-lb"><div class="t"><span>'+esc(teamAgentName(id))+'</span><span>'+teamFmt(val)+'</span></div><div class="tk"><span class="fl" style="width:'+Math.round((val/mx)*100)+'%"></span></div></div>';
+    }).join('');
 
     // Pending · ownerless imported files grouped by intended owner
     const PENDING_NAMES = { 'rooseveltsanchezrealestate@gmail.com':'Roosevelt Sanchez', 'flaviamaguilera@gmail.com':'Flavia Aguilera', 'machuca.alied@gmail.com':'Alied Machuca', 'puentesana99@gmail.com':'Ana Puentes' };
@@ -3776,8 +3799,8 @@
       ? ('<div class="pv-eyebrow">Pending sign-up &middot; auto-attaches when they create their account</div>' + pendKeys.map(function(k){
           const nm = PENDING_NAMES[k] || k;
           const fl = pend[k];
-          const rows = fl.map(function(f){ return '<div class="pv-prow"><span>'+esc(f.property_address || f.client_name || 'File')+'</span><span class="mny">'+teamFmt(teamPrice(f))+'</span></div>'; }).join('');
-          return '<div class="pv-pgrp"><div class="ph"><span class="nm">'+esc(nm)+'</span><span class="badge">'+fl.length+' file'+(fl.length===1?'':'s')+' &middot; pending</span></div>'+rows+'</div>';
+          const p = fl.reduce(function(s,f){ return s + teamPrice(f); }, 0);
+          return '<div class="pv-agrp pending"><div class="agh"><div class="nm">'+esc(nm)+'</div><div class="meta"><b>'+fl.length+'</b> file'+(fl.length===1?'':'s')+' &middot; <b>'+teamFmt(p)+'</b> &middot; pending account</div></div>'+fl.map(fileRow).join('')+'</div>';
         }).join(''))
       : '';
     const allActive = files.length + (_pendingFiles ? _pendingFiles.length : 0);
@@ -3786,7 +3809,11 @@
     host.innerHTML =
       '<div class="pv-gauge"><svg width="200" height="106" viewBox="0 0 200 110"><path d="M10,100 A90,90 0 0,1 190,100" fill="none" stroke="#EFE7D7" stroke-width="13" stroke-linecap="round"/>'+gPath+'</svg>' +
         '<div class="cap"><div class="v">'+teamFmt(heroVal)+'</div><div class="k">of '+teamFmt(goal)+' '+(heroComm?'GCI goal':'pipeline goal')+'</div></div></div>' +
-      '<div class="pv-goalrow"><span><b>'+allActive+'</b> active</span><span><b>'+teamFmt(allPipe)+'</b> pipeline</span><span><b>'+teamFmt(totalComm)+'</b> est. GCI</span></div>' +
+      '<div class="pv-goalrow"><span><b>'+allActive+'</b> active</span><span><b>'+teamFmt(allPipe)+'</b> pipeline</span><span><b>'+(heroComm?teamFmt(totalComm):'set rates')+'</b> est. GCI</span></div>' +
+      '<div class="pv-charts">' +
+        '<div class="pv-chart"><div class="ct">Pipeline by stage</div><div class="pv-vbars">'+vbar(buckets.started,'Just started')+vbar(buckets.progress,'In progress')+vbar(buckets.final,'Final')+'</div></div>' +
+        '<div class="pv-chart"><div class="ct">'+(ratesSet?'Est. commission by agent':'Pipeline by agent')+'</div>'+agentBars+'</div>' +
+      '</div>' +
       '<div class="pv-eyebrow">The numbers</div>' +
       '<div class="pv-bento">' +
         '<div class="pv-tile"><div class="tl">Just started</div><div class="tn">'+buckets.started+'</div></div>' +
@@ -3800,12 +3827,7 @@
         '<div class="pv-tile h2"><div class="tl">File Organization load</div>'+fgBars+'</div>' +
         '<div class="pv-tile h2"><div class="tl">Pipeline value</div><div class="tn">'+teamFmt(allPipe)+'</div><div style="font-size:10px;color:var(--muted)">across '+allActive+' active files</div></div>' +
       '</div>' +
-      '<div class="pv-eyebrow">Pipeline &amp; commission</div>' +
-      '<div class="pv-charts">' +
-        '<div class="pv-chart"><div class="ct">Pipeline by stage</div><div class="pv-vbars">'+vbar(buckets.started,'Just started')+vbar(buckets.progress,'In progress')+vbar(buckets.final,'Final')+'</div></div>' +
-        '<div class="pv-chart"><div class="ct">Est. commission by agent</div>'+lbBars+'</div>' +
-      '</div>' +
-      '<div class="pv-eyebrow">By agent &middot; reach out</div>' +
+      '<div class="pv-eyebrow">By agent &middot; every transaction</div>' +
       agentRows +
       pendHtml +
       '<p class="pv-note">Estimates use each agent&rsquo;s stored commission rate. View only &middot; Aari does not calculate or process commissions.</p>';
