@@ -3845,22 +3845,28 @@
   const DEFAULT_COMM_PCT = 2.5; // used until an agent's real rate is set
   function teamComm(f){
     const a = _teamAgents[f.agent_id];
-    // Per-deal rate override wins; else the agent's stored rate; else the 2.5% default.
+    const bonus = f.commission_bonus_cents ? Number(f.commission_bonus_cents)/100 : 0;
+    // Flat commission (buyer-broker / fixed fee) wins and totals even with no sale price.
+    if (f.commission_flat_cents != null && f.commission_flat_cents !== '') return Number(f.commission_flat_cents)/100 + bonus;
+    // Else per-deal rate override; else the agent's stored rate; else the 2.5% default.
     const rate = (f.commission_pct != null && f.commission_pct !== '') ? Number(f.commission_pct)
                : (a && a.default_commission_pct != null) ? Number(a.default_commission_pct)
                : DEFAULT_COMM_PCT;
-    const bonus = f.commission_bonus_cents ? Number(f.commission_bonus_cents)/100 : 0;
     return teamPrice(f) * (rate/100) + bonus;  // bonus rides along, then any split is applied by the caller
   }
-  // Comp model · agent 80 / company 20; team lead = 10% OF the company split (carved out); + per-file transaction fee.
-  const COMPANY_SPLIT_PCT = 20, TEAM_LEAD_PCT = 10;
+  // Comp model · brokerage_split_pct now = the % the AGENT KEEPS (default 100). Company gets the rest.
+  // Team lead = 10% OF the company's share (carved out); + per-file transaction fee.
+  const AGENT_KEEP_PCT = 100, TEAM_LEAD_PCT = 10;
+  // agent's keep % for a file (default 100 = keeps it all; 50 on a company lead)
+  function agentSplitOf(f){ return (f.brokerage_split_pct!=null&&f.brokerage_split_pct!=='')?Number(f.brokerage_split_pct):AGENT_KEEP_PCT; }
   function fileFee(f){ var ft=String(f.file_type||'').toLowerCase(); if(ft==='rental') return 299; if(String(f.property_type||'').toLowerCase()==='land') return 299; return 499; }
   function yourCutOf(items){
     var fee=0, gross=0, company=0, team=0;
     (items||[]).forEach(function(it){ var f=it.f||it; var g=teamComm(f);
-      var bsp=(f.brokerage_split_pct!=null&&f.brokerage_split_pct!=='')?Number(f.brokerage_split_pct):COMPANY_SPLIT_PCT;
+      var asp=agentSplitOf(f);  // % the agent keeps
       var tsp=(f.team_split_pct!=null&&f.team_split_pct!=='')?Number(f.team_split_pct):TEAM_LEAD_PCT;
-      var comp=g*(bsp/100); fee+=fileFee(f); gross+=g; company+=comp; team+=comp*(tsp/100);
+      var comp=g*((100-asp)/100);  // company's share = whatever the agent does not keep
+      fee+=fileFee(f); gross+=g; company+=comp; team+=comp*(tsp/100);
     });
     var companyNet=company-team;
     return { fee:fee, gross:gross, company:company, team:team, companyNet:companyNet, total: fee+company };
@@ -4139,31 +4145,44 @@
     var nxt=rowEl.nextSibling;
     if(nxt && nxt.className==='pv-dterms'){ nxt.parentNode.removeChild(nxt); return; }
     var price=teamPrice(f);
-    var pct=(f.commission_pct!=null && f.commission_pct!=='')?f.commission_pct:'';
+    var flatMode=(f.commission_flat_cents!=null && f.commission_flat_cents!=='');
+    var commVal=flatMode?(Number(f.commission_flat_cents)/100):((f.commission_pct!=null && f.commission_pct!=='')?f.commission_pct:'');
     var bonus=f.commission_bonus_cents?Number(f.commission_bonus_cents)/100:'';
-    var bspl=(f.brokerage_split_pct!=null && f.brokerage_split_pct!=='')?f.brokerage_split_pct:'';
+    var aspl=(f.brokerage_split_pct!=null && f.brokerage_split_pct!=='')?f.brokerage_split_pct:'';
     var tspl=(f.team_split_pct!=null && f.team_split_pct!=='')?f.team_split_pct:'';
     var isLead=!!(Array.isArray(f.splits) && f.splits.length>1);
+    var upBtn=function(on){ return 'cursor:pointer;font-size:11px;padding:1px 8px;border-radius:10px;border:1px solid '+(on?'var(--ink)':'var(--line)')+';'+(on?'background:var(--ink);color:#fff;':''); };
     var box=document.createElement('div'); box.className='pv-dterms';
     box.innerHTML='<div class="dt-grid">'+
-      '<label>Sale price<input type="text" id="dt-price" value="'+(price||'')+'"></label>'+
-      '<label>Commission %<input type="text" id="dt-pct" value="'+pct+'" placeholder="2.5"></label>'+
+      '<label>Sale price<input type="text" id="dt-price" value="'+(price||'')+'" placeholder="optional"></label>'+
+      '<label>Commission <span class="dt-units" style="float:right;display:inline-flex;gap:4px;"><b id="dt-u-pct" style="'+upBtn(!flatMode)+'">%</b><b id="dt-u-usd" style="'+upBtn(flatMode)+'">$</b></span><input type="text" id="dt-comm" value="'+commVal+'" placeholder="'+(flatMode?'1000':'2.5')+'"></label>'+
       '<label>Bonus $<input type="text" id="dt-bonus" value="'+bonus+'"></label>'+
-      '<label>Brokerage split %<input type="text" id="dt-bspl" value="'+bspl+'" placeholder="20"></label>'+
+      '<label>Agent split %<input type="text" id="dt-aspl" value="'+aspl+'" placeholder="100"></label>'+
       '<label>Team split %<input type="text" id="dt-tspl" value="'+tspl+'" placeholder="10"></label>'+
       '<label class="dt-chk"><input type="checkbox" id="dt-lead"'+(isLead?' checked':'')+'> Company lead (50/50 w/ Aari)</label>'+
     '</div><div class="dt-foot"><span id="dt-cut" class="dt-cut"></span><span><button class="dt-cancel" type="button">Cancel</button><button class="dt-save" type="button">Save</button></span></div>';
     rowEl.parentNode.insertBefore(box, rowEl.nextSibling);
+    var mode=flatMode?'usd':'pct';
     function num(id){ return parseFloat(String(document.getElementById(id).value).replace(/[^0-9.]/g,'')); }
-    function calc(){ var p=num('dt-price')||0, r=num('dt-pct'); if(isNaN(r)) r=DEFAULT_COMM_PCT; var b=num('dt-bonus')||0; var bsp=num('dt-bspl'); if(isNaN(bsp)) bsp=COMPANY_SPLIT_PCT; var tsp=num('dt-tspl'); if(isNaN(tsp)) tsp=TEAM_LEAD_PCT; var gross=p*(r/100)+b; var you=gross*(bsp/100); var team=you*(tsp/100); var agent=gross-you; document.getElementById('dt-cut').innerHTML='Agent <b>'+teamFmt(agent)+'</b> &middot; You <b>'+teamFmt(you)+'</b> &middot; Team <b>'+teamFmt(team)+'</b>'; }
+    function setUnit(m){ mode=m; document.getElementById('dt-u-pct').style.cssText=upBtn(m==='pct'); document.getElementById('dt-u-usd').style.cssText=upBtn(m==='usd'); document.getElementById('dt-comm').placeholder=(m==='usd'?'1000':'2.5'); calc(); }
+    function calc(){ var p=num('dt-price')||0, c=num('dt-comm'), b=num('dt-bonus')||0;
+      var asp=num('dt-aspl'); if(isNaN(asp)) asp=100;
+      var tsp=num('dt-tspl'); if(isNaN(tsp)) tsp=TEAM_LEAD_PCT;
+      var gross = (mode==='usd') ? ((isNaN(c)?0:c)+b) : (p*((isNaN(c)?DEFAULT_COMM_PCT:c)/100)+b);
+      var fee=fileFee(f); var agent=gross*(asp/100); var company=gross-agent; var team=company*(tsp/100); var you=company+fee;
+      document.getElementById('dt-cut').innerHTML='Agent <b>'+teamFmt(agent)+'</b> &middot; You <b>'+teamFmt(you)+'</b> &middot; Team <b>'+teamFmt(team)+'</b>'; }
     box.addEventListener('input', calc);
-    var leadCb=box.querySelector('#dt-lead'); if(leadCb) leadCb.addEventListener('change', function(){ if(this.checked) document.getElementById('dt-bspl').value='50'; calc(); });
+    box.querySelector('#dt-u-pct').addEventListener('click', function(){ setUnit('pct'); });
+    box.querySelector('#dt-u-usd').addEventListener('click', function(){ setUnit('usd'); });
+    var leadCb=box.querySelector('#dt-lead'); if(leadCb) leadCb.addEventListener('change', function(){ if(this.checked) document.getElementById('dt-aspl').value='50'; calc(); });
     calc();
     box.querySelector('.dt-cancel').addEventListener('click', function(){ box.parentNode.removeChild(box); });
     box.querySelector('.dt-save').addEventListener('click', async function(){
-      var p=num('dt-price')||0, rRaw=String(document.getElementById('dt-pct').value).replace(/[^0-9.]/g,''), b=num('dt-bonus')||0, lead=document.getElementById('dt-lead').checked;
-      var bsRaw=String(document.getElementById('dt-bspl').value).replace(/[^0-9.]/g,''), tsRaw=String(document.getElementById('dt-tspl').value).replace(/[^0-9.]/g,'');
-      var payload={ purchase_price_cents: Math.round(p*100), commission_pct: rRaw===''?null:Number(rRaw), commission_bonus_cents: Math.round(b*100), brokerage_split_pct: bsRaw===''?null:Number(bsRaw), team_split_pct: tsRaw===''?null:Number(tsRaw) };
+      var p=num('dt-price')||0, cRaw=String(document.getElementById('dt-comm').value).replace(/[^0-9.]/g,''), b=num('dt-bonus')||0, lead=document.getElementById('dt-lead').checked;
+      var asRaw=String(document.getElementById('dt-aspl').value).replace(/[^0-9.]/g,''), tsRaw=String(document.getElementById('dt-tspl').value).replace(/[^0-9.]/g,'');
+      var payload={ purchase_price_cents: Math.round(p*100), commission_bonus_cents: Math.round(b*100), brokerage_split_pct: asRaw===''?null:Number(asRaw), team_split_pct: tsRaw===''?null:Number(tsRaw) };
+      if(mode==='usd'){ payload.commission_flat_cents = cRaw===''?null:Math.round(Number(cRaw)*100); payload.commission_pct=null; }
+      else { payload.commission_pct = cRaw===''?null:Number(cRaw); payload.commission_flat_cents=null; }
       if(lead && _profile && _profile.id && f.agent_id){ payload.splits=[{agent_id:f.agent_id,pct:50},{agent_id:_profile.id,pct:50}]; if(payload.brokerage_split_pct==null) payload.brokerage_split_pct=50; }
       else if(!lead){ payload.splits=null; }
       this.disabled=true; this.textContent='Saving…';
@@ -4324,7 +4343,7 @@
     var nd = ndDays===null?'—':(ndDays<=0?'today':ndDays+'d');
     var first = g.name.split(' ')[0];
     var _cd=function(f){ var s=f.closing_date?(''+f.closing_date).slice(0,10):''; if(!s) return null; var dd=Math.ceil((new Date(s+'T00:00:00').getTime()-Date.now())/864e5); return (dd>=-2&&dd<=7)?dd:null; };
-    var _drow=function(it){ var f=it.f; var lbl=(f.property_address && f.property_address.indexOf('Buyer representation')!==0)?f.property_address:(f.client_name||'File'); var tag=(it.sps&&it.sps.length>1)?' <span class="pv-split">50% w/ Aari</span>':''; var pr=teamPrice(f); var comm=teamComm(f)*((it.pct||100)/100); return '<div class="pv-deal" data-dealedit="'+esc(f.id)+'" style="cursor:pointer" title="Tap to edit price &amp; commission"><span class="a" style="display:flex;flex-direction:column;gap:1px;"><span>'+esc(lbl)+tag+' <span style="font-size:9px;color:var(--muted)">&#9998;</span></span><span style="font-size:10.5px;color:var(--muted);font-weight:400;">'+(pr?teamFmt(pr)+' sale':'no price yet')+'</span></span><span class="m" style="color:var(--ink);font-size:14px;">'+(pr?teamFmt(comm):'&mdash;')+'</span></div>'; };
+    var _drow=function(it){ var f=it.f; var lbl=(f.property_address && f.property_address.indexOf('Buyer representation')!==0)?f.property_address:(f.client_name||'File'); var tag=(it.sps&&it.sps.length>1)?' <span class="pv-split">50% w/ Aari</span>':''; var pr=teamPrice(f); var flat=(f.commission_flat_cents!=null && f.commission_flat_cents!==''); var comm=teamComm(f)*(agentSplitOf(f)/100); var sub=pr?teamFmt(pr)+' sale':(flat?'flat fee':'no price yet'); return '<div class="pv-deal" data-dealedit="'+esc(f.id)+'" style="cursor:pointer" title="Tap to edit price &amp; commission"><span class="a" style="display:flex;flex-direction:column;gap:1px;"><span>'+esc(lbl)+tag+' <span style="font-size:9px;color:var(--muted)">&#9998;</span></span><span style="font-size:10.5px;color:var(--muted);font-weight:400;">'+sub+'</span></span><span class="m" style="color:var(--ink);font-size:14px;">'+(comm?teamFmt(comm):'&mdash;')+'</span></div>'; };
     var _dc=[], _da=[]; g.items.forEach(function(it){ if(_cd(it.f)!=null) _dc.push(it); else _da.push(it); });
     _dc.sort(function(a,b){ return (_cd(a.f)||0)-(_cd(b.f)||0); });
     _da.sort(function(a,b){ return (teamComm(b.f)*((b.pct||100)/100))-(teamComm(a.f)*((a.pct||100)/100)); });
