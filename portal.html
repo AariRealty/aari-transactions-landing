@@ -3857,9 +3857,13 @@
   // Comp model · brokerage_split_pct now = the % the AGENT KEEPS (default 100). Company gets the rest.
   // Team lead = 10% OF the company's share (carved out); + per-file transaction fee.
   const AGENT_KEEP_PCT = 100, TEAM_LEAD_PCT = 10;
+  // Company lead: the agent keeps this %, Aari keeps the rest, plus the transaction fee. Matches the Deason disbursement (37.5 / 62.5 + fee).
+  const COMPANY_LEAD_AGENT_PCT = 37.5;
   // agent's keep % for a file (default 100 = keeps it all; 50 on a company lead)
   function agentSplitOf(f){ return (f.brokerage_split_pct!=null&&f.brokerage_split_pct!=='')?Number(f.brokerage_split_pct):AGENT_KEEP_PCT; }
-  function fileFee(f){ var ft=String(f.file_type||'').toLowerCase(); if(ft==='rental') return 299; if(String(f.property_type||'').toLowerCase()==='land') return 299; return 499; }
+  // Type-based transaction fee: residential / commercial = $499; vacant land / rental = $299.
+  function baseFileFee(f){ var ft=String(f.file_type||'').toLowerCase(); var pt=String(f.property_type||'').toLowerCase(); if(ft==='rental'||pt==='rental'||pt.indexOf('lease')>=0) return 299; if(pt==='land'||pt.indexOf('vacant')>=0) return 299; return 499; }
+  function fileFee(f){ if(f.file_fee_cents!=null && f.file_fee_cents!=='') return Number(f.file_fee_cents)/100; return baseFileFee(f); }
   function yourCutOf(items){
     var fee=0, gross=0, company=0, team=0;
     (items||[]).forEach(function(it){ var f=it.f||it; var g=teamComm(f);
@@ -4168,6 +4172,7 @@
     var bonus=f.commission_bonus_cents?Number(f.commission_bonus_cents)/100:'';
     var aspl=(f.brokerage_split_pct!=null && f.brokerage_split_pct!=='')?f.brokerage_split_pct:'';
     var tspl=(f.team_split_pct!=null && f.team_split_pct!=='')?f.team_split_pct:'';
+    var feeVal=fileFee(f);
     var isLead=!!(Array.isArray(f.splits) && f.splits.length>1);
     var upBtn=function(on){ return 'cursor:pointer;font-size:11px;padding:1px 8px;border-radius:10px;border:1px solid '+(on?'var(--ink)':'var(--line)')+';'+(on?'background:var(--ink);color:#fff;':''); };
     var box=document.createElement('div'); box.className='pv-dterms';
@@ -4175,33 +4180,43 @@
       '<label>Sale price<input type="text" id="dt-price" value="'+(price||'')+'" placeholder="optional"></label>'+
       '<label>Commission <span class="dt-units" style="float:right;display:inline-flex;gap:4px;"><b id="dt-u-pct" style="'+upBtn(!flatMode)+'">%</b><b id="dt-u-usd" style="'+upBtn(flatMode)+'">$</b></span><input type="text" id="dt-comm" value="'+commVal+'" placeholder="'+(flatMode?'1000':'2.5')+'"></label>'+
       '<label>Bonus $<input type="text" id="dt-bonus" value="'+bonus+'"></label>'+
-      '<label>Agent split %<input type="text" id="dt-aspl" value="'+aspl+'" placeholder="100"></label>'+
+      '<label id="dt-aspl-wrap"'+(isLead?' style="display:none"':'')+'>Agent split %<input type="text" id="dt-aspl" value="'+aspl+'" placeholder="100"></label>'+
+      '<div id="dt-lead-note"'+(isLead?'':' style="display:none"')+' style="font-size:11.5px;color:var(--muted);align-self:end;padding-bottom:6px;line-height:1.45">Company lead: agent keeps <b style="color:var(--ink)">'+COMPANY_LEAD_AGENT_PCT+'%</b>, Aari '+(100-COMPANY_LEAD_AGENT_PCT)+'% + fee.</div>'+
+      '<label>Transaction fee $ <span id="dt-fee-lock" style="float:right;font-size:10px;color:var(--muted);cursor:pointer;text-decoration:underline">Unlock</span><input type="text" id="dt-fee" value="'+feeVal+'" readonly style="background:rgba(15,15,15,0.04)"><span style="font-size:10px;color:var(--muted);font-weight:400;display:block;margin-top:2px">Auto by property type ($499 residential/commercial, $299 land/rental). Goes to Aari, does not affect agent pay.</span></label>'+
+      '<label class="dt-chk"><input type="checkbox" id="dt-lead"'+(isLead?' checked':'')+'> Company lead (Aari provided)</label>'+
       '<label>Team split %<input type="text" id="dt-tspl" value="'+tspl+'" placeholder="10"></label>'+
-      '<label class="dt-chk"><input type="checkbox" id="dt-lead"'+(isLead?' checked':'')+'> Company lead (50/50 w/ Aari)</label>'+
     '</div><div class="dt-foot"><span id="dt-cut" class="dt-cut"></span><span><button class="dt-cancel" type="button">Cancel</button><button class="dt-save" type="button">Save</button></span></div>';
     rowEl.parentNode.insertBefore(box, rowEl.nextSibling);
     var mode=flatMode?'usd':'pct';
     function num(id){ return parseFloat(String(document.getElementById(id).value).replace(/[^0-9.]/g,'')); }
     function setUnit(m){ mode=m; document.getElementById('dt-u-pct').style.cssText=upBtn(m==='pct'); document.getElementById('dt-u-usd').style.cssText=upBtn(m==='usd'); document.getElementById('dt-comm').placeholder=(m==='usd'?'1000':'2.5'); calc(); }
     function calc(){ var p=num('dt-price')||0, c=num('dt-comm'), b=num('dt-bonus')||0;
-      var asp=num('dt-aspl'); if(isNaN(asp)) asp=100;
-      var tsp=num('dt-tspl'); if(isNaN(tsp)) tsp=TEAM_LEAD_PCT;
+      var leadOn=document.getElementById('dt-lead').checked;
+      var asp = leadOn ? COMPANY_LEAD_AGENT_PCT : num('dt-aspl'); if(isNaN(asp)) asp=100;
+      var fee=num('dt-fee'); if(isNaN(fee)) fee=0;
       var gross = (mode==='usd') ? ((isNaN(c)?0:c)+b) : (p*((isNaN(c)?DEFAULT_COMM_PCT:c)/100)+b);
-      var fee=fileFee(f); var agent=gross*(asp/100); var company=gross-agent; var team=company*(tsp/100); var you=company+fee;
-      document.getElementById('dt-cut').innerHTML='Agent <b>'+teamFmt(agent)+'</b> &middot; You <b>'+teamFmt(you)+'</b> &middot; Team <b>'+teamFmt(team)+'</b>'; }
+      var agent=gross*(asp/100); var company=gross-agent; var you=company+fee;
+      var fmt=function(n){ return '$'+Math.round(n||0).toLocaleString('en-US'); };
+      document.getElementById('dt-cut').innerHTML='<div style="font-size:12px;line-height:1.65"><div style="color:var(--muted)">Commission <b style="color:var(--ink)">'+fmt(gross)+'</b> &middot; Fee <b style="color:var(--ink)">'+fmt(fee)+'</b></div><div>Agent <b>'+fmt(agent)+'</b> &middot; You <b>'+fmt(you)+'</b></div></div>'; }
     box.addEventListener('input', calc);
     box.querySelector('#dt-u-pct').addEventListener('click', function(){ setUnit('pct'); });
     box.querySelector('#dt-u-usd').addEventListener('click', function(){ setUnit('usd'); });
-    var leadCb=box.querySelector('#dt-lead'); if(leadCb) leadCb.addEventListener('change', function(){ if(this.checked) document.getElementById('dt-aspl').value='50'; calc(); });
+    var leadCb=box.querySelector('#dt-lead'); if(leadCb) leadCb.addEventListener('change', function(){ var on=this.checked; document.getElementById('dt-aspl-wrap').style.display=on?'none':''; document.getElementById('dt-lead-note').style.display=on?'':'none'; calc(); });
+    var feeLock=box.querySelector('#dt-fee-lock'); if(feeLock) feeLock.addEventListener('click', function(){ var inp=document.getElementById('dt-fee'); if(inp.readOnly){ inp.readOnly=false; inp.style.background=''; inp.focus(); this.textContent='Reset to auto'; } else { inp.readOnly=true; inp.style.background='rgba(15,15,15,0.04)'; inp.value=String(baseFileFee(f)); this.textContent='Unlock'; calc(); } });
     calc();
     box.querySelector('.dt-cancel').addEventListener('click', function(){ box.parentNode.removeChild(box); });
     box.querySelector('.dt-save').addEventListener('click', async function(){
       var p=num('dt-price')||0, cRaw=String(document.getElementById('dt-comm').value).replace(/[^0-9.]/g,''), b=num('dt-bonus')||0, lead=document.getElementById('dt-lead').checked;
-      var asRaw=String(document.getElementById('dt-aspl').value).replace(/[^0-9.]/g,''), tsRaw=String(document.getElementById('dt-tspl').value).replace(/[^0-9.]/g,'');
-      var payload={ purchase_price_cents: Math.round(p*100), commission_bonus_cents: Math.round(b*100), brokerage_split_pct: asRaw===''?null:Number(asRaw), team_split_pct: tsRaw===''?null:Number(tsRaw) };
+      var asRaw=String(document.getElementById('dt-aspl').value).replace(/[^0-9.]/g,''), tsRaw=String(document.getElementById('dt-tspl').value).replace(/[^0-9.]/g,''), feeRaw=String(document.getElementById('dt-fee').value).replace(/[^0-9.]/g,'');
+      var feeNum = feeRaw===''?null:Math.round(Number(feeRaw)*100);
+      // Only persist a fee override when it differs from the type-based default, so it stays auto otherwise.
+      var feeOverride = (feeNum!=null && feeNum !== Math.round(baseFileFee(f)*100)) ? feeNum : null;
+      var payload={ purchase_price_cents: Math.round(p*100), commission_bonus_cents: Math.round(b*100), team_split_pct: tsRaw===''?null:Number(tsRaw), file_fee_cents: feeOverride };
+      // Company lead → agent keeps the fixed company-lead split; else whatever's typed.
+      payload.brokerage_split_pct = lead ? COMPANY_LEAD_AGENT_PCT : (asRaw===''?null:Number(asRaw));
       if(mode==='usd'){ payload.commission_flat_cents = cRaw===''?null:Math.round(Number(cRaw)*100); payload.commission_pct=null; }
       else { payload.commission_pct = cRaw===''?null:Number(cRaw); payload.commission_flat_cents=null; }
-      if(lead && _profile && _profile.id && f.agent_id){ payload.splits=[{agent_id:f.agent_id,pct:50},{agent_id:_profile.id,pct:50}]; if(payload.brokerage_split_pct==null) payload.brokerage_split_pct=50; }
+      if(lead && _profile && _profile.id && f.agent_id){ payload.splits=[{agent_id:f.agent_id,pct:COMPANY_LEAD_AGENT_PCT},{agent_id:_profile.id,pct:100-COMPANY_LEAD_AGENT_PCT}]; }
       else if(!lead){ payload.splits=null; }
       this.disabled=true; this.textContent='Saving…';
       try{ var res=await _client.from('files').update(payload).eq('id', f.id); if(res.error){ alert('Could not save: '+res.error.message); this.disabled=false; this.textContent='Save'; return; } Object.assign(f,payload); renderTeamView(); }
