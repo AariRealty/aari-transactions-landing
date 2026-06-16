@@ -4015,18 +4015,20 @@
     const sbRowHtml = function(g, rank, beyond){
       var actions = g.pending ? '' : ('<button class="pv-text" data-nudge="'+esc(g.id)+'">Text &rarr;</button>');
       var flag = g.pending ? '<span class="qflag">pending</span>' : '';
-      return '<div class="pv-sb'+(beyond?' beyond':'')+'" data-name="'+esc(g.name.toLowerCase())+'">' +
+      var _cls=(g.items||[]).some(function(it){ var s=it.f.closing_date?(''+it.f.closing_date).slice(0,10):''; if(!s) return false; var dd=Math.ceil((new Date(s+'T00:00:00').getTime()-Date.now())/864e5); return dd>=-2&&dd<=7; });
+      return '<div class="pv-sb'+(beyond?' beyond':'')+'" data-name="'+esc(g.name.toLowerCase())+'" data-stage="'+agStage(g)+'" data-closing="'+(_cls?'1':'0')+'">' +
         '<div class="pv-srow" data-sbtoggle><span class="rk">'+(rank||'·')+'</span>'+avatarHtml(g,30)+'<span class="nmwrap"><span class="nm">'+esc(g.name)+flag+'</span><span class="meta">'+g.deals+' deals &middot; '+teamFmt(g.pipe)+'</span></span><span class="comm"><span class="v">'+teamFmt(g.gci)+'</span><span class="k">waiting</span></span><span class="pv-chev">&#9662;</span></div>' +
         '<div class="pv-sbdeals">'+(actions?'<div class="pv-sbact">'+actions+'</div>':'')+g.items.map(function(it){ return flatRowFor(it, g.id); }).join('')+'</div>' +
       '</div>';
     };
-    var producers = groupsArr.filter(function(g){ return !g.quiet && g.deals>0; });
-    var needsList = groupsArr.filter(function(g){ return g.quiet && g.deals>0; });
-    var newList = groupsArr.filter(function(g){ return g.deals===0; });
-    var prodRows = producers.map(function(g,i){ return sbRowHtml(g, i+1, i>=10); }).join('') || '<div style="font-size:11px;color:var(--muted);padding:8px 2px">No active producers yet.</div>';
-    var showAllBtn = producers.length>10 ? '<button class="pv-showall" data-showall>Show all '+producers.length+' producers</button>' : '';
-    var grpBlock = function(title, list, badge){ return list.length ? ('<div class="pv-grpwrap"><div class="pv-grp" data-grptoggle><span class="gl">'+title+(badge?' <span class="qflag">'+badge+'</span>':'')+'</span><span class="gc">'+list.length+' agent'+(list.length===1?'':'s')+' &middot; tap to view</span><span class="pv-chev">&#9662;</span></div><div class="pv-grpbody">'+list.map(function(g){return sbRowHtml(g,'',false);}).join('')+'</div></div>') : ''; };
-    const agentRows = '<div class="pv-sbwrap"><div class="pv-search"><input type="text" placeholder="Search agents…" data-sbsearch></div><div class="pv-board">'+prodRows+'</div>'+showAllBtn+grpBlock('Needs attention',needsList,'Quiet')+grpBlock('New &middot; no deals yet',newList)+'</div>';
+    var ranked = reachList;
+    var tProd=0,tQuiet=0,tNew=0,tClose=0;
+    ranked.forEach(function(g){ var st=agStage(g); if(st==='active')tProd++; else if(st==='quiet')tQuiet++; else tNew++; var hc=(g.items||[]).some(function(it){ var s=it.f.closing_date?(''+it.f.closing_date).slice(0,10):''; if(!s) return false; var dd=Math.ceil((new Date(s+'T00:00:00').getTime()-Date.now())/864e5); return dd>=-2&&dd<=7; }); if(hc) tClose++; });
+    var stile=function(key,label,n){ return '<span class="pv-stile'+(key==='all'?' on':'')+'" data-tile="'+key+'"><span class="v">'+n+'</span><span class="k">'+label+'</span></span>'; };
+    var stiles='<div class="pv-stiles">'+stile('all','All',ranked.length)+stile('active','Producing',tProd)+stile('quiet','Quiet',tQuiet)+stile('new','New',tNew)+stile('closing','Closing',tClose)+'</div>';
+    var rankRows = ranked.map(function(g,i){ return sbRowHtml(g, i+1, i>=10); }).join('') || '<div style="font-size:11px;color:var(--muted);padding:8px 2px">No agents yet.</div>';
+    var showAllBtn = ranked.length>10 ? '<button class="pv-showall" data-showall>Show all '+ranked.length+'</button>' : '';
+    const agentRows = '<div class="pv-sbwrap">'+stiles+'<div class="pv-search"><input type="text" placeholder="Search agents…" data-sbsearch></div><div class="pv-board">'+rankRows+'</div>'+showAllBtn+'</div>';
     // Team at a glance · dense sortable grid (scales to 100 agents) · sorted by commission desc
     var _fgCount={}; (_teamFiles||[]).forEach(function(f){ if(f.fg_tc_id) _fgCount[f.fg_tc_id]=(_fgCount[f.fg_tc_id]||0)+1; });
     var agTcLoad=function(g){ var c={},top=null,mx=0; (g.items||[]).forEach(function(it){ var t=it.f&&it.f.fg_tc_id; if(t) c[t]=(c[t]||0)+1; }); Object.keys(c).forEach(function(t){ if(c[t]>mx){mx=c[t];top=t;} }); if(!top) return '&mdash;'; var L=_fgCount[top]||0; return L>=10?'High':(L>=5?'Med':'Low'); };
@@ -4067,7 +4069,7 @@
         '<div><div class="pv-eyebrow">FG load</div>'+fgBars+'</div>' +
       '</div>' +
       reachStrip +
-      '<div class="pv-eyebrow">Scoreboard &middot; commission waiting</div>' +
+      '<div class="pv-eyebrow">Team standings &middot; commission waiting</div>' +
       agentRows +
       '<p class="pv-note">Estimates use each agent&rsquo;s stored rate (2.5% default until you set theirs). View only &middot; Aari does not calculate or process commissions.</p>';
     host.querySelectorAll('.pv-text').forEach(b => b.addEventListener('click', function(e){ e.stopPropagation(); teamNudge(this.getAttribute('data-nudge'), this.getAttribute('data-mode')||''); }));
@@ -4076,6 +4078,7 @@
     var _sa=host.querySelector('[data-showall]'); if(_sa) _sa.addEventListener('click', function(){ var b=host.querySelector('.pv-board'); if(b)b.classList.add('showall'); this.style.display='none'; });
     var _si=host.querySelector('[data-sbsearch]'); if(_si) _si.addEventListener('input', function(){ var q=this.value.toLowerCase().trim(); var w=host.querySelector('.pv-sbwrap'); if(w) w.classList.toggle('searching', !!q); host.querySelectorAll('.pv-sb').forEach(function(r){ if(!q){ r.style.display=''; } else { r.style.display = r.getAttribute('data-name').indexOf(q)>=0 ? 'block' : 'none'; } }); });
     host.querySelectorAll('[data-grptoggle]').forEach(function(h){ h.addEventListener('click', function(){ this.parentNode.classList.toggle('open'); }); });
+    host.querySelectorAll('.pv-stile').forEach(function(t){ t.addEventListener('click', function(){ var key=this.getAttribute('data-tile'); host.querySelectorAll('.pv-stile').forEach(function(x){x.classList.remove('on');}); this.classList.add('on'); var board=host.querySelector('.pv-board'); if(key==='all'){ if(board) board.classList.remove('showall'); host.querySelectorAll('.pv-board .pv-sb').forEach(function(r){ r.style.display=''; }); } else { if(board) board.classList.add('showall'); host.querySelectorAll('.pv-board .pv-sb').forEach(function(r){ var m=(key==='closing')?(r.getAttribute('data-closing')==='1'):(r.getAttribute('data-stage')===key); r.style.display=m?'':'none'; }); } }); });
     host.querySelectorAll('[data-tgtoggle]').forEach(function(h){ h.addEventListener('click', function(){ this.parentNode.classList.toggle('open'); }); });
     host.querySelectorAll('[data-dealedit]').forEach(function(r){ r.addEventListener('click', function(e){ e.stopPropagation(); editDealTerms(this.getAttribute('data-dealedit'), this); }); });
     host.querySelectorAll('.pv-inv').forEach(function(b){ b.addEventListener('click', function(){ alert('Invite sends their sign-up link once your SMS/email connector is on. For now, share the register link manually.'); }); });
