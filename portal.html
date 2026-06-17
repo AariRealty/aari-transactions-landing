@@ -3943,26 +3943,26 @@
   // the solo Production tab and the top of a lead's Production/Team view).
   function buildYourProduction(){
     const myFiles = _files.filter(f => !isClosed(f));
-    const myPipe = myFiles.reduce((s,f) => s + teamPrice(f), 0);
-    const myRate = (_profile && _profile.default_commission_pct != null) ? Number(_profile.default_commission_pct) : 0;
-    const myBuckets = { started:0, progress:0, final:0 };
-    myFiles.forEach(f => { myBuckets[txBucket(f)] = (myBuckets[txBucket(f)]||0) + 1; });
-    const myMaxB = Math.max(1, myBuckets.started, myBuckets.progress, myBuckets.final);
-    const bar = function(n, lbl){ return '<div class="tv-vbar"><div class="num">'+n+'</div><div class="col" style="height:'+Math.round((n/myMaxB)*100)+'%"></div><div class="lbl">'+lbl+'</div></div>'; };
-    const commCell = myRate
-      ? '<div class="cell"><div class="v">'+teamFmt(myPipe*(myRate/100))+'</div><div class="k">Est. commission</div></div>'
-      : '<div class="cell"><div class="v">—</div><div class="k">Est. commission</div><a class="tv-setrate" href="#" id="tv-setrate">Set rate →</a></div>';
-    return '<div class="tv-sechead">Your production this month</div>' +
-      '<div class="tv-roll">' +
-        '<div class="cell"><div class="v">'+_files.length+'</div><div class="k">Files submitted</div></div>' +
-        '<div class="cell"><div class="v">'+teamFmt(myPipe)+'</div><div class="k">Active pipeline</div></div>' +
-        commCell +
-      '</div>' +
-      '<div class="tv-charts" style="grid-template-columns:1fr">' +
-        '<div class="tv-chart"><div class="ch-t">Your pipeline by stage</div><div class="tv-vbars">' +
-          bar(myBuckets.started,'Just started') + bar(myBuckets.progress,'In progress') + bar(myBuckets.final,'Final stretch') +
-        '</div></div>' +
-      '</div>';
+    const myVol = myFiles.reduce((s,f) => s + teamPrice(f), 0);
+    const rateSet = (_profile && _profile.default_commission_pct != null);
+    var myComm=0, myTc=0;
+    myFiles.forEach(function(f){ myComm += teamComm(f)*(agentSplitOf(f)/100); myTc += fileFee(f); });
+    const goalCents = _profile && _profile.monthly_volume_goal_cents;
+    const goalVol = goalCents ? Number(goalCents)/100 : 0;
+    const gpct = goalVol>0 ? Math.min(Math.round(myVol/goalVol*100),999) : 0;
+    const mo = (new Date()).toLocaleString('en-US',{month:'long'});
+    // Your money · what you earn, plus the TC fee (handled at closing, not taken from your pay).
+    var money = '<div class="tv-sechead">Your money &middot; '+mo+'</div>' +
+      '<table class="pv-rollup"><tbody>' +
+        '<tr><td class="l">My commission '+(rateSet?'<span class="sub">estimated</span>':'')+'</td><td class="v">'+(rateSet?teamFmt(myComm):'<a class="tv-setrate" href="#" id="tv-setrate">Set rate &rarr;</a>')+'</td></tr>' +
+        '<tr><td class="l">TC fee <span class="sub">to Aari Transactions, at closing</span></td><td>'+teamFmt(myTc)+'</td></tr>' +
+      '</tbody></table>' +
+      (goalVol>0
+        ? '<div class="pv-odgoal" style="margin:12px 0 3px"><span style="width:'+Math.min(gpct,100)+'%"></span></div><div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted)"><span>'+teamFmt(myVol)+' of '+teamFmt(goalVol)+' volume goal</span><span>'+gpct+'%</span></div>'
+        : '<div style="margin:11px 0 2px"><button class="earn-goal-btn" id="tv-setgoal">Set a monthly goal &rarr;</button></div>');
+    var arow = function(f){ var track=txTrack(f), total=track.length||1, idx=Math.max(0,Math.min(txStageIdx(f),total-1)); var lbl=(f.property_address && f.property_address.indexOf('Buyer representation')!==0)?f.property_address:(f.client_name||'File'); var pr=teamPrice(f), flat=(f.commission_flat_cents!=null && f.commission_flat_cents!==''); var comm=teamComm(f)*(agentSplitOf(f)/100); var sub=pr?teamFmt(pr)+' sale':(flat?'flat fee':'no price yet'); return '<div class="pv-drow" style="grid-template-columns:minmax(0,1fr) 84px 60px"><span class="adr" style="display:flex;flex-direction:column;gap:1px;min-width:0;"><span>'+esc(lbl)+'</span><span style="font-size:10px;color:var(--muted);font-weight:400;">'+sub+'</span></span><span class="stg">'+esc(track[idx])+'</span><span class="num big">'+(comm?teamFmt(comm):'&mdash;')+'</span></div>'; };
+    var deals = myFiles.length ? ('<div class="tv-sechead" style="margin-top:16px">Your deals</div><div class="pv-dhead" style="grid-template-columns:minmax(0,1fr) 84px 60px"><span>Deal</span><span>Stage</span><span>Commission</span></div>'+myFiles.map(arow).join('')) : '';
+    return money + deals;
   }
   // Solo Production tab · render the SAME styled "Your production" block (replaces
   // the old plain KPI tiles). Leads use the Team-fold view instead (business tab hidden).
@@ -3974,6 +3974,8 @@
     const es = document.getElementById('earn-section'); if(es) es.style.display = 'none';
     const sr = document.getElementById('tv-setrate');
     if(sr) sr.addEventListener('click', function(e){ e.preventDefault(); const b = document.getElementById('earn-goal-btn'); if(b) b.click(); });
+    const sg = document.getElementById('tv-setgoal');
+    if(sg) sg.addEventListener('click', function(e){ e.preventDefault(); const b = document.getElementById('earn-goal-btn'); if(b) b.click(); });
   }
   function renderTeamView(){
     const host = document.getElementById('tab-team'); if(!host) return;
