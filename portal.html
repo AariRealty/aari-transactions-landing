@@ -364,6 +364,15 @@
   .pv-rollup td.l{text-align:left;}
   .pv-rollup tr.tot td{font-weight:750;border-top:1px solid rgba(15,15,15,0.25);}
   .pv-rollup .v{font-weight:650;} .pv-rollup .sub{font-size:10px;color:var(--muted);}
+  .pv-cwgrp{font-size:9px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:700;margin:8px 0 2px;}
+  .pv-cwgrp.risk{color:var(--ink);}
+  .pv-cwrow{display:grid;grid-template-columns:1fr 54px 56px;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line);font-size:12px;}
+  .pv-cwrow .adr{min-width:0;display:flex;flex-direction:column;gap:1px;} .pv-cwrow .adr .t{font-weight:600;font-size:12.5px;} .pv-cwrow .adr .s{font-size:10px;color:var(--muted);}
+  .pv-cwrow .when{font-weight:700;font-size:11px;text-align:center;} .pv-cwrow .when.now{color:var(--ink);} .pv-cwrow .when.soon{color:var(--muted);}
+  .pv-cwrow .mny{text-align:right;font-weight:680;font-size:12px;}
+  .pv-cwtoggle{display:flex;align-items:center;border-top:1px solid var(--line);padding-top:9px;margin-top:4px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);cursor:pointer;}
+  .pv-cwtoggle.open .pv-chev{transform:rotate(180deg);}
+  .pv-cwok{display:none;} .pv-cwok.open{display:block;}
   .pv-saflag{font-size:11.5px;font-weight:600;color:var(--ink);background:var(--cream);border:1px solid var(--ink);border-radius:8px;padding:9px 12px;margin:2px 0 12px;}
   .pv-od-slim{display:flex;gap:16px 20px;flex-wrap:wrap;padding:2px 0 10px;border-bottom:1px solid var(--line);}
   .pv-od-slim .s b{font-size:15px;font-weight:600;display:block;line-height:1.2;}
@@ -4236,10 +4245,23 @@
         '<tr class="tot"><td class="l">House total</td><td>'+teamFmt(rThis+tThis)+'</td><td>'+teamFmt(rProj+tProj)+'</td></tr>' +
       '</tbody></table>';
 
+    // ===== Closing this week (Option G) · at-risk open, on-track collapsed. Scales to any volume. =====
+    var _cwNow = Date.now();
+    var cwList = [];
+    files.forEach(function(f){ var s=f.closing_date?(''+f.closing_date).slice(0,10):''; if(!s) return; var d=new Date(s+'T00:00:00').getTime(); var days=Math.ceil((d-_cwNow)/864e5); if(days < -1 || days > 7) return; var track=txTrack(f), total=track.length||1, idx=Math.max(0,Math.min(txStageIdx(f),total-1)); cwList.push({ f:f, days:days, risk:((idx+1)/total)<0.7, comm:teamComm(f)*(agentSplitOf(f)/100), stage:track[idx] }); });
+    cwList.sort(function(a,b){ return a.days-b.days; });
+    var cwRisk=cwList.filter(function(x){return x.risk;}), cwOk=cwList.filter(function(x){return !x.risk;});
+    var cwOkTot=cwOk.reduce(function(s,x){return s+x.comm;},0);
+    var cwRow=function(x){ var f=x.f; var lbl=(f.property_address && f.property_address.indexOf('Buyer representation')!==0)?f.property_address:(f.client_name||'File'); var who=(teamAgentName(f.agent_id)||'').split(' ')[0]; var dlab=x.days<=0?'today':(x.days+' day'+(x.days===1?'':'s')); return '<div class="pv-cwrow"><span class="adr"><span class="t">'+esc(lbl)+'</span><span class="s">'+esc(who)+' &middot; '+esc(x.stage)+'</span></span><span class="when'+(x.days<=2?' now':' soon')+'">'+dlab+'</span><span class="mny">'+(x.comm?teamFmt(x.comm):'&mdash;')+'</span></div>'; };
+    var cwHtml = cwList.length ? ('<div class="pv-eyebrow">Closing this week &middot; '+cwList.length+'</div>' +
+      (cwRisk.length ? '<div class="pv-cwgrp risk">Needs attention &middot; '+cwRisk.length+'</div>'+cwRisk.map(cwRow).join('') : '') +
+      (cwOk.length ? '<div class="pv-cwtoggle" data-cwtoggle><span>On track &middot; '+cwOk.length+'</span><span style="margin-left:auto">'+teamFmt(cwOkTot)+'</span><span class="pv-chev" style="margin-left:8px">&#9662;</span></div><div class="pv-cwok">'+cwOk.map(cwRow).join('')+'</div>' : '')) : '';
+
     host.innerHTML =
       rollup +
       '<div style="margin:2px 0 12px"><button id="pv-monday-btn" class="pv-mbtn">Monday shout-out &rarr;</button></div>' +
       reachStrip +
+      cwHtml +
       saFlag +
       '<div class="pv-eyebrow">Team standings &middot; agent / Aari / TC fee</div>' +
       agentRows +
