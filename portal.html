@@ -3932,6 +3932,15 @@
     } catch(e){ console.warn('[team] load failed', e); }
   }
   function teamAgentName(id){ const a = _teamAgents[id]; return a ? (((a.first_name||'')+' '+(a.last_name||'')).trim() || 'Agent') : 'Agent'; }
+  // Broker-only · full roster for the deal-editor "Reassign agent" picker. Loaded once.
+  let _allAgents = null;
+  async function ensureAllAgents(){
+    if(_allAgents) return _allAgents;
+    try { const r = await _client.from('agents').select('id, first_name, last_name, role').order('first_name', { ascending:true });
+      _allAgents = (r.data||[]).map(function(a){ return { id:a.id, name:(((a.first_name||'')+' '+(a.last_name||'')).trim()||'Agent'), role:(a.role||'agent') }; }); }
+    catch(_){ _allAgents = []; }
+    return _allAgents;
+  }
   // Team headshots (brand-card face crops in /images/agents). Matched by first name; used as
   // fallback when an agent has no headshot_url, and for pending (no-account) agents.
   var AGENT_PHOTOS = { alied:'/images/agents/alied-machuca.jpg', flavia:'/images/agents/flavia-aguilera.jpg', roosevelt:'/images/agents/roosevelt-sanchez.jpg', ana:'/images/agents/ana-puentes.jpg', eileen:'/images/agents/eileen-hernandez.jpg', odalis:'/images/agents/odalis-mora.jpg', milennys:'/images/agents/milennys-vargas.jpg', alejandro:'/images/agents/alejandro-paredes.jpg', marlenyi:'/images/agents/marlenyi-paredes.jpg' };
@@ -4447,6 +4456,11 @@
     var tspl=(f.team_split_pct!=null && f.team_split_pct!=='')?f.team_split_pct:'';
     var feeVal=fileFee(f);
     var isLead=!!(Array.isArray(f.splits) && f.splits.length>1);
+    var isBroker=!!(_profile && _profile.role==='broker');
+    var curAgentName=teamAgentName(f.agent_id);
+    var reassignHtml = isBroker
+      ? '<div class="dt-reassign"><label style="display:block;font-size:11px;color:var(--muted);margin:2px 0 5px">Wrong agent on this file? Reassign it</label><select id="dt-agent" style="width:100%;padding:8px 9px;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:13px;background:#fff;color:var(--ink)"><option value="'+esc(f.agent_id||'')+'">'+esc(curAgentName)+' (current)</option></select></div>'
+      : '';
     var upBtn=function(on){ return 'cursor:pointer;font-size:11px;padding:1px 8px;border-radius:10px;border:1px solid '+(on?'var(--ink)':'var(--line)')+';'+(on?'background:var(--ink);color:#fff;':''); };
     var box=document.createElement('div'); box.className='pv-dterms';
     box.innerHTML='<div class="dt-grid">'+
@@ -4458,9 +4472,13 @@
       '<label>Transaction fee $ <span id="dt-fee-lock" style="float:right;font-size:10px;color:var(--muted);cursor:pointer;text-decoration:underline">Unlock</span><input type="text" id="dt-fee" value="'+feeVal+'" readonly style="background:rgba(15,15,15,0.04)"><span style="font-size:10px;color:var(--muted);font-weight:400;display:block;margin-top:2px">Auto by property type ($499 residential/commercial, $299 land/rental). Goes to Aari, does not affect agent pay.</span></label>'+
       '<label class="dt-chk"><input type="checkbox" id="dt-lead"'+(isLead?' checked':'')+'> Company lead (Aari provided)</label>'+
       '<label>Team split %<input type="text" id="dt-tspl" value="'+tspl+'" placeholder="10"></label>'+
-    '</div><div class="dt-foot"><span id="dt-cut" class="dt-cut"></span><span><button class="dt-cancel" type="button">Cancel</button><button class="dt-save" type="button">Save</button></span></div><div id="dt-log" class="dt-log"></div>';
+    '</div>'+reassignHtml+'<div class="dt-foot"><span id="dt-cut" class="dt-cut"></span><span><button class="dt-cancel" type="button">Cancel</button><button class="dt-save" type="button">Save</button></span></div><div id="dt-log" class="dt-log"></div>';
     rowEl.parentNode.insertBefore(box, rowEl.nextSibling);
     renderDealLog(f, box.querySelector('#dt-log'));
+    // Broker reassign picker · fill with the full roster once loaded.
+    if(isBroker){ ensureAllAgents().then(function(list){ var sel=box.querySelector('#dt-agent'); if(!sel) return; var cur=String(f.agent_id||'');
+      sel.innerHTML='<option value="'+esc(cur)+'">'+esc(curAgentName)+' (current)</option>'+
+        list.filter(function(a){ return String(a.id)!==cur; }).map(function(a){ return '<option value="'+esc(a.id)+'">'+esc(a.name)+(a.role&&a.role!=='agent'?(' · '+esc(a.role)):'')+'</option>'; }).join(''); }); }
     var mode=flatMode?'usd':'pct';
     function num(id){ return parseFloat(String(document.getElementById(id).value).replace(/[^0-9.]/g,'')); }
     function setUnit(m){ mode=m; document.getElementById('dt-u-pct').style.cssText=upBtn(m==='pct'); document.getElementById('dt-u-usd').style.cssText=upBtn(m==='usd'); document.getElementById('dt-comm').placeholder=(m==='usd'?'1000':'2.5'); calc(); }
@@ -4492,6 +4510,12 @@
       else { payload.commission_pct = cRaw===''?null:Number(cRaw); payload.commission_flat_cents=null; }
       if(lead && _profile && _profile.id && f.agent_id){ payload.splits=[{agent_id:f.agent_id,pct:COMPANY_LEAD_AGENT_PCT},{agent_id:_profile.id,pct:100-COMPANY_LEAD_AGENT_PCT}]; }
       else if(!lead){ payload.splits=null; }
+      // Broker-only · reassign this file to the correct agent and reset any split.
+      var _reAgentName=null, _oldAgentName=null;
+      if(isBroker){ var _sel=document.getElementById('dt-agent'); if(_sel){ var _newId=_sel.value||null;
+        if(_newId && String(_newId)!==String(f.agent_id)){ payload.agent_id=_newId; payload.splits=null;
+          _oldAgentName=curAgentName; _reAgentName=(_sel.options[_sel.selectedIndex]?_sel.options[_sel.selectedIndex].text.replace(/ \(current\)$/,''):'');
+          if(_allAgents){ var _hit=_allAgents.filter(function(a){return String(a.id)===String(_newId);})[0]; if(_hit && !_teamAgents[_newId]){ var _p=_hit.name.split(' '); _teamAgents[_newId]={id:_newId, first_name:_p[0]||'', last_name:_p.slice(1).join(' ')}; } } } } }
       this.disabled=true; this.textContent='Saving…';
       try{ var res=await _client.from('files').update(payload).eq('id', f.id); if(res.error){ alert('Could not save: '+res.error.message); this.disabled=false; this.textContent='Save'; return; }
         // Log term changes (field-by-field diff) to the audit trail.
@@ -4507,6 +4531,7 @@
           add('Agent split', (f.brokerage_split_pct!=null?f.brokerage_split_pct+'%':'100%'), (payload.brokerage_split_pct!=null?payload.brokerage_split_pct+'%':'100%'));
           var ofee=dol(f.file_fee_cents)||('$'+Math.round(baseFileFee(f))), nfee=dol(payload.file_fee_cents)||('$'+Math.round(baseFileFee(f)));
           add('Fee', ofee, nfee);
+          if(_reAgentName){ ch.push({file_id:f.id, changed_by:(_profile&&_profile.id)||null, changed_by_name:nm, field:'Agent', old_value:_oldAgentName||null, new_value:_reAgentName||null}); }
           if(ch.length){ await _client.from('file_term_changes').insert(ch); }
         } catch(_e){}
         Object.assign(f,payload); renderTeamView(); }
