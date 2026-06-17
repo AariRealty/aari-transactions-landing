@@ -138,7 +138,7 @@
   const CONTRACT_DEADLINES = {
     'frbar_asis': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · Paragraph 2(a).' },
       { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
         compute:(E,C,c)=>addDays(E, c.lapp), bizDay:true,
@@ -164,7 +164,7 @@
     ],
     'frbar_standard': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · Paragraph 2(a).' },
       { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
         compute:(E,C,c)=>addDays(E, c.lapp), bizDay:true,
@@ -193,7 +193,7 @@
     ],
     'frbar_crsp': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · Paragraph 2(a).' },
       { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
         compute:(E,C,c)=>addDays(E, c.lapp), bizDay:true,
@@ -222,7 +222,7 @@
     ],
     'nabor': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date.' },
       { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
         compute:(E,C,c)=>addDays(E, c.lapp), bizDay:false,
@@ -266,7 +266,7 @@
     ],
     'nab089': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · Paragraph 4(a).' },
       { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
         compute:(E,C,c)=>addDays(E, c.lapp), bizDay:false,
@@ -295,7 +295,7 @@
     ],
     'builder': [
       { key:'init_deposit',   category:'Deposits',    name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · confirm from the builder contract.' },
       { key:'loan_app',       category:'Financing',   name:'Loan Application Deadline',
         compute:(E,C,c)=>addDays(E, c.lapp), bizDay:true,
@@ -318,7 +318,7 @@
     ],
     'vac_15': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · Paragraph 2(a).' },
       { key:'feasibility_end',  category:'Feasibility', name:'Feasibility Study Period Ends',
         compute:(E,C,c)=>addDays(E, c.feas), bizDay:true,
@@ -338,7 +338,7 @@
     ],
     'nab088': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date.' },
       { key:'feasibility_end',  category:'Feasibility', name:'Feasibility Study Period Ends',
         compute:(E,C,c)=>addDays(E, c.feas), bizDay:false,
@@ -358,7 +358,7 @@
     ],
     'cc_6': [
       { key:'init_deposit',     category:'Deposits',    name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addDays(E, c.dep), bizDay:false,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · Paragraph 2.' },
       { key:'finance_cont',     category:'Financing',   name:'Finance Contingency Expires',
         compute:(E,C,c)=>addDays(E, c.fin), bizDay:false,
