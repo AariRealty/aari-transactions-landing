@@ -357,6 +357,19 @@
   .pv-dhead span{text-align:right;} .pv-dhead span:nth-child(1),.pv-dhead span:nth-child(2){text-align:left;}
   .pv-dsub{display:grid;grid-template-columns:minmax(0,1fr) 78px 46px 48px 42px;gap:8px;align-items:center;padding:7px 0 1px;margin-top:3px;border-top:1px solid rgba(15,15,15,0.20);font-size:9px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);}
   .pv-dsub .num{text-align:right;font-size:11px;font-weight:750;color:var(--ink);white-space:nowrap;}
+  .dt-log{margin-top:11px;border-top:1px solid var(--line);padding-top:11px;}
+  .dt-conf{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;}
+  .dt-conf .ck{font-size:13px;} .dt-conf .ts{margin-left:auto;font-size:10px;color:var(--muted);font-weight:400;}
+  .dt-last{display:flex;align-items:center;gap:7px;font-size:11.5px;}
+  .dt-last .dot{width:6px;height:6px;border-radius:50%;background:var(--ink);flex:none;} .dt-last .ts{color:var(--muted);font-size:10px;}
+  .dt-confirm{margin-left:auto;font-size:11px;font-weight:600;background:var(--ink);color:#fff;border:0;border-radius:20px;padding:5px 13px;cursor:pointer;font-family:inherit;}
+  .dt-more{font-size:10px;color:var(--muted);text-decoration:underline;cursor:pointer;margin-top:9px;display:inline-block;}
+  .dt-tline{position:relative;padding-left:16px;margin-top:10px;}
+  .dt-tline::before{content:"";position:absolute;left:3px;top:4px;bottom:4px;width:1px;background:rgba(15,15,15,0.15);}
+  .dt-tnode{position:relative;padding:0 0 10px;} .dt-tnode:last-child{padding-bottom:0;}
+  .dt-tnode .dot{position:absolute;left:-16px;top:3px;width:7px;height:7px;border-radius:50%;background:var(--ink);}
+  .dt-tnode .x{font-size:11.5px;} .dt-tnode .x b{font-weight:650;} .dt-tnode .ts{font-size:10px;color:var(--muted);margin-top:1px;}
+  .dt-tnode .f{color:#9a958c;} .dt-tnode .a{color:var(--ink);font-weight:600;}
   .pv-rollup{width:100%;border-collapse:collapse;font-size:12.5px;margin:0 0 16px;}
   .pv-rollup th{text-align:right;font-size:9px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:400;padding-bottom:6px;}
   .pv-rollup th.l{text-align:left;}
@@ -4338,8 +4351,9 @@
       '<label>Transaction fee $ <span id="dt-fee-lock" style="float:right;font-size:10px;color:var(--muted);cursor:pointer;text-decoration:underline">Unlock</span><input type="text" id="dt-fee" value="'+feeVal+'" readonly style="background:rgba(15,15,15,0.04)"><span style="font-size:10px;color:var(--muted);font-weight:400;display:block;margin-top:2px">Auto by property type ($499 residential/commercial, $299 land/rental). Goes to Aari, does not affect agent pay.</span></label>'+
       '<label class="dt-chk"><input type="checkbox" id="dt-lead"'+(isLead?' checked':'')+'> Company lead (Aari provided)</label>'+
       '<label>Team split %<input type="text" id="dt-tspl" value="'+tspl+'" placeholder="10"></label>'+
-    '</div><div class="dt-foot"><span id="dt-cut" class="dt-cut"></span><span><button class="dt-cancel" type="button">Cancel</button><button class="dt-save" type="button">Save</button></span></div>';
+    '</div><div class="dt-foot"><span id="dt-cut" class="dt-cut"></span><span><button class="dt-cancel" type="button">Cancel</button><button class="dt-save" type="button">Save</button></span></div><div id="dt-log" class="dt-log"></div>';
     rowEl.parentNode.insertBefore(box, rowEl.nextSibling);
+    renderDealLog(f, box.querySelector('#dt-log'));
     var mode=flatMode?'usd':'pct';
     function num(id){ return parseFloat(String(document.getElementById(id).value).replace(/[^0-9.]/g,'')); }
     function setUnit(m){ mode=m; document.getElementById('dt-u-pct').style.cssText=upBtn(m==='pct'); document.getElementById('dt-u-usd').style.cssText=upBtn(m==='usd'); document.getElementById('dt-comm').placeholder=(m==='usd'?'1000':'2.5'); calc(); }
@@ -4372,9 +4386,42 @@
       if(lead && _profile && _profile.id && f.agent_id){ payload.splits=[{agent_id:f.agent_id,pct:COMPANY_LEAD_AGENT_PCT},{agent_id:_profile.id,pct:100-COMPANY_LEAD_AGENT_PCT}]; }
       else if(!lead){ payload.splits=null; }
       this.disabled=true; this.textContent='Saving…';
-      try{ var res=await _client.from('files').update(payload).eq('id', f.id); if(res.error){ alert('Could not save: '+res.error.message); this.disabled=false; this.textContent='Save'; return; } Object.assign(f,payload); renderTeamView(); }
+      try{ var res=await _client.from('files').update(payload).eq('id', f.id); if(res.error){ alert('Could not save: '+res.error.message); this.disabled=false; this.textContent='Save'; return; }
+        // Log term changes (field-by-field diff) to the audit trail.
+        try {
+          var nm=_profile?(((_profile.first_name||'')+' '+(_profile.last_name||'')).trim()||'You'):'You';
+          var dol=function(c){ return (c==null||c==='')?null:('$'+Math.round(Number(c)/100).toLocaleString('en-US')); };
+          var ch=[]; var add=function(field,ov,nv){ var a=(ov==null)?'':String(ov), b=(nv==null)?'':String(nv); if(a!==b) ch.push({file_id:f.id, changed_by:(_profile&&_profile.id)||null, changed_by_name:nm, field:field, old_value:a||null, new_value:b||null}); };
+          add('Sale price', dol(f.purchase_price_cents), dol(payload.purchase_price_cents));
+          var oc=(f.commission_flat_cents!=null&&f.commission_flat_cents!=='')?dol(f.commission_flat_cents):(f.commission_pct!=null?(f.commission_pct+'%'):null);
+          var nc=(payload.commission_flat_cents!=null)?dol(payload.commission_flat_cents):(payload.commission_pct!=null?(payload.commission_pct+'%'):null);
+          add('Commission', oc, nc);
+          add('Bonus', dol(f.commission_bonus_cents)||'$0', dol(payload.commission_bonus_cents)||'$0');
+          add('Agent split', (f.brokerage_split_pct!=null?f.brokerage_split_pct+'%':'100%'), (payload.brokerage_split_pct!=null?payload.brokerage_split_pct+'%':'100%'));
+          var ofee=dol(f.file_fee_cents)||('$'+Math.round(baseFileFee(f))), nfee=dol(payload.file_fee_cents)||('$'+Math.round(baseFileFee(f)));
+          add('Fee', ofee, nfee);
+          if(ch.length){ await _client.from('file_term_changes').insert(ch); }
+        } catch(_e){}
+        Object.assign(f,payload); renderTeamView(); }
       catch(e){ alert('Could not save the deal terms.'); this.disabled=false; this.textContent='Save'; }
     });
+  }
+  // Per-deal change history · honest "last edited by", earned "confirmed" stamp, expandable diff trail.
+  async function renderDealLog(f, host){
+    if(!host) return;
+    var rows=[];
+    try { var r = await _client.from('file_term_changes').select('*').eq('file_id', f.id).order('created_at',{ascending:false}); rows = r.data||[]; }
+    catch(_){ host.innerHTML=''; return; }
+    var who=function(x){ return (x && x.changed_by_name) || 'Someone'; };
+    var when=function(x){ try{ var d=new Date(x.created_at); return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }catch(_e){ return ''; } };
+    var latest=rows[0], confirmed=latest && latest.field==='Confirm';
+    var head = confirmed
+      ? '<div class="dt-conf"><span class="ck">&#10003;</span><span>Terms confirmed by '+esc(who(latest))+'</span><span class="ts">'+esc(when(latest))+'</span></div>'
+      : '<div class="dt-last"><span class="dot"></span><span>'+(rows.length?('Last edited by <b>'+esc(who(latest))+'</b> <span class="ts">'+esc(when(latest))+'</span>'):'No changes recorded yet')+'</span><button class="dt-confirm" type="button">Confirm terms</button></div>';
+    var tl = rows.map(function(x){ var line = x.field==='Confirm' ? ('<b>'+esc(who(x))+'</b> confirmed terms') : ('<b>'+esc(who(x))+'</b> &middot; '+esc(x.field)+' '+(x.old_value?('<span class="f">'+esc(x.old_value)+'</span> &rarr; '):'')+'<span class="a">'+esc(x.new_value||'')+'</span>'); return '<div class="dt-tnode"><span class="dot"></span><div class="x">'+line+'</div><div class="ts">'+esc(when(x))+'</div></div>'; }).join('');
+    host.innerHTML = head + (rows.length ? '<span class="dt-more">Full history ('+rows.length+') &rarr;</span><div class="dt-tline" style="display:none">'+tl+'</div>' : '');
+    var more=host.querySelector('.dt-more'); if(more) more.addEventListener('click', function(){ var t=host.querySelector('.dt-tline'); if(!t) return; var open=t.style.display!=='none'; t.style.display=open?'none':'block'; this.innerHTML=open?('Full history ('+rows.length+') &rarr;'):'Hide history &#9662;'; });
+    var cb=host.querySelector('.dt-confirm'); if(cb) cb.addEventListener('click', async function(){ this.disabled=true; this.textContent='Confirming…'; var nm=_profile?(((_profile.first_name||'')+' '+(_profile.last_name||'')).trim()||'You'):'You'; try{ await _client.from('file_term_changes').insert([{file_id:f.id, changed_by:(_profile&&_profile.id)||null, changed_by_name:nm, field:'Confirm', old_value:null, new_value:'confirmed'}]); renderDealLog(f, host); }catch(_e){ this.disabled=false; this.textContent='Confirm terms'; } });
   }
 
   // ===== Bilingual commission nudge · fresh each time, EN + ES =====
