@@ -485,6 +485,21 @@
   .pv-srow .num{text-align:right;font-size:11px;font-weight:600;white-space:nowrap;} .pv-srow .num.mut{color:var(--muted);font-weight:500;} .pv-srow .num.big{font-weight:750;}
   .pv-sb.est .pv-srow .num{color:var(--muted);font-weight:550;}
   .pv-coolp{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;background:var(--ink);color:#fff;border-radius:20px;padding:1px 6px;}
+  .pv-pod{display:flex;gap:9px;margin-top:4px;}
+  .pv-pcard{flex:1;background:#fff;border:1px solid var(--line);border-radius:11px;padding:11px 8px;text-align:center;}
+  .pv-pcard .av{width:34px;height:34px;border-radius:50%;background:#d8d2c4;margin:0 auto 6px;}
+  .pv-pcard .p{font-size:9px;color:var(--muted);font-weight:700;letter-spacing:.03em;}
+  .pv-pcard .nm2{font-size:12px;font-weight:650;margin-top:2px;} .pv-pcard .vv{font-size:11px;color:var(--muted);margin-top:1px;}
+  .pv-imp{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:10px;font-size:12px;}
+  .pv-imp .t{font-size:8.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);font-weight:700;} .pv-imp .nm{font-weight:650;} .pv-imp .up{margin-left:auto;font-weight:700;}
+  .pv-lad{display:flex;align-items:center;gap:9px;font-size:12px;padding:9px 11px;background:#fff;border:1px solid var(--line);border-radius:10px;}
+  .pv-lad .rkw{font-weight:800;color:var(--muted);width:18px;text-align:center;} .pv-lad .sp{margin-left:auto;font-weight:600;}
+  .pv-mgap{font-size:10px;color:var(--muted);text-align:center;padding:5px 0;} .pv-mgap b{color:var(--ink);}
+  .pv-merow{display:flex;align-items:center;gap:9px;background:var(--ink);color:#fff;border-radius:10px;padding:11px 12px;}
+  .pv-merow .nm{color:#fff;font-weight:650;font-size:12.5px;} .pv-merow .sp{margin-left:auto;font-weight:700;font-size:14px;} .pv-merow .rkw{font-weight:800;color:#bdbdbd;width:24px;}
+  .pv-merow .pv-you2{background:#fff;color:var(--ink);}
+  .pv-mav{width:26px;height:26px;border-radius:50%;background:#e9e5dc;flex:none;}
+  .pv-you2{font-size:8px;font-weight:700;text-transform:uppercase;background:var(--ink);color:#fff;border-radius:20px;padding:1px 6px;margin-left:6px;}
   .qflag{font-size:8px;font-weight:700;text-transform:uppercase;background:#161310;color:#fff;border-radius:20px;padding:2px 6px;margin-left:6px;vertical-align:middle;}
   .pv-invite{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;background:#161310;color:#fff;border:0;border-radius:20px;padding:3px 9px;margin-left:6px;vertical-align:middle;cursor:pointer;}
   .pv-invite:hover{opacity:.85;}
@@ -2013,6 +2028,7 @@
     renderClosed();
     renderTeam();
     renderSoloProduction();
+    renderMemberPodium();
     loadTeamLead();
     forceKanbanLayout();
     // Repopulate the Recent activity feed now that files/sends are loaded (covers a
@@ -3976,6 +3992,37 @@
     if(sr) sr.addEventListener('click', function(e){ e.preventDefault(); const b = document.getElementById('earn-goal-btn'); if(b) b.click(); });
     const sg = document.getElementById('tv-setgoal');
     if(sg) sg.addEventListener('click', function(e){ e.preventDefault(); const b = document.getElementById('earn-goal-btn'); if(b) b.click(); });
+  }
+  // Team-member podium · top 3 + most improved + your rung. Production VOLUME only (no peer earnings).
+  // Needs the team_board() SQL function. Renders into the solo Production tab for team members (not leads, not solo agents).
+  async function renderMemberPodium(){
+    if(!_profile || !_profile.id) return;
+    const host = document.getElementById('tab-business'); if(!host) return;
+    const old = document.getElementById('member-podium'); if(old) old.parentNode.removeChild(old);
+    try { const lead = await _client.from('teams').select('id').eq('lead_agent_id', _profile.id).limit(1).maybeSingle(); if(lead && lead.data) return; } catch(_){}
+    let teamId=null;
+    try { const m = await _client.from('team_members').select('team_id').eq('agent_id', _profile.id).limit(1).maybeSingle(); if(m && m.data) teamId=m.data.team_id; } catch(_){}
+    if(!teamId) return;
+    let rows=[];
+    try { const r = await _client.rpc('team_board', { p_team_id: teamId }); rows = r.data || []; } catch(_){ return; }
+    if(!rows || rows.length<2) return;
+    rows.forEach(function(x){ x.this_vol=Number(x.this_vol)||0; x.last_vol=Number(x.last_vol)||0; });
+    rows.sort(function(a,b){ return b.this_vol-a.this_vol; });
+    const first=function(n){ return (n||'').split(' ')[0]||n; };
+    const top=rows.slice(0,3);
+    let imp=null, impPct=0; rows.forEach(function(x){ if(x.last_vol>0){ var p=(x.this_vol-x.last_vol)/x.last_vol; if(p>impPct){ impPct=p; imp=x; } } });
+    let myI=-1; rows.forEach(function(x,i){ if(x.agent_id===_profile.id) myI=i; });
+    const me = myI>=0?rows[myI]:null, above = myI>0?rows[myI-1]:null;
+    const pod='<div class="pv-pod">'+top.map(function(x,i){ return '<div class="pv-pcard"><div class="av"></div><div class="p">'+(i===0?'1st':i===1?'2nd':'3rd')+'</div><div class="nm2">'+esc(first(x.name))+'</div><div class="vv">'+teamFmt(x.this_vol)+'</div></div>'; }).join('')+'</div>';
+    const impHtml = imp ? '<div class="pv-imp"><span class="t">Most improved</span><span class="nm">'+esc(imp.name)+'</span><span class="up">&#9650; '+Math.round(impPct*100)+'%</span></div>' : '';
+    let rung='';
+    if(me){
+      const meRow='<div class="pv-merow"><span class="rkw">#'+(myI+1)+'</span><span class="pv-mav"></span><span class="nm">'+esc(me.name)+'<span class="pv-you2">You</span></span><span class="sp">'+teamFmt(me.this_vol)+'</span></div>';
+      rung = '<div class="pv-eyebrow" style="margin-top:16px">Where you stand</div>' + (above ? ('<div class="pv-lad"><span class="rkw">'+myI+'</span><span class="pv-mav"></span><span>'+esc(above.name)+'</span><span class="sp">'+teamFmt(above.this_vol)+'</span></div><div class="pv-mgap">&#9650; <b>'+teamFmt(above.this_vol-me.this_vol)+'</b> to catch '+esc(first(above.name))+'</div>') : '') + meRow;
+    }
+    const wrap=document.createElement('div'); wrap.id='member-podium'; wrap.style.marginTop='18px';
+    wrap.innerHTML='<div class="pv-eyebrow">This month’s leaders</div>'+pod+impHtml+rung;
+    host.appendChild(wrap);
   }
   function renderTeamView(){
     const host = document.getElementById('tab-team'); if(!host) return;
