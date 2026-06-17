@@ -9872,6 +9872,7 @@ Tell me your planned move-out date and I will set the inspection.`
     inp.click();
   }
   let _ctEditingField = null; // which line/row is currently expanded for editing
+  let _ctWhyOpen = {}; // which deadline rows have their "Why this date" detail expanded
   let _rtEditKey = null;      // rental terms · which row's inline editor is open
   let _ctVerifyMode = false;  // split view · contract PDF beside the term lines
   // Resolve a FRESH signed URL for the attached contract (signed links expire,
@@ -10171,10 +10172,13 @@ Tell me your planned move-out date and I will set the inspection.`
     const ov = Object.assign({}, file.deadline_overrides || {});
     if(ov.insp == null && lg.inspection_days != null && lg.inspection_days !== '') ov.insp = Number(lg.inspection_days);
     const fmtMD = function(d){ return d ? d.toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '—'; };
-    let dateMap = {}, stdMap = {}, haveDates = !!(eff && cls && ct && ENG && ENG.CONTRACT_DEADLINES && ENG.CONTRACT_DEADLINES[ct]);
+    // Date with weekday ("Jun 22 · Mon") and a fuller form ("Sat Jun 20") for the why text.
+    const fmtMDW = function(d){ return d ? (d.toLocaleDateString('en-US', { month:'short', day:'numeric' }) + ' · ' + d.toLocaleDateString('en-US', { weekday:'short' })) : '—'; };
+    const fmtWMD = function(d){ return d ? d.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }) : ''; };
+    let dateMap = {}, stdMap = {}, whyMap = {}, haveDates = !!(eff && cls && ct && ENG && ENG.CONTRACT_DEADLINES && ENG.CONTRACT_DEADLINES[ct]);
     if(haveDates){
       try {
-        ENG.contractDeadlines(ct, eff, cls, ov).forEach(function(d){ dateMap[d.key] = d.date; });
+        ENG.contractDeadlines(ct, eff, cls, ov).forEach(function(d){ dateMap[d.key] = d.date; whyMap[d.key] = { cite:d.citation, comp:d.computedDate, date:d.date, rolled:(d.computedDate && d.date && d.computedDate.getTime() !== d.date.getTime()) }; });
         ENG.contractDeadlines(ct, eff, cls, {}).forEach(function(d){ stdMap[d.key] = d.date; });
       } catch(_){ haveDates = false; }
     }
@@ -10190,7 +10194,7 @@ Tell me your planned move-out date and I will set the inspection.`
       const curVal = (ov[f] != null) ? ov[f] : stdCfg[f];
       const stdVal = stdCfg[f];
       const differs = (ov[f] != null && Number(ov[f]) !== Number(stdVal));
-      const dateStr = haveDates ? fmtMD(dateMap[fd.dk]) : null;
+      const dateStr = haveDates ? fmtMDW(dateMap[fd.dk]) : null;
       // Lock-in pattern (matches ctLine) · a row is only open while it's the
       // field being edited. Differing rows stay as settled lines with a small
       // "edited" marker; tap to open, "Lock in" to settle.
@@ -10205,18 +10209,39 @@ Tell me your planned move-out date and I will set the inspection.`
       }
       // Confirmed line · "Label · N days  ........  Date ✓" (tap to change).
       if(!editing){
-        return '<button type="button" data-ctedit="' + f + '" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:12px 2px;border:0;border-top:0.5px solid #f1ede6;background:none;cursor:pointer;font-family:inherit;text-align:left">' +
+        // "Why this date" · contract citation + plain-language weekend/holiday roll, read only on tap.
+        const _wm = haveDates ? whyMap[fd.dk] : null;
+        let _whyText = '';
+        if(_wm && _wm.cite){
+          _whyText = esc(_wm.cite);
+          if(_wm.rolled){ _whyText += ' Falls on ' + fmtWMD(_wm.comp) + ', so Standard F rolls it to the next business day, ' + fmtWMD(_wm.date) + '.'; }
+        }
+        const _whyHtml = _whyText
+          ? '<div style="padding:0 2px 10px">' +
+              '<button type="button" data-ctwhy="' + f + '" style="background:none;border:0;padding:0;font-family:inherit;font-size:11px;color:#9a958c;cursor:pointer;text-decoration:underline">Why this date</button>' +
+              '<div id="ctwhy-' + f + '" style="display:' + (_ctWhyOpen[f] ? 'block' : 'none') + ';background:#faf7f1;border:0.5px solid #ece4d2;border-radius:9px;padding:9px 11px;margin-top:7px;font-size:11.5px;color:#6f6a61;line-height:1.5">' + _whyText + '</div>' +
+            '</div>'
+          : '';
+        return '<div>' +
+          '<button type="button" data-ctedit="' + f + '" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:12px 2px;border:0;border-top:0.5px solid #f1ede6;background:none;cursor:pointer;font-family:inherit;text-align:left">' +
           '<span style="font-size:13px;color:#5f5e5a">' + esc(fd.label) + ' &middot; ' + curVal + ' ' + dayWord +
             (differs ? '<span style="font-size:10px;color:#a39e95;font-weight:600;margin-left:6px">edited</span>' : '') + '</span>' +
           '<span style="display:flex;align-items:center;gap:7px;font-size:13px">' +
             (dateStr ? '<span style="font-weight:600;color:#0f0f0f">' + dateStr + '</span><span style="color:#3e7d57;font-size:13px">&check;</span>'
                      : '<span style="font-size:10px;color:#c69a4a">set dates</span>') +
-          '</span></button>';
+          '</span></button>' +
+          _whyHtml +
+        '</div>';
       }
       // Editing card · dark box + live date + standard reference.
       const stdHint = differs
         ? '<div style="font-size:10.5px;color:#c69a4a;margin-top:9px">standard ' + stdVal + (haveDates && stdMap[fd.dk] ? ' &rarr; ' + fmtMD(stdMap[fd.dk]) : '') + '</div>'
         : '<div style="font-size:10.5px;color:#a39e95;margin-top:9px">contract standard &middot; ' + stdVal + ' days</div>';
+      // Same contract why, shown inline while editing this row.
+      const _wmE = haveDates ? whyMap[fd.dk] : null;
+      let _whyE = '';
+      if(_wmE && _wmE.cite){ _whyE = esc(_wmE.cite); if(_wmE.rolled){ _whyE += ' Rolled off ' + fmtWMD(_wmE.comp) + ' to ' + fmtWMD(_wmE.date) + ' under Standard F.'; } }
+      const whyHintE = _whyE ? '<div style="font-size:10.5px;color:#8a857c;margin-top:6px;line-height:1.5">' + _whyE + '</div>' : '';
       return '<div style="background:#faf7f1;border:0.5px solid #ece4d2;border-radius:11px;padding:12px 13px;margin:8px 0">' +
         '<div style="display:flex;justify-content:space-between;align-items:center">' +
           '<span style="font-size:13px;font-weight:600;color:#0f0f0f">' + esc(fd.label) + '</span>' +
@@ -10227,7 +10252,7 @@ Tell me your planned move-out date and I will set the inspection.`
           '<span style="font-size:11px;color:#a39e95">days</span>' +
           '<span style="margin-left:auto;font-size:15px;font-weight:700;color:#0f0f0f">' + (dateStr || '—') + '</span>' +
           (isInsp ? '<button type="button" id="ct-inspwaive" title="Mark inspection waived" style="background:none;border:none;color:#c2bdb4;font-size:15px;line-height:1;cursor:pointer;font-family:inherit" aria-label="Waive inspection">&times;</button>' : '') +
-        '</div>' + stdHint +
+        '</div>' + stdHint + whyHintE +
         '<div style="text-align:right;margin-top:11px"><button type="button" data-ctday-done="' + f + '" style="background:#0f0f0f;color:#fff;border:0;border-radius:7px;padding:7px 15px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Lock in</button></div>' +
       '</div>';
     }).join('');
@@ -10528,6 +10553,15 @@ Tell me your planned move-out date and I will set the inspection.`
         const f = b.getAttribute('data-ctedit');
         _ctEditingField = (_ctEditingField === f) ? null : f;
         renderContractTerms(file);
+      });
+    });
+    // "Why this date" · toggle the citation detail in place, no re-render so the row stays put.
+    host.querySelectorAll('[data-ctwhy]').forEach(function(b){
+      b.addEventListener('click', function(){
+        const f = b.getAttribute('data-ctwhy');
+        _ctWhyOpen[f] = !_ctWhyOpen[f];
+        const d = document.getElementById('ctwhy-' + f);
+        if(d) d.style.display = _ctWhyOpen[f] ? 'block' : 'none';
       });
     });
     CT_DAY_FIELDS.forEach(function(fd){
