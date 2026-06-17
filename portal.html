@@ -4260,7 +4260,16 @@
     var rankRows = ranked.map(function(g,i){ return sbRowHtml(g, i+1, i>=10); }).join('') || '<div style="font-size:11px;color:var(--muted);padding:8px 2px">No agents yet.</div>';
     var showAllBtn = ranked.length>10 ? '<button class="pv-showall" data-showall>Show all '+ranked.length+'</button>' : '';
     var sbHead = '<div class="pv-sbhead"><span class="hl">Agent</span><span>Pipeline</span><span>Earns</span><span>Aari</span><span>TC fee</span><span>Soon</span><span></span></div>';
-    const agentRows = '<div class="pv-sbwrap">'+stiles+'<div class="pv-search"><input type="text" placeholder="Search agents…" data-sbsearch></div>'+sbHead+'<div class="pv-board">'+rankRows+'</div>'+showAllBtn+'</div>';
+    // The lead's own production as a "You" row under the standings (their files are in _files, not _teamFiles).
+    var meRow='';
+    if(_files && _files.length){ var _myAct=_files.filter(function(f){return !isClosed(f);}); if(_myAct.length){
+      var _myItems=_myAct.map(function(f){ var sp=(Array.isArray(f.splits)&&f.splits.length)?f.splits:[{agent_id:f.agent_id,pct:100}]; return {f:f, pct:100, sps:sp}; });
+      var _mc=yourCutOf(_myItems); var _myNm=(((_profile.first_name||'')+' '+(_profile.last_name||'')).trim()||'You');
+      var meGroup={ id:_profile.id, name:_myNm, ini:(_myNm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase(), photo:(_profile.headshot_url)||photoFor(_myNm), items:_myItems, deals:_myItems.length, pipe:_myAct.reduce(function(s,f){return s+teamPrice(f);},0), gci:_mc.gross, agentEarns:_mc.gross-_mc.company, aariComm:_mc.company, tcFee:_mc.fee, pending:false, mom:'none' };
+      meGroup.quiet=(meGroup.deals<=1);
+      meRow='<div class="pv-mewrap"><div class="pv-sbhead" style="border-top:1px solid var(--line);padding-top:11px;margin-top:8px"><span class="hl">Your production</span><span>Pipeline</span><span>Earns</span><span>Aari</span><span>TC fee</span><span>Soon</span><span></span></div>'+sbRowHtml(meGroup,'&#9733;',false)+'</div>';
+    }}
+    const agentRows = '<div class="pv-sbwrap">'+stiles+'<div class="pv-search"><input type="text" placeholder="Search agents…" data-sbsearch></div>'+sbHead+'<div class="pv-board">'+rankRows+'</div>'+showAllBtn+meRow+'</div>';
     // Team at a glance · dense sortable grid (scales to 100 agents) · sorted by commission desc
     var _fgCount={}; (_teamFiles||[]).forEach(function(f){ if(f.fg_tc_id) _fgCount[f.fg_tc_id]=(_fgCount[f.fg_tc_id]||0)+1; });
     var agTcLoad=function(g){ var c={},top=null,mx=0; (g.items||[]).forEach(function(it){ var t=it.f&&it.f.fg_tc_id; if(t) c[t]=(c[t]||0)+1; }); Object.keys(c).forEach(function(t){ if(c[t]>mx){mx=c[t];top=t;} }); if(!top) return '&mdash;'; var L=_fgCount[top]||0; return L>=10?'High':(L>=5?'Med':'Low'); };
@@ -4326,7 +4335,6 @@
       (cwRisk.length ? '<div class="pv-cwgrp risk">Needs attention &middot; '+cwRisk.length+'</div>'+cwRisk.map(cwRow).join('') : '') +
       (cwOk.length ? '<div class="pv-cwtoggle" data-cwtoggle><span>On track &middot; '+cwOk.length+'</span><span style="margin-left:auto">'+teamFmt(cwOkTot)+'</span><span class="pv-chev" style="margin-left:8px">&#9662;</span></div><div class="pv-cwok">'+cwOk.map(cwRow).join('')+'</div>' : '')) : '';
 
-    var ownProd = (_files && _files.length) ? ('<div class="pv-eyebrow" style="margin-top:26px;border-top:1px solid var(--line);padding-top:18px">Your own production</div>' + buildYourProduction()) : '';
     host.innerHTML =
       '<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button class="pv-viewagent" id="pv-addagent">+ Add an agent</button></div>' +
       rollup +
@@ -4337,7 +4345,7 @@
       '<div class="pv-eyebrow">Team standings &middot; agent / Aari / TC fee</div>' +
       agentRows +
       odBlock +
-      '<p class="pv-note">Estimates use each agent&rsquo;s stored rate (2.5% default until you set theirs). View only &middot; Aari does not calculate or process commissions.</p>' + ownProd;
+      '<p class="pv-note">Estimates use each agent&rsquo;s stored rate (2.5% default until you set theirs). View only &middot; Aari does not calculate or process commissions.</p>';
     host.querySelectorAll('.pv-text').forEach(b => b.addEventListener('click', function(e){ e.stopPropagation(); teamNudge(this.getAttribute('data-nudge'), this.getAttribute('data-mode')||''); }));
     host.querySelectorAll('.pv-rate').forEach(b => b.addEventListener('click', function(e){ e.stopPropagation(); setAgentRate(this.getAttribute('data-rate')); }));
     host.querySelectorAll('[data-sbtoggle]').forEach(function(h){ h.addEventListener('click', function(e){ if(e.target.closest('.pv-text')||e.target.closest('.pv-rate')||e.target.closest('.pv-invite')) return; this.parentNode.classList.toggle('open'); }); });
@@ -4390,7 +4398,7 @@
 
   // Inline per-deal commission editor · price + rate override + bonus + company-lead 50/50.
   function editDealTerms(fileId, rowEl){
-    var f=null; (_teamFiles||[]).forEach(function(x){ if(String(x.id)===String(fileId)) f=x; });
+    var f=null; (_teamFiles||[]).concat(_files||[]).forEach(function(x){ if(String(x.id)===String(fileId)) f=x; });
     if(!f){ alert('Deal not found.'); return; }
     var nxt=rowEl.nextSibling;
     if(nxt && nxt.className==='pv-dterms'){ nxt.parentNode.removeChild(nxt); return; }
