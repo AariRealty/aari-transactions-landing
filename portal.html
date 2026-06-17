@@ -3902,7 +3902,7 @@
       const mem = await _client.from('team_members').select('agent_id').eq('team_id', _team.id);
       const ids = (mem.data || []).map(m => m.agent_id);
       if(!ids.length) return;
-      const ag = await _client.from('agents').select('id, first_name, last_name, default_commission_pct, agreement_signed_at, headshot_url').in('id', ids);
+      const ag = await _client.from('agents').select('id, first_name, last_name, role, default_commission_pct, agreement_signed_at, headshot_url').in('id', ids);
       _teamAgents = {}; (ag.data || []).forEach(a => { _teamAgents[a.id] = a; });
       const fl = await _client.from('files').select('*').in('agent_id', ids);
       _teamFiles = (fl.data || []).filter(f => !isClosed(f));
@@ -4134,10 +4134,15 @@
   }
   function renderTeamView(){
     const host = document.getElementById('tab-team'); if(!host) return;
-    // Standings = Aari agent production only. TC-submitted files are coordination
-    // work for OUTSIDE clients, so they never count toward the leaderboard and a
-    // coordinator never shows as a producer. They still live in the TC cockpit.
-    const isTcCoord = function(f){ var r=f.raw_form_data||{}; return r.submitted_by_tc===true || r.submitted_by_tc==='true'; };
+    // Standings = Aari agent production only. A file is coordination work (kept out
+    // of the leaderboard) if it was TC-submitted OR its assigned agent is a TC. A
+    // coordinator never shows as a producer either way. They still live in the TC cockpit.
+    const isTcCoord = function(f){
+      var r=f.raw_form_data||{};
+      if(r.submitted_by_tc===true || r.submitted_by_tc==='true') return true;
+      var a=_teamAgents[f.agent_id]; if(a && (a.role||'')==='tc') return true;
+      return false;
+    };
     const files = (_teamFiles || []).filter(function(f){ return !isTcCoord(f); });
     if(!files.length){ host.innerHTML = '<div class="tx-empty">No active team files yet.</div>'; return; }
     const totalPipe = files.reduce((s,f) => s + teamPrice(f), 0);
