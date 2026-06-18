@@ -9167,6 +9167,35 @@ Tell me your planned move-out date and I will set the inspection.`
       }
       return;
     }
+    // Attach an outside agent's signed Service Agreement to the file (they signed
+    // offline and have no Aari account, so it lives on the file, not the agent record).
+    const saAtt = e.target.closest && e.target.closest('[data-sa-attach]');
+    if(saAtt){
+      e.preventDefault();
+      const fid = saAtt.getAttribute('data-sa-attach');
+      const f = (_currentFile && _currentFile.id === fid) ? _currentFile : _files.find(x => x.id === fid);
+      if(!f || !_client) return;
+      const inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = '.pdf,application/pdf,image/*';
+      inp.addEventListener('change', async function(){
+        const f0 = inp.files && inp.files[0]; if(!f0) return;
+        saAtt.disabled = true; saAtt.textContent = 'Uploading…';
+        try {
+          const safe = (f0.name || 'service-agreement.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+          const path = fid + '/sa/' + safe;
+          const up = await _client.storage.from('signed-agreements').upload(path, f0, { upsert:true, contentType: f0.type || 'application/octet-stream' });
+          if(up && up.error) throw new Error(up.error.message);
+          const lg = Object.assign({}, f.logistics || {}, { sa_pdf_path: path, sa_attached_at: new Date().toISOString() });
+          const r = await _client.from('files').update({ logistics: lg }).eq('id', fid).select('id');
+          if(r && r.error) throw new Error(r.error.message);
+          f.logistics = lg; if(_currentFile && _currentFile.id === fid) _currentFile.logistics = lg;
+          try { writeAuditLog('sa_attached', fid, { path: path }); } catch(_){}
+          renderPlaybook(f);
+        } catch(err){ saAtt.disabled = false; saAtt.textContent = 'Attach signed SA'; alert('Could not attach the agreement: ' + (err && err.message || 'unknown')); }
+      });
+      inp.click();
+      return;
+    }
     const vb = e.target.closest && e.target.closest('[data-view]');
     if(vb){ setView(vb.getAttribute('data-view')); return; }
     const row = e.target.closest && e.target.closest('.flist-row');
@@ -12577,17 +12606,19 @@ Tell me your planned move-out date and I will set the inspection.`
       const badPill = function(txt){ return '<span style="font-size:11px;font-weight:600;color:#a3402f;background:#f7ecea;border:0.5px solid #e6cdc7;border-radius:7px;padding:4px 10px;white-space:nowrap">' + txt + '</span>'; };
       const warnPill = function(txt){ return '<span style="font-size:11px;font-weight:600;color:#8a6a1f;background:#faf3e3;border:0.5px solid #ecdcb8;border-radius:7px;padding:4px 10px;white-space:nowrap">' + txt + '</span>'; };
       if(t.systemCheck === 'sa'){
-        const signed = !!(_drawerAgent && _drawerAgent.agreement_signed_at);
-        const saPath = (_drawerAgent && _drawerAgent.agreement_pdf_path) || '';
-        // SA is enforced upstream (intake + portal login); this row is a passive
-        // confirmation, not a gate. No alarm when unsigned. When the executed PDF
-        // is on file, the pill OPENS it (signed URL · broker/TC read access).
-        if(signed && saPath){
+        const _f = _drawerFile || file;
+        const _fileSa = (_f.logistics || {}).sa_pdf_path || '';
+        const agentSigned = !!(_drawerAgent && _drawerAgent.agreement_signed_at);
+        // "On file" if the agent signed in their Aari account OR a signed copy was
+        // attached to this file (outside agents who signed offline). The pill OPENS it.
+        const saPath = (_drawerAgent && _drawerAgent.agreement_pdf_path) || _fileSa || '';
+        if((agentSigned || _fileSa) && saPath){
           pill = '<button type="button" data-sa-open="' + esc(saPath) + '" title="Open the executed Service Agreement" style="font-size:11px;font-weight:600;color:#2f6b48;background:#eaf3ee;border:0.5px solid #cfe5d8;border-radius:7px;padding:4px 10px;white-space:nowrap;cursor:pointer">&#10003; SA on file <span style="opacity:.65">&#183; open</span></button>';
-        } else if(signed){
+        } else if(agentSigned){
           pill = okPill('&#10003; SA on file');
         } else {
-          pill = '<span style="font-size:11px;font-weight:600;color:#8a857c;background:#f1ede6;border-radius:7px;padding:4px 10px;white-space:nowrap">SA pending</span>';
+          pill = '<span style="display:inline-flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:600;color:#8a857c;background:#f1ede6;border-radius:7px;padding:4px 10px;white-space:nowrap">SA pending</span>' +
+            '<button type="button" data-sa-attach="' + esc(_f.id) + '" title="Attach a signed Service Agreement to this file" style="font-size:11px;font-weight:600;color:#0f0f0f;background:#fff;border:0.5px solid rgba(15,15,15,0.3);border-radius:7px;padding:4px 10px;white-space:nowrap;cursor:pointer;font-family:inherit">Attach signed SA</button></span>';
         }
         note = '';
       } else {
