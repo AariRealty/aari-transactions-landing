@@ -6131,7 +6131,12 @@ Tell me your planned move-out date and I will set the inspection.`
     const _cc = (file.logistics || {}).contacts || {};
     const _ccGet = function(k, f){ return (_cc[k] && _cc[k][f]) || ''; };
     const _rfd = file.raw_form_data || {};
-    const buyerName = _ccGet('buyer','name') || (isBuyerSide ? (file.client_name || '[buyer name]') : (_rfd.pa_buyer_name || _rfd.buyer_name || '[buyer name]'));
+    // All buyers · the contract can name several (e.g. a couple or co-buyers). Show
+    // every one the agent entered, not just the first, joined with "&".
+    const _allBuyers = [_rfd.pa_buyer_name, _rfd.pa_buyer2_name, _rfd.pa_buyer3_name].filter(Boolean).join(' & ');
+    const buyerName = (_allBuyers && _allBuyers.indexOf('&') >= 0)
+      ? _allBuyers
+      : (_ccGet('buyer','name') || (isBuyerSide ? (file.client_name || '') : '') || _allBuyers || _rfd.pa_buyer_name || _rfd.buyer_name || '[buyer name]');
     const sellerName = _ccGet('seller','name') || (isSellerSide ? (file.client_name || '[seller name]') : (_rfd.pa_seller_name || _rfd.seller_name || _rfd.pa_other_party_name || '[seller name]'));
     const tenantName = file.client_name || '[tenant name]';
     const buyerFirst = buyerName.split(' ')[0];
@@ -6173,7 +6178,11 @@ Tell me your planned move-out date and I will set the inspection.`
     const coAgentEmail   = _ccGet('co_agent','email') || raw.pa_co_agent_email   || raw.co_agent_email   || '';
     const commissionNotes = raw.pa_commission_notes || raw.commission_notes || raw.offer_notes || '[commission terms]';
     const agentPhone   = (_ourAgentKey && _ccGet(_ourAgentKey,'phone')) || _rfd.pa_agent_phone || (agent && agent.phone) || raw.agent_phone || '[agent phone]';
-    const agentCompany = raw.brokerage || raw.brokerageName || 'Aari Realty';
+    // Our agent's brokerage · use the captured company first. Only fall back to
+    // "Aari Realty" when there's a real Aari agent record on the file; for outside
+    // agents we coordinate for, show the captured company (or a bracket) instead of
+    // wrongly stamping Aari Realty on a buyer's agent who isn't ours.
+    const agentCompany = (_ourAgentKey && _ccGet(_ourAgentKey,'company')) || _rfd.pa_agent_company || raw.brokerage || raw.brokerageName || (agent ? 'Aari Realty' : '[brokerage]');
     // Binder/EMD amount: the cents column if set, else the confirmed EMD amount
     // (file.emd.amount, set in Contract Terms as "Binder deposit"). Normalize to $.
     const _emdAmt = (file.emd && file.emd.amount) ? String(file.emd.amount).trim() : '';
@@ -9877,12 +9886,15 @@ Tell me your planned move-out date and I will set the inspection.`
   let _ctVerifyMode = false;  // split view · contract PDF beside the term lines
   // Resolve a FRESH signed URL for the attached contract (signed links expire,
   // so always regenerate from the durable storage path).
+  // Open the PDF fit to the full page width with the thumbnail sidebar hidden,
+  // so the preview pane shows the whole page instead of a small cropped view.
+  function withPdfView(u){ if(!u) return u; return u + (u.indexOf('#') >= 0 ? '&' : '#') + 'view=FitH&pagemode=none'; }
   async function ctResolveViewUrl(file){
     const raw = file.raw_form_data || {};
     let path = raw.contract_path || '';
     if(!path){ const ex = contractUrlOf(file) || ''; const m = ex.match(/transaction-files\/([^?]+)/); if(m) path = decodeURIComponent(m[1]); }
-    if(!path){ try { await resolveContractUrl(file); } catch(_){} const ex2 = file._resolvedContract || ''; const m2 = ex2.match(/transaction-files\/([^?]+)/); if(m2) path = decodeURIComponent(m2[1]); else if(ex2) return ex2; }
-    if(path){ try { const { data, error } = await _client.storage.from('transaction-files').createSignedUrl(path, 3600); if(!error && data && data.signedUrl) return data.signedUrl; } catch(_){} }
+    if(!path){ try { await resolveContractUrl(file); } catch(_){} const ex2 = file._resolvedContract || ''; const m2 = ex2.match(/transaction-files\/([^?]+)/); if(m2) path = decodeURIComponent(m2[1]); else if(ex2) return withPdfView(ex2); }
+    if(path){ try { const { data, error } = await _client.storage.from('transaction-files').createSignedUrl(path, 3600); if(!error && data && data.signedUrl) return withPdfView(data.signedUrl); } catch(_){} }
     return '';
   }
   // Remove the attached contract (e.g. wrong file uploaded). Unlinks the
@@ -11277,18 +11289,11 @@ Tell me your planned move-out date and I will set the inspection.`
     const reviewNotice = _reviewNeedsLink
       ? '<div class="tpb-review-notice">Action required &mdash; paste the Google review link before sending this email.</div>'
       : '';
-    // Missing-field catcher · ask the TC for anything still blank before send.
-    const missing = missingFieldsFor(e, file, agent);
-    const missingBlock = missing.length
-      ? '<div class="tpb-ef-missing">' +
-          '<p class="tpb-ef-missing-eb">Fill these before you send</p>' +
-          missing.map(mf =>
-            '<div class="tpb-ef-mrow"><label>' + esc(mf.label) + '</label>' +
-            '<input type="text" data-mf-key="' + esc(mf.key) + '" placeholder="' + esc(mf.label) + '"></div>'
-          ).join('') +
-          '<button type="button" class="tpb-ef-msave" data-mf-save="' + eid + '">Save to file</button>' +
-        '</div>'
-      : '';
+    // Fill-these prompt removed per request · no "fill these before you send" form
+    // and no "to fill" badge. Anything still blank shows as an editable [placeholder]
+    // in the email body, which the TC can fill inline before copying.
+    const missing = [];
+    const missingBlock = '';
     return '<div class="tpb-email'+(sent?' sent':'')+(missing.length?' has-missing':'')+'" data-email-id="'+eid+'">' +
       '<div class="tpb-email-head">' +
         '<span class="tpb-thread-badge" style="background:'+thread.color+'">Thread ' + e.thread + ' · ' + esc(thread.name) + '</span>' +
