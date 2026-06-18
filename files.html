@@ -12608,12 +12608,16 @@ Tell me your planned move-out date and I will set the inspection.`
       if(t.systemCheck === 'sa'){
         const _f = _drawerFile || file;
         const _fileSa = (_f.logistics || {}).sa_pdf_path || '';
-        const agentSigned = !!(_drawerAgent && _drawerAgent.agreement_signed_at);
-        // "On file" if the agent signed in their Aari account OR a signed copy was
-        // attached to this file (outside agents who signed offline). The pill OPENS it.
+        const _sigUrl = (_drawerAgent && _drawerAgent._sa_sig_url) || '';
+        const agentSigned = !!(_drawerAgent && _drawerAgent.agreement_signed_at) || !!_sigUrl;
+        // "On file" if the agent signed (agents row OR agreement_signatures) OR a copy was
+        // attached to this file. Storage paths open via signed URL; the signature record
+        // is a full URL opened directly.
         const saPath = (_drawerAgent && _drawerAgent.agreement_pdf_path) || _fileSa || '';
-        if((agentSigned || _fileSa) && saPath){
+        if(saPath){
           pill = '<button type="button" data-sa-open="' + esc(saPath) + '" title="Open the executed Service Agreement" style="font-size:11px;font-weight:600;color:#2f6b48;background:#eaf3ee;border:0.5px solid #cfe5d8;border-radius:7px;padding:4px 10px;white-space:nowrap;cursor:pointer">&#10003; SA on file <span style="opacity:.65">&#183; open</span></button>';
+        } else if(_sigUrl){
+          pill = '<a href="' + esc(_sigUrl) + '" target="_blank" rel="noopener" title="Open the executed Service Agreement" style="font-size:11px;font-weight:600;color:#2f6b48;background:#eaf3ee;border:0.5px solid #cfe5d8;border-radius:7px;padding:4px 10px;white-space:nowrap;cursor:pointer;text-decoration:none">&#10003; SA on file <span style="opacity:.65">&#183; open</span></a>';
         } else if(agentSigned){
           pill = okPill('&#10003; SA on file');
         } else {
@@ -13741,7 +13745,22 @@ Tell me your planned move-out date and I will set the inspection.`
       const { data } = await _client.from('agents')
         .select('id, first_name, last_name, email, phone, agreement_signed_at, agreement_pdf_path, google_review_link')
         .eq('id', agentId).single();
-      _agentCache[agentId] = data || null;
+      const a = data || null;
+      // The executed Service Agreement is the source of truth in agreement_signatures,
+      // not the agents row. Fold it in so a signed agent never shows "SA pending".
+      if(a){
+        try {
+          const sig = await _client.from('agreement_signatures')
+            .select('signed_agreement_pdf_url, signed_at')
+            .eq('agent_id', agentId).eq('agreement_type', 'service_agreement')
+            .order('signed_at', { ascending: false }).limit(1).maybeSingle();
+          if(sig && sig.data){
+            if(!a.agreement_signed_at && sig.data.signed_at) a.agreement_signed_at = sig.data.signed_at;
+            if(sig.data.signed_agreement_pdf_url) a._sa_sig_url = sig.data.signed_agreement_pdf_url;
+          }
+        } catch(_){}
+      }
+      _agentCache[agentId] = a;
       return _agentCache[agentId];
     } catch(_){ _agentCache[agentId] = null; return null; }
   }
