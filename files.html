@@ -9594,28 +9594,16 @@ Tell me your planned move-out date and I will set the inspection.`
     try {
       const upd = Object.assign({}, colPatch || {});
       if(lgPatch){ const lg = Object.assign({}, file.logistics || {}, lgPatch); upd.logistics = lg; file.logistics = lg; }
-      // AUTO-ADVANCE · confirming the effective date = the contract is executed, so a
-      // file still in New moves to Under contract. Gated like a manual move (compliance
-      // blocks still apply) and logged the same way. Never auto-derives — it rides a
-      // deliberate TC action (the TC confirming the contract term).
-      const _prevStage = (file.transaction_stage || '').toLowerCase();
-      let _bumpUC = false;
-      if(colPatch && colPatch.effective_date && (_prevStage === '' || _prevStage === 'new')){
-        const _gate = (typeof hardStageGate === 'function') ? hardStageGate(file, 'under_contract') : '';
-        if(!_gate){ upd.transaction_stage = 'under_contract'; _bumpUC = true; }
-      }
+      // Confirming a contract term just SAVES the term. It no longer auto-advances the
+      // file's stage — that silent New → Under contract jump reshuffled the task list and
+      // lost the TC's place. The stage moves only on the deliberate "Move to Under
+      // contract" button, which is already gated for compliance.
       Object.keys(colPatch || {}).forEach(k => { file[k] = colPatch[k]; });
       if(_currentFile && _currentFile.id === file.id) Object.assign(_currentFile, file);
       const { data, error } = await _client.from('files').update(upd).eq('id', file.id).select('id');
       if(error) throw error;
       if(!data || data.length === 0){ alert('Not saved — the database rejected the change. You may not have edit permission on this file (RLS).'); return; }
       writeAuditLog('contract_term_confirmed', file.id, Object.assign({}, colPatch || {}, lgPatch || {}));
-      if(_bumpUC){
-        file.transaction_stage = 'under_contract';
-        if(_currentFile && _currentFile.id === file.id) _currentFile.transaction_stage = 'under_contract';
-        try { writeAuditLog('file_stage_changed', file.id, { from_stage: _prevStage || null, to_stage: 'under_contract', file_type: file.file_type || 'sale', property_address: file.property_address || null, via: 'contract_terms_confirmed', changed_at: new Date().toISOString() }); } catch(_){}
-        try { renderKanban(); } catch(_){}
-      }
       renderPlaybook(file);
     } catch(err){ console.warn('[files] contract terms save failed', err); alert('Save failed: ' + (err && err.message || 'unknown')); }
   }
