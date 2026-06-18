@@ -1123,7 +1123,7 @@
   };
   const STAGE_LABELS = {
     // Sale
-    'new':'New', 'waiting_for_tc':'Waiting for TC', 'under_contract':'Under contract', 'inspection':'Inspection',
+    'new':'New', 'waiting_for_tc':'Setup', 'under_contract':'Under contract', 'inspection':'Inspection',
     'remedy':'Remedy', 'appraisal':'Appraisal', 'ctc':'Clear to close', 'closed':'Closed',
     // Listing
     'active':'Active', 'pending':'Pending', 'cancelled':'Cancelled',
@@ -1134,7 +1134,7 @@
   };
   const STAGE_SUBS = {
     // Sale
-    'new':'awaiting TC', 'waiting_for_tc':'needs a coordinator', 'under_contract':'signed, set up', 'inspection':'scheduled / done',
+    'new':'awaiting TC', 'waiting_for_tc':'TC setting up the file', 'under_contract':'signed, set up', 'inspection':'scheduled / done',
     'remedy':'repairs / credits', 'appraisal':'ordered / in', 'ctc':'CD sent / walk',
     'closed':'funded, paid',
     // Listing
@@ -11162,6 +11162,26 @@ Tell me your planned move-out date and I will set the inspection.`
   });
 
   // Move-to-next-stage · delegated once. Mirrors the kanban drag guards:
+  // Clean in-app confirm · replaces the browser's gray "site says" popup with a
+  // branded modal. Returns a Promise<boolean>.
+  function appConfirm(message, opts){
+    opts = opts || {};
+    return new Promise(function(resolve){
+      var ov = document.createElement('div');
+      ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,0.45);display:flex;align-items:center;justify-content:center;z-index:99999';
+      ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:360px;width:calc(100% - 48px);padding:20px 22px;box-shadow:0 12px 40px rgba(0,0,0,0.25);font-family:inherit">' +
+        '<p style="font-size:14px;color:#0f0f0f;margin:0 0 18px;line-height:1.45">' + (message || 'Are you sure?') + '</p>' +
+        '<div style="display:flex;gap:9px;justify-content:flex-end">' +
+          '<button type="button" data-ac-cancel style="font-size:12.5px;font-weight:600;color:#5f5e5a;background:#f3f0ea;border:0.5px solid rgba(15,15,15,0.12);border-radius:8px;padding:8px 16px;cursor:pointer;font-family:inherit">' + (opts.cancel || 'Cancel') + '</button>' +
+          '<button type="button" data-ac-ok style="font-size:12.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:8px;padding:8px 16px;cursor:pointer;font-family:inherit">' + (opts.ok || 'OK') + '</button>' +
+        '</div></div>';
+      document.body.appendChild(ov);
+      var done = function(v){ try { ov.remove(); } catch(_){} resolve(v); };
+      ov.querySelector('[data-ac-ok]').addEventListener('click', function(){ done(true); });
+      ov.querySelector('[data-ac-cancel]').addEventListener('click', function(){ done(false); });
+      ov.addEventListener('click', function(ev){ if(ev.target === ov) done(false); });
+    });
+  }
   // SA lock + the stage-2 agent-confirm gate. Never offers Closed.
   document.addEventListener('click', async function(e){
     const mb = e.target && e.target.closest && e.target.closest('[data-move-next-stage]');
@@ -11171,7 +11191,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const _gateMsg2 = hardStageGate(file, newStage);
     if(_gateMsg2){ alert(_gateMsg2); return; }
     // Opening-sequence gate now enforced by hardStageGate (Item 15).
-    if(!confirm('Move this file to ' + (STAGE_LABELS[newStage] || newStage) + '?')) return;
+    if(!(await appConfirm('Move this file to ' + (STAGE_LABELS[newStage] || newStage) + '?', { ok:'Move file' }))) return;
     file.transaction_stage = newStage;
     try { renderKanban(); } catch(_){}
     try {
