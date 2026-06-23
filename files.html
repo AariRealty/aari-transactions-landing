@@ -8604,6 +8604,12 @@ Tell me your planned move-out date and I will set the inspection.`
     // from the executed contract — never ask for the same fact twice.
     const _dayKeyByRow = { init_deposit:'dep', loan_app:'lapp', loan_approval:'lappr', inspection_end:'insp', title_evidence:'title' };
     const _dayOv = file.deadline_overrides || {};
+    // Merged from Contingency days · per-row "Why this date" (citation + weekend roll)
+    // and inline day-count editing now live on the ledger row itself.
+    const _stdCfg = (ENG.CONTRACT_DEFAULTS && ENG.CONTRACT_DEFAULTS[ct]) || {};
+    const _whyMap = {};
+    try { ENG.contractDeadlines(ct, effISO, clsISO, overridesJson).forEach(function(d){ _whyMap[d.key] = { cite:d.citation, comp:d.computedDate, date:d.date, rolled:(d.computedDate && d.date && d.computedDate.getTime() !== d.date.getTime()) }; }); } catch(_){}
+    const _fmtWMD = function(d){ return d ? d.toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }) : ''; };
     const _fromTerms = function(it){
       // Walk-through and Closing derive from the Closing date the TC already
       // locked + attested in Contract terms — never re-ask downstairs.
@@ -8734,16 +8740,33 @@ Tell me your planned move-out date and I will set the inspection.`
           }
         } else { dueCell = esc(fmtDl(it.date)); }
         const lenderTag = (it.scheduled && !it.scheduledSet) ? ' <span class="dl-lender-tag">lender sets</span>' : '';
+        const _shortKey = _dayKeyByRow[it.key];
+        const _isDayBased = !!(_shortKey && _stdCfg[_shortKey] != null);
+        const _curDays = _isDayBased ? (overridesJson[_shortKey] != null ? overridesJson[_shortKey] : _stdCfg[_shortKey]) : null;
+        const _why = _whyMap[it.key];
+        const _whyOpen = !!_dlWhyOpen[it.key];
+        const _daysLabel = _isDayBased ? (' <span style="color:#9a958c;font-size:11px">' + _curDays + 'd</span>') : '';
+        const _whyBtn = (_why && _why.cite) ? '<button type="button" data-dlwhy="' + esc(it.key) + '" style="background:none;border:0;padding:0;margin-top:1px;font-family:inherit;font-size:11px;color:#9a958c;cursor:pointer;text-decoration:underline">Why this date</button>' : '';
+        let _whyDetail = '';
+        if(_whyOpen && _why && _why.cite){
+          let _wt = esc(_why.cite);
+          if(_why.rolled){ _wt += ' Falls on ' + _fmtWMD(_why.comp) + ', so Standard F rolls it to the next business day, ' + _fmtWMD(_why.date) + '.'; }
+          const _dayEdit = _isDayBased ? ('<div style="margin-top:8px;display:flex;align-items:center;gap:6px"><span style="color:#a39e95">Days</span><input type="number" data-dlday="' + esc(_shortKey) + '" value="' + esc(_curDays) + '" min="0" max="365" style="width:50px;padding:3px 7px;font-size:12px;border:0.5px solid #d9d4ca;border-radius:6px;font-family:inherit;-moz-appearance:textfield"><span style="color:#a39e95;font-size:11px">change if your contract differs</span></div>') : '';
+          _whyDetail = '<tr class="dl-lextra"><td colspan="4"><div style="background:#faf7f1;border:0.5px solid #ece4d2;border-radius:9px;padding:9px 11px;margin:2px 0 6px;font-size:11.5px;color:#6f6a61;line-height:1.5">' + _wt + _dayEdit + '</div></td></tr>';
+        }
         return '<tr class="dl-lrow' + (done ? ' done' : '') + ((!done && !confirmedRow) ? ' dl-queued' : '') + '">' +
-            '<td class="dl-lname"><span>' + esc(it.name) + '</span>' + lenderTag + '</td>' +
+            '<td class="dl-lname"><span>' + esc(it.name) + '</span>' + _daysLabel + lenderTag + (_whyBtn ? '<br>' + _whyBtn : '') + '</td>' +
             '<td class="dl-ldue">' + dueCell + '</td>' +
             '<td class="dl-ldone">' + receivedCell + '</td>' +
             '<td class="dl-lresult ' + resCls + '">' + esc(resText) + '</td>' +
-          '</tr>' + citeRow;
+          '</tr>' + citeRow + _whyDetail;
       }).join('') +
       '</tbody></table>' + citesToggle +
       '<p style="font-size:11px;color:#8a857c;line-height:1.5;margin:14px 2px 2px;padding-top:10px;border-top:0.5px solid #f1ede6">Effective Date is the day the last party signs and delivers, per Paragraph 3(b). Every deadline counts from that date. If a deadline lands on a weekend or holiday, it moves to the next business day. Example, a deadline that falls on Saturday moves to Monday, per Paragraph 18.</p>';
 
+    // Per-row "Why this date" toggle + inline day-count edit (merged from Contingency days).
+    hostEl.querySelectorAll('[data-dlwhy]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-dlwhy'); _dlWhyOpen[k] = !_dlWhyOpen[k]; renderDeadlinesForFile(file); }); });
+    hostEl.querySelectorAll('[data-dlday]').forEach(function(inp){ inp.addEventListener('change', function(){ ctSaveDays(file, this.getAttribute('data-dlday'), this.value); }); });
     const citesBtn = document.getElementById('tpb-dl-cites');
     if(citesBtn) citesBtn.addEventListener('click', function(){ _dlShowCites = !_dlShowCites; renderDeadlinesForFile(file); });
 
@@ -9946,6 +9969,7 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   let _ctEditingField = null; // which line/row is currently expanded for editing
   let _ctWhyOpen = {}; // which deadline rows have their "Why this date" detail expanded
+  let _dlWhyOpen = {}; // ledger per-row "Why this date" expanded state (merged from Contingency days)
   let _rtEditKey = null;      // rental terms · which row's inline editor is open
   let _ctVerifyMode = false;  // split view · contract PDF beside the term lines
   // Resolve a FRESH signed URL for the attached contract (signed links expire,
@@ -10424,13 +10448,9 @@ Tell me your planned move-out date and I will set the inspection.`
         : '';
       return ctLine('std_' + i, d.label, d.value, _stdInput('ct-std-' + i, d.value), d.note, false, d.fromProfile, promo);
     }).join('');
-    const daysBlock = (ct
-      ? (dayRows
-          ? grp('Contingency days') +
-            '<p style="font-size:11.5px;color:#5f5e5a;margin:0 0 4px">Standards are filled. Change only what your contract differs on.</p>' + dayRows +
-            (haveDates ? '' : '<p style="font-size:10.5px;color:#b3aea5;margin:8px 0 0">Set both dates above to see each deadline date.</p>')
-          : '')
-      : '');
+    // Contingency days section removed June 2026 · its day-count editing and per-row
+    // "Why this date" now live on the bottom Deadlines ledger (the single source for dates).
+    const daysBlock = '';
     const assocBlock = associationSectionHtml(file);
     // Full deadline strip (Priority 6) — every contract deadline + CFPB, in one place,
     // on every file. Lives in the Contract Terms panel below the contingency days.
