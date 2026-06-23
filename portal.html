@@ -3974,12 +3974,7 @@
   function agentSplitOf(f){ return (f.brokerage_split_pct!=null&&f.brokerage_split_pct!=='')?Number(f.brokerage_split_pct):AGENT_KEEP_PCT; }
   // Type-based transaction fee: residential / commercial = $499; vacant land / rental = $299.
   function baseFileFee(f){ var ft=String(f.file_type||'').toLowerCase(); var pt=String(f.property_type||'').toLowerCase(); if(ft==='rental'||pt==='rental'||pt.indexOf('lease')>=0) return 299; if(pt==='land'||pt.indexOf('vacant')>=0) return 299; return 499; }
-  // Self-coordination waiver · when the agent on a file is also the assigned TC
-  // (same person), there is no one to bill, so the TC fee is $0. TCs are rows in the
-  // agents table, so agent_id and assigned_tc_id both reference agents.id · match on ID,
-  // never name or email. This wins over a manual fee override for the same reason.
-  function isSelfCoordinated(f){ return !!(f && f.agent_id && f.assigned_tc_id && String(f.agent_id)===String(f.assigned_tc_id)); }
-  function fileFee(f){ if(isSelfCoordinated(f)) return 0; if(f.file_fee_cents!=null && f.file_fee_cents!=='') return Number(f.file_fee_cents)/100; return baseFileFee(f); }
+  function fileFee(f){ if(f.file_fee_cents!=null && f.file_fee_cents!=='') return Number(f.file_fee_cents)/100; return baseFileFee(f); }
   function yourCutOf(items){
     var fee=0, gross=0, company=0, team=0;
     (items||[]).forEach(function(it){ var f=it.f||it; var g=teamComm(f);
@@ -4140,11 +4135,15 @@
   function renderTeamView(){
     const host = document.getElementById('tab-team'); if(!host) return;
     // Standings = Aari agent production only. The discriminator is the FILE, not the
-    // person: a file submitted on behalf of a TC client (submitted_by_tc) is coordination
-    // work and never counts. But an agent's OWN sales always count, even if that same
-    // person also works as a TC, so Eileen or Milennys can still win the board on their
-    // own deals. Coordination files still live in the TC cockpit.
-    const isTcCoord = function(f){ var r=f.raw_form_data||{}; return r.submitted_by_tc===true || r.submitted_by_tc==='true'; };
+    // person. A file is coordination work (never counts, lives in the TC cockpit) when:
+    //  1. it is flagged submitted_by_tc, OR
+    //  2. the agent and the assigned TC are the SAME person. The TC-submit flow sets both
+    //     agent_id and assigned_tc_id to the TC's own id and keeps the real outside agent
+    //     only as a text name, so agent_id===assigned_tc_id uniquely marks coordination.
+    //     This also catches imported TC files that never got the submitted_by_tc flag
+    //     (e.g. Eileen coordinating 1216 NW 32nd Pl for outside agent Samantha).
+    // A genuine team sale always has a separate selling agent and TC, so it still counts.
+    const isTcCoord = function(f){ var r=f.raw_form_data||{}; if(r.submitted_by_tc===true || r.submitted_by_tc==='true') return true; return !!(f.agent_id && f.assigned_tc_id && String(f.agent_id)===String(f.assigned_tc_id)); };
     const files = (_teamFiles || []).filter(function(f){ return !isTcCoord(f); });
     if(!files.length){ host.innerHTML = '<div class="tx-empty">No active team files yet.</div>'; return; }
     const totalPipe = files.reduce((s,f) => s + teamPrice(f), 0);
