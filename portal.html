@@ -4017,6 +4017,31 @@
     var sub='<div class="pv-dsub"><span>Subtotal</span><span></span><span class="num">'+(sa?teamFmt(sa):'&mdash;')+'</span><span class="num">'+(sai?teamFmt(sai):'&mdash;')+'</span><span class="num">'+(st?teamFmt(st):'&mdash;')+'</span></div>';
     return '<div class="pv-dgroup '+cls+'"><div class="pv-dglab">'+label+' &middot; '+items.length+'</div><div class="pv-dhead"><span>Deal</span><span>Stage</span><span>Agent</span><span>Aari</span><span>TC</span></div>'+items.map(dealRow).join('')+sub+'</div>';
   }
+  // Collapsible deal group · same columns as dealGroup, but with a clickable count header
+  // (reuses the pv-grpwrap / data-grptoggle pattern wired in renderTeamView). open=expanded by default.
+  function collapsibleDealGroup(label, items, open){
+    if(!items||!items.length) return '';
+    var sa=0, sai=0, st=0;
+    items.forEach(function(it){ var f=it.f, gross=teamComm(f), asp=agentSplitOf(f); sa+=gross*(asp/100); sai+=gross*((100-asp)/100); st+=fileFee(f); });
+    var head='<div class="pv-dhead"><span>Deal</span><span>Stage</span><span>Agent</span><span>Aari</span><span>TC</span></div>';
+    var sub='<div class="pv-dsub"><span>Subtotal</span><span></span><span class="num">'+(sa?teamFmt(sa):'&mdash;')+'</span><span class="num">'+(sai?teamFmt(sai):'&mdash;')+'</span><span class="num">'+(st?teamFmt(st):'&mdash;')+'</span></div>';
+    return '<div class="pv-grpwrap'+(open?' open':'')+'"><div class="pv-grp" data-grptoggle><span class="gl">'+esc(label)+'</span><span class="gc">'+items.length+' deal'+(items.length===1?'':'s')+'</span><span class="pv-chev">&#9662;</span></div><div class="pv-grpbody">'+head+items.map(dealRow).join('')+sub+'</div></div>';
+  }
+  // Active deals (excluding closing-soon, passed separately) split into action-first buckets:
+  // Under contract (open) · In setup (collapsed) · Needs price (open, needs her input).
+  function activeStageBuckets(items){
+    var b={'Under contract':[],'In setup':[],'Needs price':[]};
+    (items||[]).forEach(function(it){ var f=it.f;
+      var hasPrice=(teamPrice(f)>0)||(f.commission_flat_cents!=null&&f.commission_flat_cents!=='');
+      if(!hasPrice){ b['Needs price'].push(it); return; }
+      var track=txTrack(f), idx=Math.max(0,Math.min(txStageIdx(f),track.length-1)), lbl=String(track[idx]||'').toLowerCase();
+      if(/under contract|inspection|appraisal|remedy|clear to close|ctc/.test(lbl)) b['Under contract'].push(it);
+      else b['In setup'].push(it);
+    });
+    return collapsibleDealGroup('Under contract', b['Under contract'], true)
+         + collapsibleDealGroup('In setup', b['In setup'], false)
+         + collapsibleDealGroup('Needs price', b['Needs price'], true);
+  }
   // "Your production this month" · the agent's own numbers, styled (used by BOTH
   // the solo Production tab and the top of a lead's Production/Team view).
   function buildYourProduction(){
@@ -4279,7 +4304,7 @@
       // Three-way money split + closing-soon count, all from the same comp model.
       var _agentComm=(g.agentEarns!=null?g.agentEarns:0), _aariComm=(g.aariComm!=null?g.aariComm:0), _tcFee=(g.tcFee!=null?g.tcFee:0);
       var _soonN=_cls2.length;
-      var _dealsHtml=(actions?'<div class="pv-sbact">'+actions+'</div>':'')+dealGroup('close','Closing soon',_cls2)+dealGroup('act','Active',_act2);
+      var _dealsHtml=(actions?'<div class="pv-sbact">'+actions+'</div>':'')+dealGroup('close','Closing soon',_cls2)+activeStageBuckets(_act2)+collapsibleDealGroup('Sold', g.soldItems||[], false);
       return '<div class="pv-sb'+(beyond?' beyond':'')+(g.pending?' est':'')+'" data-name="'+esc(g.name.toLowerCase())+'" data-stage="'+agStage(g)+'" data-closing="'+(_cls?'1':'0')+'">' +
         '<div class="pv-srow" data-sbtoggle>' +
           '<span class="ag"><span class="rk">'+(rank||'·')+'</span>'+avatarHtml(g,28)+'<span class="nmwrap"><span class="nm">'+esc(g.name)+flag+'</span><span class="meta">'+g.deals+' deals'+((g.id&&!g.placeholder)?(g.mom==='hot'?' &middot; <b style="color:var(--ink)">&#9650; Heating</b>':g.mom==='cool'?' <span class="pv-coolp">Cooling</span>':''):'')+'</span></span></span>' +
@@ -4304,10 +4329,11 @@
     var sbHead = '<div class="pv-sbhead"><span class="hl">Agent</span><span>Pipeline</span><span>Earns</span><span>Aari</span><span>TC fee</span><span>Soon</span><span></span></div>';
     // The lead's own production as a "You" row under the standings (their files are in _files, not _teamFiles).
     var meRow='';
-    if(_files && _files.length){ var _myAct=_files.filter(function(f){return !isClosed(f);}); if(_myAct.length){
+    if(_files && _files.length){ var _myAct=_files.filter(function(f){return !isClosed(f);}); var _myClosed=_files.filter(function(f){return isClosed(f);}); if(_myAct.length || _myClosed.length){
       var _myItems=_myAct.map(function(f){ var sp=(Array.isArray(f.splits)&&f.splits.length)?f.splits:[{agent_id:f.agent_id,pct:100}]; return {f:f, pct:100, sps:sp}; });
+      var _mySold=_myClosed.map(function(f){ var sp=(Array.isArray(f.splits)&&f.splits.length)?f.splits:[{agent_id:f.agent_id,pct:100}]; return {f:f, pct:100, sps:sp}; });
       var _mc=yourCutOf(_myItems); var _myNm=(((_profile.first_name||'')+' '+(_profile.last_name||'')).trim()||'You');
-      var meGroup={ id:_profile.id, name:_myNm, ini:(_myNm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase(), photo:(_profile.headshot_url)||photoFor(_myNm), items:_myItems, deals:_myItems.length, pipe:_myAct.reduce(function(s,f){return s+teamPrice(f);},0), gci:_mc.gross, agentEarns:_mc.gross-_mc.company, aariComm:_mc.company, tcFee:_mc.fee, pending:false, mom:'none' };
+      var meGroup={ id:_profile.id, name:_myNm, ini:(_myNm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase(), photo:(_profile.headshot_url)||photoFor(_myNm), items:_myItems, soldItems:_mySold, deals:_myItems.length, pipe:_myAct.reduce(function(s,f){return s+teamPrice(f);},0), gci:_mc.gross, agentEarns:_mc.gross-_mc.company, aariComm:_mc.company, tcFee:_mc.fee, pending:false, mom:'none' };
       meGroup.quiet=(meGroup.deals<=1);
       meRow='<div class="pv-mewrap" style="border-bottom:1px solid var(--line);padding-bottom:11px;margin-bottom:10px"><div class="pv-sbhead"><span class="hl">Your production</span><span>Pipeline</span><span>Earns</span><span>Aari</span><span>TC fee</span><span>Soon</span><span></span></div>'+sbRowHtml(meGroup,'&#9733;',false)+'</div>';
     }}
@@ -4494,7 +4520,7 @@
       '<label>Transaction fee $ <span id="dt-fee-lock" style="float:right;font-size:10px;color:var(--muted);cursor:pointer;text-decoration:underline">Unlock</span><input type="text" id="dt-fee" value="'+feeVal+'" readonly style="background:rgba(15,15,15,0.04)"><span style="font-size:10px;color:var(--muted);font-weight:400;display:block;margin-top:2px">Auto by property type ($499 residential/commercial, $299 land/rental). Goes to Aari, does not affect agent pay.</span></label>'+
       '<label class="dt-chk"><input type="checkbox" id="dt-lead"'+(isLead?' checked':'')+'> Company lead (Aari provided)</label>'+
       '<label>Team split %<input type="text" id="dt-tspl" value="'+tspl+'" placeholder="10"></label>'+
-    '</div>'+reassignHtml+'<div class="dt-foot"><span id="dt-cut" class="dt-cut"></span><span><button class="dt-cancel" type="button">Cancel</button><button class="dt-save" type="button">Save</button></span></div><div id="dt-log" class="dt-log"></div>';
+    '</div>'+reassignHtml+'<div class="dt-foot"><span id="dt-cut" class="dt-cut"></span><span>'+(isClosed(f)?'':'<button class="dt-marksold" type="button" style="background:none;border:1px solid var(--ink);border-radius:20px;padding:5px 13px;font-size:11.5px;margin-right:6px;cursor:pointer">Mark sold</button>')+'<button class="dt-cancel" type="button">Cancel</button><button class="dt-save" type="button">Save</button></span></div><div id="dt-log" class="dt-log"></div>';
     rowEl.parentNode.insertBefore(box, rowEl.nextSibling);
     renderDealLog(f, box.querySelector('#dt-log'));
     // Broker reassign picker · fill with the full roster once loaded.
@@ -4519,6 +4545,16 @@
     var feeLock=box.querySelector('#dt-fee-lock'); if(feeLock) feeLock.addEventListener('click', function(){ var inp=document.getElementById('dt-fee'); if(inp.readOnly){ inp.readOnly=false; inp.style.background=''; inp.focus(); this.textContent='Reset to auto'; } else { inp.readOnly=true; inp.style.background='rgba(15,15,15,0.04)'; inp.value=String(baseFileFee(f)); this.textContent='Unlock'; calc(); } });
     calc();
     box.querySelector('.dt-cancel').addEventListener('click', function(){ box.parentNode.removeChild(box); });
+    var _ms=box.querySelector('.dt-marksold'); if(_ms) _ms.addEventListener('click', async function(){
+      if(!confirm('Mark this deal as sold? It moves to your Sold list and counts toward closed production.')) return;
+      this.disabled=true; this.textContent='Saving…';
+      var _tIso=new Date().toISOString().slice(0,10);
+      var msPayload={ status:'closed', transaction_stage:'closed' }; if(!f.closing_date) msPayload.closing_date=_tIso;
+      try{ var msr=await _client.from('files').update(msPayload).eq('id', f.id); if(msr && msr.error){ alert('Could not mark sold: '+msr.error.message); this.disabled=false; this.textContent='Mark sold'; return; }
+        try{ var _nm=_profile?(((_profile.first_name||'')+' '+(_profile.last_name||'')).trim()||'You'):'You'; await _client.from('file_term_changes').insert([{file_id:f.id, changed_by:(_profile&&_profile.id)||null, changed_by_name:_nm, field:'Status', old_value:'Active', new_value:'Sold'}]); }catch(_e){}
+        Object.assign(f,msPayload); if(box.parentNode) box.parentNode.removeChild(box); renderTeamView();
+      }catch(_e2){ alert('Could not mark sold.'); this.disabled=false; this.textContent='Mark sold'; }
+    });
     box.querySelector('.dt-save').addEventListener('click', async function(){
       var p=num('dt-price')||0, cRaw=String(document.getElementById('dt-comm').value).replace(/[^0-9.]/g,''), b=num('dt-bonus')||0, lead=document.getElementById('dt-lead').checked;
       var asRaw=String(document.getElementById('dt-aspl').value).replace(/[^0-9.]/g,''), tsRaw=String(document.getElementById('dt-tspl').value).replace(/[^0-9.]/g,''), feeRaw=String(document.getElementById('dt-fee').value).replace(/[^0-9.]/g,'');
