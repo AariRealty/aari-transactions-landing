@@ -13508,74 +13508,62 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){}
     return next;
   }
-  function stageRecapHtml(file){
-    const ft = file.file_type || 'sale';
-    if(!STAGE_CHECKLISTS[ft]) return '';
-    const stages = STAGES_BY_TYPE[ft] || STAGES_BY_TYPE.sale;
+  // ---- Draft update · one button (no visible recap) that opens an already-written
+  // progress email to the agent, built from the file's completed tasks + dates. ----
+  function updateBtnHtml(file){
+    if((file.file_type || 'sale') !== 'sale' && (file.file_type || '') !== 'rental') return '';
+    const done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    let n = 0; Object.keys(done).forEach(function(k){ if(done[k]) n++; });
+    if(!n) return ''; // nothing done yet · nothing to update the agent about
+    return '<div style="display:flex;align-items:center;gap:10px;background:#fff;border:0.5px solid #ece8e0;border-radius:11px;padding:11px 13px;margin-bottom:13px">' +
+        '<span style="flex:1;font-size:12px;color:#5f5e5a">' + n + ' done · update the agent</span>' +
+        '<button type="button" data-draft-update="1" style="flex:none;font-size:11px;font-weight:500;color:#fff;background:#0f0f0f;border:0;border-radius:20px;padding:6px 14px;cursor:pointer;font-family:inherit">&#9993; Draft update</button>' +
+      '</div><div id="upd-draft-host"></div>';
+  }
+  function buildUpdateEmail(file, agent){
+    const street = String(file.property_address || '').split(',')[0].trim() || 'your file';
+    let to = '';
+    try { to = fillEmailVars('{{agent_name}} <{{agent_email}}>', file, agent); } catch(_){ to = ''; }
+    let first = (agent && (agent.first_name || String(agent.name || '').split(' ')[0])) || '';
+    if(!first){ try { first = String(fillEmailVars('{{agent_name}}', file, agent) || '').split(' ')[0]; } catch(_){} }
+    const done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    const stages = STAGES_BY_TYPE[file.file_type || 'sale'] || STAGES_BY_TYPE.sale;
     const cur = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || '');
     const curIdx = stages.indexOf(cur);
-    if(curIdx < 0) return '';
-    const done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
-    const fmt = function(dt){ try { return dt.toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } };
-    const lbl = function(s){ return '<div style="font-size:10.5px;font-weight:500;letter-spacing:.05em;text-transform:uppercase;color:#a39e95;margin:2px 0 6px">' + s + '</div>'; };
-    const doneRow = function(name, when, color){ return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:5px"><span style="flex:none;color:#3e7d57">&#10003;</span><span style="flex:1;color:#0f0f0f">' + esc(name) + '</span><span style="flex:none;color:' + (color || '#a39e95') + '">' + esc(when || '') + '</span></div>'; };
-
-    const met = recapMetDates(file);
-    const nextOpen = recapNextOpen(file);
-    let cards = '';
-    for(let i = 0; i <= curIdx; i++){
-      const s = stages[i];
-      let st = ckTasksFor(file, s);
+    const doneLines = [];
+    for(let i = 0; i <= curIdx && i < stages.length; i++){
+      let st = ckTasksFor(file, stages[i]);
       if(st) st = st.filter(function(t){ return !t.showIf || t.showIf(file); });
-      const doneTasks = (st || []).filter(function(t){ return done[t.id]; });
-      const isCur = (i === curIdx);
-      if(!isCur && !doneTasks.length) continue; // skip empty past stages (e.g. New)
-      let body = '';
-      if(isCur && met.length){
-        body += lbl('Dates met') + met.map(function(m){ return doneRow(m.name, m.when + (m.tag ? (' · ' + m.tag) : ''), m.late ? '#a3402f' : '#3e7d57'); }).join('') + '<div style="height:9px"></div>';
-      }
-      if(doneTasks.length){
-        body += lbl('Tasks done') + doneTasks.map(function(t){ const rec = done[t.id]; return doneRow(t.label || t.id, (rec && rec.at) ? _recapDate(rec.at) : ''); }).join('');
-      }
-      if(isCur && nextOpen){
-        body += '<div style="height:9px"></div>' + lbl('Still open') + '<div style="display:flex;align-items:center;gap:8px;font-size:12px;opacity:.8"><span style="flex:none;color:#8a857c">&#9675;</span><span style="flex:1;color:#5f5e5a">' + esc(nextOpen.name) + '</span><span style="flex:none;color:#8a857c">' + esc(fmt(nextOpen.date)) + '</span></div>';
-      }
-      if(!body) body = '<div style="font-size:12px;color:#a39e95">Nothing completed yet.</div>';
-      const chip = isCur
-        ? '<span style="flex:none;font-size:11px;color:#8a857c;background:#f1efe8;border-radius:20px;padding:2px 10px">In progress</span>'
-        : '<span style="flex:none;font-size:11px;color:#3e7d57;background:#eef5ef;border-radius:20px;padding:2px 10px">Completed</span>';
-      cards += '<div style="background:#fff;border:' + (isCur ? '1.5px solid #0f0f0f' : '0.5px solid #ece8e0') + ';border-radius:11px;overflow:hidden;margin-bottom:8px">' +
-        '<div style="display:flex;align-items:center;gap:9px;padding:10px 13px;border-bottom:0.5px solid #f1ede6">' +
-          '<span style="flex:1;font-size:12.5px;font-weight:500;color:#0f0f0f">' + esc(STAGE_LABELS[s] || s) + '</span>' + chip +
-          '<button type="button" data-stage-recap-copy="' + esc(s) + '" style="flex:none;background:none;border:0;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit">Copy</button>' +
-        '</div>' +
-        '<div style="padding:10px 13px">' + body + '</div>' +
-      '</div>';
+      (st || []).forEach(function(t){ if(done[t.id]){ const rec = done[t.id]; doneLines.push((t.label || t.id) + ((rec && rec.at) ? (', ' + _recapDate(rec.at)) : '')); } });
     }
-    if(!cards) return '';
-    let future = '';
-    if(curIdx < stages.length - 1){
-      future = '<div style="display:flex;align-items:center;gap:9px;background:#faf8f5;border:0.5px solid #efeae1;border-radius:11px;padding:10px 13px;opacity:.6"><span style="flex:none;color:#a39e95">&#128274;</span><span style="flex:1;font-size:12px;color:#5f5e5a">More stages</span><span style="flex:none;font-size:11px;color:#a39e95">recap builds as you work</span></div>';
-    }
-    return '<details class="ck-archive-wrap" open style="margin-top:14px"><summary>Recap</summary><div style="margin-top:10px">' + cards + future + '</div></details>';
+    recapMetDates(file).forEach(function(m){ doneLines.push(m.name + ', ' + m.when); });
+    const comingLines = [];
+    try {
+      const status = _deadlinesByFile[file.id] || {};
+      const t0 = new Date(); t0.setHours(0,0,0,0);
+      fileContractDeadlines(file)
+        .filter(function(d){ const rec = status[d.key]; return d.date && (!rec || !rec.completed_at) && d.date >= t0; })
+        .sort(function(a, b){ return a.date - b.date; }).slice(0, 3)
+        .forEach(function(d){ comingLines.push(d.name + ' due ' + _recapDate(d.date)); });
+    } catch(_){}
+    let body = 'Hi ' + (first || 'there') + ',\n\n';
+    body += 'Quick status on ' + street + '. Everything is moving on our side.\n\n';
+    if(doneLines.length) body += 'Done so far\n' + doneLines.join('\n') + '\n\n';
+    if(comingLines.length) body += 'Coming up\n' + comingLines.join('\n') + '\n\n';
+    body += 'I will keep you posted as each date clears.';
+    return { to: to, subject: street + ' · file update', body: body };
   }
-  function stageRecapText(file, stage){
-    const done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
-    const street = String(file.property_address || '').split(',')[0].trim();
-    const cur = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || '');
-    let st = ckTasksFor(file, stage);
-    if(st) st = st.filter(function(t){ return !t.showIf || t.showIf(file); });
-    const doneTasks = (st || []).filter(function(t){ return done[t.id]; });
-    let lines = [ (street ? street + ' — ' : '') + (STAGE_LABELS[stage] || stage) + ' recap', '' ];
-    if(stage === cur){
-      const met = recapMetDates(file);
-      if(met.length){ lines.push('Dates met'); met.forEach(function(m){ lines.push('- ' + m.name + ': ' + m.when + (m.tag ? (' (' + m.tag + ')') : '')); }); lines.push(''); }
-    }
-    if(doneTasks.length){
-      lines.push('Tasks done');
-      doneTasks.forEach(function(t){ const rec = done[t.id]; lines.push('- ' + (t.label || t.id) + ((rec && rec.at) ? (' (' + _recapDate(rec.at) + ')') : '')); });
-    }
-    return lines.join('\n');
+  function updateDraftCardHtml(em){
+    return '<div class="tpb-email" style="margin-top:0">' +
+      '<div class="tpb-email-fields">' +
+        '<div class="tpb-ef-row"><span class="tpb-ef-key">TO</span><span class="tpb-ef-val" id="upd-to">' + esc(em.to) + '</span><button class="tpb-ef-copy" data-upd-copy="to">Copy</button></div>' +
+        '<div class="tpb-ef-row"><span class="tpb-ef-key">SUBJECT</span><span class="tpb-ef-val" id="upd-subject">' + esc(em.subject) + '</span><button class="tpb-ef-copy" data-upd-copy="subject">Copy</button></div>' +
+        '<div class="tpb-ef-body"><textarea class="tpb-ef-textarea" id="upd-body">' + esc(em.body) + '</textarea></div>' +
+      '</div>' +
+      '<div class="tpb-email-actions">' +
+        '<button class="tpb-email-copy-all" data-upd-copy="all">Copy email (subject + body)</button>' +
+      '</div>' +
+    '</div>';
   }
   function renderStageChecklist(file){
     const host = document.getElementById('tpb-checklist');
@@ -13749,21 +13737,36 @@ Tell me your planned move-out date and I will set the inspection.`
     const moveBtn = (_stNext && _stNext !== 'closed' && file.status !== 'archived' && !anyLock)
       ? '<div style="padding:14px 0 4px;border-top:0.5px solid #f1ede6;margin-top:14px;text-align:right"><button type="button" class="move-stage-btn" data-move-next-stage="' + esc(_stNext) + '">Move to ' + esc(STAGE_LABELS[_stNext] || _stNext) + ' &rarr;</button></div>'
       : '';
-    // Recap on top (replaces the old raw "Earlier stages" list with a dated,
-    // audit-friendly recap of completed dates + tasks), Due-soon at the bottom.
-    host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget + (_setupHide ? '' : stageRecapHtml(file)) +
+    // Draft-update button on top (replaces the visible recap · she wanted a single
+    // button that opens an already-written progress email instead of a recap list),
+    // Due-soon at the bottom.
+    host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget + (_setupHide ? '' : updateBtnHtml(file)) +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
       (_setupHide ? '' : dueSoon) + moveBtn;
     // Work rail · re-mark the NEXT task after every checklist render.
     try { if(typeof markNextTask === 'function') markNextTask(); } catch(_){}
   }
-  // Copy a stage recap (dates met + tasks done) to the clipboard, client-ready.
+  // Draft update · open / close the pre-written progress email under the button.
   document.addEventListener('click', function(e){
-    const rb = e.target.closest && e.target.closest('[data-stage-recap-copy]');
-    if(!rb || !_currentFile) return;
-    const txt = stageRecapText(_currentFile, rb.getAttribute('data-stage-recap-copy'));
-    try { navigator.clipboard.writeText(txt); const o = rb.textContent; rb.textContent = 'Copied ✓'; setTimeout(function(){ rb.textContent = o; }, 1500); }
-    catch(_){ window.prompt('Copy this recap:', txt); }
+    const b = e.target.closest && e.target.closest('[data-draft-update]');
+    if(!b || !_currentFile) return;
+    const host = document.getElementById('upd-draft-host');
+    if(!host) return;
+    if(host.innerHTML){ host.innerHTML = ''; return; } // toggle closed
+    const em = buildUpdateEmail(_currentFile, (typeof _drawerAgent !== 'undefined' ? _drawerAgent : null));
+    host.innerHTML = updateDraftCardHtml(em);
+  });
+  // Copy from the draft (To / Subject / whole email). Body is editable first.
+  document.addEventListener('click', function(e){
+    const c = e.target.closest && e.target.closest('[data-upd-copy]');
+    if(!c) return;
+    const host = document.getElementById('upd-draft-host'); if(!host) return;
+    const which = c.getAttribute('data-upd-copy');
+    const subj = (host.querySelector('#upd-subject') || {}).textContent || '';
+    const to = (host.querySelector('#upd-to') || {}).textContent || '';
+    const bodyEl = host.querySelector('#upd-body'); const body = bodyEl ? bodyEl.value : '';
+    const txt = (which === 'to') ? to : (which === 'subject' ? subj : (subj + '\n\n' + body));
+    _clip(txt).then(function(ok){ if(ok) _flashCopied(c); });
   });
   // Copy payment link (Section 11 · Fix 1) — copies the Stripe link to clipboard.
   document.addEventListener('click', function(e){
