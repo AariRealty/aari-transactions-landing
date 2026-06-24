@@ -127,6 +127,16 @@ function parseContract(T: string): Record<string, string> {
   out.title_name = nm;
   const em = T.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/); if (em) out.title_email = em[0];
   const ph = T.match(/\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/); if (ph) out.title_phone = ph[0];
+  const adL = findLine(/Address:.*Phone:/i);
+  if (adL) { const m = adL.match(/Address:\s*([^_].*?)\s*Phone:/i); if (m) out.title_address = clean(m[1]).replace(/_+/g, "").trim(); }
+
+  // Paragraph 19 BROKER block · Cooperating = buyer side, Listing = seller side.
+  const cols = (line: string) => line.split(/_{3,}/).map((s) => clean(s))
+    .filter((s) => s.length > 2 && /[A-Za-z]/.test(s) && !/^\d+$/.test(s) && !/Sales Associate|Cooperating|Listing|if any|^Broker$/i.test(s));
+  const sa = findIdx(/Cooperating Sales Associate/i);
+  if (sa > 0) { const n = cols(lines[sa - 1]); if (n[0]) out.buyer_agent = n[0]; if (n[1]) out.seller_agent = n[1]; }
+  const brI = findIdx(/Cooperating Broker, if any/i);
+  if (brI > 0) { const b = cols(lines[brI - 1]); if (b[0]) out.buyer_brokerage = b[0]; if (b[1]) out.seller_brokerage = b[1]; }
 
   for (const k of Object.keys(out)) if (!out[k]) delete out[k];
   return out;
