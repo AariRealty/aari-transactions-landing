@@ -10286,8 +10286,12 @@ Tell me your planned move-out date and I will set the inspection.`
     const inspWaived = !!lg.inspection_waived;
     const inspDays = (lg.inspection_days != null && lg.inspection_days !== '') ? lg.inspection_days : '';
     const hoa = lg.hoa_applies || '';
-    const agentEff = raw.effective_date || raw.pa_effective_date || '';
-    const agentCls = raw.closing_date || raw.pa_closing_date || '';
+    // Contract-extractor draft (free, no AI) · pre-fill source for the terms stepper.
+    const _exT = extractedFields(file) || {};
+    const _exDateISO = function(s){ if(!s) return ''; const d = new Date(s); return isNaN(d) ? '' : d.toISOString().slice(0,10); };
+    const _exCents = function(s){ if(!s) return 0; const n = parseFloat(String(s).replace(/[^0-9.]/g,'')); return isNaN(n) ? 0 : Math.round(n * 100); };
+    const agentEff = raw.effective_date || raw.pa_effective_date || _exDateISO(_exT.effective_date) || '';
+    const agentCls = raw.closing_date || raw.pa_closing_date || _exDateISO(_exT.closing_date) || '';
     const seg = (val, a, aLabel, b, bLabel, attr) =>
       '<span class="ct-seg">' +
         '<button type="button" data-ct-' + attr + '="' + a + '"' + (val === a ? ' class="on"' : '') + '>' + aLabel + '</button>' +
@@ -10413,9 +10417,9 @@ Tell me your planned move-out date and I will set the inspection.`
     // estoppel task only appear when the property actually has a tenant.
     const shownTenant = (((file.logistics||{}).ctc_tenant_occupied) === 'yes') ? 'yes' : (((file.logistics||{}).ctc_tenant_occupied) === 'no' ? 'no' : '');
     // Financial terms · confirmed against the executed contract in Step 1.
-    const priceCents = file.purchase_price_cents || 0;
+    const priceCents = file.purchase_price_cents || _exCents(_exT.price) || 0;
     const shownPrice = priceCents ? ('$' + (priceCents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) : '';
-    const emdAmt = (emdData(file).amount || raw.earnest_money || raw.pa_earnest_money || '');
+    const emdAmt = (emdData(file).amount || raw.earnest_money || raw.pa_earnest_money || (_exT.emd ? ('$' + _exT.emd) : '') || '');
     const FIN_LABELS = { cash:'Cash', conventional:'Conventional', fha:'FHA', va:'VA', usda:'USDA', financed:'Financed' };
     const rawFinType = String(raw.financing_type || raw.pa_financing_type || '').toLowerCase();
     const shownFinType = (lg.financing_type || (FIN_LABELS[rawFinType] ? rawFinType : '') || (shownFin === 'cash' ? 'cash' : ''));
@@ -12702,6 +12706,15 @@ Tell me your planned move-out date and I will set the inspection.`
       email: pick(raw.pa_co_agent_email, raw.co_agent_email),
       phone: pick(raw.pa_co_agent_phone, raw.co_agent_phone),
     };
+    // Pre-fill agents / brokerages / title from the contract draft (only where the
+    // agent left a slot empty). Cooperating = buyer's agent, Listing = seller's agent.
+    const _ex = extractedFields(file);
+    if(_ex){
+      const fill = function(o, k, v){ if(v && !o[k]) o[k] = v; };
+      fill(src.buyer_agent, 'name', _ex.buyer_agent);   fill(src.buyer_agent, 'company', _ex.buyer_brokerage);
+      fill(src.listing_agent, 'name', _ex.seller_agent); fill(src.listing_agent, 'company', _ex.seller_brokerage);
+      fill(src.title, 'name', _ex.title_name); fill(src.title, 'email', _ex.title_email); fill(src.title, 'phone', _ex.title_phone);
+    }
     const ov = (file.logistics || {}).contacts || {};
     const coLabel = buyerSide ? "Co-buyer's agent" : (sellerSide ? 'Co-listing agent' : 'Co-agent');
     const hasCo = !!(src.co_agent.name || (ov.co_agent && ov.co_agent.name));
@@ -12724,10 +12737,26 @@ Tell me your planned move-out date and I will set the inspection.`
   // ===== Parties (buyers / sellers) · structured, signer-aware, multi-party =====
   // partiesOf normalizes logistics.parties, or seeds from the existing buyer/seller
   // contact slots so a file with no parties data migrates cleanly on first edit.
+  // The free contract extractor (extract-contract-fields edge fn) drops a DRAFT
+  // at raw_form_data.extracted_contract.fields. These helpers read it for pre-fill.
+  function extractedFields(file){ const e = ((file.raw_form_data || {}).extracted_contract || {}).fields; return (e && typeof e === 'object') ? e : null; }
+  function isEntityName(n){ return /\b(LLC|L\.L\.C|INC|CORP|CO\.|COMPANY|TRUST|LP|LLP|PA|PLLC|ENTERPRISES?|INVESTMENTS?|PROPERTIES|HOLDINGS?|GROUP|PARTNERS?)\b/i.test(n || ''); }
+  function partyFromName(name, email, phone){
+    name = (name || '').trim();
+    return isEntityName(name)
+      ? { type:'entity', entity_name:name, signer_name:'', signer_title:'', email:email || '', phone:phone || '' }
+      : { type:'person', name:name, email:email || '', phone:phone || '' };
+  }
   function partiesOf(file){
     const lg = file.logistics || {};
     if(lg.parties && (Array.isArray(lg.parties.buyers) || Array.isArray(lg.parties.sellers))){
       return { buyers:(lg.parties.buyers || []).slice(), sellers:(lg.parties.sellers || []).slice() };
+    }
+    // Pre-fill from the contract draft first (entity-aware: an LLC/Trust seller
+    // becomes an entity party with the signer left for the TC to confirm).
+    const ex = extractedFields(file);
+    if(ex && (ex.buyer || ex.seller)){
+      return { buyers:[ partyFromName(ex.buyer) ], sellers:[ partyFromName(ex.seller) ] };
     }
     const rows = contactRows(file);
     const findC = function(k){ const r = rows.find(function(x){ return x.key === k; }); return r ? r.c : { name:'', email:'', phone:'' }; };
