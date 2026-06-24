@@ -8863,11 +8863,16 @@ Tell me your planned move-out date and I will set the inspection.`
     // "confirm each on its row" subtext, which only add noise at setup).
     const _setupSaleDl = _dlSetup && (file.file_type || 'sale') === 'sale';
     try { const _eb = hostEl.closest('.tpb-pop') && hostEl.closest('.tpb-pop').querySelector('.rail-eb'); if(_eb) _eb.textContent = _setupSaleDl ? 'Terms & dates' : 'Deadlines'; } catch(_){}
-    // Nested in section 4 the header already says "Terms & dates", so inside the box
-    // we only need the count (drop the contract-form line + the "nothing met" strip).
-    const _preamble = _setupSaleDl
-      ? '<div class="tpb-dl-estban" style="margin-top:0">' + (unconfList.length ? (unconfList.length + ' of ' + rows.length + ' left to confirm') : 'All dates confirmed') + '</div>'
-      : (ctLine + stepper + perfStrip);
+    // Clean preamble for ALL sale files (not just Setup): one count line, and the
+    // performance strip ONLY when there's real data — the empty "On track · No
+    // deadlines met yet" strip + verbose "confirm each on its row" was the old look.
+    const _saleDl = (file.file_type || 'sale') === 'sale';
+    const _cnt = unconfList.length ? (unconfList.length + ' of ' + rows.length + ' left to confirm') : ('All ' + rows.length + ' dates confirmed');
+    const _showPerf = (_met > 0 || _lateN > 0 || _openOver > 0);
+    let _preamble;
+    if(_setupSaleDl) _preamble = '<div class="tpb-dl-estban" style="margin-top:0">' + _cnt + '</div>';
+    else if(_saleDl) _preamble = ctLine + '<div class="tpb-dl-estban">' + _cnt + '</div>' + (_showPerf ? perfStrip : '');
+    else _preamble = ctLine + stepper + perfStrip;   // rentals keep the original
     hostEl.innerHTML = _preamble + groupsHtml + footer;
     // The Move gate bar is the setup CARD footer (host in setupReviewBar), placed
     // after section 4's nested dates — not inside the ledger itself.
@@ -9279,7 +9284,7 @@ Tell me your planned move-out date and I will set the inspection.`
   // ===== CALENDAR VIEW · every live deadline across active sale files, grouped by
   // urgency, each section its own card (Option A). Leads with Today / Coming up;
   // Overdue only appears when something is actually late. Sync exports all to .ics.
-  let _calOpen = { ontrack:false };  // file-list "On track" group collapsed by default
+  let _calOpen = { ontrack:false, claim:false };  // file-list "On track" + TC "Available to claim" collapsed by default
   let _calSearch = '';                // file-list search
   let _calMonth = null;   // heatmap displayed month
   let _calSelDay = null;  // heatmap selected day
@@ -9334,6 +9339,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const g = { needstc: [], needsyou: [], ontrack: [] };
     (_files || []).forEach(function(f){
       if(deriveStage(f) === 'closed' || f.status === 'archived') return;
+      if((f.file_type || 'sale') !== _fileTypeFilter) return;   // scoped to the selected type tab
       const stage = deriveStage(f);
       const status = _deadlinesByFile[f.id] || {};
       let overdue = 0, todayN = 0, next = null;
@@ -9382,7 +9388,9 @@ Tell me your planned move-out date and I will set the inspection.`
       html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:26px;text-align:center;font-size:13px;color:#a39e95">No active files.</div>';
       host.innerHTML = html; _wireCal(host); return;
     }
-    if(ntc.length){
+    const broker = (_profile && String(_profile.role || '').toLowerCase() === 'broker');
+    // Broker · assigning unassigned files is the job → "Needs a TC" leads, at top.
+    if(broker && ntc.length){
       html += '<div style="background:#fff;border:1.5px solid #0f0f0f;border-radius:12px;padding:13px 16px;margin-bottom:10px">' +
         '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">Needs a TC</span><span style="font-size:11px;font-weight:600;color:#fff;background:#0f0f0f;border-radius:20px;padding:1px 8px">' + ntc.length + '</span></div>' +
         ntc.map(function(it){ return fileRow(it, 'needstc'); }).join('') + '</div>';
@@ -9394,8 +9402,15 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     if(ont.length){
       html += _calOpen.ontrack
-        ? '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px"><div data-cal-group="ontrack" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">On track</span><span style="font-size:11px;color:#a39e95">' + ont.length + '</span><span style="font-size:13px;color:#a39e95">&#9662;</span></div>' + ont.map(function(it){ return fileRow(it, 'ontrack'); }).join('') + '</div>'
-        : '<div data-cal-group="ontrack" style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px;display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:12.5px;color:#5f5e5a">On track</span><span style="font-size:12px;color:#a39e95">' + ont.length + '</span><span style="font-size:13px;color:#a39e95">&#8250;</span></div>';
+        ? '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px;margin-bottom:10px"><div data-cal-group="ontrack" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">On track</span><span style="font-size:11px;color:#a39e95">' + ont.length + '</span><span style="font-size:13px;color:#a39e95">&#9662;</span></div>' + ont.map(function(it){ return fileRow(it, 'ontrack'); }).join('') + '</div>'
+        : '<div data-cal-group="ontrack" style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px;margin-bottom:10px;display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:12.5px;color:#5f5e5a">On track</span><span style="font-size:12px;color:#a39e95">' + ont.length + '</span><span style="font-size:13px;color:#a39e95">&#8250;</span></div>';
+    }
+    // Single TC · the claim pool is secondary work, so it sits at the BOTTOM as
+    // "Available to claim" (collapsed), below their own files. (Broker handled it up top.)
+    if(!broker && ntc.length){
+      html += _calOpen.claim
+        ? '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px"><div data-cal-group="claim" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">Available to claim</span><span style="font-size:11px;color:#a39e95">' + ntc.length + '</span><span style="font-size:13px;color:#a39e95">&#9662;</span></div>' + ntc.map(function(it){ return fileRow(it, 'needstc'); }).join('') + '</div>'
+        : '<div data-cal-group="claim" style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px;display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:12.5px;color:#5f5e5a">Available to claim</span><span style="font-size:12px;color:#a39e95">' + ntc.length + '</span><span style="font-size:13px;color:#a39e95">&#8250;</span></div>';
     }
     host.innerHTML = html; _wireCal(host);
   }
