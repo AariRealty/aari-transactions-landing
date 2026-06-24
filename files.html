@@ -9274,6 +9274,116 @@ Tell me your planned move-out date and I will set the inspection.`
     if(_view === 'list') renderFileList();
     else if(_view === 'calendar'){ try { renderTcCalendar(); if(!_calLoaded) loadCalDeadlines(); } catch(_){} }
   }
+
+  // ===== CALENDAR VIEW · every live deadline across active sale files, grouped by
+  // urgency, each section its own card (Option A). Leads with Today / Coming up;
+  // Overdue only appears when something is actually late. Sync exports all to .ics.
+  let _calOpen = { week:false, later:false };
+  let _calSearch = '';
+  let _calLoaded = false;
+  async function loadCalDeadlines(){
+    try {
+      const ids = (_files || []).filter(function(f){ return deriveStage(f) !== 'closed' && f.status !== 'archived' && (f.file_type || 'sale') === 'sale'; }).map(function(f){ return f.id; });
+      const need = ids.filter(function(id){ return !_deadlinesByFile[id]; });
+      if(need.length && _client){
+        const { data } = await _client.from('file_deadlines').select('file_id, deadline_key, completed_at, due_date').in('file_id', need);
+        need.forEach(function(id){ _deadlinesByFile[id] = _deadlinesByFile[id] || {}; });
+        (data || []).forEach(function(r){ (_deadlinesByFile[r.file_id] = _deadlinesByFile[r.file_id] || {})[r.deadline_key] = r; });
+      }
+    } catch(_){}
+    _calLoaded = true;
+    if(_view === 'calendar') renderTcCalendar();
+  }
+  function _tcCalDeadlines(){
+    const out = [];
+    (_files || []).forEach(function(f){
+      try {
+        if(deriveStage(f) === 'closed' || f.status === 'archived') return;
+        if((f.file_type || 'sale') !== 'sale') return;
+        const status = _deadlinesByFile[f.id] || {};
+        fileContractDeadlines(f).forEach(function(d){
+          if(!(d && d.date instanceof Date) || isNaN(d.date.getTime())) return;
+          const rec = status[d.key];
+          if(rec && rec.completed_at) return; // done · no longer a live deadline
+          out.push({ date:d.date, key:d.key, label:d.name || 'Deadline', address:f.property_address || '', fileId:f.id });
+        });
+      } catch(_){}
+    });
+    out.sort(function(a, b){ return a.date - b.date; });
+    return out;
+  }
+  function _calIcs(){
+    let s = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Aari Transactions//TC//EN\r\n';
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+    _tcCalDeadlines().forEach(function(d){
+      const dt = d.date, y = dt.getFullYear(), m = ('0' + (dt.getMonth() + 1)).slice(-2), day = ('0' + dt.getDate()).slice(-2);
+      const uid = String(d.fileId + '-' + d.key).replace(/[^a-zA-Z0-9-]/g, '');
+      const sum = (d.label + ' · ' + d.address).replace(/[\\,;]/g, ' ');
+      s += 'BEGIN:VEVENT\r\nUID:' + uid + '@aaritransactions\r\nDTSTAMP:' + stamp + '\r\nDTSTART;VALUE=DATE:' + y + m + day + '\r\nSUMMARY:' + sum + '\r\nEND:VEVENT\r\n';
+    });
+    return s + 'END:VCALENDAR';
+  }
+  function renderTcCalendar(){
+    const host = document.getElementById('fileCalendar'); if(!host) return;
+    const all = _tcCalDeadlines();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const t0 = today.getTime(), weekEnd = t0 + 7 * 86400000;
+    const q = (_calSearch || '').toLowerCase();
+    const dayOf = function(d){ const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); return x.getTime(); };
+    const overdue = [], todayL = [], week = [], later = [];
+    all.forEach(function(d){
+      if(q && d.label.toLowerCase().indexOf(q) === -1 && d.address.toLowerCase().indexOf(q) === -1) return;
+      const x = dayOf(d);
+      if(x < t0) overdue.push(d); else if(x === t0) todayL.push(d); else if(x < weekEnd) week.push(d); else later.push(d);
+    });
+    const row = function(d, right, rc){
+      return '<div data-cal-open="' + esc(d.fileId) + '" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:13px;color:#0f0f0f">' + esc(d.label) + '</div><div style="font-size:11px;color:#8a857c">' + esc(d.address) + '</div></div>' +
+        '<span style="flex:none;font-size:11px;color:' + (rc || '#8a857c') + '">' + esc(right) + '</span></div>';
+    };
+    const lateTxt = function(d){ const n = Math.round((t0 - dayOf(d)) / 86400000); return n + 'd late'; };
+    const inTxt = function(d){ const n = Math.round((dayOf(d) - t0) / 86400000); return n === 1 ? 'tomorrow' : ('in ' + n + 'd'); };
+    const dateTxt = function(d){ return d.date.toLocaleDateString('en-US', { month:'short', day:'numeric' }); };
+    let html = '<div style="display:flex;align-items:center;gap:9px;margin-bottom:13px">' +
+      '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:19px;font-weight:600;color:#0f0f0f">Deadlines</span>' +
+      '<input id="cal-search" value="' + esc(_calSearch) + '" placeholder="Search…" style="width:140px;font-size:12px;color:#0f0f0f;border:0.5px solid #ece8e0;border-radius:8px;padding:7px 11px;font-family:inherit;background:#fff">' +
+      '<button type="button" id="cal-sync" style="font-size:12px;color:#0f0f0f;border:0.5px solid #ece8e0;border-radius:8px;padding:7px 12px;background:#fff;cursor:pointer;font-family:inherit">&#128197; Sync</button></div>';
+    if(!all.length){
+      html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:26px;text-align:center;font-size:13px;color:#a39e95">No deadlines yet. Add the effective and closing dates on your files to see them here.</div>';
+      host.innerHTML = html; _wireCal(host); return;
+    }
+    if(overdue.length){
+      html += '<div style="background:#fff;border:0.5px solid #f0cfca;border-radius:12px;padding:12px 15px;margin-bottom:10px">' +
+        '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#a3402f">Overdue</span><span style="font-size:11px;font-weight:600;color:#a3402f;background:#fbecea;border-radius:20px;padding:1px 8px">' + overdue.length + '</span></div>' +
+        overdue.map(function(d){ return row(d, lateTxt(d), '#a3402f'); }).join('') + '</div>';
+    }
+    html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:12px 15px;margin-bottom:10px">' +
+      '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">Today · ' + today.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }) + '</span><span style="font-size:11px;font-weight:600;color:#fff;background:#0f0f0f;border-radius:20px;padding:1px 8px">' + todayL.length + '</span></div>' +
+      (todayL.length ? todayL.map(function(d){ return row(d, 'today', '#0f0f0f'); }).join('') : '<div style="font-size:12px;color:#a39e95;padding:10px 0 2px;border-top:0.5px solid #f3f0ea">Nothing due today. You’re ahead.</div>') + '</div>';
+    if(_calOpen.week){
+      html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:12px 15px;margin-bottom:8px">' +
+        '<div data-cal-group="week" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">This week</span><span style="font-size:11px;color:#a39e95">' + week.length + '</span><span style="font-size:13px;color:#a39e95">&#9662;</span></div>' +
+        (week.length ? week.map(function(d){ return row(d, inTxt(d), '#8a857c'); }).join('') : '<div style="font-size:12px;color:#a39e95;padding:10px 0 2px;border-top:0.5px solid #f3f0ea">Nothing else this week.</div>') + '</div>';
+    } else {
+      html += '<div data-cal-group="week" style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 15px;margin-bottom:8px;display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:12.5px;color:#5f5e5a">This week</span><span style="font-size:12px;color:#a39e95">' + week.length + '</span><span style="font-size:13px;color:#a39e95">&#8250;</span></div>';
+    }
+    if(_calOpen.later){
+      html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:12px 15px">' +
+        '<div data-cal-group="later" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">Later</span><span style="font-size:11px;color:#a39e95">' + later.length + '</span><span style="font-size:13px;color:#a39e95">&#9662;</span></div>' +
+        (later.length ? later.slice(0, 80).map(function(d){ return row(d, dateTxt(d), '#a39e95'); }).join('') : '<div style="font-size:12px;color:#a39e95;padding:10px 0 2px;border-top:0.5px solid #f3f0ea">Nothing later.</div>') + '</div>';
+    } else {
+      html += '<div data-cal-group="later" style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 15px;display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:12.5px;color:#5f5e5a">Later</span><span style="font-size:12px;color:#a39e95">' + later.length + '</span><span style="font-size:13px;color:#a39e95">&#8250;</span></div>';
+    }
+    host.innerHTML = html; _wireCal(host);
+  }
+  function _wireCal(host){
+    const ss = document.getElementById('cal-search');
+    if(ss) ss.addEventListener('input', function(){ _calSearch = this.value; const pos = this.selectionStart; renderTcCalendar(); const e = document.getElementById('cal-search'); if(e){ e.focus(); try { e.setSelectionRange(pos, pos); } catch(_){} } });
+    const sync = document.getElementById('cal-sync');
+    if(sync) sync.addEventListener('click', function(){ try { const blob = new Blob([_calIcs()], { type:'text/calendar' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'aari-deadlines.ics'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); }, 1000); } catch(_){} });
+    host.querySelectorAll('[data-cal-group]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-cal-group'); _calOpen[k] = !_calOpen[k]; renderTcCalendar(); }); });
+    host.querySelectorAll('[data-cal-open]').forEach(function(r){ r.addEventListener('click', function(){ const id = this.getAttribute('data-cal-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f) openPlaybook(f); }); });
+  }
   document.addEventListener('click', (e) => {
     const saBtn = e.target.closest && e.target.closest('[data-sa-open]');
     if(saBtn){
@@ -9492,17 +9602,14 @@ Tell me your planned move-out date and I will set the inspection.`
         '<span style="flex:none;font-size:9px;background:#fdecea;color:#c96b6b;border-radius:999px;padding:3px 9px;font-weight:700;letter-spacing:0.5px">DO FIRST</span>' +
         '<span style="flex:1.4;min-width:0">' + street(f) + '<span style="font-size:9.5px;color:#888">' + rowSub(f, prog) + '</span></span>' +
         '<span style="flex:1.4;font-size:11px;color:#c96b6b;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(actionText(t)) + '</span>' +
-        '<span class="card-score score-' + cert.bucket + '" style="flex:none">' + cert.score + '</span>' +
       '</div>';
     });
     groups.week.forEach(({ f, t }) => {
       const prog = stageProgress(f);
-      const cert = computeClosingCertainty(f);
       html += '<div class="flist-row" data-file-id="' + esc(f.id) + '" style="background:#fff;border:0.5px solid #e8e4db;border-radius:10px;padding:11px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px;cursor:pointer">' +
         '<span style="flex:none;font-size:9px;background:#fdf6e3;color:#9a7c3a;border-radius:999px;padding:3px 9px;font-weight:700;letter-spacing:0.5px">THIS WEEK</span>' +
         '<span style="flex:1.4;min-width:0">' + street(f) + '<span style="font-size:9.5px;color:#888">' + rowSub(f, prog) + '</span></span>' +
         '<span style="flex:1.4;font-size:11px;color:#9a7c3a;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t.dlText || '') + '</span>' +
-        '<span class="card-score score-' + cert.bucket + '" style="flex:none">' + cert.score + '</span>' +
       '</div>';
     });
     groups.ontrack.forEach(({ f, t }) => {
@@ -11013,7 +11120,9 @@ Tell me your planned move-out date and I will set the inspection.`
     var payBadge = f.payment_pending ? '<span class="card-tag-pay">Awaiting payment</span>' : '';
     var saBadge = saUnsigned(f) ? '<span style="display:inline-block;font-size:9px;font-weight:700;color:#c96b6b;background:#fdecea;border:0.5px solid #f2a9a9;border-radius:999px;padding:2px 7px;margin-left:6px;letter-spacing:0.3px">SA missing</span>' : '';
     var testBadge = ((f.raw_form_data || {}).test_pool) ? '<span style="display:inline-block;font-size:8.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#6f6a61;background:#efece6;border:0.5px solid #ddd6c8;border-radius:3px;padding:1px 5px;margin-left:6px;vertical-align:middle">Test</span>' : '';
-    var scoreBadge = '<span class="card-score score-' + cert.bucket + '" title="Closing Certainty">' + cert.score + '</span>';
+    // Closing-certainty score retired from the card face (June 24) · the action line
+    // carries urgency. cert is still computed because it drives the action tier/tone.
+    var scoreBadge = '';
 
     var raw = f.raw_form_data || {};
     var clientName = f.client_name || raw.buyer_name || raw.seller_name || '';
