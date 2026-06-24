@@ -8540,7 +8540,10 @@ Tell me your planned move-out date and I will set the inspection.`
     if(ds) ds.addEventListener('click', function(){ ctSave(file, {}, { rental_deposit_received_date: new Date().toISOString().slice(0,10) }).then(function(){ try { renderPlaybook(file); } catch(_){} }); });
   }
   function renderDeadlinesForFile(file){
-    const hostEl = document.getElementById('tpb-dl-body');
+    // During Setup the ledger nests inside section 4 (host #tpb-dl-setup-body in the
+    // setup bar); past Setup it renders in the standalone bottom panel (#tpb-dl-body).
+    const setupBody = document.getElementById('tpb-dl-setup-body');
+    const hostEl = setupBody || document.getElementById('tpb-dl-body');
     const metaEl = document.getElementById('tpb-dl-meta');
     if(!hostEl) return;
     if((file.file_type || '') === 'rental'){ renderRentalDates(file, hostEl, metaEl); return; }
@@ -8561,14 +8564,16 @@ Tell me your planned move-out date and I will set the inspection.`
     // During Setup the bottom Deadlines panel stays hidden until Terms & dates is
     // its turn (financing confirmed) — then it shows full-width at the bottom, with
     // the setup bar's section 4 pointing down to it. Past Setup it always shows.
-    const _dlWrap = hostEl.closest('.tpb-pop');
-    if(_dlSetup && !_dlFinOk){
-      if(_dlWrap) _dlWrap.style.display = 'none';
-      hostEl.innerHTML = '';
-      if(metaEl) metaEl.textContent = '';
-      return;
+    // The standalone bottom panel (found by its OWN id) stays HIDDEN during Setup —
+    // the ledger nests in section 4 instead. It returns once the file is past Setup.
+    const _bottomBody = document.getElementById('tpb-dl-body');
+    const _bottomWrap = _bottomBody ? _bottomBody.closest('.tpb-pop') : null;
+    if(_dlSetup){
+      if(_bottomWrap) _bottomWrap.style.display = 'none';
+      if(!setupBody){ if(metaEl) metaEl.textContent = ''; return; } // section 4 not active yet
+    } else {
+      if(_bottomWrap) _bottomWrap.style.display = '';
     }
-    if(_dlWrap) _dlWrap.style.display = '';
 
     const _dlRaw = file.raw_form_data || {};
     // Fall back to the agent's picked contract form (raw_form_data label) so the
@@ -8867,7 +8872,10 @@ Tell me your planned move-out date and I will set the inspection.`
     const _preamble = _setupSaleDl
       ? ctLine + '<div class="tpb-dl-estban">' + (unconfList.length ? (unconfList.length + ' of ' + rows.length + ' left to confirm') : 'All dates confirmed') + '</div>'
       : (ctLine + stepper + perfStrip);
-    hostEl.innerHTML = _preamble + groupsHtml + footer + setupMove;
+    hostEl.innerHTML = _preamble + groupsHtml + footer;
+    // The Move gate bar is the setup CARD footer (host in setupReviewBar), placed
+    // after section 4's nested dates — not inside the ledger itself.
+    try { const _mh = document.getElementById('tpb-setup-move-host'); if(_mh) _mh.innerHTML = setupMove; } catch(_){}
 
     // Per-row "Why this date" toggle + inline day-count edit (merged from Contingency days).
     hostEl.querySelectorAll('[data-dlwhy]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-dlwhy'); _dlWhyOpen[k] = !_dlWhyOpen[k]; renderDeadlinesForFile(file); }); });
@@ -13514,9 +13522,9 @@ Tell me your planned move-out date and I will set the inspection.`
           if(s.n === 'Contract type') body = ctBody;
           else if(s.n === 'Parties') body = contactsTaskHtml(file);
           else if(s.n === 'Financing') body = financingHtml(file);
-          // Terms & dates is a slim POINTER · the full ledger lives full-width at the
-          // bottom of the panel. The row just signals it is ready and points down.
-          else if(s.n === 'Terms & dates') hint = '<span style="flex:none;font-size:11px;color:#8a857c;display:flex;align-items:center;gap:4px">ready below <span style="font-size:13px">&#8595;</span></span>';
+          // Terms & dates · the deadline ledger nests INSIDE this section's box
+          // (renderDeadlinesForFile fills this host) so it visibly belongs to section 4.
+          else if(s.n === 'Terms & dates') body = '<div id="tpb-dl-setup-body"></div>';
         } catch(_){ body = ''; }
         return '<div style="background:#fff;border:1.5px solid #0f0f0f;border-radius:10px;padding:11px 13px;margin-bottom:7px">' +
           '<div style="display:flex;align-items:center;gap:10px">' + numDot(i) + '<span style="flex:1;font-size:12.5px;font-weight:500;color:#0f0f0f">' + esc(s.n) + '</span>' + hint + '</div>' +
@@ -13530,9 +13538,13 @@ Tell me your planned move-out date and I will set the inspection.`
     const gateLine = (doneN >= 3)
       ? '<div style="font-size:11.5px;font-weight:600;color:#3e7d57;background:#eef5ef;border-radius:9px;padding:10px 12px;margin-top:3px">Last section, then this file can move to Under Contract</div>'
       : '<div style="font-size:11.5px;font-weight:600;color:#a39e95;background:#efece6;border-radius:9px;padding:10px 12px;margin-top:3px">Confirm all 4 sections to move to Under Contract</div>';
+    // Footer · once Terms & dates is active (financing confirmed) the Move gate bar
+    // lives here as the card footer (renderDeadlinesForFile fills this host with the
+    // locked/active bar). Before that, the plain gate line.
+    const footer = fOk ? '<div id="tpb-setup-move-host" style="margin-top:3px"></div>' : gateLine;
     return '<div style="background:#f6f4ef;border:0.5px solid #ece8e0;border-radius:12px;padding:13px;margin-bottom:14px">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px"><span style="font-size:13px;font-weight:600;color:#0f0f0f">Set up this file</span><span style="font-size:11px;color:#a39e95">' + doneN + ' of 4 confirmed</span></div>' +
-      secs.map(rowH).join('') + gateLine + '</div>';
+      secs.map(rowH).join('') + footer + '</div>';
   }
   // ---- Per-stage recap · a clean, audit-friendly record of the dates met and the
   // tasks completed so far. Replaces the old global "Weekly recap" button: nothing
@@ -14328,6 +14340,17 @@ Tell me your planned move-out date and I will set the inspection.`
       emailsEl.style.display = 'none'; emailsEl.innerHTML = '';
       if(_emCount) _emCount.style.display = 'none';
     }
+    // Re-evaluate the "Your work" pop now that emails have rendered (checklist ran
+    // before this): during Setup, hide the pop entirely if it ends up empty.
+    try {
+      const _ckHost = document.getElementById('tpb-checklist');
+      const _ckPop = _ckHost && _ckHost.parentElement;
+      const _isSetupSale = (stage === 'waiting_for_tc' || stage === 'new') && (file.file_type || 'sale') === 'sale';
+      if(_ckPop && _ckPop.classList.contains('tpb-pop')){
+        const _empty = _isSetupSale && (!_ckHost || !_ckHost.innerHTML.trim()) && !standaloneEmails.length;
+        _ckPop.style.display = _empty ? 'none' : '';
+      }
+    } catch(_){}
 
     // Deadlines section · seed config controls from the file row, then render
     const ctSel = document.getElementById('tpb-contract');
