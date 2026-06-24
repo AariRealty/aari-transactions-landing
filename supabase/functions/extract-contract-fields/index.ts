@@ -138,6 +138,14 @@ function parseContract(T: string): Record<string, string> {
   out.loan_amount = dollar(findLine(/\(c\)\s*Financing:/));
   out.balance_to_close = dollar(findLine(/transfer or other Collected funds/i));
 
+  // Operational flags (free · presence detection of ELECTIVE rider/addendum items
+  // that drop a task later). Home warranty and turnkey are never in the base AS-IS
+  // form, so their presence means the parties elected them. Special-assessment
+  // proration is standard boilerplate in every contract, so it is intentionally
+  // NOT flagged (it would always be true = noise). Empty values are pruned below.
+  out.flag_home_warranty = /home warranty/i.test(T) ? "yes" : "";
+  out.flag_turnkey = (/\bturn[\s-]?key\b/i.test(T) || /conveyed[^.]{0,60}furnishings/i.test(T)) ? "yes" : "";
+
   const ci = findIdx(/Closing shall occur on/);
   if (ci >= 0) for (let k = ci - 2; k <= ci + 1; k++) { if (k < 0 || k >= lines.length) continue; const m = clean(lines[k]).match(/[A-Z][a-z]+ \d{1,2}, \d{4}/); if (m) { out.closing_date = m[0]; break; } }
 
@@ -234,7 +242,7 @@ Deno.serve(async (req) => {
       } catch (_e) { /* split is best-effort */ }
     }
     const raw = Object.assign({}, file.raw_form_data || {});
-    raw.extracted_contract = { fields, documents, at: new Date().toISOString(), source: "extract-contract-fields/v5" };
+    raw.extracted_contract = { fields, documents, at: new Date().toISOString(), source: "extract-contract-fields/v6" };
     const { error } = await admin.from("files").update({ raw_form_data: raw }).eq("id", body.file_id);
     if (error) return j(500, { ok: false, fields, documents, error: "Draft save failed: " + error.message });
   }

@@ -12188,10 +12188,15 @@ Tell me your planned move-out date and I will set the inspection.`
       const inc = tasksFor('new').filter(t => (!t.showIf || t.showIf(file)) && t.systemCheck !== 'sa' && t.systemCheck !== 'payment' && !dt[t.id]);
       if(inc.length) return 'Complete all New stage tasks before moving this file.';
     }
-    // Opening-email gate (Item 15) — the opening email to all parties must be
-    // sent (its task checked) before the file can go live to Under Contract.
-    if(cur === 'waiting_for_tc' && newStage === 'under_contract' && !dt['wtc_opening_email']){
-      return 'Send the opening email to all parties before moving this file to Under Contract.';
+    // Setup gate — Setup is confirmations only, so the file moves to Under Contract
+    // once the contract type, parties, and financing are confirmed. The outreach
+    // (opening email, escrow, intros) then appears in Under Contract.
+    if(cur === 'waiting_for_tc' && newStage === 'under_contract'){
+      const _lg = file.logistics || {};
+      const _termsOk = (typeof termsAttested === 'function') ? termsAttested(file) : true;
+      if(!(_termsOk && _lg.contacts_confirmed_at && _lg.financing_confirmed_at)){
+        return 'Confirm the contract type, parties, and financing in Setup before moving this file to Under Contract.';
+      }
     }
     // Loan-approval gate (Item 16) — confirmed before Clear to Close (cash exempt)
     if(newStage === 'ctc' && cur !== 'ctc' && !isCashFile(file) && !dt['uc_loan_approval_acknowledged']){
@@ -12625,8 +12630,20 @@ Tell me your planned move-out date and I will set the inspection.`
   });
 
   let _ckSaving = false;
+  // Setup is confirmations only. The opening/outreach work (defined in the
+  // waiting_for_tc list for historical reasons) actually belongs in Under Contract:
+  // it happens AFTER the TC confirms the file and clicks Move to Under Contract.
+  // We redistribute at read time so the definition arrays stay intact.
+  const OPENING_TASK_IDS = ['wtc_agent_confirm','wtc_opening_email','wtc_escrow_instructions','wtc_buyer_deposit_title','wtc_other_agent_intro','wtc_processor_intro','wtc_hoa_request','wtc_survey_title_request','wtc_title_insurance_request','wtc_condo_docs'];
+  function isOpeningTaskId(id){ return OPENING_TASK_IDS.indexOf(id) !== -1; }
   function ckTasksFor(file, stage){
-    const byType = STAGE_CHECKLISTS[(file.file_type || 'sale')] || {};
+    const ft = file.file_type || 'sale';
+    const byType = STAGE_CHECKLISTS[ft] || {};
+    if(ft === 'sale'){
+      const wtc = byType.waiting_for_tc || [];
+      if(stage === 'waiting_for_tc') return wtc.filter(function(t){ return !isOpeningTaskId(t.id); });
+      if(stage === 'under_contract') return wtc.filter(function(t){ return isOpeningTaskId(t.id); }).concat(byType.under_contract || []);
+    }
     return byType[stage] || null;
   }
   // Logistics fields live INSIDE the task that needs them (ADHD: no separate
@@ -14194,6 +14211,19 @@ Tell me your planned move-out date and I will set the inspection.`
     const ft = file.file_type || 'sale';
     const ftPlaybook = EMAIL_PLAYBOOK[ft] || {};
     let list = (ftPlaybook[stage] || []).filter(e => (typeof e.showIf === 'function' ? e.showIf(file) : true));
+    // The opening emails live in the waiting_for_tc playbook but their tasks now
+    // render in Under Contract, so move the emails with them: pull them into UC and
+    // keep them out of Setup. (Sale files only; mirrors ckTasksFor redistribution.)
+    if(ft === 'sale'){
+      const _emKeys = function(e){ return (Array.isArray(e.tasks) && e.tasks.length) ? e.tasks : [e.task || e.id]; };
+      const _isOpeningEmail = function(e){ return _emKeys(e).some(function(k){ return isOpeningTaskId(k); }); };
+      if(stage === 'waiting_for_tc'){
+        list = list.filter(function(e){ return !_isOpeningEmail(e); });
+      } else if(stage === 'under_contract'){
+        const _opening = (ftPlaybook.waiting_for_tc || []).filter(function(e){ return _isOpeningEmail(e) && (typeof e.showIf === 'function' ? e.showIf(file) : true); });
+        list = _opening.concat(list);
+      }
+    }
     const agent = await loadAgentForFile(file.agent_id);
     _drawerFile = file; _drawerAgent = agent; _emailStage = stage;
     _emailTplById = {}; list.forEach(e => { _emailTplById[e.id] = e; });
