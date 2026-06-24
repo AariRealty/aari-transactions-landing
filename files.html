@@ -8832,7 +8832,30 @@ Tell me your planned move-out date and I will set the inspection.`
         '<button type="button" data-dl-calc="1" style="background:none;border:0;padding:0;font-family:inherit;font-size:11px;color:#8a857c;cursor:pointer;text-decoration:underline">' + (_dlCalcOpen ? 'Hide calculation' : 'How these dates are calculated') + '</button>' +
         '<button type="button" id="tpb-dl-cites" style="background:none;border:0;padding:0;font-family:inherit;font-size:11px;color:#8a857c;cursor:pointer;text-decoration:underline">' + (showCites ? 'Hide refs' : 'Show refs') + '</button>' +
       '</div>' + calcNote;
-    hostEl.innerHTML = ctLine + stepper + perfStrip + groupsHtml + footer;
+    // Option A · during Setup the "Move to Under contract" action lives at the END,
+    // after the dates. It unlocks only when the contract type, parties and financing
+    // are confirmed AND every date is confirmed (section 4 done). Until then it shows
+    // a locked bar with what's left.
+    let setupMove = '';
+    if(_dlSetup && (file.file_type || 'sale') === 'sale'){
+      const _lg = file.logistics || {};
+      const _confOk = (typeof termsAttested === 'function' ? termsAttested(file) : true) && !!_lg.contacts_confirmed_at && !!_lg.financing_confirmed_at;
+      const _datesLeft = unconfList.length;
+      if(_confOk && _datesLeft === 0){
+        setupMove = '<div style="background:#0f0f0f;border-radius:12px;padding:13px 15px;margin-top:14px;display:flex;align-items:center;gap:10px">' +
+          '<span style="flex:1;font-size:12px;color:#fff">Setup confirmed. This file is ready to move.</span>' +
+          '<button type="button" class="move-stage-btn" data-move-next-stage="under_contract" style="flex:none;font-size:11px;font-weight:500;color:#0f0f0f;background:#fff;border:0;border-radius:20px;padding:7px 14px;cursor:pointer;font-family:inherit">Move to Under contract &rarr;</button>' +
+        '</div>';
+      } else {
+        const _msg = !_confOk ? 'Confirm contract type, parties and financing first' : (_datesLeft + ' date' + (_datesLeft === 1 ? '' : 's') + ' left to confirm, then this file can move');
+        setupMove = '<div style="background:#faf8f5;border:0.5px dashed #d9d4ca;border-radius:12px;padding:13px 15px;margin-top:14px;display:flex;align-items:center;gap:10px">' +
+          '<span style="flex:none;color:#a39e95;font-size:13px">&#128274;</span>' +
+          '<span style="flex:1;font-size:12px;color:#8a857c">' + esc(_msg) + '</span>' +
+          '<span style="flex:none;font-size:11px;font-weight:500;color:#a39e95;background:#efece6;border-radius:20px;padding:7px 14px">Move to Under contract</span>' +
+        '</div>';
+      }
+    }
+    hostEl.innerHTML = ctLine + stepper + perfStrip + groupsHtml + footer + setupMove;
 
     // Per-row "Why this date" toggle + inline day-count edit (merged from Contingency days).
     hostEl.querySelectorAll('[data-dlwhy]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-dlwhy'); _dlWhyOpen[k] = !_dlWhyOpen[k]; renderDeadlinesForFile(file); }); });
@@ -13612,7 +13635,10 @@ Tell me your planned move-out date and I will set the inspection.`
     // the checklist shows nothing until they're all confirmed, then the opening
     // tasks appear (minus the parties task the bar already handled).
     if(_isSetupStage && (file.file_type || 'sale') === 'sale' && tasks){
-      tasks = _setupHide ? [] : tasks.filter(t => t.id !== 'wtc_contacts_complete');
+      // Show only PENDING setup steps (accept, review, disclosure) so completed
+      // ones drop out — no "Done in setup" clutter. Parties is the bar's job.
+      const _dt = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+      tasks = tasks.filter(t => !_dt[t.id] && t.id !== 'wtc_contacts_complete');
     }
     // Seamless single-box look for the Setup review (CSS removes the panel dividers).
     try { const _pv = document.getElementById('tpb-popview'); if(_pv) _pv.classList.toggle('setup-flow', _isSetupStage && (file.file_type || 'sale') === 'sale'); } catch(_){}
@@ -13757,15 +13783,17 @@ Tell me your planned move-out date and I will set the inspection.`
     // excluded on purpose — its 5-task protective gate stays on the board drag.
     const _stO = STAGES_BY_TYPE[file.file_type || 'sale'] || STAGES_BY_TYPE.sale, _stI = _stO.indexOf(stage);
     const _stNext = (_stI >= 0) ? _stO[_stI + 1] : null;
-    const moveBtn = (_stNext && _stNext !== 'closed' && file.status !== 'archived' && !anyLock)
+    // During Setup the Move action lives at the END of the deadlines panel (Option A,
+    // after the dates) — so it is suppressed here. Past Setup it renders inline.
+    const _setupSale = _isSetupStage && (file.file_type || 'sale') === 'sale';
+    const moveBtn = (_stNext && _stNext !== 'closed' && file.status !== 'archived' && !anyLock && !_setupSale)
       ? '<div style="padding:14px 0 4px;border-top:0.5px solid #f1ede6;margin-top:14px;text-align:right"><button type="button" class="move-stage-btn" data-move-next-stage="' + esc(_stNext) + '">Move to ' + esc(STAGE_LABELS[_stNext] || _stNext) + ' &rarr;</button></div>'
       : '';
-    // Draft-update button on top (replaces the visible recap · she wanted a single
-    // button that opens an already-written progress email instead of a recap list),
-    // Due-soon at the bottom.
-    host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget + (_setupHide ? '' : updateBtnHtml(file)) +
+    // Draft update + Due-soon don't belong in Setup (no agent update to send yet, no
+    // cross-stage deadlines in play). They return once the file is past Setup.
+    host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget + (_isSetupStage ? '' : updateBtnHtml(file)) +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
-      (_setupHide ? '' : dueSoon) + moveBtn;
+      (_isSetupStage ? '' : dueSoon) + moveBtn;
     // Work rail · re-mark the NEXT task after every checklist render.
     try { if(typeof markNextTask === 'function') markNextTask(); } catch(_){}
   }
