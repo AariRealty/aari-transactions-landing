@@ -10496,11 +10496,42 @@ Tell me your planned move-out date and I will set the inspection.`
         (_ctTermsExpanded ? ('<div style="margin:0 0 12px">' + ctLines + daysBlock + dlStrip + assocBlock + '</div>') : '') +
         contactsTaskHtml(file);
     } else if(confirmed){
-      // Terms step (confirmed) · full terms, then the "Next" CTA at the very end.
-      termsBody = ctLines +
-        '<p style="font-size:10.5px;color:#a39e95;margin:13px 2px 0">&#10003; Confirmed' + (((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '') + '</p>' +
-        daysBlock + dlStrip + assocBlock +
-        '<button type="button" data-ct-next-contacts="1" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:11px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;margin:16px 0 2px">Next: confirm all contacts &rarr;</button>';
+      // Terms step (confirmed) · full terms, then the "Next" CTA. Plus a compact,
+      // one-question-at-a-time "Review terms" stepper (data-ct-rev-open) that walks the
+      // 7 contract terms read-only. Additive · never touches the confirmation gate.
+      const _revTerms = [
+        ['Contract type', shownCt ? ctLabelFor(shownCt) : '—'],
+        ['Effective date', fmtLineDate(shownEff) || '—'],
+        ['Closing date', fmtLineDate(shownCls) || '—'],
+        ['Purchase price', shownPrice || '—'],
+        ['Binder deposit (EMD)', emdAmt ? esc(emdAmt) : '—'],
+        ['Financing', FIN_LABELS[shownFinType] || '—'],
+        ['Tenant occupied?', (shownTenant === 'yes' ? 'Yes' : (shownTenant === 'no' ? 'No' : '—'))]
+      ];
+      const _revStep = function(idx){
+        const t = _revTerms[idx]; let dots = '';
+        for(var d = 0; d < _revTerms.length; d++){ var bg = d < idx ? '#0f0f0f' : (d === idx ? '#185FA5' : '#d9d4ca'); var w = d === idx ? '16px' : '6px'; dots += '<span style="height:6px;width:' + w + ';border-radius:20px;background:' + bg + ';display:inline-block"></span>'; }
+        const last = idx >= _revTerms.length - 1;
+        return '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:10px;margin-bottom:8px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;padding:11px 14px 0"><span style="display:flex;gap:5px;align-items:center">' + dots + '</span><span style="font-size:11px;color:#a39e95">' + (idx + 1) + ' of ' + _revTerms.length + '</span></div>' +
+          '<div style="padding:12px 14px 14px">' +
+            '<div style="font-size:10.5px;color:#a39e95;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px">' + esc(t[0]) + '</div>' +
+            '<div style="font-size:18px;font-weight:500;line-height:1.25">' + esc(t[1]) + '</div>' +
+            '<div style="margin-top:14px;display:flex;align-items:center;justify-content:space-between">' +
+              '<button type="button" data-ct-rev-next="1" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;padding:8px 16px;border-radius:8px;cursor:pointer">' + (last ? 'Done' : 'Looks right') + '</button>' +
+              (idx > 0 ? '<button type="button" data-ct-rev-back="1" style="background:none;border:0;color:#a39e95;font-family:inherit;font-size:12px;cursor:pointer">&larr; back</button>' : '<button type="button" data-ct-rev-close="1" style="background:none;border:0;color:#a39e95;font-family:inherit;font-size:12px;cursor:pointer">close</button>') +
+            '</div>' +
+          '</div></div>';
+      };
+      if(_ctReviewIdx != null){
+        termsBody = _revStep(Math.max(0, Math.min(_ctReviewIdx, _revTerms.length - 1)));
+      } else {
+        termsBody = ctLines +
+          '<p style="font-size:10.5px;color:#a39e95;margin:13px 2px 0">&#10003; Confirmed' + (((file.logistics || {}).terms_confirmed_at) ? ' &middot; ' + fmtLineDate((file.logistics.terms_confirmed_at || '').slice(0,10)) : '') + '</p>' +
+          '<button type="button" data-ct-rev-open="1" style="display:block;width:100%;background:none;border:0.5px solid #ece8e0;border-radius:9px;padding:9px;text-align:center;font-size:12px;font-weight:500;color:#5f5e5a;cursor:pointer;font-family:inherit;margin:10px 0 2px">Review terms one at a time &rarr;</button>' +
+          daysBlock + dlStrip + assocBlock +
+          '<button type="button" data-ct-next-contacts="1" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:11px;text-align:center;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;margin:16px 0 2px">Next: confirm all contacts &rarr;</button>';
+      }
     } else {
       const confirmBlock = ready
         ? '<button type="button" id="ct-confirm" style="display:block;width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:12px;text-align:center;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;margin:14px 0 2px">&check; Confirm &amp; unlock my work</button>' +
@@ -11217,6 +11248,14 @@ Tell me your planned move-out date and I will set the inspection.`
     if(nc){ _ctContactsStep = true; try { renderContractTerms(_currentFile); } catch(_){} return; }
     const bt = e.target.closest('[data-ct-back-terms]');
     if(bt){ _ctContactsStep = false; try { renderContractTerms(_currentFile); } catch(_){} return; }
+    const ctro = e.target.closest('[data-ct-rev-open]');
+    if(ctro){ _ctReviewIdx = 0; try { renderContractTerms(_currentFile); } catch(_){} return; }
+    const ctrn = e.target.closest('[data-ct-rev-next]');
+    if(ctrn){ _ctReviewIdx = (_ctReviewIdx == null ? 1 : _ctReviewIdx + 1); if(_ctReviewIdx > 6) _ctReviewIdx = null; try { renderContractTerms(_currentFile); } catch(_){} return; }
+    const ctrb = e.target.closest('[data-ct-rev-back]');
+    if(ctrb){ if(_ctReviewIdx) _ctReviewIdx = _ctReviewIdx - 1; try { renderContractTerms(_currentFile); } catch(_){} return; }
+    const ctrc = e.target.closest('[data-ct-rev-close]');
+    if(ctrc){ _ctReviewIdx = null; try { renderContractTerms(_currentFile); } catch(_){} return; }
     const tt = e.target.closest('[data-ct-terms-toggle]');
     if(tt){ _ctTermsExpanded = !_ctTermsExpanded; try { renderContractTerms(_currentFile); } catch(_){} return; }
     const cv = e.target.closest('[data-contacts-toggle]');
@@ -11359,7 +11398,7 @@ Tell me your planned move-out date and I will set the inspection.`
     renderAgentRequestsBanner();
     renderServiceStage();
     _openPopKey = null;
-    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null;
+    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null;
     document.body.classList.add('tpb-open');
     renderPlaybook(file);
     renderDeleteZone(file);
@@ -12518,6 +12557,7 @@ Tell me your planned move-out date and I will set the inspection.`
   let _contactEditKey = null;     // which contact row is in edit mode
   let _ctTermsExpanded = false;   // confirmed terms · collapsed summary → expand
   let _ctContactsStep = false;    // confirmed terms · advanced to the contacts step
+  let _ctReviewIdx = null;        // confirmed terms · one-at-a-time review stepper index (null = off)
   // The contact panel renders in two places — the Contract Terms split column
   // (#tpb-terms) and Your Work Task 3 (#tpb-checklist). Re-render whichever is open.
   function rerenderContactsHost(){
