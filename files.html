@@ -12868,6 +12868,81 @@ Tell me your planned move-out date and I will set the inspection.`
     const { error } = await _client.from('files').update({ logistics: lg }).eq('id', file.id);
     if(error){ alert('Could not remove that party — check your connection and try again.'); }
   }
+  // ===== Financing section · price / deposit / loan / balance / financing type =====
+  // A one-at-a-time confirm stepper, same feel as Contract type. Pre-fills from the
+  // contract draft. Appears after Parties is confirmed; stamps financing_confirmed_at.
+  function financingConfirmed(file){ return !!((file.logistics || {}).financing_confirmed_at); }
+  async function confirmFinancing(file){
+    const fin = financingFieldsOf(file);
+    if(!(fin.type && fin.priceCents)){ alert('Set the financing type and purchase price before confirming.'); return; }
+    const lg = Object.assign({}, file.logistics || {});
+    lg.financing_confirmed_at = new Date().toISOString();
+    if(!lg.financing_confirmed) lg.financing_confirmed = (fin.type === 'cash' ? 'cash' : 'financed');
+    file.logistics = lg;
+    if(_currentFile && _currentFile.id === file.id) _currentFile.logistics = lg;
+    const { error } = await _client.from('files').update({ logistics: lg }).eq('id', file.id);
+    if(error){ alert('Could not confirm financing — check your connection and try again.'); return; }
+    try { renderContractTerms(file); } catch(_){}
+  }
+  function financingFieldsOf(file){
+    const lg = file.logistics || {}; const raw = file.raw_form_data || {}; const ex = extractedFields(file) || {};
+    const FIN = { cash:'Cash', conventional:'Conventional', fha:'FHA', va:'VA', usda:'USDA', financed:'Financed' };
+    const rawFin = String(raw.financing_type || raw.pa_financing_type || '').toLowerCase();
+    const type = lg.financing_type || (FIN[rawFin] ? rawFin : '') || (lg.financing_confirmed === 'cash' ? 'cash' : '');
+    const cents = function(s){ if(!s) return 0; const n = parseFloat(String(s).replace(/[^0-9.]/g, '')); return isNaN(n) ? 0 : Math.round(n * 100); };
+    const priceCents = file.purchase_price_cents || cents(ex.price) || 0;
+    const emd = ((file.emd && file.emd.amount) || raw.earnest_money || raw.pa_earnest_money || (ex.emd ? ('$' + ex.emd) : '') || '');
+    const loan = (lg.loan_amount || (ex.loan_amount ? ('$' + ex.loan_amount) : '') || '');
+    const balance = (lg.balance_to_close || '');
+    return { type:type, FIN:FIN, priceCents:priceCents, emd:emd, loan:loan, balance:balance };
+  }
+  function financingHtml(file){
+    const lg = file.logistics || {};
+    if(!lg.contacts_confirmed_at) return '';
+    const esc2 = esc;
+    const f = financingFieldsOf(file);
+    const priceStr = f.priceCents ? ('$' + (f.priceCents / 100).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 })) : '';
+    if(financingConfirmed(file)){
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 2px 2px;margin-top:6px">' +
+        '<span style="font-size:12.5px;color:#0f0f0f"><span style="display:inline-flex;width:18px;height:18px;border-radius:50%;background:#0f0f0f;color:#fff;align-items:center;justify-content:center;font-size:9px;vertical-align:-4px;margin-right:7px">&#10003;</span>Financing confirmed</span>' +
+        '<span style="font-size:11px;color:#a39e95">' + esc2(f.FIN[f.type] || '') + (priceStr ? ' &middot; ' + priceStr : '') + '</span>' +
+      '</div>';
+    }
+    const inS = 'width:100%;border:0.5px solid #d9d4ca;border-radius:8px;padding:8px 10px;font-size:14px;font-family:inherit;background:#fff;box-sizing:border-box';
+    const seg = '<span class="ct-seg">' + [['cash','Cash'],['conventional','Conv'],['fha','FHA'],['va','VA'],['usda','USDA']].map(function(o){ return '<button type="button" data-ct-fin="' + o[0] + '"' + (f.type === o[0] ? ' class="on"' : '') + '>' + o[1] + '</button>'; }).join('') + '</span>';
+    const fields = [
+      ['Financing type', seg, ''],
+      ['Purchase price', '<input type="number" id="ct-price" value="' + (f.priceCents ? (f.priceCents / 100) : '') + '" placeholder="209999" min="0" step="1" style="' + inS + '">', ''],
+      ['Initial deposit (EMD)', '<input type="text" id="ct-emd" value="' + esc2(f.emd) + '" placeholder="$2,000" style="' + inS + '">', ''],
+      ['Loan amount', '<input type="text" id="ct-loan" value="' + esc2(f.loan) + '" placeholder="$0" style="' + inS + '">', (f.type === 'cash' ? 'Cash deal — leave blank.' : '')],
+      ['Balance to close', '<input type="text" id="ct-balance" value="' + esc2(f.balance) + '" placeholder="$0" style="' + inS + '">', '']
+    ];
+    const idx = Math.max(0, Math.min(_finStep || 0, fields.length - 1));
+    _finStep = idx;
+    const fld = fields[idx];
+    let dots = '';
+    for(var d = 0; d < fields.length; d++){ var bg = d < idx ? '#0f0f0f' : (d === idx ? '#185FA5' : '#d9d4ca'); var w = d === idx ? '16px' : '6px'; dots += '<span style="height:6px;width:' + w + ';border-radius:20px;background:' + bg + ';display:inline-block"></span>'; }
+    const last = idx >= fields.length - 1;
+    const ready = !!(f.type && f.priceCents);
+    const primary = last
+      ? (ready
+          ? '<button type="button" data-fin-confirm="1" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;font-weight:600;padding:8px 16px;border-radius:8px;cursor:pointer">&check; Confirm financing</button>'
+          : '<div style="background:#efece6;color:#a39e95;border:0;font-family:inherit;font-size:13px;font-weight:600;padding:8px 16px;border-radius:8px">Confirm financing</div>')
+      : '<button type="button" data-fin-next="1" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;padding:8px 16px;border-radius:8px;cursor:pointer">Looks right</button>';
+    return '<div style="margin-top:14px">' +
+      '<div style="font-size:13px;font-weight:500;color:#0f0f0f;padding:2px 2px 8px">Confirm the financing</div>' +
+      '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:11px;padding:12px 14px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="display:flex;gap:5px;align-items:center">' + dots + '</span><span style="font-size:11px;color:#a39e95">' + (idx + 1) + ' of ' + fields.length + '</span></div>' +
+        '<div style="font-size:10.5px;color:#a39e95;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">' + esc2(fld[0]) + '</div>' +
+        '<div>' + fld[1] + '</div>' +
+        (fld[2] ? '<p style="font-size:10px;color:#8a857c;margin:9px 0 0">' + esc2(fld[2]) + '</p>' : '') +
+        '<div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between">' + primary +
+          (idx > 0 ? '<button type="button" data-fin-back="1" style="background:none;border:0;color:#a39e95;font-family:inherit;font-size:12px;cursor:pointer">&larr; back</button>' : '<span></span>') +
+        '</div>' +
+        (last && !ready ? '<p style="text-align:center;font-size:10px;color:#a39e95;margin:12px 0 0">Set the financing type and purchase price to confirm</p>' : '') +
+      '</div>' +
+    '</div>';
+  }
   function contactsTaskHtml(file){
     const lg = file.logistics || {};
     const confirmedAt = lg.contacts_confirmed_at || '';
