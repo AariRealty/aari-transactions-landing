@@ -133,15 +133,10 @@
 
   async function submitFile(){
     var btn = $('btnSubmit');
-    var svcId = $('fService').value;
-    var address = $('fAddress').value.trim();
-    var agent = $('fAgent').value.trim();
+    var svcId = $('fService').value || 'tc_one_side';
     var contractFile = $('fContract').files && $('fContract').files[0];
-    if(!svcId){ setStatus('Pick a service.', 'err'); return; }
-    if(!address){ setStatus('Property address is required.', 'err'); return; }
-    if(!agent){ setStatus('Agent name is required.', 'err'); return; }
-    if(!contractFile){ setStatus('Attach the executed contract.', 'err'); return; }
-    var svc = SVC_BY_ID[svcId];
+    if(!contractFile){ setStatus('Upload the executed contract.', 'err'); return; }
+    var svc = SVC_BY_ID[svcId] || SVC_BY_ID['tc_one_side'] || { file_type:'sale' };
     btn.disabled = true; setStatus('Uploading contract…');
     try {
       var subId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-' + Date.now());
@@ -152,74 +147,50 @@
       var urlData = await client.storage.from('transaction-files').createSignedUrl(path, 604800);
       var contractUrl = (urlData && urlData.data && urlData.data.signedUrl) || '';
 
-      // Additional docs (optional).
-      var addl = [];
-      var docs = $('fDocs').files;
-      if(docs && docs.length){
-        setStatus('Uploading documents…');
-        for(var i=0; i<Math.min(docs.length,5); i++){
-          var f = docs[i];
-          var dn = (f.name || ('doc'+i)).replace(/[^a-zA-Z0-9._-]/g, '_');
-          var dp = uid + '/' + subId + '/additional/' + dn;
-          try {
-            var du = await client.storage.from('transaction-files').upload(dp, f, { upsert:false, contentType: f.type || 'application/octet-stream' });
-            if(!(du && du.error)) addl.push({ filename: dn, path: dp });
-          } catch(_){}
-        }
-      }
-
+      // Minimal row · everything else (address, parties, dates) is READ from the
+      // contract below and lands as a DRAFT the TC confirms in the cockpit.
       setStatus('Filing the transaction…');
-      var buyer = $('fBuyer').value.trim();
-      var seller = $('fSeller').value.trim();
       var row = {
         id: subId,
         agent_id: uid,
         service_type: svcId,
         file_type: svc.file_type || 'sale',
-        client_type: buyer ? 'Buyer' : (seller ? 'Seller' : null),
-        client_name: buyer || seller || '',
-        property_address: address,
-        effective_date: $('fEffective').value || null,
-        closing_date: $('fClosing').value || null,
+        property_address: '',
         assigned_tc_id: uid,
         is_aari_engaged: true,
         status: 'intake_received',
-        transaction_stage: 'new', // explicit from creation → deriveStage never hits the date fallback
+        transaction_stage: 'new',
         raw_form_data: {
           submitted_by_tc: true,
           tc_submitter_id: uid,
-          buyer_name: buyer, seller_name: seller, agent_name: agent,
           contract_url: contractUrl, contract_filename: safeName, contract_path: path,
-          additional_docs: addl, submission_id: subId
+          submission_id: subId
         }
       };
       var ins = await client.from('files').insert(row).select('id').single();
       if(ins && ins.error) throw new Error(ins.error.message);
 
-      // Confirmation screen.
-      $('formWrap').classList.add('hide');
-      var link = svc.stripe || '';
-      if(link){
-        $('payLink').value = link;
-        $('payRow').style.display = 'flex';
-        $('payNote').textContent = svc.name + ' · $' + svc.price;
-        $('copyBtn').onclick = function(){
-          try { navigator.clipboard.writeText(link); } catch(_){}
-          var o = $('copyBtn').textContent; $('copyBtn').textContent = '✓ Copied'; setTimeout(function(){ $('copyBtn').textContent = o; }, 1400);
-        };
-      } else {
-        $('payRow').style.display = 'none';
-        $('payNote').textContent = (svc.meta || 'Billed at closing via CDA') + ' — no upfront payment link for this service.';
-      }
-      $('doneWrap').classList.remove('hide');
-      window.scrollTo(0,0);
+      // READ EACH LINE · the free extractor parses the contract, splits the bundle
+      // into its documents, and writes a draft. We label the file with the parsed
+      // address so the card isn't "Untitled". Never confirms anything — the TC does.
+      setStatus('Reading the contract…');
+      try {
+        var ec = await client.functions.invoke('extract-contract-fields', { body: { file_id: subId } });
+        var fld = (ec && ec.data && ec.data.fields) || null;
+        if(fld && (fld.address || fld.street)){
+          var addr = fld.address || [fld.street, fld.city, fld.state, fld.zip].filter(Boolean).join(', ');
+          if(addr) await client.from('files').update({ property_address: addr }).eq('id', subId);
+        }
+      } catch(exErr){ console.warn('extract skipped', exErr); }
+
+      // Straight to the board · the new file is there, pre-filled, ready to confirm.
+      window.location.href = '/files.html';
     } catch(err){
       btn.disabled = false;
       var _msg = (err && err.message) ? err.message : 'try again.';
       setStatus('Could not submit · ' + _msg, 'err');
-      // Loud failure · a TC submitting on behalf of a client must never see
-      // "nothing happen" — surface the real reason so it can't be missed.
-      alert('This file did NOT submit and nothing was sent.\n\nReason: ' + _msg + '\n\nTry again. If it keeps happening, send this exact message to support.');
+      // Loud failure · a TC submitting must never see "nothing happen".
+      alert('This file did NOT submit.\n\nReason: ' + _msg + '\n\nTry again. If it keeps happening, send this exact message to support.');
     }
   }
 
