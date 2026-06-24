@@ -9278,8 +9278,8 @@ Tell me your planned move-out date and I will set the inspection.`
   // ===== CALENDAR VIEW · every live deadline across active sale files, grouped by
   // urgency, each section its own card (Option A). Leads with Today / Coming up;
   // Overdue only appears when something is actually late. Sync exports all to .ics.
-  let _calOpen = { week:false, later:false }; // agenda This-week/Later collapse
-  let _calSearch = '';                          // agenda search
+  let _calOpen = { ontrack:false };  // file-list "On track" group collapsed by default
+  let _calSearch = '';                // file-list search
   let _calMonth = null;   // heatmap displayed month
   let _calSelDay = null;  // heatmap selected day
   let _calLoaded = false;
@@ -9325,51 +9325,78 @@ Tell me your planned move-out date and I will set the inspection.`
     });
     return s + 'END:VCALENDAR';
   }
-  // ---- Boxed deadlines AGENDA (the list she kept) · #fileCalendar ----
+  // ---- FILE-FIRST triage · one row per FILE (not per deadline), grouped by the
+  // action it needs: Needs a TC (unassigned) · Needs you (overdue/today) · On track.
+  // Each row shows the file's STAGE + its deadline health. · #fileCalendar ----
+  function _fileTriage(){
+    const today = new Date(); today.setHours(0, 0, 0, 0); const t0 = today.getTime();
+    const g = { needstc: [], needsyou: [], ontrack: [] };
+    (_files || []).forEach(function(f){
+      if(deriveStage(f) === 'closed' || f.status === 'archived') return;
+      const stage = deriveStage(f);
+      const status = _deadlinesByFile[f.id] || {};
+      let overdue = 0, todayN = 0, next = null;
+      try {
+        fileContractDeadlines(f).forEach(function(d){
+          if(!(d && d.date instanceof Date) || isNaN(d.date.getTime())) return;
+          const rec = status[d.key]; if(rec && rec.completed_at) return;
+          const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); const xt = x.getTime();
+          if(xt < t0) overdue++; else if(xt === t0) todayN++; else if(!next || x < next.date) next = { name:d.name, date:x };
+        });
+      } catch(_){}
+      const it = { f:f, stage:stage, label:(STAGE_LABELS && STAGE_LABELS[stage]) || stage, overdue:overdue, todayN:todayN, next:next };
+      if(!f.assigned_tc_id) g.needstc.push(it);
+      else if(overdue > 0 || todayN > 0) g.needsyou.push(it);
+      else g.ontrack.push(it);
+    });
+    g.needsyou.sort(function(a, b){ return (b.overdue + b.todayN) - (a.overdue + a.todayN); });
+    g.ontrack.sort(function(a, b){ const ad = a.next ? a.next.date.getTime() : 8.64e15, bd = b.next ? b.next.date.getTime() : 8.64e15; return ad - bd; });
+    return g;
+  }
   function renderTcCalendar(){
     const host = document.getElementById('fileCalendar'); if(!host) return;
-    const all = _tcCalDeadlines();
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const t0 = today.getTime(), weekEnd = t0 + 7 * 86400000;
+    const g = _fileTriage();
     const q = (_calSearch || '').toLowerCase();
-    const dayOf = function(d){ const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); return x.getTime(); };
-    const overdue = [], todayL = [], week = [], later = [];
-    all.forEach(function(d){
-      if(q && d.label.toLowerCase().indexOf(q) === -1 && d.address.toLowerCase().indexOf(q) === -1) return;
-      const x = dayOf(d);
-      if(x < t0) overdue.push(d); else if(x === t0) todayL.push(d); else if(x < weekEnd) week.push(d); else later.push(d);
-    });
-    const row = function(d, right, rc){
-      return '<div data-cal-open="' + esc(d.fileId) + '" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
-        '<div style="flex:1;min-width:0"><div style="font-size:13px;color:#0f0f0f">' + esc(d.label) + '</div><div style="font-size:11px;color:#8a857c">' + esc(d.address) + '</div></div>' +
-        '<span style="flex:none;font-size:11px;color:' + (rc || '#8a857c') + '">' + esc(right) + '</span></div>';
+    const keep = function(it){ return !q || String(it.f.property_address || '').toLowerCase().indexOf(q) !== -1; };
+    const fmt = function(dt){ return dt.toLocaleDateString('en-US', { month:'short', day:'numeric' }); };
+    const chip = function(it){ return '<span style="flex:none;font-size:11px;font-weight:500;color:#5f5e5a;background:#f1efe8;border:0.5px solid #e6e1d6;border-radius:20px;padding:4px 11px">' + esc(it.label) + '</span>'; };
+    const fileRow = function(it, kind){
+      const f = it.f; const addr = String(f.property_address || 'Untitled file').split(',')[0];
+      const cash = (typeof isCashFile === 'function' && isCashFile(f)) ? ' <span style="font-size:9px;font-weight:600;letter-spacing:.3px;color:#854f0b;background:#faeeda;border-radius:4px;padding:1px 5px">CASH</span>' : '';
+      let sub = '', sc = '#8a857c';
+      if(kind === 'needstc'){ sub = (f.created_at ? ('Submitted ' + fmt(new Date(f.created_at)) + ' · ') : '') + 'no coordinator yet'; }
+      else if(kind === 'needsyou'){ const b = []; if(it.overdue) b.push(it.overdue + ' overdue'); if(it.todayN) b.push(it.todayN + ' due today'); sub = b.join(' · '); sc = '#a3402f'; }
+      else { sub = it.next ? ('Next: ' + it.next.name + ' · ' + fmt(it.next.date)) : ((f.file_type || 'sale') === 'sale' ? 'On track' : 'No contract dates yet'); }
+      const claim = (kind === 'needstc') ? '<span data-claim-file="' + esc(f.id) + '" style="flex:none;font-size:11px;font-weight:500;color:#fff;background:#0f0f0f;border-radius:20px;padding:5px 13px;cursor:pointer;font-family:inherit">Claim</span>' : '';
+      return '<div data-file-open="' + esc(f.id) + '" style="display:flex;align-items:center;gap:12px;padding:11px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:500;color:#0f0f0f">' + esc(addr) + cash + '</div>' + (sub ? ('<div style="font-size:11.5px;color:' + sc + ';margin-top:2px">' + esc(sub) + '</div>') : '') + '</div>' +
+        chip(it) + claim + '</div>';
     };
-    const lateTxt = function(d){ const n = Math.round((t0 - dayOf(d)) / 86400000); return n + 'd late'; };
-    const inTxt = function(d){ const n = Math.round((dayOf(d) - t0) / 86400000); return n === 1 ? 'tomorrow' : ('in ' + n + 'd'); };
-    const dateTxt = function(d){ return d.date.toLocaleDateString('en-US', { month:'short', day:'numeric' }); };
-    let ah = '<div style="display:flex;align-items:center;gap:9px;margin-bottom:13px">' +
-      '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:19px;font-weight:600;color:#0f0f0f">Deadlines</span>' +
+    let html = '<div style="display:flex;align-items:center;gap:9px;margin-bottom:13px">' +
+      '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:19px;font-weight:600;color:#0f0f0f">Active files</span>' +
       '<input id="cal-search" value="' + esc(_calSearch) + '" placeholder="Search…" style="width:140px;font-size:12px;color:#0f0f0f;border:0.5px solid #ece8e0;border-radius:8px;padding:7px 11px;font-family:inherit;background:#fff">' +
       '<button type="button" id="cal-sync" style="font-size:12px;color:#0f0f0f;border:0.5px solid #ece8e0;border-radius:8px;padding:7px 12px;background:#fff;cursor:pointer;font-family:inherit">&#128197; Sync</button></div>';
-    if(!all.length){
-      ah += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:26px;text-align:center;font-size:13px;color:#a39e95">No deadlines yet. Add the effective and closing dates on your files to see them here.</div>';
-      host.innerHTML = ah; _wireCal(host); return;
+    const ntc = g.needstc.filter(keep), nyou = g.needsyou.filter(keep), ont = g.ontrack.filter(keep);
+    if(!(ntc.length + nyou.length + ont.length)){
+      html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:26px;text-align:center;font-size:13px;color:#a39e95">No active files.</div>';
+      host.innerHTML = html; _wireCal(host); return;
     }
-    if(overdue.length){
-      ah += '<div style="background:#fff;border:0.5px solid #f0cfca;border-radius:12px;padding:12px 15px;margin-bottom:10px">' +
-        '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#a3402f">Overdue</span><span style="font-size:11px;font-weight:600;color:#a3402f;background:#fbecea;border-radius:20px;padding:1px 8px">' + overdue.length + '</span></div>' +
-        overdue.map(function(d){ return row(d, lateTxt(d), '#a3402f'); }).join('') + '</div>';
+    if(ntc.length){
+      html += '<div style="background:#fff;border:1.5px solid #0f0f0f;border-radius:12px;padding:13px 16px;margin-bottom:10px">' +
+        '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">Needs a TC</span><span style="font-size:11px;font-weight:600;color:#fff;background:#0f0f0f;border-radius:20px;padding:1px 8px">' + ntc.length + '</span></div>' +
+        ntc.map(function(it){ return fileRow(it, 'needstc'); }).join('') + '</div>';
     }
-    ah += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:12px 15px;margin-bottom:10px">' +
-      '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">Today · ' + today.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }) + '</span><span style="font-size:11px;font-weight:600;color:#fff;background:#0f0f0f;border-radius:20px;padding:1px 8px">' + todayL.length + '</span></div>' +
-      (todayL.length ? todayL.map(function(d){ return row(d, 'today', '#0f0f0f'); }).join('') : '<div style="font-size:12px;color:#a39e95;padding:10px 0 2px;border-top:0.5px solid #f3f0ea">Nothing due today. You’re ahead.</div>') + '</div>';
-    ah += _calOpen.week
-      ? '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:12px 15px;margin-bottom:8px"><div data-cal-group="week" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">This week</span><span style="font-size:11px;color:#a39e95">' + week.length + '</span><span style="font-size:13px;color:#a39e95">&#9662;</span></div>' + (week.length ? week.map(function(d){ return row(d, inTxt(d), '#8a857c'); }).join('') : '<div style="font-size:12px;color:#a39e95;padding:10px 0 2px;border-top:0.5px solid #f3f0ea">Nothing else this week.</div>') + '</div>'
-      : '<div data-cal-group="week" style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 15px;margin-bottom:8px;display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:12.5px;color:#5f5e5a">This week</span><span style="font-size:12px;color:#a39e95">' + week.length + '</span><span style="font-size:13px;color:#a39e95">&#8250;</span></div>';
-    ah += _calOpen.later
-      ? '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:12px 15px"><div data-cal-group="later" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">Later</span><span style="font-size:11px;color:#a39e95">' + later.length + '</span><span style="font-size:13px;color:#a39e95">&#9662;</span></div>' + (later.length ? later.slice(0, 80).map(function(d){ return row(d, dateTxt(d), '#a39e95'); }).join('') : '<div style="font-size:12px;color:#a39e95;padding:10px 0 2px;border-top:0.5px solid #f3f0ea">Nothing later.</div>') + '</div>'
-      : '<div data-cal-group="later" style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 15px;display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:12.5px;color:#5f5e5a">Later</span><span style="font-size:12px;color:#a39e95">' + later.length + '</span><span style="font-size:13px;color:#a39e95">&#8250;</span></div>';
-    host.innerHTML = ah; _wireCal(host);
+    if(nyou.length){
+      html += '<div style="background:#fff;border:0.5px solid #f0cfca;border-radius:12px;padding:13px 16px;margin-bottom:10px">' +
+        '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#a3402f">Needs you</span><span style="font-size:11px;font-weight:600;color:#a3402f;background:#fbecea;border-radius:20px;padding:1px 8px">' + nyou.length + '</span></div>' +
+        nyou.map(function(it){ return fileRow(it, 'needsyou'); }).join('') + '</div>';
+    }
+    if(ont.length){
+      html += _calOpen.ontrack
+        ? '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px"><div data-cal-group="ontrack" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">On track</span><span style="font-size:11px;color:#a39e95">' + ont.length + '</span><span style="font-size:13px;color:#a39e95">&#9662;</span></div>' + ont.map(function(it){ return fileRow(it, 'ontrack'); }).join('') + '</div>'
+        : '<div data-cal-group="ontrack" style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px;display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:12.5px;color:#5f5e5a">On track</span><span style="font-size:12px;color:#a39e95">' + ont.length + '</span><span style="font-size:13px;color:#a39e95">&#8250;</span></div>';
+    }
+    host.innerHTML = html; _wireCal(host);
   }
   // ---- Month HEATMAP calendar (replaces the kanban) · #calHeatmap ----
   function renderCalHeatmap(){
@@ -9421,12 +9448,8 @@ Tell me your planned move-out date and I will set the inspection.`
         (right ? ('<span style="flex:none;font-size:11px;color:' + (rc || '#8a857c') + '">' + esc(right) + '</span>') : '') + '</div>';
     };
     html += '<div>';
-    if(overdue.length){
-      html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:2px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#a3402f">Overdue</span><span style="font-size:11px;font-weight:600;color:#a3402f;background:#fbecea;border-radius:20px;padding:1px 7px">' + overdue.length + '</span></div>';
-      html += overdue.slice(0, 8).map(function(d){ const n = Math.round((t0 - dayOf(d)) / 86400000); return rowHtml(d, n + 'd', '#a3402f'); }).join('');
-      if(overdue.length > 8) html += '<div style="font-size:11px;color:#a39e95;padding-top:4px">+ ' + (overdue.length - 8) + ' more</div>';
-      html += '<div style="height:15px"></div>';
-    }
+    // (Overdue lives in the Active-files list above; the calendar panel just shows
+    // the day you tap — default today — so it isn't a duplicate.)
     const sel = new Date(_calSelDay), sd = byDay[_calSelDay] || [];
     const selLab = (_calSelDay === t0 ? 'Today · ' : '') + sel.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
     html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:2px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">' + esc(selLab) + '</span><span style="font-size:11px;font-weight:600;color:#fff;background:#0f0f0f;border-radius:20px;padding:1px 7px">' + sd.length + '</span></div>';
@@ -9447,6 +9470,7 @@ Tell me your planned move-out date and I will set the inspection.`
     host.querySelectorAll('[data-cal-nav]').forEach(function(b){ b.addEventListener('click', function(){ const dir = this.getAttribute('data-cal-nav') === 'next' ? 1 : -1; _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() + dir, 1); renderCalHeatmap(); }); });
     host.querySelectorAll('[data-cal-day]').forEach(function(b){ b.addEventListener('click', function(){ _calSelDay = parseInt(this.getAttribute('data-cal-day'), 10); renderCalHeatmap(); }); });
     host.querySelectorAll('[data-cal-open]').forEach(function(r){ r.addEventListener('click', function(){ const id = this.getAttribute('data-cal-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f) openPlaybook(f); }); });
+    host.querySelectorAll('[data-file-open]').forEach(function(r){ r.addEventListener('click', function(e){ if(e.target.closest && e.target.closest('[data-claim-file]')) return; const id = this.getAttribute('data-file-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f) openPlaybook(f); }); });
   }
   document.addEventListener('click', (e) => {
     const saBtn = e.target.closest && e.target.closest('[data-sa-open]');
