@@ -134,6 +134,7 @@ function parseContract(T: string): Record<string, string> {
   out.price = dollar(findLine(/2\.\s*PURCHASE PRICE/));
   out.emd = dollar(findLine(/Initial deposit to be held/));
   out.loan_amount = dollar(findLine(/\(c\)\s*Financing:/));
+  out.balance_to_close = dollar(findLine(/transfer or other Collected funds/i));
 
   const ci = findIdx(/Closing shall occur on/);
   if (ci >= 0) for (let k = ci - 2; k <= ci + 1; k++) { if (k < 0 || k >= lines.length) continue; const m = clean(lines[k]).match(/[A-Z][a-z]+ \d{1,2}, \d{4}/); if (m) { out.closing_date = m[0]; break; } }
