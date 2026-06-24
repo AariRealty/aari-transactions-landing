@@ -12775,14 +12775,21 @@ Tell me your planned move-out date and I will set the inspection.`
       email: pick(raw.pa_co_agent_email, raw.co_agent_email),
       phone: pick(raw.pa_co_agent_phone, raw.co_agent_phone),
     };
-    // Pre-fill agents / brokerages / title from the contract draft (only where the
-    // agent left a slot empty). Cooperating = buyer's agent, Listing = seller's agent.
+    // Pre-fill agents / brokerages / title from the contract draft. Cooperating =
+    // buyer's agent, Listing = seller's agent (read off the broker block, line 649).
     const _ex = extractedFields(file);
     if(_ex){
       const fill = function(o, k, v){ if(v && !o[k]) o[k] = v; };
-      fill(src.buyer_agent, 'name', _ex.buyer_agent);   fill(src.buyer_agent, 'company', _ex.buyer_brokerage);
-      fill(src.listing_agent, 'name', _ex.seller_agent); fill(src.listing_agent, 'company', _ex.seller_brokerage);
-      fill(src.title, 'name', _ex.title_name); fill(src.title, 'email', _ex.title_email); fill(src.title, 'phone', _ex.title_phone);
+      // Names: the CONTRACT wins when it's a fuller version of a partial intake name
+      // (intake "Samantha" → contract "Samantha Haringa"). The full contract name is
+      // the source of truth; a different intake name is left alone.
+      const fillName = function(o, v){
+        if(!v) return; const cur = (o.name || '').trim();
+        if(!cur || (v.toLowerCase().indexOf(cur.toLowerCase()) === 0 && v.length > cur.length)) o.name = v;
+      };
+      fillName(src.buyer_agent, _ex.buyer_agent);   fill(src.buyer_agent, 'company', _ex.buyer_brokerage);
+      fillName(src.listing_agent, _ex.seller_agent); fill(src.listing_agent, 'company', _ex.seller_brokerage);
+      fillName(src.title, _ex.title_name); fill(src.title, 'email', _ex.title_email); fill(src.title, 'phone', _ex.title_phone);
     }
     const ov = (file.logistics || {}).contacts || {};
     const coLabel = buyerSide ? "Co-buyer's agent" : (sellerSide ? 'Co-listing agent' : 'Co-agent');
@@ -13088,11 +13095,11 @@ Tell me your planned move-out date and I will set the inspection.`
               '<div style="margin-top:6px"><span style="font-size:11px;color:#a39e95">tap to change</span></div>' +
             '</button>'
           : '<button type="button" data-party-edit="1" style="background:none;border:0;padding:0;cursor:pointer;font-family:inherit;text-align:left;display:block"><span style="font-size:16px;font-weight:500;color:#c2bdb4">Add ' + esc(sc.label.toLowerCase()) + '</span></button>';
-        // Option 4 · on the LAST buyer / LAST seller the footer pairs a quiet "Add"
-        // with "Looks right"; back moves up by the dots so the footer stays two clean
-        // actions. No more "Another buyer?" interstitial.
-        const _lastBuyer = sc.side === 'buyers' && sc.idx === P.buyers.length - 1;
-        const _lastSeller = sc.side === 'sellers' && sc.idx === P.sellers.length - 1;
+        // Option 4 · the footer pairs a quiet "Add" with "Looks right" ONLY when the
+        // contract gave a SINGLE buyer / seller (a co-party might be missing). With 2+
+        // the contract already listed everyone, so no Add — the count is complete.
+        const _lastBuyer = sc.side === 'buyers' && P.buyers.length === 1;
+        const _lastSeller = sc.side === 'sellers' && P.sellers.length === 1;
         const _addBtn = _lastBuyer
           ? '<button type="button" data-party-add="buyers" style="flex:none;background:#fff;color:#0f0f0f;border:0.5px solid #d9d4ca;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;font-family:inherit"><i class="ti ti-plus" aria-hidden="true" style="vertical-align:-2px;margin-right:3px"></i>Add a buyer</button>'
           : (_lastSeller
