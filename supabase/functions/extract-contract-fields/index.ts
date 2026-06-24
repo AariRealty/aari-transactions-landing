@@ -33,10 +33,10 @@ const cors = {
 };
 
 // --- pdf.js: text items -> reconstructed lines (cluster by y, sort by x) -------
-async function pdfToLines(bytes: Uint8Array): Promise<string> {
+async function pdfToPages(bytes: Uint8Array): Promise<string[]> {
   const doc = await getDocumentProxy(bytes);
   const TOL = 5;
-  const out: string[] = [];
+  const pages: string[] = [];
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const tc = await page.getTextContent();
@@ -50,6 +50,7 @@ async function pdfToLines(bytes: Uint8Array): Promise<string> {
       if (!row) { row = { y: it.y, items: [] }; rows.push(row); }
       row.items.push(it);
     }
+    const out: string[] = [];
     for (const row of rows) {
       row.items.sort((a, b) => a.x - b.x);
       let line = "", lastEnd: number | null = null;
@@ -62,8 +63,32 @@ async function pdfToLines(bytes: Uint8Array): Promise<string> {
       }
       out.push(line);
     }
+    pages.push(out.join("\n"));
   }
-  return out.join("\n");
+  return pages;
+}
+
+// Split a bundled upload into its component documents by reading the form title
+// at the top of each page. Returns [{ title, page (1-based start), pages }].
+function detectDocuments(pages: string[]): { title: string; page: number; pages: number }[] {
+  const rules = [
+    { re: /AS IS.{0,6}Residential Contract For Sale/i, title: "Contract" },
+    { re: /Addendum to Contract|Addendum No|Addendum #/i, title: "Addendum" },
+    { re: /Comprehensive Rider/i, title: "Rider" },
+    { re: /Compensation Agreement/i, title: "Compensation" },
+  ];
+  const docs: { title: string; page: number; pages: number }[] = [];
+  pages.forEach((pg, i) => {
+    const top = pg.split("\n").slice(0, 18).join(" ");
+    for (const r of rules) {
+      if (r.re.test(top)) {
+        if (!docs.length || docs[docs.length - 1].title !== r.title) docs.push({ title: r.title, page: i + 1, pages: 0 });
+        break;
+      }
+    }
+  });
+  for (let k = 0; k < docs.length; k++) docs[k].pages = (k < docs.length - 1 ? docs[k + 1].page : pages.length + 1) - docs[k].page;
+  return docs;
 }
 
 // --- FR/BAR field parser (validated against real contracts) -------------------
@@ -174,9 +199,11 @@ Deno.serve(async (req) => {
   }
 
   let fields: Record<string, string>;
+  let documents: { title: string; page: number; pages: number }[] = [];
   try {
-    const text = await pdfToLines(bytes!);
-    fields = parseContract(text);
+    const pages = await pdfToPages(bytes!);
+    fields = parseContract(pages.join("\n"));
+    documents = detectDocuments(pages);
   } catch (e) {
     return j(500, { ok: false, error: "Parse failed: " + (e as Error).message });
   }
@@ -184,9 +211,9 @@ Deno.serve(async (req) => {
   // Write the DRAFT only (never a confirmed value). One blob, easy to read + tag.
   if (body.write !== false && body.file_id && file) {
     const raw = Object.assign({}, file.raw_form_data || {});
-    raw.extracted_contract = { fields, at: new Date().toISOString(), source: "extract-contract-fields/v1" };
+    raw.extracted_contract = { fields, documents, at: new Date().toISOString(), source: "extract-contract-fields/v3" };
     const { error } = await admin.from("files").update({ raw_form_data: raw }).eq("id", body.file_id);
-    if (error) return j(500, { ok: false, fields, error: "Draft save failed: " + error.message });
+    if (error) return j(500, { ok: false, fields, documents, error: "Draft save failed: " + error.message });
   }
-  return j(200, { ok: true, fields });
+  return j(200, { ok: true, fields, documents });
 });
