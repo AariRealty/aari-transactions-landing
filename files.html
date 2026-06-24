@@ -8514,7 +8514,7 @@ Tell me your planned move-out date and I will set the inspection.`
     } else if(anchor){
       html += '<div class="tpb-dl-estban ok">&#10003; Move-in confirmed. The timeline below computes from it.</div>';
     }
-    html += '<div class="dl-perf ok"><span class="dl-perf-tag">On track</span><span class="dl-perf-txt">No dates met yet</span><button type="button" class="dl-perf-recap" id="rd-recap">Weekly recap &rarr;</button></div>';
+    html += '<div class="dl-perf ok"><span class="dl-perf-tag">On track</span><span class="dl-perf-txt">No dates met yet</span></div>';
     let body = '';
     if(listingEnd) body += lrow('ELLA / listing expires', listingEnd);
     if(anchor){ body += lrow('Available / move-in', anchor); body += lrow('Lease start', anchor); body += lrow('First rent due', anchor); }
@@ -8536,25 +8536,10 @@ Tell me your planned move-out date and I will set the inspection.`
     if(sv) sv.addEventListener('click', function(){ const e = document.getElementById('rd-anchor-edit'); if(e && e.value) ctSave(file, {}, { rental_move_in: e.value }).then(function(){ try { renderPlaybook(file); } catch(_){} }); });
     const ds = document.getElementById('rd-disc-set');
     if(ds) ds.addEventListener('click', function(){ ctSave(file, {}, { rental_deposit_received_date: new Date().toISOString().slice(0,10) }).then(function(){ try { renderPlaybook(file); } catch(_){} }); });
-    const rc = document.getElementById('rd-recap');
-    if(rc) rc.addEventListener('click', function(){
-      const street = String(file.property_address || '').split(',')[0].trim();
-      const lines = [];
-      if(listingEnd) lines.push('ELLA / listing expires: ' + fmt(listingEnd));
-      if(anchor) lines.push('Move-in / lease start: ' + fmt(anchor));
-      if(leaseEnd) lines.push('Lease ends: ' + fmt(leaseEnd));
-      if(renewal) lines.push('Renewal notice: ' + fmt(renewal));
-      const recap = (street ? (street + ' · rental dates\n') : 'Rental dates\n') + lines.join('\n');
-      try { navigator.clipboard.writeText(recap); rc.textContent = 'Copied ✓'; setTimeout(function(){ rc.textContent = 'Weekly recap →'; }, 1800); } catch(_){ }
-    });
   }
   function renderDeadlinesForFile(file){
-    // Terms & dates nests this ledger inside the Setup bar's section 4 (distinct
-    // host ids) while a file is in Setup; once past Setup it renders in the
-    // standalone bottom panel. Prefer the setup host when it is present.
-    const setupBody = document.getElementById('tpb-dl-setup-body');
-    const hostEl = setupBody || document.getElementById('tpb-dl-body');
-    const metaEl = document.getElementById('tpb-dl-setup-meta') || document.getElementById('tpb-dl-meta');
+    const hostEl = document.getElementById('tpb-dl-body');
+    const metaEl = document.getElementById('tpb-dl-meta');
     if(!hostEl) return;
     if((file.file_type || '') === 'rental'){ renderRentalDates(file, hostEl, metaEl); return; }
     // Deadlines unlock the moment the contract terms are confirmed — the effective
@@ -8571,19 +8556,17 @@ Tell me your planned move-out date and I will set the inspection.`
     // dates is its turn (financing confirmed). Once it's section 4, or the file is
     // past Setup, the block shows. (.tpb-pop panels are stacked, so display toggles
     // cleanly — no tab logic to fight.)
-    // Find the standalone bottom panel by its OWN id (hostEl may be the nested
-    // setup host). During Setup the bottom panel stays hidden — the ledger lives
-    // inside the bar's Terms & dates section; it returns to the bottom past Setup.
-    const _bottomBody = document.getElementById('tpb-dl-body');
-    const _dlWrap = _bottomBody ? _bottomBody.closest('.tpb-pop') : null;
-    if(_dlSetup){
+    // During Setup the bottom Deadlines panel stays hidden until Terms & dates is
+    // its turn (financing confirmed) — then it shows full-width at the bottom, with
+    // the setup bar's section 4 pointing down to it. Past Setup it always shows.
+    const _dlWrap = hostEl.closest('.tpb-pop');
+    if(_dlSetup && !_dlFinOk){
       if(_dlWrap) _dlWrap.style.display = 'none';
-      // The setup host only exists once Terms & dates is its turn (financing
-      // confirmed). Until then there is nowhere to render — leave it clean.
-      if(!setupBody){ if(metaEl) metaEl.textContent = ''; return; }
-    } else {
-      if(_dlWrap) _dlWrap.style.display = '';
+      hostEl.innerHTML = '';
+      if(metaEl) metaEl.textContent = '';
+      return;
     }
+    if(_dlWrap) _dlWrap.style.display = '';
 
     const _dlRaw = file.raw_form_data || {};
     // Fall back to the agent's picked contract form (raw_form_data label) so the
@@ -8720,7 +8703,6 @@ Tell me your planned move-out date and I will set the inspection.`
     const perfStrip = '<div class="dl-perf' + (_perfClean ? ' ok' : '') + '">' +
       '<span class="dl-perf-tag">' + (_perfClean ? 'On track' : 'Watch') + '</span>' +
       '<span class="dl-perf-txt">' + (_perfBits.length ? _perfBits.join(' &middot; ') : 'No deadlines met yet') + '</span>' +
-      '<button type="button" class="dl-perf-recap" id="dl-recap">Weekly recap &rarr;</button>' +
     '</div>';
 
     hostEl.innerHTML = ctLine + stepper + perfStrip +
@@ -8808,31 +8790,6 @@ Tell me your planned move-out date and I will set the inspection.`
     hostEl.querySelectorAll('[data-dlday]').forEach(function(inp){ inp.addEventListener('change', function(){ ctSaveDays(file, this.getAttribute('data-dlday'), this.value); }); });
     const citesBtn = document.getElementById('tpb-dl-cites');
     if(citesBtn) citesBtn.addEventListener('click', function(){ _dlShowCites = !_dlShowCites; renderDeadlinesForFile(file); });
-
-    // Weekly recap · builds a clean client-ready ledger from the same data and
-    // copies it to the clipboard. Due / result per deadline, neutral + factual.
-    const recapBtn = document.getElementById('dl-recap');
-    if(recapBtn) recapBtn.addEventListener('click', function(){
-      const fD = function(d){ return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); };
-      const street = String(file.property_address || '').split(',')[0].trim();
-      // Ledger table (audit view) · Deadline | Due | Done | Result. Markdown so it
-      // pastes as a real table into email, Notion, or the file; readable as text too.
-      const tbl = rows.map(function(it){
-        const rc = status[it.key];
-        const dd = new Date(it.date.getTime()); dd.setHours(0,0,0,0);
-        let doneCell = '—', result;
-        if(rc && rc.completed_at){
-          doneCell = fD(new Date(rc.completed_at));
-          result = lateLabel(rc.completed_at, it.date, 'met').text;
-        } else if(dd < _tNow && !pastAtIntake(it)){ result = 'open, past due'; }
-        else { result = 'upcoming'; }
-        return '| ' + it.name + ' | ' + fD(it.date) + ' | ' + doneCell + ' | ' + result + ' |';
-      });
-      const recap = street + ' — deadline ledger (as of ' + _tNow.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }) + ')\n\n' +
-        '| Deadline | Due | Done | Result |\n| --- | --- | --- | --- |\n' + tbl.join('\n');
-      try { navigator.clipboard.writeText(recap); recapBtn.textContent = 'Copied ✓'; setTimeout(function(){ recapBtn.textContent = 'Weekly recap →'; }, 1800); }
-      catch(_){ alert(recap); }
-    });
 
     hostEl.querySelectorAll('[data-dl-toggle]').forEach(btn => btn.addEventListener('click', () => {
       const k = btn.getAttribute('data-dl-toggle');
@@ -10776,9 +10733,9 @@ Tell me your planned move-out date and I will set the inspection.`
 
     if(meta) meta.textContent = confirmed ? 'Set up · ready to work' : 'Confirm to unlock your work';
 
-    // Setup · the Terms & dates section nests the deadlines ledger. confirmFinancing
-    // only re-renders this panel, so render the ledger now that its host is in the DOM.
-    try { if(document.getElementById('tpb-dl-setup-body')) renderDeadlinesForFile(file); } catch(_){}
+    // Setup · section 4 (Terms & dates) points down to the bottom ledger. When
+    // financing was just confirmed, that ledger panel needs a render so it appears.
+    try { if(financingConfirmed(file)) renderDeadlinesForFile(file); } catch(_){}
 
     // ---- wiring ---- (PDF-panel buttons are wired once during shell build above)
     const ac = document.getElementById('ct-attachcontract');
@@ -13441,14 +13398,17 @@ Tell me your planned move-out date and I will set the inspection.`
       }
       if(s.st === 'active'){
         let body = '';
+        let hint = '';
         try {
           if(s.n === 'Contract type') body = ctBody;
           else if(s.n === 'Parties') body = contactsTaskHtml(file);
           else if(s.n === 'Financing') body = financingHtml(file);
-          else if(s.n === 'Terms & dates') body = '<div id="tpb-dl-setup-meta" style="font-size:11px;color:#a39e95;margin-bottom:7px"></div><div id="tpb-dl-setup-body"></div>';
+          // Terms & dates is a slim POINTER · the full ledger lives full-width at the
+          // bottom of the panel. The row just signals it is ready and points down.
+          else if(s.n === 'Terms & dates') hint = '<span style="flex:none;font-size:11px;color:#8a857c;display:flex;align-items:center;gap:4px">ready below <span style="font-size:13px">&#8595;</span></span>';
         } catch(_){ body = ''; }
         return '<div style="background:#fff;border:1.5px solid #0f0f0f;border-radius:10px;padding:11px 13px;margin-bottom:7px">' +
-          '<div style="display:flex;align-items:center;gap:10px">' + numDot(i) + '<span style="flex:1;font-size:12.5px;font-weight:500;color:#0f0f0f">' + esc(s.n) + '</span></div>' +
+          '<div style="display:flex;align-items:center;gap:10px">' + numDot(i) + '<span style="flex:1;font-size:12.5px;font-weight:500;color:#0f0f0f">' + esc(s.n) + '</span>' + hint + '</div>' +
           nest(body) + '</div>';
       }
       return '<div style="display:flex;align-items:center;gap:10px;background:#faf8f5;border:0.5px solid #efeae1;border-radius:10px;padding:10px 13px;margin-bottom:7px;opacity:.6">' +
@@ -13462,6 +13422,107 @@ Tell me your planned move-out date and I will set the inspection.`
     return '<div style="background:#f6f4ef;border:0.5px solid #ece8e0;border-radius:12px;padding:13px;margin-bottom:14px">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px"><span style="font-size:13px;font-weight:600;color:#0f0f0f">Set up this file</span><span style="font-size:11px;color:#a39e95">' + doneN + ' of 4 confirmed</span></div>' +
       secs.map(rowH).join('') + gateLine + '</div>';
+  }
+  // ---- Per-stage recap · a clean, audit-friendly record of the dates met and the
+  // tasks completed so far. Replaces the old global "Weekly recap" button: nothing
+  // shows until something is actually done, and it fills in stage by stage.
+  function _recapDate(iso){ try { return new Date(iso).toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } }
+  function recapMetDates(file){
+    const status = _deadlinesByFile[file.id] || {};
+    const out = [];
+    try {
+      fileContractDeadlines(file).forEach(function(d){
+        if(!d || !d.date) return;
+        const rec = status[d.key];
+        if(rec && rec.completed_at){
+          const ll = lateLabel(rec.completed_at, d.date, 'met');
+          out.push({ name:d.name, when:_recapDate(rec.completed_at), tag:ll.text.replace(/^met ?/, '') || 'on time', late:(ll.cls === 'late') });
+        }
+      });
+    } catch(_){}
+    return out;
+  }
+  function recapNextOpen(file){
+    const status = _deadlinesByFile[file.id] || {};
+    const t0 = new Date(); t0.setHours(0,0,0,0);
+    let next = null;
+    try {
+      fileContractDeadlines(file).forEach(function(d){
+        if(!d || !d.date) return;
+        const rec = status[d.key];
+        if((!rec || !rec.completed_at) && d.date >= t0 && (!next || d.date < next.date)) next = { name:d.name, date:d.date };
+      });
+    } catch(_){}
+    return next;
+  }
+  function stageRecapHtml(file){
+    const ft = file.file_type || 'sale';
+    if(!STAGE_CHECKLISTS[ft]) return '';
+    const stages = STAGES_BY_TYPE[ft] || STAGES_BY_TYPE.sale;
+    const cur = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || '');
+    const curIdx = stages.indexOf(cur);
+    if(curIdx < 0) return '';
+    const done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    const fmt = function(dt){ try { return dt.toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } };
+    const lbl = function(s){ return '<div style="font-size:10.5px;font-weight:500;letter-spacing:.05em;text-transform:uppercase;color:#a39e95;margin:2px 0 6px">' + s + '</div>'; };
+    const doneRow = function(name, when, color){ return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:5px"><span style="flex:none;color:#3e7d57">&#10003;</span><span style="flex:1;color:#0f0f0f">' + esc(name) + '</span><span style="flex:none;color:' + (color || '#a39e95') + '">' + esc(when || '') + '</span></div>'; };
+
+    const met = recapMetDates(file);
+    const nextOpen = recapNextOpen(file);
+    let cards = '';
+    for(let i = 0; i <= curIdx; i++){
+      const s = stages[i];
+      let st = ckTasksFor(file, s);
+      if(st) st = st.filter(function(t){ return !t.showIf || t.showIf(file); });
+      const doneTasks = (st || []).filter(function(t){ return done[t.id]; });
+      const isCur = (i === curIdx);
+      if(!isCur && !doneTasks.length) continue; // skip empty past stages (e.g. New)
+      let body = '';
+      if(isCur && met.length){
+        body += lbl('Dates met') + met.map(function(m){ return doneRow(m.name, m.when + (m.tag ? (' · ' + m.tag) : ''), m.late ? '#a3402f' : '#3e7d57'); }).join('') + '<div style="height:9px"></div>';
+      }
+      if(doneTasks.length){
+        body += lbl('Tasks done') + doneTasks.map(function(t){ const rec = done[t.id]; return doneRow(t.label || t.id, (rec && rec.at) ? _recapDate(rec.at) : ''); }).join('');
+      }
+      if(isCur && nextOpen){
+        body += '<div style="height:9px"></div>' + lbl('Still open') + '<div style="display:flex;align-items:center;gap:8px;font-size:12px;opacity:.8"><span style="flex:none;color:#8a857c">&#9675;</span><span style="flex:1;color:#5f5e5a">' + esc(nextOpen.name) + '</span><span style="flex:none;color:#8a857c">' + esc(fmt(nextOpen.date)) + '</span></div>';
+      }
+      if(!body) body = '<div style="font-size:12px;color:#a39e95">Nothing completed yet.</div>';
+      const chip = isCur
+        ? '<span style="flex:none;font-size:11px;color:#8a857c;background:#f1efe8;border-radius:20px;padding:2px 10px">In progress</span>'
+        : '<span style="flex:none;font-size:11px;color:#3e7d57;background:#eef5ef;border-radius:20px;padding:2px 10px">Completed</span>';
+      cards += '<div style="background:#fff;border:' + (isCur ? '1.5px solid #0f0f0f' : '0.5px solid #ece8e0') + ';border-radius:11px;overflow:hidden;margin-bottom:8px">' +
+        '<div style="display:flex;align-items:center;gap:9px;padding:10px 13px;border-bottom:0.5px solid #f1ede6">' +
+          '<span style="flex:1;font-size:12.5px;font-weight:500;color:#0f0f0f">' + esc(STAGE_LABELS[s] || s) + '</span>' + chip +
+          '<button type="button" data-stage-recap-copy="' + esc(s) + '" style="flex:none;background:none;border:0;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit">Copy</button>' +
+        '</div>' +
+        '<div style="padding:10px 13px">' + body + '</div>' +
+      '</div>';
+    }
+    if(!cards) return '';
+    let future = '';
+    if(curIdx < stages.length - 1){
+      future = '<div style="display:flex;align-items:center;gap:9px;background:#faf8f5;border:0.5px solid #efeae1;border-radius:11px;padding:10px 13px;opacity:.6"><span style="flex:none;color:#a39e95">&#128274;</span><span style="flex:1;font-size:12px;color:#5f5e5a">More stages</span><span style="flex:none;font-size:11px;color:#a39e95">recap builds as you work</span></div>';
+    }
+    return '<details class="ck-archive-wrap" open style="margin-top:14px"><summary>Recap</summary><div style="margin-top:10px">' + cards + future + '</div></details>';
+  }
+  function stageRecapText(file, stage){
+    const done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    const street = String(file.property_address || '').split(',')[0].trim();
+    const cur = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || '');
+    let st = ckTasksFor(file, stage);
+    if(st) st = st.filter(function(t){ return !t.showIf || t.showIf(file); });
+    const doneTasks = (st || []).filter(function(t){ return done[t.id]; });
+    let lines = [ (street ? street + ' — ' : '') + (STAGE_LABELS[stage] || stage) + ' recap', '' ];
+    if(stage === cur){
+      const met = recapMetDates(file);
+      if(met.length){ lines.push('Dates met'); met.forEach(function(m){ lines.push('- ' + m.name + ': ' + m.when + (m.tag ? (' (' + m.tag + ')') : '')); }); lines.push(''); }
+    }
+    if(doneTasks.length){
+      lines.push('Tasks done');
+      doneTasks.forEach(function(t){ const rec = done[t.id]; lines.push('- ' + (t.label || t.id) + ((rec && rec.at) ? (' (' + _recapDate(rec.at) + ')') : '')); });
+    }
+    return lines.join('\n');
   }
   function renderStageChecklist(file){
     const host = document.getElementById('tpb-checklist');
@@ -13635,13 +13696,22 @@ Tell me your planned move-out date and I will set the inspection.`
     const moveBtn = (_stNext && _stNext !== 'closed' && file.status !== 'archived' && !anyLock)
       ? '<div style="padding:14px 0 4px;border-top:0.5px solid #f1ede6;margin-top:14px;text-align:right"><button type="button" class="move-stage-btn" data-move-next-stage="' + esc(_stNext) + '">Move to ' + esc(STAGE_LABELS[_stNext] || _stNext) + ' &rarr;</button></div>'
       : '';
-    // Swapped per Marlenyi: Earlier stages on top, Due-soon toggled at the bottom.
-    host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget + (_setupHide ? '' : archiveBlock) +
+    // Recap on top (replaces the old raw "Earlier stages" list with a dated,
+    // audit-friendly recap of completed dates + tasks), Due-soon at the bottom.
+    host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget + (_setupHide ? '' : stageRecapHtml(file)) +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
       (_setupHide ? '' : dueSoon) + moveBtn;
     // Work rail · re-mark the NEXT task after every checklist render.
     try { if(typeof markNextTask === 'function') markNextTask(); } catch(_){}
   }
+  // Copy a stage recap (dates met + tasks done) to the clipboard, client-ready.
+  document.addEventListener('click', function(e){
+    const rb = e.target.closest && e.target.closest('[data-stage-recap-copy]');
+    if(!rb || !_currentFile) return;
+    const txt = stageRecapText(_currentFile, rb.getAttribute('data-stage-recap-copy'));
+    try { navigator.clipboard.writeText(txt); const o = rb.textContent; rb.textContent = 'Copied ✓'; setTimeout(function(){ rb.textContent = o; }, 1500); }
+    catch(_){ window.prompt('Copy this recap:', txt); }
+  });
   // Copy payment link (Section 11 · Fix 1) — copies the Stripe link to clipboard.
   document.addEventListener('click', function(e){
     const btn = e.target.closest && e.target.closest('[data-copy-paylink]');
