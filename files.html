@@ -10667,10 +10667,10 @@ Tell me your planned move-out date and I will set the inspection.`
         '</div>' +
         daysBlock + dlStrip + assocBlock;
     }
-    // Single-panel Setup review · the gated section bar leads the whole flow. The
-    // Contract type panel is the first stacked panel, so putting the bar at the top
-    // of it puts the bar above everything (contract type, parties, financing, dates).
-    if(_ctSetup) termsBody = setupReviewBar(file) + termsBody;
+    // Single-panel Setup review · the gated section bar IS the panel. The Contract
+    // type stepper (termsBody) is passed in so it nests inside the Contract type row,
+    // exactly like Parties / Financing nest inside theirs.
+    if(_ctSetup) termsBody = setupReviewBar(file, termsBody);
     // D · swap the drawer header to reflect the active step (only when this is the
     // open section). Contacts step → "Confirm contacts" + a "Contract terms" back.
     if(_openPopKey === 'terms'){
@@ -13362,13 +13362,15 @@ Tell me your planned move-out date and I will set the inspection.`
       ? '<div class="ck-dl-table">' + rows + cfpbRow + '</div>'
       : '<div class="ck-dl-table ck-dl-empty-note">Add the Effective + Closing dates to this file to auto-calculate deadlines.</div>';
   }
-  // Setup review · the gated section overview shown while the file is in Setup.
-  // Four sections, one active at a time, the rest locked until reached. Purely a
-  // map + gate; the section bodies (steppers) render in the tasks below.
-  function setupReviewBar(file){
-    if((file.file_type || 'sale') !== 'sale') return '';
+  // Setup review · the gated section list shown while the file is in Setup. One
+  // section open at a time; the active (or re-opened) section's body nests INSIDE
+  // its own row. `ctBody` is the Contract type stepper, passed in from
+  // renderContractTerms so it can sit under the Contract type row like the others.
+  function setupReviewBar(file, ctBody){
+    ctBody = ctBody || '';
+    if((file.file_type || 'sale') !== 'sale') return ctBody;
     const stg = (file.transaction_stage || '').toLowerCase();
-    if(['', 'new', 'intake_received', 'waiting_for_tc'].indexOf(stg) === -1) return '';
+    if(['', 'new', 'intake_received', 'waiting_for_tc'].indexOf(stg) === -1) return ctBody;
     const lg = file.logistics || {};
     const tOk = termsAttested(file);
     const cOk = !!lg.contacts_confirmed_at;
@@ -13380,35 +13382,33 @@ Tell me your planned move-out date and I will set the inspection.`
       { n:'Terms & dates', st: !fOk ? 'locked' : 'active' }
     ];
     const doneN = secs.filter(function(s){ return s.st === 'done'; }).length;
+    const nest = function(body){ return body ? ('<div style="margin-top:10px">' + body + '</div>') : ''; };
+    const numDot = function(i){ return '<span style="flex:none;width:20px;height:20px;border-radius:50%;border:1.5px solid #0f0f0f;display:flex;align-items:center;justify-content:center;font-size:10px;color:#0f0f0f">' + (i + 1) + '</span>'; };
+    const check = '<span style="flex:none;width:20px;height:20px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px">&#10003;</span>';
     const rowH = function(s, i){
       if(s.st === 'done'){
-        // A confirmed section can be re-opened to edit while still in Setup. Only
-        // Contract type is wired so far ('terms'); Parties/Financing follow.
         const secKey = s.n === 'Contract type' ? 'terms' : '';
+        const editing = !!(secKey && _setupEditSec === secKey);
         const editLink = secKey
-          ? (_setupEditSec === secKey
+          ? (editing
               ? '<button type="button" data-setup-edit="' + secKey + '" style="flex:none;background:none;border:0;color:#0f0f0f;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit">Done</button>'
               : '<button type="button" data-setup-edit="' + secKey + '" style="flex:none;background:none;border:0;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit">Edit</button>')
           : '';
-        return '<div style="display:flex;align-items:center;gap:10px;background:#fff;border:0.5px solid #ece8e0;border-radius:10px;padding:10px 13px;margin-bottom:7px">' +
-          '<span style="flex:none;width:20px;height:20px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px">&#10003;</span>' +
-          '<span style="flex:1;font-size:12.5px;color:#0f0f0f">' + esc(s.n) + '</span>' + editLink + '</div>';
+        const head = '<div style="display:flex;align-items:center;gap:10px">' + check + '<span style="flex:1;font-size:12.5px;color:#0f0f0f">' + esc(s.n) + '</span>' + editLink + '</div>';
+        // Re-opened for editing → nest the body (the contract-type stepper) under it.
+        return '<div style="background:#fff;border:' + (editing ? '1.5px solid #0f0f0f' : '0.5px solid #ece8e0') + ';border-radius:10px;padding:10px 13px;margin-bottom:7px">' +
+          head + (editing && s.n === 'Contract type' ? nest(ctBody) : '') + '</div>';
       }
       if(s.st === 'active'){
-        // The active section's body (the stepper) renders INSIDE its row, so the
-        // items sit right under the section, not in a separate block below.
         let body = '';
         try {
-          if(s.n === 'Parties') body = contactsTaskHtml(file);
+          if(s.n === 'Contract type') body = ctBody;
+          else if(s.n === 'Parties') body = contactsTaskHtml(file);
           else if(s.n === 'Financing') body = financingHtml(file);
         } catch(_){ body = ''; }
         return '<div style="background:#fff;border:1.5px solid #0f0f0f;border-radius:10px;padding:11px 13px;margin-bottom:7px">' +
-          '<div style="display:flex;align-items:center;gap:10px">' +
-            '<span style="flex:none;width:20px;height:20px;border-radius:50%;border:1.5px solid #0f0f0f;display:flex;align-items:center;justify-content:center;font-size:10px;color:#0f0f0f">' + (i + 1) + '</span>' +
-            '<span style="flex:1;font-size:12.5px;font-weight:500;color:#0f0f0f">' + esc(s.n) + '</span>' +
-          '</div>' +
-          (body ? ('<div style="margin-top:10px">' + body + '</div>') : '') +
-        '</div>';
+          '<div style="display:flex;align-items:center;gap:10px">' + numDot(i) + '<span style="flex:1;font-size:12.5px;font-weight:500;color:#0f0f0f">' + esc(s.n) + '</span></div>' +
+          nest(body) + '</div>';
       }
       return '<div style="display:flex;align-items:center;gap:10px;background:#faf8f5;border:0.5px solid #efeae1;border-radius:10px;padding:10px 13px;margin-bottom:7px;opacity:.6">' +
         '<span style="flex:none;width:20px;height:20px;border-radius:50%;background:#efece6;color:#a39e95;display:flex;align-items:center;justify-content:center;font-size:10px">' + (i + 1) + '</span>' +
