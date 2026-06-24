@@ -6484,8 +6484,10 @@ Tell me your planned move-out date and I will set the inspection.`
     const role = (_profile.role || '').toLowerCase();
     let q = _client.from('files').select('*').order('created_at',{ascending:false});
     if(role === 'tc'){
-      // A TC sees files where they're the service TC OR the File-Org conductor.
-      q = q.or('assigned_tc_id.eq.'+_profile.id+',fg_tc_id.eq.'+_profile.id);
+      // A TC sees files where they're the service TC OR the File-Org conductor,
+      // PLUS the unassigned claim pool (assigned_tc_id is null) so any TC can grab an
+      // open file. RLS must allow TCs to read null-assigned files (see claim-pool migration).
+      q = q.or('assigned_tc_id.eq.'+_profile.id+',fg_tc_id.eq.'+_profile.id+',assigned_tc_id.is.null');
     } else if(role === 'broker' && _tcFilter !== 'all'){
       q = q.or('assigned_tc_id.eq.'+_tcFilter+',fg_tc_id.eq.'+_tcFilter);
     }
@@ -10752,6 +10754,12 @@ Tell me your planned move-out date and I will set the inspection.`
     var tc = f.assigned_tc_id ? _tcsById[f.assigned_tc_id] : null;
     var tcName = tc ? ((tc.first_name || '') + (tc.last_name ? ' ' + tc.last_name.charAt(0).toUpperCase() + '.' : '')).trim() : 'No TC';
     var tcInit = tc ? (((tc.first_name || '').charAt(0) + ((tc.last_name || '').charAt(0))).toUpperCase()) : '·';
+    // Claim pool · a TC viewing an unassigned file can grab it in one tap.
+    var _isTcViewer = !!(_profile && String(_profile.role || '').toLowerCase() === 'tc');
+    var _claimable = _isTcViewer && !f.assigned_tc_id;
+    var tcFootHtml = _claimable
+      ? '<button type="button" data-claim-file="' + esc(f.id) + '" style="background:#0f0f0f;color:#fff;border:0;font-size:10px;font-weight:600;letter-spacing:.02em;padding:3px 12px;border-radius:999px;cursor:pointer;font-family:inherit">Claim file</button>'
+      : '<span class="cardv2-tc"><span class="cardv2-ava">' + esc(tcInit) + '</span>' + esc(tcName) + '</span>';
     var prog = stageProgress(f);
     var progHtml2 = prog ? '<span class="cardv2-tasks">' + prog.done + '/' + prog.total + ' done</span>' : '<span class="cardv2-tasks"></span>';
 
@@ -10783,7 +10791,7 @@ Tell me your planned move-out date and I will set the inspection.`
         '<p class="cardv2-action ' + act.tone + '">' + esc(act.text) + '</p>' +
       '</div>' +
       '<div class="cardv2-foot">' +
-        '<span class="cardv2-tc"><span class="cardv2-ava">' + esc(tcInit) + '</span>' + esc(tcName) + '</span>' +
+        tcFootHtml +
         progHtml2 +
       '</div>' +
     '</div>';
@@ -11161,7 +11169,31 @@ Tell me your planned move-out date and I will set the inspection.`
       }
     });
 
-    k.addEventListener('click', (e) => {
+    k.addEventListener('click', async (e) => {
+      // Claim pool · first TC to grab an unassigned file wins. The .is(null) guard on
+      // the update makes the claim atomic — if another TC claimed first, it affects 0
+      // rows and we revert, so the file never gets double-claimed.
+      const claimBtn = e.target.closest && e.target.closest('[data-claim-file]');
+      if(claimBtn){
+        e.stopPropagation();
+        const cfid = claimBtn.getAttribute('data-claim-file');
+        const file = _files.find(f => f.id === cfid);
+        if(!file) return;
+        if(file.assigned_tc_id){ alert('Another TC already has this file.'); renderKanban(); return; }
+        claimBtn.disabled = true; claimBtn.textContent = 'Claiming…';
+        const nowIso = new Date().toISOString();
+        try {
+          const r = await _client.from('files')
+            .update({ assigned_tc_id: _profile.id, tc_accepted_at: nowIso })
+            .eq('id', cfid).is('assigned_tc_id', null).select('id');
+          if(r.error || !r.data || !r.data.length){ alert('Could not claim — another TC may have grabbed it first.'); renderKanban(); return; }
+          file.assigned_tc_id = _profile.id; file.tc_accepted_at = nowIso;
+          if(typeof _tcsById === 'object' && _tcsById && !_tcsById[_profile.id]){ _tcsById[_profile.id] = { id:_profile.id, first_name:_profile.first_name || 'You', last_name:_profile.last_name || '' }; }
+          try { writeAuditLog('tc_claimed_file', cfid, { tc_id:_profile.id, claimed_at:nowIso }); } catch(_){}
+          renderKanban();
+        } catch(err){ alert('Could not claim the file.'); renderKanban(); }
+        return;
+      }
       const card = e.target.closest && e.target.closest('.card');
       if(!card) return;
       if(_dragJustEnded) return;
