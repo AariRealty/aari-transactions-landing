@@ -21,6 +21,8 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 // unpdf bundles a DOM-free pdf.js built for serverless / Deno / Workers, which
 // avoids the DOMMatrix/Path2D errors raw pdfjs-dist throws in the edge runtime.
 import { getDocumentProxy } from "https://esm.sh/unpdf@0.12.1";
+// pdf-lib splits the bundled upload into a separate PDF per detected document.
+import { PDFDocument } from "https://esm.sh/pdf-lib@1.17.1";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -200,7 +202,7 @@ Deno.serve(async (req) => {
   }
 
   let fields: Record<string, string>;
-  let documents: { title: string; page: number; pages: number }[] = [];
+  let documents: { title: string; page: number; pages: number; path?: string }[] = [];
   try {
     const pages = await pdfToPages(bytes!);
     fields = parseContract(pages.join("\n"));
@@ -211,8 +213,28 @@ Deno.serve(async (req) => {
 
   // Write the DRAFT only (never a confirmed value). One blob, easy to read + tag.
   if (body.write !== false && body.file_id && file) {
+    // TRUE SPLIT · cut the bundled PDF into a separate file per document so each tab
+    // shows only its document (SkySlope-style). Best-effort: on any error the tabs
+    // simply have no path and the client falls back to the page-jump.
+    if (documents.length > 1) {
+      try {
+        const srcPdf = await PDFDocument.load(bytes!);
+        const total = srcPdf.getPageCount();
+        for (const doc of documents) {
+          const sub = await PDFDocument.create();
+          const idxs: number[] = [];
+          for (let p = doc.page - 1; p < doc.page - 1 + doc.pages && p < total; p++) idxs.push(p);
+          const copied = await sub.copyPages(srcPdf, idxs);
+          copied.forEach((pg) => sub.addPage(pg));
+          const subBytes = await sub.save();
+          const dpath = `${body.file_id}/split/${doc.title.toLowerCase()}-${doc.page}.pdf`;
+          await admin.storage.from(BUCKET).upload(dpath, subBytes, { contentType: "application/pdf", upsert: true });
+          doc.path = dpath;
+        }
+      } catch (_e) { /* split is best-effort */ }
+    }
     const raw = Object.assign({}, file.raw_form_data || {});
-    raw.extracted_contract = { fields, documents, at: new Date().toISOString(), source: "extract-contract-fields/v3" };
+    raw.extracted_contract = { fields, documents, at: new Date().toISOString(), source: "extract-contract-fields/v5" };
     const { error } = await admin.from("files").update({ raw_form_data: raw }).eq("id", body.file_id);
     if (error) return j(500, { ok: false, fields, documents, error: "Draft save failed: " + error.message });
   }
