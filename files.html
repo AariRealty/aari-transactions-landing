@@ -9980,6 +9980,22 @@ Tell me your planned move-out date and I will set the inspection.`
         if(_currentFile && _currentFile.id === file.id){ _currentFile.raw_form_data = raw; _currentFile.contract_filename = f.name; _currentFile._resolvedContract = undefined; }
         const ff = (_files || []).find(function(x){ return x.id === file.id; }); if(ff){ ff.raw_form_data = raw; ff.contract_filename = f.name; }
         renderPlaybook(file);
+        // FREE contract extraction · drop a draft the terms + parties steppers
+        // pre-fill from. Non-blocking: the attach already shows; this enriches it.
+        // The edge function writes the draft server-side too; we mirror locally
+        // for an instant re-render. Never confirms anything — it is pre-fill only.
+        try {
+          const ec = await _client.functions.invoke('extract-contract-fields', { body: { file_id: file.id } });
+          const fields = ec && ec.data && ec.data.fields;
+          if(fields && Object.keys(fields).length){
+            const raw2 = Object.assign({}, file.raw_form_data || {});
+            raw2.extracted_contract = { fields: fields, at: new Date().toISOString(), source: 'extract-contract-fields' };
+            file.raw_form_data = raw2;
+            if(_currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = raw2;
+            const ff2 = (_files || []).find(function(x){ return x.id === file.id; }); if(ff2) ff2.raw_form_data = raw2;
+            renderPlaybook(file);
+          }
+        } catch(exErr){ console.warn('[files] contract extraction skipped', exErr); }
       } catch(err){ console.warn('[files] attach contract failed', err); alert('Upload failed: ' + (err && err.message || 'unknown')); }
     });
     inp.click();
@@ -10462,7 +10478,9 @@ Tell me your planned move-out date and I will set the inspection.`
     // When a contract is attached, Contract Terms opens straight into the split
     // verify panel (PDF beside the terms). When it isn't, show an Attach button.
     const attachBtn = '<button type="button" id="ct-attachcontract" style="display:inline-flex;align-items:center;gap:6px;border:0.5px dashed #c2bdb4;background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-family:inherit;color:#5f5e5a;cursor:pointer;margin:2px 0 10px">&#128206; Attach contract</button>';
-    const introP = confirmed ? '' : '<p style="font-size:11px;color:#8a877f;margin:0 0 8px">Pre-filled from the agent’s submission. Glance, then confirm — tap a line to change anything that doesn’t match the contract.</p>';
+    const _exHasT = Object.keys(_exT).length > 0;
+    const _exTag = '<span style="font-size:10px;color:#0c447c;background:#e6f1fb;border-radius:9px;padding:2px 8px;margin-left:6px;white-space:nowrap"><i class="ti ti-file-text" aria-hidden="true" style="font-size:11px;vertical-align:-1px;margin-right:3px"></i>from the contract</span>';
+    const introP = confirmed ? '' : ('<p style="font-size:11px;color:#8a877f;margin:0 0 8px">' + (_exHasT ? 'Pre-filled from the contract.' : 'Pre-filled from the agent’s submission.') + ' Glance, then confirm — tap a line to change anything that doesn’t match.' + (_exHasT ? _exTag : '') + '</p>');
     // The editable term lines, the contingency-day block, and the association block.
     const ctLines =
       ctLine('contract', 'Contract type', (shownCt ? ctLabelFor(shownCt) : ''), ctSelect, agentForm ? ('Agent submitted: ' + agentForm) : '', !!agentForm) +
@@ -12950,8 +12968,10 @@ Tell me your planned move-out date and I will set the inspection.`
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="display:flex;gap:5px;align-items:center">' + pdots + '</span><span style="font-size:11px;color:#a39e95">' + (si + 1) + ' of ' + screens.length + '</span></div>' +
         labelLine + valueBlock + footer +
       '</div>';
+    const _exP = extractedFields(file);
+    const _exPTag = _exP ? '<span style="font-size:10px;color:#0c447c;background:#e6f1fb;border-radius:9px;padding:2px 8px;margin-left:6px;white-space:nowrap"><i class="ti ti-file-text" aria-hidden="true" style="font-size:11px;vertical-align:-1px;margin-right:3px"></i>from the contract</span>' : '';
     return '<div class="ck-task-wrap">' +
-      '<div style="font-size:13px;font-weight:500;color:#0f0f0f;padding:4px 2px 8px">Confirm the parties on this file</div>' +
+      '<div style="font-size:13px;font-weight:500;color:#0f0f0f;padding:4px 2px 8px">Confirm the parties on this file' + _exPTag + '</div>' +
       card +
       '</div>';
   }
