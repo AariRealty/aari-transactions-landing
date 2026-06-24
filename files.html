@@ -12773,6 +12773,19 @@ Tell me your planned move-out date and I will set the inspection.`
     if(error){ alert('Could not add that party — check your connection and try again.'); return -1; }
     return parties[side].length - 1;
   }
+  async function removePartyAt(file, side, idx){
+    const lg = Object.assign({}, file.logistics || {});
+    const seed = partiesOf(file);
+    const parties = lg.parties
+      ? { buyers:(lg.parties.buyers || seed.buyers).slice(), sellers:(lg.parties.sellers || seed.sellers).slice() }
+      : { buyers:seed.buyers.slice(), sellers:seed.sellers.slice() };
+    if(idx <= 0 || idx >= parties[side].length) return; // never remove the primary party
+    parties[side].splice(idx, 1);
+    lg.parties = parties; file.logistics = lg;
+    if(_currentFile && _currentFile.id === file.id) _currentFile.logistics = lg;
+    const { error } = await _client.from('files').update({ logistics: lg }).eq('id', file.id);
+    if(error){ alert('Could not remove that party — check your connection and try again.'); }
+  }
   function contactsTaskHtml(file){
     const lg = file.logistics || {};
     const confirmedAt = lg.contacts_confirmed_at || '';
@@ -12797,61 +12810,113 @@ Tell me your planned move-out date and I will set the inspection.`
       }
       return html + '</div>';
     }
-    const inputStyle = 'width:100%;border:0.5px solid #d9d4ca;border-radius:6px;padding:5px 8px;font-size:12px;font-family:inherit;background:#fff;box-sizing:border-box;margin-top:4px';
-    const initials = function(name){ const p = (name || '').trim().split(/\s+/); if(!p[0]) return ''; return ((p[0][0] || '') + ((p[1] || '')[0] || '')).toUpperCase(); };
-    const rowHtml = (d) => {
+    const inputStyle = 'width:100%;border:0.5px solid #d9d4ca;border-radius:6px;padding:6px 9px;font-size:13px;font-family:inherit;background:#fff;box-sizing:border-box;margin-top:6px';
+    // One-at-a-time parties stepper · same mechanism as Contract terms. Buyers and
+    // sellers are structured parties (person/entity + signer, multi-party); agents,
+    // title and lender stay simple contacts. Each gets its own screen.
+    const P = partiesOf(file);
+    const otherRoles = rows.filter(function(r){ return r.key !== 'buyer' && r.key !== 'seller'; });
+    const screens = [];
+    P.buyers.forEach(function(p, i){ screens.push({ t:'party', side:'buyers', idx:i, label:(P.buyers.length > 1 ? ('Buyer ' + (i + 1)) : 'Buyer') }); });
+    screens.push({ t:'add', side:'buyers', label:'Another buyer on the contract?' });
+    P.sellers.forEach(function(p, i){ screens.push({ t:'party', side:'sellers', idx:i, label:(P.sellers.length > 1 ? ('Seller ' + (i + 1)) : 'Seller') }); });
+    screens.push({ t:'add', side:'sellers', label:'Another seller on the contract?' });
+    otherRoles.forEach(function(r){ screens.push({ t:'contact', row:r, label:r.label }); });
+    const si = Math.max(0, Math.min(_partyStep || 0, screens.length - 1));
+    _partyStep = si;
+    const sc = screens[si];
+    const reqMissing = [];
+    if(!partyComplete(P.buyers[0])) reqMissing.push('buyer');
+    if(!partyComplete(P.sellers[0])) reqMissing.push('seller');
+    otherRoles.forEach(function(r){ if(!r.complete) reqMissing.push(r.key); });
+    const allIn = reqMissing.length === 0;
+    let pdots = '';
+    for(var pd = 0; pd < screens.length; pd++){ var pbg = pd < si ? '#0f0f0f' : (pd === si ? '#185FA5' : '#d9d4ca'); var pw = pd === si ? '16px' : '6px'; pdots += '<span style="height:6px;width:' + pw + ';border-radius:20px;background:' + pbg + ';display:inline-block"></span>'; }
+    const last = si === screens.length - 1;
+    const navPrimary = last
+      ? (allIn
+          ? '<button type="button" data-contacts-confirm="1" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;font-weight:600;padding:8px 16px;border-radius:8px;cursor:pointer">Confirm all parties &rarr;</button>'
+          : '<button type="button" disabled style="background:#efece6;color:#a39e95;border:0;font-family:inherit;font-size:12.5px;font-weight:600;padding:8px 14px;border-radius:8px">' + reqMissing.length + ' still needed</button>')
+      : '<button type="button" data-party-next="1" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;padding:8px 16px;border-radius:8px;cursor:pointer">Looks right</button>';
+    const navBack = si > 0 ? '<button type="button" data-party-back="1" style="background:none;border:0;color:#a39e95;font-family:inherit;font-size:12px;cursor:pointer">&larr; back</button>' : '<span></span>';
+    let label = sc.label, badge = '', valueBlock = '', footer = '';
+    if(sc.t === 'add'){
+      valueBlock = '<div style="display:flex;gap:8px;margin-top:2px">' +
+        '<button type="button" data-party-add="' + sc.side + '" style="flex:1;background:#fff;border:0.5px solid #d9d4ca;border-radius:9px;padding:11px;font-size:13px;color:#0f0f0f;cursor:pointer;font-family:inherit"><i class="ti ti-plus" aria-hidden="true" style="vertical-align:-2px;margin-right:4px"></i>Add ' + (sc.side === 'buyers' ? 'a buyer' : 'a seller') + '</button>' +
+        '<button type="button" data-party-next="1" style="flex:1;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:11px;font-size:13px;cursor:pointer;font-family:inherit">No, continue</button>' +
+        '</div>';
+      footer = '<div style="margin-top:14px;display:flex;align-items:center;justify-content:flex-end">' + navBack + '</div>';
+    } else if(sc.t === 'party'){
+      const p = P[sc.side][sc.idx] || { type:'person' };
+      const isEnt = p.type === 'entity';
+      badge = isEnt ? ' &middot; company' : '';
+      if(_partyEdit){
+        const typeToggle = '<div style="display:inline-flex;border:0.5px solid #d9d4ca;border-radius:8px;overflow:hidden;margin-bottom:9px">' +
+          '<button type="button" data-party-type="' + sc.side + '__' + sc.idx + '__person" style="font-size:11.5px;padding:6px 14px;border:0;cursor:pointer;font-family:inherit;' + (!isEnt ? 'background:#0f0f0f;color:#fff' : 'background:#fff;color:#5f5e5a') + '">Person</button>' +
+          '<button type="button" data-party-type="' + sc.side + '__' + sc.idx + '__entity" style="font-size:11.5px;padding:6px 14px;border:0;cursor:pointer;font-family:inherit;' + (isEnt ? 'background:#0f0f0f;color:#fff' : 'background:#fff;color:#5f5e5a') + '">Company</button>' +
+          '</div>';
+        const flds = isEnt
+          ? '<input type="text" data-party-input="' + sc.side + '__' + sc.idx + '__entity_name" value="' + esc(p.entity_name || '') + '" placeholder="Company legal name" style="' + inputStyle + '">' +
+            '<input type="text" data-party-input="' + sc.side + '__' + sc.idx + '__signer_name" value="' + esc(p.signer_name || '') + '" placeholder="Who signs for the company" style="' + inputStyle + '">' +
+            '<input type="text" data-party-input="' + sc.side + '__' + sc.idx + '__signer_title" value="' + esc(p.signer_title || '') + '" placeholder="Signer title (Manager, Trustee...)" style="' + inputStyle + '">' +
+            '<input type="email" data-party-input="' + sc.side + '__' + sc.idx + '__email" value="' + esc(p.email || '') + '" placeholder="Email" style="' + inputStyle + '">' +
+            '<input type="tel" data-party-input="' + sc.side + '__' + sc.idx + '__phone" value="' + esc(p.phone || '') + '" placeholder="Phone" style="' + inputStyle + '">'
+          : '<input type="text" data-party-input="' + sc.side + '__' + sc.idx + '__name" value="' + esc(p.name || '') + '" placeholder="Full name" style="' + inputStyle + '">' +
+            '<input type="email" data-party-input="' + sc.side + '__' + sc.idx + '__email" value="' + esc(p.email || '') + '" placeholder="Email" style="' + inputStyle + '">' +
+            '<input type="tel" data-party-input="' + sc.side + '__' + sc.idx + '__phone" value="' + esc(p.phone || '') + '" placeholder="Phone" style="' + inputStyle + '">';
+        const rm = (sc.idx > 0)
+          ? '<button type="button" data-party-remove="' + sc.side + '__' + sc.idx + '" style="background:none;border:0;color:#a3402f;font-size:11.5px;cursor:pointer;font-family:inherit">Remove</button>'
+          : '<span></span>';
+        valueBlock = typeToggle + flds;
+        footer = '<div style="margin-top:14px;display:flex;align-items:center;justify-content:space-between">' +
+          '<button type="button" data-party-editdone="1" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;padding:8px 16px;border-radius:8px;cursor:pointer">Done</button>' + rm + '</div>';
+      } else {
+        const disp = partyDisplayName(p);
+        const sub = isEnt ? (p.signer_name ? ('Signed by ' + esc(p.signer_name) + (p.signer_title ? ', ' + esc(p.signer_title) : '')) : 'Add who signs') : '';
+        const contact = [p.email || '', p.phone || ''].filter(Boolean).map(esc).join(' &middot; ');
+        valueBlock = disp
+          ? '<button type="button" data-party-edit="1" style="background:none;border:0;padding:0;margin:0;cursor:pointer;font-family:inherit;text-align:left;display:block;width:100%">' +
+              '<span style="font-size:18px;font-weight:500;color:#0f0f0f;border-bottom:1.5px dashed #c2bdb4;padding-bottom:2px">' + esc(disp) + '</span>' +
+              (sub ? '<div style="font-size:12px;color:#5f5e5a;margin-top:8px"><i class="ti ti-signature" aria-hidden="true" style="font-size:13px;vertical-align:-2px;margin-right:4px"></i>' + sub + '</div>' : '') +
+              (contact ? '<div style="font-size:12px;color:#888;margin-top:' + (sub ? '4' : '8') + 'px">' + contact + '</div>' : '') +
+              '<div style="margin-top:6px"><span style="font-size:11px;color:#a39e95">tap to change</span></div>' +
+            '</button>'
+          : '<button type="button" data-party-edit="1" style="background:none;border:0;padding:0;cursor:pointer;font-family:inherit;text-align:left;display:block"><span style="font-size:16px;font-weight:500;color:#c2bdb4">Add ' + esc(sc.label.toLowerCase()) + '</span></button>';
+        footer = '<div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between">' + navPrimary + navBack + '</div>';
+      }
+    } else {
+      const d = sc.row;
       const editing = (_contactEditKey === d.key);
       if(editing){
-        return '<div style="padding:10px 12px;border-top:0.5px solid #f0ebe0">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.04em">' + esc(d.label) + '</span>' +
-            '<button type="button" data-contact-edit="' + d.key + '" style="border:0;background:none;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit">Done</button></div>' +
-          '<input type="text" data-contact-input="' + d.key + '__name" value="' + esc(d.c.name) + '" placeholder="Full name" style="' + inputStyle + '">' +
+        valueBlock = '<input type="text" data-contact-input="' + d.key + '__name" value="' + esc(d.c.name) + '" placeholder="Full name" style="' + inputStyle + '">' +
           '<input type="email" data-contact-input="' + d.key + '__email" value="' + esc(d.c.email) + '" placeholder="Email" style="' + inputStyle + '">' +
-          '<input type="tel" data-contact-input="' + d.key + '__phone" value="' + esc(d.c.phone) + '" placeholder="Phone' + (d.reqPhone ? '' : ' (optional)') + '" style="' + inputStyle + '">' +
-        '</div>';
+          '<input type="tel" data-contact-input="' + d.key + '__phone" value="' + esc(d.c.phone) + '" placeholder="Phone' + (d.reqPhone ? '' : ' (optional)') + '" style="' + inputStyle + '">';
+        footer = '<div style="margin-top:14px;display:flex;align-items:center;justify-content:flex-start">' +
+          '<button type="button" data-contact-edit="' + d.key + '" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;padding:8px 16px;border-radius:8px;cursor:pointer">Done</button></div>';
+      } else {
+        const hasName = !!d.c.name;
+        const contact = [d.c.email || '', d.c.phone || ''].filter(Boolean).map(esc).join(' &middot; ');
+        badge = d.optional ? ' &middot; optional' : '';
+        valueBlock = hasName
+          ? '<button type="button" data-contact-edit="' + d.key + '" style="background:none;border:0;padding:0;cursor:pointer;font-family:inherit;text-align:left;display:block;width:100%">' +
+              '<span style="font-size:18px;font-weight:500;color:#0f0f0f;border-bottom:1.5px dashed #c2bdb4;padding-bottom:2px">' + esc(d.c.name) + '</span>' +
+              (contact ? '<div style="font-size:12px;color:#888;margin-top:8px">' + contact + '</div>' : '') +
+              '<div style="margin-top:6px"><span style="font-size:11px;color:#a39e95">tap to change</span></div>' +
+            '</button>'
+          : '<button type="button" data-contact-edit="' + d.key + '" style="background:none;border:0;padding:0;cursor:pointer;font-family:inherit;text-align:left;display:block"><span style="font-size:16px;font-weight:500;color:' + (d.optional ? '#c2bdb4' : '#c96b6b') + '">Add ' + esc(d.label.toLowerCase()) + (d.optional ? ' (optional)' : '') + '</span></button>';
+        footer = '<div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between">' + navPrimary + navBack + '</div>';
       }
-      const hasName = !!d.c.name;
-      const showCheck = hasName && d.complete; // ✓ only when there's real, complete data
-      const avatar = hasName
-        ? '<span style="flex:none;width:30px;height:30px;border-radius:50%;background:#efece6;color:#5f5e5a;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">' + (esc(initials(d.c.name)) || '&middot;') + '</span>'
-        : (d.optional
-            ? '<span style="flex:none;width:30px;height:30px;border-radius:50%;background:#f1ede6;color:#b3aea5;display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1">+</span>'
-            : '<span style="flex:none;width:30px;height:30px;border-radius:50%;background:#fdecea;color:#c96b6b;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700">!</span>');
-      const mid = hasName
-        ? '<span style="display:block;font-size:12.5px;font-weight:500;color:#0f0f0f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(d.c.name) + '</span>' +
-          '<span style="display:block;font-size:10px;color:#a39e95;text-transform:uppercase;letter-spacing:.04em">' + esc(d.label) + '</span>' +
-          ((d.c.email || d.c.phone) ? '<span style="display:block;font-size:11px;color:#888;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(d.c.email || '') + (d.c.phone ? ' &middot; ' + esc(d.c.phone) : '') + '</span>' : '')
-        : '<span style="display:block;font-size:12.5px;font-weight:500;color:#c2bdb4">Add ' + esc(d.label.toLowerCase()) + (d.optional ? ' (optional)' : '') + '</span>' +
-          '<span style="display:block;font-size:10px;color:#a39e95;text-transform:uppercase;letter-spacing:.04em">' + esc(d.label) + '</span>';
-      const right = showCheck
-        ? '<span style="flex:none;display:inline-flex;align-items:center;gap:9px"><span style="color:#3e7d57;font-size:15px">&#10003;</span><button type="button" data-contact-edit="' + d.key + '" style="border:0;background:none;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit">Edit</button></span>'
-        : '<button type="button" data-contact-edit="' + d.key + '" style="flex:none;border:0;background:none;color:#185FA5;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit">' + (hasName ? 'Edit' : 'Add') + '</button>';
-      return '<div style="display:flex;align-items:center;gap:11px;padding:10px 12px;border-top:0.5px solid #f0ebe0">' + avatar + '<span style="flex:1;min-width:0">' + mid + '</span>' + right + '</div>';
-    };
-    // Option 1 (ADHD) · show only the contacts still missing, with a counter.
-    // Already-added and skippable-optional contacts collapse behind a toggle.
-    const missing = rows.filter(r => !r.complete);            // required, not filled
-    const added = rows.filter(r => r.complete && r.c.name);    // has real data
-    const optEmpty = rows.filter(r => r.complete && !r.c.name); // optional, not filled
-    const leftN = missing.length;
-    const box = (inner) => '<div style="background:#faf8f4;border:0.5px solid #e8e4db;border-radius:8px;overflow:hidden">' + inner + '</div>';
-    const counter = leftN
-      ? '<div style="font-size:11.5px;font-weight:600;color:#854f0b;background:#faeeda;border-radius:8px;padding:8px 11px;margin:0 0 8px">' + leftN + ' contact' + (leftN === 1 ? '' : 's') + ' left to add</div>'
-      : '<div style="font-size:11.5px;font-weight:600;color:#3e7d57;background:#eef5ef;border-radius:8px;padding:8px 11px;margin:0 0 8px">&#10003; All required contacts in</div>';
-    const mainList = missing.length ? (box(missing.map(rowHtml).join('')) + '<div style="height:8px"></div>') : '';
-    const addedSection = added.length
-      ? '<details' + (added.some(r => r.key === _contactEditKey) ? ' open' : '') + ' style="margin-bottom:6px"><summary style="font-size:11.5px;color:#8a857c;cursor:pointer;padding:5px 2px">' + added.length + ' added</summary><div style="margin-top:6px">' + box(added.map(rowHtml).join('')) + '</div></details>'
-      : '';
-    const optSection = optEmpty.length
-      ? '<details' + (optEmpty.some(r => r.key === _contactEditKey) ? ' open' : '') + ' style="margin-bottom:8px"><summary style="font-size:11.5px;color:#a39e95;cursor:pointer;padding:5px 2px">' + optEmpty.length + ' optional</summary><div style="margin-top:6px">' + box(optEmpty.map(rowHtml).join('')) + '</div></details>'
-      : '';
-    const confirmBtn = (leftN === 0)
-      ? '<button type="button" data-contacts-confirm="1" style="width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:8px;padding:11px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Confirm all contacts &rarr;</button>'
-      : '<button type="button" disabled style="width:100%;background:#efece6;color:#a39e95;border:0;border-radius:8px;padding:11px;font-size:13px;font-weight:600;font-family:inherit">Add the ' + leftN + ' required contact' + (leftN === 1 ? '' : 's') + ' to confirm</button>';
+    }
+    const missBadge = (sc.t === 'party' && !_partyEdit && !partyComplete(P[sc.side][sc.idx]))
+      ? ' <span style="color:#854f0b;background:#faeeda;border-radius:9px;padding:2px 8px;font-size:10px;text-transform:none;letter-spacing:0">missing</span>' : '';
+    const labelLine = '<div style="font-size:10.5px;color:#a39e95;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">' + esc(label) + badge + missBadge + '</div>';
+    const card = '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:11px;padding:12px 14px">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span style="display:flex;gap:5px;align-items:center">' + pdots + '</span><span style="font-size:11px;color:#a39e95">' + (si + 1) + ' of ' + screens.length + '</span></div>' +
+        labelLine + valueBlock + footer +
+      '</div>';
     return '<div class="ck-task-wrap">' +
-      '<div style="font-size:13px;font-weight:500;color:#0f0f0f;padding:4px 2px 2px">Confirm the parties on this file</div>' +
-      '<div style="font-size:11px;color:#8a857c;padding:0 2px 8px">Only what is missing is shown. The rest is filled from the agent submission.</div>' +
-      counter + mainList + addedSection + optSection + confirmBtn +
+      '<div style="font-size:13px;font-weight:500;color:#0f0f0f;padding:4px 2px 8px">Confirm the parties on this file</div>' +
+      card +
       '</div>';
   }
   async function saveContactField(file, key, field, value){
@@ -12866,7 +12931,11 @@ Tell me your planned move-out date and I will set the inspection.`
     if(error){ alert('Could not save that edit — check your connection and try again.'); }
   }
   async function confirmContacts(file){
-    if(!contactRows(file).every(r => r.complete)){ alert('Fill every required field before confirming.'); return; }
+    // Parties-aware gate · primary buyer + seller come from the structured parties
+    // (signer-complete for a company), the other roles from contactRows.
+    const _P = partiesOf(file);
+    const _otherOk = contactRows(file).filter(function(r){ return r.key !== 'buyer' && r.key !== 'seller'; }).every(function(r){ return r.complete; });
+    if(!(partyComplete(_P.buyers[0]) && partyComplete(_P.sellers[0]) && _otherOk)){ alert('Fill every required field before confirming.'); return; }
     const lg = Object.assign({}, file.logistics || {});
     lg.contacts_confirmed_at = new Date().toISOString();
     const st = Object.assign({}, file.stage_tasks || {});
@@ -13354,8 +13423,25 @@ Tell me your planned move-out date and I will set the inspection.`
     if(ed){ const k = ed.getAttribute('data-contact-edit'); _contactEditKey = (_contactEditKey === k) ? null : k; rerenderContactsHost(); return; }
     const cf = e.target.closest && e.target.closest('[data-contacts-confirm]');
     if(cf){ confirmContacts(_currentFile); return; }
+    // ---- parties stepper ----
+    const pn = e.target.closest && e.target.closest('[data-party-next]');
+    if(pn){ _partyEdit = false; _partyStep = (_partyStep || 0) + 1; rerenderContactsHost(); return; }
+    const pb = e.target.closest && e.target.closest('[data-party-back]');
+    if(pb){ _partyEdit = false; _partyStep = Math.max(0, (_partyStep || 0) - 1); rerenderContactsHost(); return; }
+    const ped = e.target.closest && e.target.closest('[data-party-editdone]');
+    if(ped){ _partyEdit = false; rerenderContactsHost(); return; }
+    const pe = e.target.closest && e.target.closest('[data-party-edit]');
+    if(pe){ _partyEdit = true; rerenderContactsHost(); return; }
+    const pt = e.target.closest && e.target.closest('[data-party-type]');
+    if(pt){ const pr = pt.getAttribute('data-party-type').split('__'); savePartyPatch(_currentFile, pr[0], +pr[1], { type: pr[2] }).then(rerenderContactsHost); return; }
+    const pa = e.target.closest && e.target.closest('[data-party-add]');
+    if(pa){ const side = pa.getAttribute('data-party-add'); addParty(_currentFile, side).then(function(ni){ if(ni < 0) return; const P2 = partiesOf(_currentFile); _partyStep = (side === 'buyers') ? (P2.buyers.length - 1) : (P2.buyers.length + 1 + (P2.sellers.length - 1)); _partyEdit = true; rerenderContactsHost(); }); return; }
+    const prm = e.target.closest && e.target.closest('[data-party-remove]');
+    if(prm){ const a = prm.getAttribute('data-party-remove').split('__'); removePartyAt(_currentFile, a[0], +a[1]).then(function(){ _partyEdit = false; _partyStep = Math.max(0, (_partyStep || 0) - 1); rerenderContactsHost(); }); return; }
   });
   document.addEventListener('change', (e) => {
+    const pin = e.target.closest && e.target.closest('[data-party-input]');
+    if(pin && _currentFile){ const q = pin.getAttribute('data-party-input').split('__'); const patch = {}; patch[q[2]] = pin.value; savePartyPatch(_currentFile, q[0], +q[1], patch); return; }
     const inp = e.target.closest && e.target.closest('[data-contact-input]');
     if(!inp || !_currentFile) return;
     const parts = inp.getAttribute('data-contact-input').split('__');
