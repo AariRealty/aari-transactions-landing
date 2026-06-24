@@ -8453,6 +8453,8 @@ Tell me your planned move-out date and I will set the inspection.`
   let _dlShowCites = false; // Mockup A · paragraph citations off by default
   let _dlEditKey = null; // which deadline's received editor is open (one at a time)
   let _dlDueEditKey = null; // which lender-scheduled (appraisal) due editor is open
+  let _dlCalcOpen = false; // footer "How these dates are calculated" note toggle
+  let _dlGroupOpen = { coming:false, done:false }; // Option A · collapsed groups (Needs you always open)
 
   async function loadDeadlineStatusForFile(fileId){
     if(_deadlinesByFile[fileId]) return _deadlinesByFile[fileId];
@@ -8705,85 +8707,132 @@ Tell me your planned move-out date and I will set the inspection.`
       '<span class="dl-perf-txt">' + (_perfBits.length ? _perfBits.join(' &middot; ') : 'No deadlines met yet') + '</span>' +
     '</div>';
 
-    hostEl.innerHTML = ctLine + stepper + perfStrip +
-      '<table class="dl-ledger"><thead><tr><th>Deadline</th><th>Due</th><th>Received</th><th>Result</th></tr></thead><tbody>' +
-      rows.map(function(it){
-        const rec = status[it.key];
-        const done = rec && rec.completed_at;
-        const confirmedRow = isConfirmed(it);
-        const cd = dlCountdown(it.date);
-        const intakeTag = !done && pastAtIntake(it);
-        // Result column · the real outcome vs the contract due date.
-        let resCls, resText;
-        if(it.scheduled && !it.scheduledSet){ resCls = 'up'; resText = 'no date'; }
-        else if(done){
-          const c = new Date(rec.completed_at); c.setHours(0,0,0,0);
-          const dd2 = new Date(it.date.getTime()); dd2.setHours(0,0,0,0);
-          const lateD = Math.round((c - dd2) / 86400000);
-          if(lateD <= 0){ resCls = 'ok'; resText = 'on time'; }
-          else { resCls = 'late'; resText = lateD + ' day' + (lateD === 1 ? '' : 's') + ' late'; }
-        } else if(intakeTag){ resCls = 'intake'; resText = 'past at intake'; }
-        else if(cd.cls === 'overdue'){ resCls = 'over'; resText = 'past due'; }
-        else { resCls = 'up'; resText = cd.tag; }
-        const _note = (((file.logistics || {}).dl_notes) || {})[it.key] || '';
-        // Quiet until you act (view A) · the Received cell shows the recorded
-        // date, a "mark received" link when it's due, or a quiet dash when far
-        // off. The date + note editor only appears on click (re-render based, so
-        // it never jams). The note is never shown in the resting row.
-        let receivedCell;
-        if(_dlEditKey === it.key){
-          receivedCell =
-            '<input type="date" class="dl-recv-date" data-mark-date="' + esc(it.key) + '" value="' + (done ? new Date(rec.completed_at).toISOString().slice(0,10) : '') + '">' +
-            '<input type="text" class="dl-recv-note" data-mark-note="' + esc(it.key) + '" value="' + esc(_note) + '" placeholder="' + esc(markNoteHint(it.key)) + '" maxlength="200">' +
-            '<button type="button" class="dl-recv-done" data-dl-edit-close="1">done</button>';
-        } else if(done){
-          receivedCell = '<button type="button" class="dl-recv-datebtn" data-dl-edit-recv="' + esc(it.key) + '" title="Click to change">' + esc(fmtDl(new Date(rec.completed_at))) + '</button>';
-        } else if(cd.cls === 'overdue' || cd.cls === 'today'){
-          receivedCell = '<button type="button" class="dl-recv-link" data-dl-edit-recv="' + esc(it.key) + '">+ mark received</button>';
-        } else {
-          receivedCell = '<button type="button" class="dl-recv-dash" data-dl-edit-recv="' + esc(it.key) + '">—</button>';
-        }
-        const citeRow = (showCites && it.citation) ? '<tr class="dl-lextra"><td colspan="4">' + esc(it.citation) + '</td></tr>' : '';
-        // Appraisal etc. · Due is the lender-scheduled date. No invented date —
-        // "+ set date" until the lender confirms, then an editable date.
-        let dueCell;
-        if(it.scheduled){
-          if(_dlDueEditKey === it.key){
-            dueCell = '<input type="date" class="dl-due-input" data-due-date="' + esc(it.key) + '" value="' + (it.scheduledSet ? it.date.toISOString().slice(0,10) : '') + '">';
-          } else if(it.scheduledSet){
-            dueCell = '<button type="button" class="dl-recv-datebtn" data-due-open="' + esc(it.key) + '">' + esc(fmtDl(it.date)) + '</button>';
-          } else {
-            dueCell = '<button type="button" class="dl-due-link" data-due-open="' + esc(it.key) + '">+ set date</button>';
-          }
-        } else { dueCell = esc(fmtDl(it.date)); }
-        const lenderTag = (it.scheduled && !it.scheduledSet) ? ' <span class="dl-lender-tag">lender sets</span>' : '';
-        const _shortKey = _dayKeyByRow[it.key];
-        const _isDayBased = !!(_shortKey && _stdCfg[_shortKey] != null);
-        const _curDays = _isDayBased ? (overridesJson[_shortKey] != null ? overridesJson[_shortKey] : _stdCfg[_shortKey]) : null;
-        const _why = _whyMap[it.key];
-        const _whyOpen = !!_dlWhyOpen[it.key];
-        const _daysLabel = _isDayBased ? (' <span style="color:#9a958c;font-size:11px">' + _curDays + 'd</span>') : '';
-        const _whyBtn = (_why && _why.cite) ? '<button type="button" data-dlwhy="' + esc(it.key) + '" style="background:none;border:0;padding:0;margin-top:1px;font-family:inherit;font-size:11px;color:#9a958c;cursor:pointer;text-decoration:underline">Why this date</button>' : '';
-        let _whyDetail = '';
-        if(_whyOpen && _why && _why.cite){
-          let _wt = esc(_why.cite);
-          if(_why.rolled){ _wt += ' Falls on ' + _fmtWMD(_why.comp) + ', so Standard F rolls it to the next business day, ' + _fmtWMD(_why.date) + '.'; }
-          const _dayEdit = _isDayBased ? ('<div style="margin-top:8px;display:flex;align-items:center;gap:6px"><span style="color:#a39e95">Days</span><input type="number" data-dlday="' + esc(_shortKey) + '" value="' + esc(_curDays) + '" min="0" max="365" style="width:50px;padding:3px 7px;font-size:12px;border:0.5px solid #d9d4ca;border-radius:6px;font-family:inherit;-moz-appearance:textfield"><span style="color:#a39e95;font-size:11px">change if your contract differs</span></div>') : '';
-          _whyDetail = '<tr class="dl-lextra"><td colspan="4"><div style="background:#faf7f1;border:0.5px solid #ece4d2;border-radius:9px;padding:9px 11px;margin:2px 0 6px;font-size:11.5px;color:#6f6a61;line-height:1.5">' + _wt + _dayEdit + '</div></td></tr>';
-        }
-        const _confCtl = it.scheduled ? '' : (confirmedRow
-          ? '<button type="button" data-dl-unconfirm="' + esc(it.key) + '" style="background:none;border:0;padding:0;font-family:inherit;font-size:11px;color:#2f855a;cursor:pointer">&#10003; confirmed</button>'
-          : '<button type="button" data-dl-confirm="' + esc(it.key) + '" data-dl-cdate="' + it.date.toISOString().slice(0,10) + '" style="background:#0f0f0f;color:#fff;border:0;font-size:11px;padding:2px 11px;border-radius:20px;cursor:pointer;font-family:inherit">Confirm</button>');
-        const _subline = (_whyBtn || _confCtl) ? ('<br><span style="display:inline-flex;align-items:center;gap:9px;margin-top:3px">' + _whyBtn + _confCtl + '</span>') : '';
-        return '<tr class="dl-lrow' + (done ? ' done' : '') + ((!done && !confirmedRow) ? ' dl-queued' : '') + '">' +
-            '<td class="dl-lname"><span>' + esc(it.name) + '</span>' + _daysLabel + lenderTag + _subline + '</td>' +
-            '<td class="dl-ldue">' + dueCell + '</td>' +
-            '<td class="dl-ldone">' + receivedCell + '</td>' +
-            '<td class="dl-lresult ' + resCls + '">' + esc(resText) + '</td>' +
-          '</tr>' + citeRow + _whyDetail;
-      }).join('') +
-      '</tbody></table>' + citesToggle +
-      '<p style="font-size:11px;color:#8a857c;line-height:1.5;margin:14px 2px 2px;padding-top:10px;border-top:0.5px solid #f1ede6">Effective Date is the day the last party signs and delivers, per Paragraph 3(b). Every deadline counts from that date. If a deadline lands on a weekend or holiday, it moves to the next business day. Example, a deadline that falls on Saturday moves to Monday, per Paragraph 18.</p>';
+    // ---- Option A · group by status (Needs you / Coming up / Done). Quiet rows;
+    // the calc rationale, day-count edit, citation, Confirm and mark-received all
+    // live in the tap-to-expand panel so nine rows stop shouting at once. ----
+    const rowHtml = function(it){
+      const rec = status[it.key];
+      const done = rec && rec.completed_at;
+      const confirmedRow = isConfirmed(it);
+      const cd = dlCountdown(it.date);
+      const intakeTag = !done && pastAtIntake(it);
+      const open = !!_dlWhyOpen[it.key];
+      // One muted status line under the name (no green, no 4 columns).
+      let statusTxt;
+      if(it.scheduled && !it.scheduledSet) statusTxt = 'lender sets the date';
+      else if(done){
+        const c = new Date(rec.completed_at); c.setHours(0,0,0,0);
+        const dd2 = new Date(it.date.getTime()); dd2.setHours(0,0,0,0);
+        const lateD = Math.round((c - dd2) / 86400000);
+        statusTxt = 'received ' + fmtDl(new Date(rec.completed_at)) + ' · ' + (lateD <= 0 ? 'on time' : (lateD + ' day' + (lateD === 1 ? '' : 's') + ' late'));
+      } else if(intakeTag) statusTxt = 'due ' + fmtDl(it.date) + ' · past at intake';
+      else if(cd.cls === 'overdue') statusTxt = 'due ' + fmtDl(it.date) + ' · past due';
+      else if(it.scheduledSet) statusTxt = 'due ' + fmtDl(it.date);
+      else statusTxt = 'due ' + fmtDl(it.date) + ' · ' + cd.tag;
+      // Resting-row right control · only what the row needs right now.
+      let action = '';
+      if(it.scheduled && !it.scheduledSet){
+        action = '<button type="button" data-due-open="' + esc(it.key) + '" style="flex:none;background:none;border:0;font-size:11px;color:#185FA5;cursor:pointer;font-family:inherit">+ set date</button>';
+      } else if(!it.scheduled && !confirmedRow){
+        action = '<button type="button" data-dl-confirm="' + esc(it.key) + '" data-dl-cdate="' + it.date.toISOString().slice(0,10) + '" style="flex:none;font-size:11px;font-weight:500;color:#fff;background:#0f0f0f;border:0;border-radius:20px;padding:4px 13px;cursor:pointer;font-family:inherit">Confirm</button>';
+      } else if(!done && (cd.cls === 'overdue' || cd.cls === 'today')){
+        action = '<button type="button" data-dl-edit-recv="' + esc(it.key) + '" style="flex:none;background:none;border:0;font-size:11px;color:#0f0f0f;cursor:pointer;font-family:inherit;text-decoration:underline">mark received</button>';
+      }
+      const chev = '<span data-dlwhy="' + esc(it.key) + '" style="flex:none;color:#a39e95;cursor:pointer;font-size:12px;line-height:1;display:inline-block;transform:rotate(' + (open ? '180' : '0') + 'deg)">&#8964;</span>';
+      const restRow =
+        '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:0.5px solid #f1ede6">' +
+          '<div data-dlwhy="' + esc(it.key) + '" style="flex:1;min-width:0;cursor:pointer">' +
+            '<div style="font-size:13px;color:#0f0f0f">' + esc(it.name) + '</div>' +
+            '<div style="font-size:11px;color:#8a857c">' + esc(statusTxt) + '</div>' +
+          '</div>' + action + chev +
+        '</div>';
+      if(!open) return restRow;
+      // Expanded panel · the calculation + every control, tucked here.
+      const _shortKey = _dayKeyByRow[it.key];
+      const _isDayBased = !!(_shortKey && _stdCfg[_shortKey] != null);
+      const _curDays = _isDayBased ? (overridesJson[_shortKey] != null ? overridesJson[_shortKey] : _stdCfg[_shortKey]) : null;
+      const _why = _whyMap[it.key];
+      let calc;
+      if(_why && _why.cite){
+        calc = esc(_why.cite);
+        if(_why.rolled) calc += ' Falls on ' + _fmtWMD(_why.comp) + ', so Standard F rolls it to the next business day, ' + _fmtWMD(_why.date) + '.';
+      } else if(_isDayBased){ calc = _curDays + ' days from the Effective Date.'; }
+      else { calc = 'Set from the contract dates.'; }
+      const dayEdit = _isDayBased ? ('<div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:11px;color:#a39e95"><span>Days</span><input type="number" data-dlday="' + esc(_shortKey) + '" value="' + esc(_curDays) + '" min="0" max="365" style="width:50px;padding:3px 7px;font-size:12px;border:0.5px solid #d9d4ca;border-radius:6px;font-family:inherit;-moz-appearance:textfield"><span>change if your contract differs</span></div>') : '';
+      const citeLine = (showCites && it.citation) ? ('<div style="margin-top:8px;font-size:11px;color:#a39e95">' + esc(it.citation) + '</div>') : '';
+      let detailAct = '';
+      if(!it.scheduled){
+        detailAct = confirmedRow
+          ? '<button type="button" data-dl-unconfirm="' + esc(it.key) + '" style="background:none;border:0;padding:0;font-family:inherit;font-size:11px;color:#8a857c;cursor:pointer">&#10003; confirmed · undo</button>'
+          : '<button type="button" data-dl-confirm="' + esc(it.key) + '" data-dl-cdate="' + it.date.toISOString().slice(0,10) + '" style="font-size:11px;font-weight:500;color:#fff;background:#0f0f0f;border:0;border-radius:20px;padding:4px 13px;cursor:pointer;font-family:inherit">Confirm this date</button>';
+      }
+      const _note = (((file.logistics || {}).dl_notes) || {})[it.key] || '';
+      let recvCtl = '';
+      if(_dlEditKey === it.key){
+        recvCtl = '<input type="date" class="dl-recv-date" data-mark-date="' + esc(it.key) + '" value="' + (done ? new Date(rec.completed_at).toISOString().slice(0,10) : '') + '">' +
+          '<input type="text" class="dl-recv-note" data-mark-note="' + esc(it.key) + '" value="' + esc(_note) + '" placeholder="' + esc(markNoteHint(it.key)) + '" maxlength="200">' +
+          '<button type="button" class="dl-recv-done" data-dl-edit-close="1">done</button>';
+      } else if(done){
+        recvCtl = '<button type="button" data-dl-edit-recv="' + esc(it.key) + '" style="background:none;border:0;padding:0;font-family:inherit;font-size:11px;color:#185FA5;cursor:pointer">Received ' + esc(fmtDl(new Date(rec.completed_at))) + ' · change</button>';
+      } else if(!it.scheduled){
+        recvCtl = '<button type="button" data-dl-edit-recv="' + esc(it.key) + '" style="background:none;border:0;padding:0;font-family:inherit;font-size:11px;color:#185FA5;cursor:pointer">+ mark received</button>';
+      }
+      let schedCtl = '';
+      if(it.scheduled){
+        schedCtl = (_dlDueEditKey === it.key)
+          ? '<input type="date" class="dl-due-input" data-due-date="' + esc(it.key) + '" value="' + (it.scheduledSet ? it.date.toISOString().slice(0,10) : '') + '">'
+          : '<button type="button" data-due-open="' + esc(it.key) + '" style="background:none;border:0;padding:0;font-family:inherit;font-size:11px;color:#185FA5;cursor:pointer">' + (it.scheduledSet ? ('Due ' + esc(fmtDl(it.date)) + ' · change') : '+ set lender date') + '</button>';
+      }
+      const actLine = [detailAct, recvCtl, schedCtl].filter(Boolean).join('<span style="display:inline-block;width:14px"></span>');
+      return restRow +
+        '<div style="margin:0 0 8px;padding:10px 12px;background:#f6f4ef;border-radius:9px;font-size:11.5px;color:#6f6a61;line-height:1.5">' +
+          calc + dayEdit + citeLine +
+          (actLine ? ('<div style="margin-top:9px;display:flex;align-items:center;gap:4px;flex-wrap:wrap">' + actLine + '</div>') : '') +
+        '</div>';
+    };
+    // Bucket the rows. Done = received; Needs you = unconfirmed, or confirmed but
+    // due/overdue and not yet received; everything else = Coming up.
+    const _g = { needs: [], coming: [], done: [] };
+    rows.forEach(function(it){
+      const rec = status[it.key];
+      if(rec && rec.completed_at){ _g.done.push(it); return; }
+      if(it.scheduled){ _g.coming.push(it); return; }
+      if(!isConfirmed(it)){ _g.needs.push(it); return; }
+      const cd = dlCountdown(it.date);
+      if((cd.cls === 'overdue' || cd.cls === 'today') && !pastAtIntake(it)){ _g.needs.push(it); return; }
+      _g.coming.push(it);
+    });
+    const _range = function(list){ if(!list.length) return ''; const ds = list.map(function(x){ return x.date; }).sort(function(a,b){ return a - b; }); return fmtDl(ds[0]) + (ds.length > 1 ? (' to ' + fmtDl(ds[ds.length - 1])) : ''); };
+    const collHead = function(label, n, key, openState, summary){
+      return '<div data-dlgroup="' + key + '" style="display:flex;align-items:center;gap:8px;margin-top:14px;padding:11px 12px;background:#f6f4ef;border-radius:9px;cursor:pointer">' +
+        '<span style="flex:1;font-size:12.5px;color:#5f5e5a">' + label + ' · ' + n + '</span>' +
+        '<span style="font-size:11px;color:#a39e95">' + esc(summary || '') + '</span>' +
+        '<span style="flex:none;font-size:13px;color:#a39e95;display:inline-block;transform:rotate(' + (openState ? '90' : '0') + 'deg)">&#8250;</span>' +
+      '</div>';
+    };
+    let groupsHtml = '';
+    if(_g.needs.length){
+      groupsHtml += '<div style="font-size:11px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f;margin:0 0 2px">Needs you · ' + _g.needs.length + '</div>' +
+        _g.needs.map(rowHtml).join('');
+    }
+    if(_g.coming.length){
+      groupsHtml += collHead('Coming up', _g.coming.length, 'coming', _dlGroupOpen.coming, _range(_g.coming)) +
+        (_dlGroupOpen.coming ? ('<div>' + _g.coming.map(rowHtml).join('') + '</div>') : '');
+    }
+    if(_g.done.length){
+      const _dn = _g.done.map(function(x){ return x.name; }).slice(0, 2).join(', ') + (_g.done.length > 2 ? '…' : '');
+      groupsHtml += collHead('Done', _g.done.length, 'done', _dlGroupOpen.done, _dn) +
+        (_dlGroupOpen.done ? ('<div>' + _g.done.map(rowHtml).join('') + '</div>') : '');
+    }
+    if(!groupsHtml) groupsHtml = '<div style="font-size:12px;color:#a39e95;padding:10px 0">No deadlines computed yet.</div>';
+    const calcNote = _dlCalcOpen
+      ? '<div style="margin-top:10px;font-size:11px;color:#8a857c;line-height:1.55">Effective Date is the day the last party signs and delivers, per Paragraph 3(b). Every deadline counts from that date. If a deadline lands on a weekend or holiday, it moves to the next business day, per Paragraph 18.</div>'
+      : '';
+    const footer = '<div style="margin-top:16px;padding-top:11px;border-top:0.5px solid #f1ede6;display:flex;gap:16px">' +
+        '<button type="button" data-dl-calc="1" style="background:none;border:0;padding:0;font-family:inherit;font-size:11px;color:#8a857c;cursor:pointer;text-decoration:underline">' + (_dlCalcOpen ? 'Hide calculation' : 'How these dates are calculated') + '</button>' +
+        '<button type="button" id="tpb-dl-cites" style="background:none;border:0;padding:0;font-family:inherit;font-size:11px;color:#8a857c;cursor:pointer;text-decoration:underline">' + (showCites ? 'Hide refs' : 'Show refs') + '</button>' +
+      '</div>' + calcNote;
+    hostEl.innerHTML = ctLine + stepper + perfStrip + groupsHtml + footer;
 
     // Per-row "Why this date" toggle + inline day-count edit (merged from Contingency days).
     hostEl.querySelectorAll('[data-dlwhy]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-dlwhy'); _dlWhyOpen[k] = !_dlWhyOpen[k]; renderDeadlinesForFile(file); }); });
