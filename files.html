@@ -6147,7 +6147,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // All buyers · the contract can name several (e.g. a couple or co-buyers). Show
     // {{buyer_name}} stays the PRIMARY buyer (used in greetings + TO lines). Each buyer
     // gets their OWN contact line via {{buyer_lines}} below, listed separately, not merged.
-    const buyerName = _ccGet('buyer','name') || (isBuyerSide ? (file.client_name || '') : '') || _rfd.pa_buyer_name || _rfd.buyer_name || '[buyer name]';
+    let buyerName = _ccGet('buyer','name') || (isBuyerSide ? (file.client_name || '') : '') || _rfd.pa_buyer_name || _rfd.buyer_name || '[buyer name]';
     // Build one "Buyer: name · email · phone" line per buyer the agent entered.
     const _buyerRows = [];
     const _pushBuyer = function(n, e, p){ n = (n || '').trim(); if(!n) return; _buyerRows.push('Buyer: ' + n + ' · ' + (e || '[buyer email]') + ' · ' + (p || '[buyer phone]')); };
@@ -6156,8 +6156,32 @@ Tell me your planned move-out date and I will set the inspection.`
                _ccGet('buyer','phone') || _rfd.pa_buyer_phone || (isBuyerSide ? file.client_phone : ''));
     _pushBuyer(_rfd.pa_buyer2_name, _rfd.pa_buyer2_email, _rfd.pa_buyer2_phone);
     _pushBuyer(_rfd.pa_buyer3_name, _rfd.pa_buyer3_email, _rfd.pa_buyer3_phone);
-    const buyerLines = _buyerRows.length ? _buyerRows.join('\n') : ('Buyer: ' + buyerName + ' · [buyer email] · [buyer phone]');
-    const sellerName = _ccGet('seller','name') || (isSellerSide ? (file.client_name || '[seller name]') : (_rfd.pa_seller_name || _rfd.seller_name || _rfd.pa_other_party_name || '[seller name]'));
+    let buyerLines = _buyerRows.length ? _buyerRows.join('\n') : ('Buyer: ' + buyerName + ' · [buyer email] · [buyer phone]');
+    let sellerName = _ccGet('seller','name') || (isSellerSide ? (file.client_name || '[seller name]') : (_rfd.pa_seller_name || _rfd.seller_name || _rfd.pa_other_party_name || '[seller name]'));
+    let sellerLines = 'Seller: ' + sellerName + ' · ' + (_ccGet('seller','email') || _rfd.pa_seller_email || (isSellerSide ? file.client_email : '') || '[seller email]') + ' · ' + (_ccGet('seller','phone') || _rfd.pa_seller_phone || (isSellerSide ? file.client_phone : '') || '[seller phone]');
+    // Structured parties (logistics.parties) · when present they are the source of
+    // truth and are SIGNER-AWARE: greetings/TO lines address the human (the signer
+    // for a company), while the contact LINES show the entity with its signer noted.
+    // Gated entirely on _parties, so any file WITHOUT parties data is untouched.
+    const _parties = (file.logistics && file.logistics.parties) ? file.logistics.parties : null;
+    if(_parties){
+      const _pDisp = function(p){ return (p && p.type === 'entity') ? (p.signer_name || p.entity_name || '') : ((p && p.name) || ''); };
+      const _pLine = function(role, p){
+        if(!p) return '';
+        const who = (p.type === 'entity')
+          ? ((p.entity_name || '[company]') + (p.signer_name ? (' (signer: ' + p.signer_name + ')') : ''))
+          : (p.name || '[name]');
+        return role + ': ' + who + ' · ' + (p.email || '[email]') + ' · ' + (p.phone || '[phone]');
+      };
+      if(Array.isArray(_parties.buyers) && _parties.buyers.length){
+        buyerName = _pDisp(_parties.buyers[0]) || buyerName;
+        buyerLines = _parties.buyers.map(function(p){ return _pLine('Buyer', p); }).filter(Boolean).join('\n') || buyerLines;
+      }
+      if(Array.isArray(_parties.sellers) && _parties.sellers.length){
+        sellerName = _pDisp(_parties.sellers[0]) || sellerName;
+        sellerLines = _parties.sellers.map(function(p){ return _pLine('Seller', p); }).filter(Boolean).join('\n') || sellerLines;
+      }
+    }
     const tenantName = file.client_name || '[tenant name]';
     const buyerFirst = buyerName.split(' ')[0];
     const sellerFirst = sellerName.split(' ')[0];
@@ -6222,7 +6246,7 @@ Tell me your planned move-out date and I will set the inspection.`
       buyer_name: buyerName, buyer_first_name: buyerFirst, buyer_lines: buyerLines,
       buyer_email: _ccGet('buyer','email') || (isBuyerSide ? (file.client_email || '[buyer email]') : '[buyer email]'),
       buyer_phone: _ccGet('buyer','phone') || _rfd.pa_buyer_phone || (isBuyerSide ? (file.client_phone || '[buyer phone]') : '[buyer phone]'),
-      seller_name: sellerName, seller_first_name: sellerFirst,
+      seller_name: sellerName, seller_first_name: sellerFirst, seller_lines: sellerLines,
       seller_email: _ccGet('seller','email') || (isSellerSide ? (file.client_email || '[seller email]') : '[seller email]'),
       seller_phone: _ccGet('seller','phone') || _rfd.pa_seller_phone || (isSellerSide ? (file.client_phone || '[seller phone]') : '[seller phone]'),
       tenant_name: tenantName, tenant_first_name: tenantFirst, tenant_email: file.client_email || '[tenant email]',
@@ -10485,15 +10509,14 @@ Tell me your planned move-out date and I will set the inspection.`
       const _datesBit = (shownEff && shownCls) ? (_fmtMD2(shownEff) + ' → ' + _fmtMD2(shownCls)) : '';
       const _pills = [ (shownCt ? ctLabelFor(shownCt) : ''), _datesBit, shownPrice, (_dlCount ? (_dlCount + ' deadline' + (_dlCount === 1 ? '' : 's')) : '') ].filter(Boolean);
       const _pillHtml = _pills.map(function(p){ return '<span style="font-size:10.5px;color:#5f5e5a;background:#f1ede6;border-radius:6px;padding:3px 8px">' + esc(p) + '</span>'; }).join('');
+      // Option 1 · thin receipt line. The dates + deadlines live in the bottom
+      // Deadlines section now, so the pills were redundant. View toggles the full
+      // terms inline (same _ctTermsExpanded mechanism).
       const termsSummary =
-        '<button type="button" data-ct-terms-toggle="1" style="display:block;width:100%;border:0.5px solid #ece8e0;border-radius:10px;background:#fff;padding:11px 13px;cursor:pointer;font-family:inherit;text-align:left;margin-bottom:8px">' +
-          '<div style="display:flex;align-items:center;gap:9px' + (_pillHtml ? ';margin-bottom:8px' : '') + '">' +
-            '<span style="flex:none;width:20px;height:20px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px">&#10003;</span>' +
-            '<span style="flex:1;font-size:12.5px;font-weight:600;color:#0f0f0f">Contract terms</span>' +
-            '<span style="flex:none;color:#185FA5;font-size:11px;font-weight:500">' + (_ctTermsExpanded ? 'Hide' : 'View') + '</span>' +
-          '</div>' +
-          (_pillHtml ? ('<div style="display:flex;flex-wrap:wrap;gap:5px">' + _pillHtml + '</div>') : '') +
-        '</button>';
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 2px 10px">' +
+          '<span style="font-size:12.5px;color:#0f0f0f"><span style="display:inline-flex;width:18px;height:18px;border-radius:50%;background:#0f0f0f;color:#fff;align-items:center;justify-content:center;font-size:9px;vertical-align:-4px;margin-right:7px">&#10003;</span>Contract terms confirmed</span>' +
+          '<button type="button" data-ct-terms-toggle="1" style="background:none;border:0;font-family:inherit;font-size:11.5px;color:#185FA5;font-weight:500;cursor:pointer">' + (_ctTermsExpanded ? 'Hide' : 'View') + '</button>' +
+        '</div>';
       termsBody = termsSummary +
         (_ctTermsExpanded ? ('<div style="margin:0 0 12px">' + ctLines + daysBlock + dlStrip + assocBlock + '</div>') : '') +
         contactsTaskHtml(file);
