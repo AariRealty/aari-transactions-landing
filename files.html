@@ -13302,6 +13302,48 @@ Tell me your planned move-out date and I will set the inspection.`
       ? '<div class="ck-dl-table">' + rows + cfpbRow + '</div>'
       : '<div class="ck-dl-table ck-dl-empty-note">Add the Effective + Closing dates to this file to auto-calculate deadlines.</div>';
   }
+  // Setup review · the gated section overview shown while the file is in Setup.
+  // Four sections, one active at a time, the rest locked until reached. Purely a
+  // map + gate; the section bodies (steppers) render in the tasks below.
+  function setupReviewBar(file){
+    if((file.file_type || 'sale') !== 'sale') return '';
+    const stg = (file.transaction_stage || '').toLowerCase();
+    if(['', 'new', 'intake_received', 'waiting_for_tc'].indexOf(stg) === -1) return '';
+    const lg = file.logistics || {};
+    const tOk = termsAttested(file);
+    const cOk = !!lg.contacts_confirmed_at;
+    const fOk = !!lg.financing_confirmed_at;
+    const secs = [
+      { n:'Contract type', st: tOk ? 'done' : 'active' },
+      { n:'Parties',       st: !tOk ? 'locked' : (cOk ? 'done' : 'active') },
+      { n:'Financing',     st: !cOk ? 'locked' : (fOk ? 'done' : 'active') },
+      { n:'Terms & dates', st: !fOk ? 'locked' : 'active' }
+    ];
+    const doneN = secs.filter(function(s){ return s.st === 'done'; }).length;
+    const rowH = function(s, i){
+      if(s.st === 'done'){
+        return '<div style="display:flex;align-items:center;gap:10px;background:#fff;border:0.5px solid #ece8e0;border-radius:10px;padding:10px 13px;margin-bottom:7px">' +
+          '<span style="flex:none;width:20px;height:20px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px">&#10003;</span>' +
+          '<span style="flex:1;font-size:12.5px;color:#0f0f0f">' + esc(s.n) + '</span></div>';
+      }
+      if(s.st === 'active'){
+        return '<div style="display:flex;align-items:center;gap:10px;background:#fff;border:1.5px solid #0f0f0f;border-radius:10px;padding:10px 13px;margin-bottom:7px">' +
+          '<span style="flex:none;width:20px;height:20px;border-radius:50%;border:1.5px solid #0f0f0f;display:flex;align-items:center;justify-content:center;font-size:10px;color:#0f0f0f">' + (i + 1) + '</span>' +
+          '<span style="flex:1;font-size:12.5px;font-weight:500;color:#0f0f0f">' + esc(s.n) + '</span>' +
+          '<span style="font-size:10px;color:#5f5e5a">confirm below</span></div>';
+      }
+      return '<div style="display:flex;align-items:center;gap:10px;background:#faf8f5;border:0.5px solid #efeae1;border-radius:10px;padding:10px 13px;margin-bottom:7px;opacity:.6">' +
+        '<span style="flex:none;width:20px;height:20px;border-radius:50%;background:#efece6;color:#a39e95;display:flex;align-items:center;justify-content:center;font-size:10px">' + (i + 1) + '</span>' +
+        '<span style="flex:1;font-size:12.5px;color:#5f5e5a">' + esc(s.n) + '</span>' +
+        '<span style="font-size:13px;color:#c2bdb4">&#128274;</span></div>';
+    };
+    const gateLine = (doneN >= 3)
+      ? '<div style="font-size:11.5px;font-weight:600;color:#3e7d57;background:#eef5ef;border-radius:9px;padding:10px 12px;margin-top:3px">Last section, then this file can move to Under Contract</div>'
+      : '<div style="font-size:11.5px;font-weight:600;color:#a39e95;background:#efece6;border-radius:9px;padding:10px 12px;margin-top:3px">Confirm all 4 sections to move to Under Contract</div>';
+    return '<div style="background:#f6f4ef;border:0.5px solid #ece8e0;border-radius:12px;padding:13px;margin-bottom:14px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px"><span style="font-size:13px;font-weight:600;color:#0f0f0f">Set up this file</span><span style="font-size:11px;color:#a39e95">' + doneN + ' of 4 confirmed</span></div>' +
+      secs.map(rowH).join('') + gateLine + '</div>';
+  }
   function renderStageChecklist(file){
     const host = document.getElementById('tpb-checklist');
     const head = document.getElementById('tpb-ck-meta');
@@ -13459,7 +13501,7 @@ Tell me your planned move-out date and I will set the inspection.`
       ? '<div style="padding:14px 0 4px;border-top:0.5px solid #f1ede6;margin-top:14px;text-align:right"><button type="button" class="move-stage-btn" data-move-next-stage="' + esc(_stNext) + '">Move to ' + esc(STAGE_LABELS[_stNext] || _stNext) + ' &rarr;</button></div>'
       : '';
     // Swapped per Marlenyi: Earlier stages on top, Due-soon toggled at the bottom.
-    host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget + archiveBlock +
+    host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget + setupReviewBar(file) + archiveBlock +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
       dueSoon + moveBtn;
     // Work rail · re-mark the NEXT task after every checklist render.
