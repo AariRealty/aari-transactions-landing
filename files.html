@@ -10536,16 +10536,19 @@ Tell me your planned move-out date and I will set the inspection.`
     // on every file. Lives in the Contract Terms panel below the contingency days.
     const dlStrip = ''; // "All deadlines" removed from Contract Terms — the dedicated deadline box at the bottom is the single source (no duplicate)
     let termsBody;
-    const contactsStep = confirmed && (_ctContactsStep || !!((file.logistics || {}).contacts_confirmed_at));
+    // When re-editing Contract type from the bar, route to the review stepper (below),
+    // not the contacts summary — so contactsStep is suppressed in that case.
+    const contactsStep = confirmed && (_ctContactsStep || !!((file.logistics || {}).contacts_confirmed_at)) && _setupEditSec !== 'terms';
     // FOLDED INTO THE SETUP REVIEW · while the file is in Setup, the gated section
     // bar + checklist own Parties, Financing and Terms-and-dates. So once Contract
     // type is confirmed this panel collapses to a thin receipt instead of repeating
     // the review stepper (and its old contacts/financing flow) above the bar.
     const _ctSetup = ['', 'new', 'intake_received', 'waiting_for_tc'].indexOf((file.transaction_stage || '').toLowerCase()) !== -1;
-    if(_ctSetup && confirmed){
+    if(_ctSetup && confirmed && _setupEditSec !== 'terms'){
       // Contract type confirmed during Setup · the gated bar (prepended below) owns
       // the whole flow now and shows Contract type as done + nests Parties/Financing,
-      // so this panel adds nothing.
+      // so this panel adds nothing — UNLESS the TC re-opened it for editing (Edit on
+      // the bar's done row sets _setupEditSec='terms' → falls through to the review).
       termsBody = '';
     } else if(contactsStep){
       // Contacts step. A collapsed "Contract terms" summary sits on top — it shows
@@ -10598,7 +10601,9 @@ Tell me your planned move-out date and I will set the inspection.`
             '<span></span>';
         } else {
           const primary = last
-            ? '<button type="button" data-ct-next-contacts="1" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;font-weight:600;padding:8px 16px;border-radius:8px;cursor:pointer">Next: confirm all contacts &rarr;</button>'
+            ? (_setupEditSec === 'terms'
+                ? '<button type="button" data-setup-edit="terms" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;font-weight:600;padding:8px 16px;border-radius:8px;cursor:pointer">Done</button>'
+                : '<button type="button" data-ct-next-contacts="1" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;font-weight:600;padding:8px 16px;border-radius:8px;cursor:pointer">Next: confirm all contacts &rarr;</button>')
             : '<button type="button" data-ct-rev-next="1" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;padding:8px 16px;border-radius:8px;cursor:pointer">Looks right</button>';
           valueBlock = '<button type="button" data-ct-rev-edit="1" style="background:none;border:0;padding:0;margin:0;cursor:pointer;font-family:inherit;text-align:left;display:block">' +
               '<span style="font-size:18px;font-weight:500;line-height:1.25;color:#0f0f0f">' + esc(t[1]) + '</span>' +
@@ -11403,6 +11408,9 @@ Tell me your planned move-out date and I will set the inspection.`
     if(fnb){ _finStep = Math.max(0, (_finStep || 0) - 1); try { renderContractTerms(_currentFile); } catch(_){} return; }
     const fnc = e.target.closest('[data-fin-confirm]');
     if(fnc){ confirmFinancing(_currentFile); return; }
+    // Re-open / close a DONE setup section for editing (Edit/Done on the bar row).
+    const sed = e.target.closest('[data-setup-edit]');
+    if(sed){ const k = sed.getAttribute('data-setup-edit'); _setupEditSec = (_setupEditSec === k) ? '' : k; if(k === 'terms'){ _ctReviewIdx = 0; _revEdit = false; } try { renderContractTerms(_currentFile); } catch(_){} return; }
     const tt = e.target.closest('[data-ct-terms-toggle]');
     if(tt){ _ctTermsExpanded = !_ctTermsExpanded; try { renderContractTerms(_currentFile); } catch(_){} return; }
     const cv = e.target.closest('[data-contacts-toggle]');
@@ -11545,7 +11553,7 @@ Tell me your planned move-out date and I will set the inspection.`
     renderAgentRequestsBanner();
     renderServiceStage();
     _openPopKey = null;
-    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null; _ctConfStep = 0; _revEdit = false; _partyStep = 0; _partyEdit = false; _finStep = 0;
+    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null; _ctConfStep = 0; _revEdit = false; _partyStep = 0; _partyEdit = false; _finStep = 0; _setupEditSec = '';
     document.body.classList.add('tpb-open');
     renderPlaybook(file);
     renderDeleteZone(file);
@@ -12710,6 +12718,7 @@ Tell me your planned move-out date and I will set the inspection.`
   let _partyStep = 0;             // parties confirm stepper · current screen index
   let _partyEdit = false;         // parties confirm stepper · is the current screen open for editing
   let _finStep = 0;               // financing confirm stepper · current field index
+  let _setupEditSec = '';         // setup review · which DONE section is re-opened for editing ('terms')
   // The contact panel renders in two places — the Contract Terms split column
   // (#tpb-terms) and Your Work Task 3 (#tpb-checklist). Re-render whichever is open.
   function rerenderContactsHost(){
@@ -13373,9 +13382,17 @@ Tell me your planned move-out date and I will set the inspection.`
     const doneN = secs.filter(function(s){ return s.st === 'done'; }).length;
     const rowH = function(s, i){
       if(s.st === 'done'){
+        // A confirmed section can be re-opened to edit while still in Setup. Only
+        // Contract type is wired so far ('terms'); Parties/Financing follow.
+        const secKey = s.n === 'Contract type' ? 'terms' : '';
+        const editLink = secKey
+          ? (_setupEditSec === secKey
+              ? '<button type="button" data-setup-edit="' + secKey + '" style="flex:none;background:none;border:0;color:#0f0f0f;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit">Done</button>'
+              : '<button type="button" data-setup-edit="' + secKey + '" style="flex:none;background:none;border:0;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit">Edit</button>')
+          : '';
         return '<div style="display:flex;align-items:center;gap:10px;background:#fff;border:0.5px solid #ece8e0;border-radius:10px;padding:10px 13px;margin-bottom:7px">' +
           '<span style="flex:none;width:20px;height:20px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px">&#10003;</span>' +
-          '<span style="flex:1;font-size:12.5px;color:#0f0f0f">' + esc(s.n) + '</span></div>';
+          '<span style="flex:1;font-size:12.5px;color:#0f0f0f">' + esc(s.n) + '</span>' + editLink + '</div>';
       }
       if(s.st === 'active'){
         // The active section's body (the stepper) renders INSIDE its row, so the
