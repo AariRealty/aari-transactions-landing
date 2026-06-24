@@ -11477,7 +11477,7 @@ Tell me your planned move-out date and I will set the inspection.`
     renderAgentRequestsBanner();
     renderServiceStage();
     _openPopKey = null;
-    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null; _ctConfStep = 0; _revEdit = false;
+    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null; _ctConfStep = 0; _revEdit = false; _partyStep = 0; _partyEdit = false;
     document.body.classList.add('tpb-open');
     renderPlaybook(file);
     renderDeleteZone(file);
@@ -12639,6 +12639,8 @@ Tell me your planned move-out date and I will set the inspection.`
   let _ctReviewIdx = null;        // confirmed terms · one-at-a-time review stepper index (null = off)
   let _ctConfStep = 0;            // UNconfirmed terms · one-at-a-time confirm stepper index
   let _revEdit = false;           // confirmed review stepper · is the current step open for editing
+  let _partyStep = 0;             // parties confirm stepper · current screen index
+  let _partyEdit = false;         // parties confirm stepper · is the current screen open for editing
   // The contact panel renders in two places — the Contract Terms split column
   // (#tpb-terms) and Your Work Task 3 (#tpb-checklist). Re-render whichever is open.
   function rerenderContactsHost(){
@@ -12718,6 +12720,58 @@ Tell me your planned move-out date and I will set the inspection.`
       const complete = r.optional ? true : !!c.name;
       return Object.assign({}, r, { c, complete });
     });
+  }
+  // ===== Parties (buyers / sellers) · structured, signer-aware, multi-party =====
+  // partiesOf normalizes logistics.parties, or seeds from the existing buyer/seller
+  // contact slots so a file with no parties data migrates cleanly on first edit.
+  function partiesOf(file){
+    const lg = file.logistics || {};
+    if(lg.parties && (Array.isArray(lg.parties.buyers) || Array.isArray(lg.parties.sellers))){
+      return { buyers:(lg.parties.buyers || []).slice(), sellers:(lg.parties.sellers || []).slice() };
+    }
+    const rows = contactRows(file);
+    const findC = function(k){ const r = rows.find(function(x){ return x.key === k; }); return r ? r.c : { name:'', email:'', phone:'' }; };
+    const mk = function(c){ return { type:'person', name:c.name || '', email:c.email || '', phone:c.phone || '' }; };
+    const raw = file.raw_form_data || {};
+    const buyers = [ mk(findC('buyer')) ];
+    if(raw.pa_buyer2_name) buyers.push({ type:'person', name:raw.pa_buyer2_name, email:raw.pa_buyer2_email || '', phone:raw.pa_buyer2_phone || '' });
+    if(raw.pa_buyer3_name) buyers.push({ type:'person', name:raw.pa_buyer3_name, email:raw.pa_buyer3_email || '', phone:raw.pa_buyer3_phone || '' });
+    return { buyers:buyers, sellers:[ mk(findC('seller')) ] };
+  }
+  function partyComplete(p){
+    if(!p) return false;
+    return (p.type === 'entity') ? !!((p.entity_name || '').trim() && (p.signer_name || '').trim()) : !!((p.name || '').trim());
+  }
+  function partyDisplayName(p){
+    if(!p) return '';
+    return (p.type === 'entity') ? (p.entity_name || '') : (p.name || '');
+  }
+  async function savePartyPatch(file, side, idx, patch){
+    const lg = Object.assign({}, file.logistics || {});
+    const seed = partiesOf(file);
+    const parties = lg.parties
+      ? { buyers:(lg.parties.buyers || seed.buyers).slice(), sellers:(lg.parties.sellers || seed.sellers).slice() }
+      : { buyers:seed.buyers.slice(), sellers:seed.sellers.slice() };
+    const arr = parties[side].slice();
+    arr[idx] = Object.assign({ type:'person' }, arr[idx] || {}, patch);
+    parties[side] = arr;
+    lg.parties = parties; file.logistics = lg;
+    if(_currentFile && _currentFile.id === file.id) _currentFile.logistics = lg;
+    const { error } = await _client.from('files').update({ logistics: lg }).eq('id', file.id);
+    if(error){ alert('Could not save that party — check your connection and try again.'); }
+  }
+  async function addParty(file, side){
+    const lg = Object.assign({}, file.logistics || {});
+    const seed = partiesOf(file);
+    const parties = lg.parties
+      ? { buyers:(lg.parties.buyers || seed.buyers).slice(), sellers:(lg.parties.sellers || seed.sellers).slice() }
+      : { buyers:seed.buyers.slice(), sellers:seed.sellers.slice() };
+    parties[side] = parties[side].concat([{ type:'person', name:'', email:'', phone:'' }]);
+    lg.parties = parties; file.logistics = lg;
+    if(_currentFile && _currentFile.id === file.id) _currentFile.logistics = lg;
+    const { error } = await _client.from('files').update({ logistics: lg }).eq('id', file.id);
+    if(error){ alert('Could not add that party — check your connection and try again.'); return -1; }
+    return parties[side].length - 1;
   }
   function contactsTaskHtml(file){
     const lg = file.logistics || {};
