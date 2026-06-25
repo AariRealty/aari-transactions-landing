@@ -13782,10 +13782,29 @@ Tell me your planned move-out date and I will set the inspection.`
         grp('Contract', 'contract', [{f:'__type',label:'Type',val:_type,ro:true},{f:'address',label:'Property',val:(ex.address||file.property_address||'')},{f:'county',label:'County',val:(ex.county||'')}]) +
         grp('Parties', 'parties', _pf) +
         grp('Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),ro:true},{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}]) +
-        grp('Price & dates', 'pricedates', [{f:'price',label:'Purchase price',val:_price},{f:'emd',label:'Initial deposit',val:_money(ex.emd)},{f:'balance_to_close',label:'Balance to close',val:_money(ex.balance_to_close)},{f:'effective_date',label:'Effective date',val:_eff},{f:'closing_date',label:'Closing date',val:_cls}]);
-    // Deadlines · the real ledger renders into #tpb-dl-setup-body (per-deadline confirm kept).
-    const dlGroup = '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:11px;padding:4px 14px 11px;margin-bottom:9px"><div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#9a958c;padding:9px 0 2px">Deadlines</div><div id="tpb-dl-setup-body"></div></div>';
-    const footer = '<div id="tpb-setup-move-host" style="margin-top:3px"></div>';
+        grp('Price', 'pricedates', [{f:'price',label:'Purchase price',val:_price},{f:'emd',label:'Initial deposit',val:_money(ex.emd)},{f:'balance_to_close',label:'Balance to close',val:_money(ex.balance_to_close)}]);
+    // Deadlines · own section. Effective + closing editable here (recalculate the rest);
+    // quiet list (Option A): name + date, weekend roll shown only when it moves.
+    const _dlEng = window.AariDeadlineEngine;
+    let _dlRows = []; try { _dlRows = fileContractDeadlines(file) || []; } catch(_){ _dlRows = []; }
+    const _dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const _fmtD = function(d){ try { return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(_){ return ''; } };
+    const _dlRowsHtml = _dlRows.map(function(r){
+      if(!r || !r.date) return '';
+      const rolled = r.bizDay && r.computedDate && _dlEng && _dlEng.ymd(r.computedDate) !== _dlEng.ymd(r.date);
+      const rollNote = rolled ? ('<div style="font-size:11.5px;color:#b98a2e;font-weight:600;margin-top:2px">' + _dow[r.computedDate.getDay()] + ' ' + _fmtD(r.computedDate) + ' &rarr; moved to ' + _dow[r.date.getDay()] + '</div>') : '';
+      return '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:11px 0;border-top:0.5px solid #f2eee7"><div><div style="font-size:14px;font-weight:600">' + esc(r.name) + '</div>' + rollNote + '</div><span style="font-size:14px;font-weight:700;white-space:nowrap">' + _fmtD(r.date) + '</span></div>';
+    }).join('');
+    const _anchors = '<div style="display:flex;gap:24px;flex-wrap:wrap;padding-bottom:13px;border-bottom:0.5px solid #ece8e0">' +
+      '<div><div style="font-size:11px;color:#9a958c;margin-bottom:3px">Effective</div><input type="date" data-nf-anchor="effective_date" value="' + (file.effective_date || '') + '" style="font:inherit;font-size:13px;font-weight:600;border:0;border-bottom:1px solid #d9d4ca;padding:2px 0;color:#0f0f0f;background:transparent"></div>' +
+      '<div><div style="font-size:11px;color:#9a958c;margin-bottom:3px">Closing</div><input type="date" data-nf-anchor="closing_date" value="' + (file.closing_date || '') + '" style="font:inherit;font-size:13px;font-weight:600;border:0;border-bottom:1px solid #d9d4ca;padding:2px 0;color:#0f0f0f;background:transparent"></div>' +
+      '</div><div style="font-size:11px;color:#9a958c;margin:9px 0 4px">Fix a date here and the deadlines recalculate. Weekends roll to the next business day.</div>';
+    const _dlInner = file.effective_date
+      ? (_anchors + (_dlRowsHtml || '<div style="font-size:13px;color:#9a958c;padding:10px 0">No deadlines for this contract type.</div>'))
+      : (_anchors + '<div style="font-size:13px;color:#9a958c;padding:10px 0">Add the effective date above to generate the deadlines.</div>');
+    const _moveBtn = '<button type="button" data-move-next-stage="under_contract" style="width:100%;margin-top:14px;font-size:14px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:10px;padding:13px;cursor:pointer;font-family:inherit">Confirm and move to Under contract &rarr;</button>';
+    const dlGroup = '<div style="background:#fff;border:1px solid #0f0f0f;border-radius:12px;padding:14px 16px;margin-bottom:9px"><div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#0f0f0f;margin-bottom:11px">Deadlines</div>' + _dlInner + _moveBtn + '</div>';
+    const footer = '';
     return '<div style="background:#f6f4ef;border:0.5px solid #ece8e0;border-radius:12px;padding:13px;margin-bottom:14px">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;font-weight:600;color:#0f0f0f">What I extracted</span><span style="font-size:10px;color:#0c447c;background:#e6f1fb;border-radius:9px;padding:2px 8px;font-weight:600">from the contract</span></div>' +
       '<div style="font-size:11.5px;color:#a39e95;margin-bottom:11px">Review the list, tap Edit on anything that is off, then confirm the dates below.</div>' +
@@ -13823,6 +13842,16 @@ Tell me your planned move-out date and I will set the inspection.`
   document.addEventListener('click', function(e){
     const sv = e.target && e.target.closest && e.target.closest('[data-nf-save]');
     if(sv && _currentFile){ nfSaveGroup(); }
+  });
+  // Edit the effective / closing date in the Deadlines section → save + recalculate.
+  document.addEventListener('change', async function(e){
+    const an = e.target && e.target.getAttribute && e.target.getAttribute('data-nf-anchor');
+    if(!an || !_currentFile) return;
+    const val = e.target.value || null;
+    const f = _currentFile;
+    try { await _client.from('files').update({ [an]: val }).eq('id', f.id); } catch(_){}
+    f[an] = val;
+    try { renderContractTerms(f); } catch(_){ try { openPlaybook(f); } catch(__){} }
   });
   // ---- Per-stage recap · a clean, audit-friendly record of the dates met and the
   // tasks completed so far. Replaces the old global "Weekly recap" button: nothing
