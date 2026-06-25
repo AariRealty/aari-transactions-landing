@@ -13737,67 +13737,42 @@ Tell me your planned move-out date and I will set the inspection.`
     if((file.file_type || 'sale') !== 'sale') return ctBody;
     const stg = (file.transaction_stage || '').toLowerCase();
     if(['', 'new', 'intake_received', 'waiting_for_tc'].indexOf(stg) === -1) return ctBody;
-    const lg = file.logistics || {};
-    const tOk = termsAttested(file);
-    const cOk = !!lg.contacts_confirmed_at;
-    const fOk = !!lg.financing_confirmed_at;
-    const secs = [
-      { n:'Contract type', st: tOk ? 'done' : 'active' },
-      { n:'Parties',       st: !tOk ? 'locked' : (cOk ? 'done' : 'active') },
-      { n:'Financing',     st: !cOk ? 'locked' : (fOk ? 'done' : 'active') },
-      { n:'Terms & dates', st: !fOk ? 'locked' : 'active' }
-    ];
-    const doneN = secs.filter(function(s){ return s.st === 'done'; }).length;
-    const nest = function(body){ return body ? ('<div style="margin-top:10px">' + body + '</div>') : ''; };
-    const numDot = function(i){ return '<span style="flex:none;width:20px;height:20px;border-radius:50%;border:1.5px solid #0f0f0f;display:flex;align-items:center;justify-content:center;font-size:10px;color:#0f0f0f">' + (i + 1) + '</span>'; };
-    const check = '<span style="flex:none;width:20px;height:20px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px">&#10003;</span>';
-    const rowH = function(s, i){
-      if(s.st === 'done'){
-        // Any confirmed section can be re-opened to edit. Edit → nests that section's
-        // body under its row (contract type stepper / parties stepper / financing).
-        const secKey = s.n === 'Contract type' ? 'terms' : (s.n === 'Parties' ? 'parties' : (s.n === 'Financing' ? 'financing' : ''));
-        const editing = !!(secKey && _setupEditSec === secKey);
-        const editLink = secKey
-          ? (editing
-              ? '<button type="button" data-setup-edit="' + secKey + '" style="flex:none;background:none;border:0;color:#0f0f0f;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit">Done</button>'
-              : '<button type="button" data-setup-edit="' + secKey + '" style="flex:none;background:none;border:0;color:#185FA5;font-size:11px;cursor:pointer;font-family:inherit">Edit</button>')
-          : '';
-        const head = '<div style="display:flex;align-items:center;gap:10px">' + check + '<span style="flex:1;font-size:12.5px;color:#0f0f0f">' + esc(s.n) + '</span>' + editLink + '</div>';
-        let body = '';
-        if(editing){ try { body = secKey === 'terms' ? ctBody : (secKey === 'parties' ? contactsTaskHtml(file) : (secKey === 'financing' ? financingHtml(file) : '')); } catch(_){ body = ''; } }
-        return '<div style="background:#fff;border:' + (editing ? '1.5px solid #0f0f0f' : '0.5px solid #ece8e0') + ';border-radius:10px;padding:10px 13px;margin-bottom:7px">' +
-          head + nest(body) + '</div>';
-      }
-      if(s.st === 'active'){
-        let body = '';
-        let hint = '';
-        try {
-          if(s.n === 'Contract type') body = ctBody;
-          else if(s.n === 'Parties') body = contactsTaskHtml(file);
-          else if(s.n === 'Financing') body = financingHtml(file);
-          // Terms & dates · the deadline ledger nests INSIDE this section's box
-          // (renderDeadlinesForFile fills this host) so it visibly belongs to section 4.
-          else if(s.n === 'Terms & dates') body = '<div id="tpb-dl-setup-body"></div>';
-        } catch(_){ body = ''; }
-        return '<div style="background:#fff;border:1.5px solid #0f0f0f;border-radius:10px;padding:11px 13px;margin-bottom:7px">' +
-          '<div style="display:flex;align-items:center;gap:10px">' + numDot(i) + '<span style="flex:1;font-size:12.5px;font-weight:500;color:#0f0f0f">' + esc(s.n) + '</span>' + hint + '</div>' +
-          nest(body) + '</div>';
-      }
-      return '<div style="display:flex;align-items:center;gap:10px;background:#faf8f5;border:0.5px solid #efeae1;border-radius:10px;padding:10px 13px;margin-bottom:7px;opacity:.6">' +
-        '<span style="flex:none;width:20px;height:20px;border-radius:50%;background:#efece6;color:#a39e95;display:flex;align-items:center;justify-content:center;font-size:10px">' + (i + 1) + '</span>' +
-        '<span style="flex:1;font-size:12.5px;color:#5f5e5a">' + esc(s.n) + '</span>' +
-        '<span style="font-size:13px;color:#c2bdb4">&#128274;</span></div>';
+    // ===== Grouped review LIST (not one-at-a-time) · show everything extracted at
+    // once, edit any group inline, deadlines + Move gate below. =====
+    const ex = (typeof extractedFields === 'function' ? (extractedFields(file) || {}) : {});
+    const editSec = _setupEditSec;
+    const _money = function(v){ if(v==null||v==='') return ''; var s=String(v).replace(/^\$/,'').replace(/\.00$/,''); return '$'+s; };
+    const _ctLabels = { frbar_asis:'AS IS Residential (FR/BAR 7x)', frbar_standard:'Residential (FR/BAR Standard)', frbar_crsp:'Vacant Land / CRSP', nabor:'NABOR Residential' };
+    const _type = file.contract_type ? (_ctLabels[file.contract_type] || file.contract_type) : (ex.__t || 'AS IS Residential');
+    const _financed = !!(ex.loan_amount && parseFloat(String(ex.loan_amount).replace(/[^0-9.]/g,'')) > 0) || !isCashFile(file);
+    const _price = file.purchase_price_cents ? ('$' + Number(file.purchase_price_cents/100).toLocaleString()) : _money(ex.price);
+    const _eff = file.effective_date || ex.effective_date || '';
+    const _cls = file.closing_date || ex.closing_date || '';
+    const grpRow = function(k, v){ return v ? ('<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(k) + '</span><span style="font-weight:600;text-align:right">' + esc(v) + '</span></div>') : ''; };
+    const grp = function(title, secKey, rows){
+      const editing = !!(secKey && editSec === secKey);
+      const editBtn = secKey
+        ? '<button type="button" data-setup-edit="' + secKey + '" style="background:none;border:0;color:' + (editing ? '#0f0f0f' : '#185FA5') + ';font-size:11.5px;font-weight:500;cursor:pointer;font-family:inherit">' + (editing ? 'Done' : 'Edit') + '</button>'
+        : '';
+      let editor = '';
+      if(editing){ try { editor = secKey === 'parties' ? contactsTaskHtml(file) : (secKey === 'financing' ? financingHtml(file) : ctBody); } catch(_){ editor = ''; } }
+      const body = editing ? ('<div style="margin-top:10px">' + editor + '</div>') : rows.map(function(r){ return grpRow(r[0], r[1]); }).join('');
+      return '<div style="background:#fff;border:' + (editing ? '1.5px solid #0f0f0f' : '0.5px solid #ece8e0') + ';border-radius:11px;padding:4px 14px 11px;margin-bottom:9px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0 2px"><span style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#9a958c">' + esc(title) + '</span>' + editBtn + '</div>' +
+        body + '</div>';
     };
-    const gateLine = (doneN >= 3)
-      ? '<div style="font-size:11.5px;font-weight:600;color:#3e7d57;background:#eef5ef;border-radius:9px;padding:10px 12px;margin-top:3px">Last section, then this file can move to Under Contract</div>'
-      : '<div style="font-size:11.5px;font-weight:600;color:#a39e95;background:#efece6;border-radius:9px;padding:10px 12px;margin-top:3px">Confirm all 4 sections to move to Under Contract</div>';
-    // Footer · once Terms & dates is active (financing confirmed) the Move gate bar
-    // lives here as the card footer (renderDeadlinesForFile fills this host with the
-    // locked/active bar). Before that, the plain gate line.
-    const footer = fOk ? '<div id="tpb-setup-move-host" style="margin-top:3px"></div>' : gateLine;
+    const listHtml =
+        grp('Contract', 'terms', [['Type', _type], ['Property', (ex.address || file.property_address || '')], ['County', (ex.county || '')]]) +
+        grp('Parties', 'parties', [['Buyer', (ex.buyer || '')], ['Seller', (ex.seller || '')], ['Listing brokerage', (ex.seller_brokerage || '')], ['Buyer brokerage', (ex.buyer_brokerage || '')], ['Title', (ex.title_name || '')]]) +
+        grp('Financing', 'financing', [['Type', (_financed ? 'Financed' : 'Cash')], ['Loan amount', _money(ex.loan_amount)]]) +
+        grp('Price & dates', 'terms', [['Purchase price', _price], ['Initial deposit', _money(ex.emd)], ['Balance to close', _money(ex.balance_to_close)], ['Effective date', _eff], ['Closing date', _cls]]);
+    // Deadlines · the real ledger renders into #tpb-dl-setup-body (per-deadline confirm kept).
+    const dlGroup = '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:11px;padding:4px 14px 11px;margin-bottom:9px"><div style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#9a958c;padding:9px 0 2px">Deadlines</div><div id="tpb-dl-setup-body"></div></div>';
+    const footer = '<div id="tpb-setup-move-host" style="margin-top:3px"></div>';
     return '<div style="background:#f6f4ef;border:0.5px solid #ece8e0;border-radius:12px;padding:13px;margin-bottom:14px">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px"><span style="font-size:13px;font-weight:600;color:#0f0f0f">Set up this file</span><span style="font-size:11px;color:#a39e95">' + doneN + ' of 4 confirmed</span></div>' +
-      secs.map(rowH).join('') + footer + '</div>';
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;font-weight:600;color:#0f0f0f">What I extracted</span><span style="font-size:10px;color:#0c447c;background:#e6f1fb;border-radius:9px;padding:2px 8px;font-weight:600">from the contract</span></div>' +
+      '<div style="font-size:11.5px;color:#a39e95;margin-bottom:11px">Review the list, tap Edit on anything that is off, then confirm the dates below.</div>' +
+      listHtml + dlGroup + footer + '</div>';
   }
   // ---- Per-stage recap · a clean, audit-friendly record of the dates met and the
   // tasks completed so far. Replaces the old global "Weekly recap" button: nothing
