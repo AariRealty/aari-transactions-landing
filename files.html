@@ -13240,17 +13240,33 @@ Tell me your planned move-out date and I will set the inspection.`
   // document's first page. Empty when the upload is a single document.
   function docTabsHtml(file){
     const docs = (((file.raw_form_data || {}).extracted_contract || {}).documents) || [];
-    if(!Array.isArray(docs) || docs.length < 2) return '';
-    // Legal names · the parser reads the title at the top of each document and
-    // assigns the tab; these are the proper document names for the tab labels.
-    const lbl = { Contract:'AS IS Contract', Addendum:'Addendum', Rider:'Comprehensive Rider', Compensation:'Compensation Agreement' };
-    return '<div id="ct-doc-tabs" style="display:flex;gap:6px;overflow-x:auto;padding:1px 0 9px">' +
-      docs.map(function(d, i){
-        const on = i === 0;
-        const pathAttr = d.path ? (' data-doc-path="' + esc(d.path) + '"') : '';
-        return '<button type="button" data-doc-page="' + d.page + '"' + pathAttr + ' class="ct-doc-tab" style="flex:none;border:0;border-radius:20px;font-family:inherit;font-size:11px;padding:5px 11px;cursor:pointer;white-space:nowrap;' + (on ? 'background:#0f0f0f;color:#fff' : 'background:#f1ede6;color:#5f5e5a') + '">' + esc(lbl[d.title] || d.title) + '</button>';
-      }).join('') +
-      '</div>';
+    if(!Array.isArray(docs) || !docs.length) return '';
+    // Canonical display order, ALWAYS: Contract → Comprehensive Rider →
+    // Compensation Agreement → Addendum(s) last (regardless of page order).
+    const lbl = { Contract:'AS IS Contract', Rider:'Comprehensive Rider', Compensation:'Compensation Agreement' };
+    const order = { Contract:0, Rider:1, Compensation:2, Addendum:3 };
+    const sorted = docs.map(function(d, i){ return { d:d, i:i }; }).sort(function(a, b){
+      const pa = (order[a.d.title] != null) ? order[a.d.title] : 9;
+      const pb = (order[b.d.title] != null) ? order[b.d.title] : 9;
+      return (pa - pb) || (a.i - b.i);
+    }).map(function(x){ return x.d; });
+    // A missing core document (Contract / Rider / Compensation) gets flagged so
+    // the TC sees the gap. Only when a multi-doc package was uploaded.
+    const have = {}; sorted.forEach(function(d){ have[d.title] = true; });
+    const missing = ['Contract','Rider','Compensation'].filter(function(t){ return !have[t]; });
+    if(sorted.length < 2 && !missing.length) return '';
+    let _addn = 0;
+    const tabsHtml = sorted.map(function(d, i){
+      const on = i === 0;
+      const pathAttr = d.path ? (' data-doc-path="' + esc(d.path) + '"') : '';
+      // Addenda are labelled by sequence letter: Addendum: A, B, C …
+      const text = (d.title === 'Addendum') ? ('Addendum: ' + String.fromCharCode(65 + (_addn++))) : (lbl[d.title] || d.title);
+      return '<button type="button" data-doc-page="' + d.page + '"' + pathAttr + ' class="ct-doc-tab" style="flex:none;border:0;border-radius:20px;font-family:inherit;font-size:11px;padding:5px 11px;cursor:pointer;white-space:nowrap;' + (on ? 'background:#0f0f0f;color:#fff' : 'background:#f1ede6;color:#5f5e5a') + '">' + esc(text) + '</button>';
+    }).join('');
+    const flagHtml = missing.map(function(t){
+      return '<span title="Not found in the uploaded package" style="flex:none;border:1px solid #e6c4ba;background:#fbf1ee;color:#a3402f;border-radius:20px;font-size:11px;font-weight:600;padding:5px 11px;white-space:nowrap">&#9888; ' + esc(lbl[t]) + ' missing</span>';
+    }).join('');
+    return '<div id="ct-doc-tabs" style="display:flex;gap:6px;align-items:center;overflow-x:auto;padding:1px 0 9px">' + tabsHtml + flagHtml + '</div>';
   }
   function isEntityName(n){ return /\b(LLC|L\.L\.C|INC|CORP|CO\.|COMPANY|TRUST|LP|LLP|PA|PLLC|ENTERPRISES?|INVESTMENTS?|PROPERTIES|HOLDINGS?|GROUP|PARTNERS?)\b/i.test(n || ''); }
   function partyFromName(name, email, phone){
