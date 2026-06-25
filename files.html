@@ -12121,7 +12121,14 @@ Tell me your planned move-out date and I will set the inspection.`
       if(un){ await unmarkEmailSent(_drawerFile, un.getAttribute('data-unmark')); renderPlaybook(_drawerFile); return; }
     });
   }
-  // ===== BROKER-ONLY FILE DELETE · quiet text link, inline confirm =====
+  // ===== BROKER-ONLY FILE DELETE · tucked inside a ⋯ menu (low accidental-click) =====
+  // Wraps the destructive action in an overflow menu so it takes two taps to reach.
+  function delMenu(itemHtml){
+    return '<div style="position:relative;display:inline-block">' +
+      '<button type="button" data-del-menu-toggle aria-label="More" style="width:30px;height:30px;border:0.5px solid rgba(15,15,15,0.14);border-radius:8px;background:#fff;cursor:pointer;color:#7a756c;font-size:17px;line-height:1;font-weight:700;font-family:inherit">&#8943;</button>' +
+      '<div data-del-menu hidden style="position:absolute;right:0;bottom:38px;background:#fff;border:0.5px solid rgba(15,15,15,0.14);border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:5px;min-width:150px;z-index:60">' + itemHtml + '</div>' +
+      '</div>';
+  }
   function renderDeleteZone(file){
     const z = document.getElementById('tpb-delete');
     if(!z) return;
@@ -12135,19 +12142,26 @@ Tell me your planned move-out date and I will set the inspection.`
             (req.at ? ' \u00b7 ' + new Date(req.at).toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '') +
             ' \u00b7 <a href="#" data-del-dismiss style="color:#9a7c3a">dismiss</a></div>'
         : '';
-      z.innerHTML = banner + '<a href="#" data-del-link style="font-size:11px;color:#e0a8a8;text-decoration:underline;text-underline-offset:3px">Delete file</a>';
+      z.innerHTML = banner + delMenu('<a href="#" data-del-link style="display:block;font-size:12.5px;color:#a3402f;padding:8px 11px;border-radius:6px;text-decoration:none">Delete file</a>');
       return;
     }
     if(_profile && _profile.role === 'tc'){
       z.hidden = false;
       z.innerHTML = req
         ? '<span style="font-size:11px;color:#9a7c3a">Deletion requested \u00b7 waiting on Marlenyi</span>'
-        : '<a href="#" data-del-request style="font-size:11px;color:#b0aca4;text-decoration:underline;text-underline-offset:3px">Request deletion</a>';
+        : delMenu('<a href="#" data-del-request style="display:block;font-size:12.5px;color:#7a756c;padding:8px 11px;border-radius:6px;text-decoration:none">Request deletion</a>');
       return;
     }
     z.hidden = true; z.innerHTML = '';
   }
   document.addEventListener('click', async (e) => {
+    // ⋯ menu: toggle open, and close any open menu when clicking elsewhere.
+    const dtog = e.target.closest && e.target.closest('[data-del-menu-toggle]');
+    if(dtog){ e.preventDefault(); const m = dtog.parentNode.querySelector('[data-del-menu]');
+      const wasHidden = m && m.hidden;
+      document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; });
+      if(m) m.hidden = !wasHidden; return; }
+    if(!(e.target.closest && e.target.closest('[data-del-menu]'))){ document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; }); }
     const dreq = e.target.closest && e.target.closest('[data-del-request]');
     if(dreq && _currentFile){
       e.preventDefault();
@@ -14935,7 +14949,15 @@ Tell me your planned move-out date and I will set the inspection.`
     const tt = document.getElementById('tpb-poptitle'); if(tt) tt.textContent = '';
     const bk = document.getElementById('tpb-popback'); if(bk) bk.innerHTML = '&larr; All files';
     const ad = document.getElementById('rail-bar-addr');
-    if(ad && _currentFile) ad.textContent = String(_currentFile.property_address || '').split(',')[0].trim();
+    if(ad && _currentFile){
+      const _addr = String(_currentFile.property_address || '').split(',')[0].trim();
+      let _stg, _lbl = '';
+      try { _stg = (typeof deriveStage === 'function') ? deriveStage(_currentFile) : (_currentFile.transaction_stage || 'new'); } catch(_){ _stg = _currentFile.transaction_stage || 'new'; }
+      try { _lbl = (typeof stageLabel === 'function') ? stageLabel(_currentFile.file_type || 'sale', _stg) : ''; } catch(_){ _lbl = ''; }
+      if(!_lbl) _lbl = 'New';
+      ad.innerHTML = esc(_addr) +
+        '<span style="display:inline-flex;align-items:center;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:#fff;background:#0f0f0f;border-radius:20px;padding:3px 10px;margin-left:10px;vertical-align:middle;font-family:Inter,system-ui,sans-serif">' + esc(_lbl) + '</span>';
+    }
     markNextTask();
     pv.hidden = false;
   }
