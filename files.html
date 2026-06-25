@@ -15247,9 +15247,138 @@ Tell me your planned move-out date and I will set the inspection.`
       if((e.key==='Escape'||e.key==='Esc') && document.body.classList.contains('tpb-open')) closePlaybook();
     });
     document.getElementById('btn-newfile').addEventListener('click', () => {
-      // TC quick-submit · just upload the contract, the extractor reads every line.
-      window.location.href = '/tc-submit.html';
+      // TC quick-submit · runs IN the dashboard so the scan flows straight into the
+      // real "Set up this file" (openPlaybook), no separate page, no redirect.
+      openNewFileFlow();
     });
+
+    // ===== In-dashboard new-file flow: upload -> scan -> openPlaybook =====
+    var NF_SIDE_SVC = {
+      listing:{ id:'lc', file_type:'listing' },
+      both:{ id:'tc_both_sides', file_type:'sale' },
+      buyer:{ id:'tc_one_side', file_type:'sale' }
+    };
+    var _nfFile = null, _nfSide = null, _nfBusy = false;
+    function buildNewFileModal(){
+      if(document.getElementById('nf-style')) return;
+      var st = document.createElement('style'); st.id = 'nf-style';
+      st.textContent = '.nf-back{position:fixed;inset:0;background:rgba(15,15,15,.45);display:none;align-items:flex-start;justify-content:center;z-index:9000;padding:60px 16px;overflow:auto}'
+        + '.nf-back.open{display:flex}'
+        + '.nf-card{background:#fff;border-radius:16px;max-width:520px;width:100%;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.25);font-family:inherit}'
+        + '.nf-head{display:flex;align-items:center;justify-content:space-between;font-size:19px;font-weight:600;margin-bottom:6px}'
+        + '.nf-x{cursor:pointer;color:#8a857c;font-size:24px;line-height:1}'
+        + '.nf-sub{font-size:13px;color:#8a857c;margin:0 0 16px}'
+        + '.nf-drop{border:1.5px dashed rgba(15,15,15,.16);border-radius:12px;padding:18px;text-align:center;cursor:pointer;font-size:14px;font-weight:600;background:#fbfaf7}'
+        + '.nf-drop:hover,.nf-drop.over{background:#f3f1ec}'
+        + '.nf-filerow{display:flex;align-items:center;gap:11px;background:#fbfaf7;border:0.5px solid rgba(15,15,15,.14);border-radius:11px;padding:12px 14px;margin-top:12px}'
+        + '.nf-pdf{font-size:11px;font-weight:700;color:#fff;background:#0f0f0f;border-radius:6px;padding:4px 7px}'
+        + '.nf-nm{font-weight:600;font-size:14px}.nf-mb{font-size:12px;color:#8a857c}.nf-rmv{margin-left:auto;color:#8a857c;cursor:pointer;font-size:20px}'
+        + '.nf-q{font-size:13px;font-weight:700;margin:18px 0 9px}'
+        + '.nf-seg{display:flex;border:1px solid rgba(15,15,15,.14);border-radius:10px;overflow:hidden}'
+        + '.nf-seg button{flex:1;border:0;background:#fff;font:inherit;font-size:13.5px;font-weight:600;padding:11px 6px;cursor:pointer;color:#8a857c;border-right:1px solid rgba(15,15,15,.14)}'
+        + '.nf-seg button:last-child{border-right:0}.nf-seg button.sel{background:#0f0f0f;color:#fff}'
+        + '.nf-scan{width:100%;margin-top:18px;font:inherit;font-size:14px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:10px;padding:13px;cursor:pointer}'
+        + '.nf-scan:disabled{opacity:.32;cursor:default}'
+        + '.nf-err{font-size:12.5px;color:#a32d2d;margin-top:10px;min-height:14px}'
+        + '.nf-reading{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:600;margin:6px 0 4px}'
+        + '.nf-spin{width:16px;height:16px;border:2px solid rgba(15,15,15,.16);border-top-color:#0f0f0f;border-radius:50%;animation:nfsp .8s linear infinite;display:inline-block}'
+        + '@keyframes nfsp{to{transform:rotate(360deg)}}';
+      document.head.appendChild(st);
+      var m = document.createElement('div'); m.className = 'nf-back'; m.id = 'nf-modal';
+      m.innerHTML = '<div class="nf-card">'
+        + '<div class="nf-head"><span>Submit a file</span><span class="nf-x" id="nf-x">&times;</span></div>'
+        + '<div id="nf-step-upload">'
+        + '<p class="nf-sub">Drop the executed contract, pick your side, and I read every line, then open it here to confirm.</p>'
+        + '<div class="nf-drop" id="nf-drop">&uarr; &nbsp;<span id="nf-dropt">Drag and drop, or click to browse a PDF</span></div>'
+        + '<input type="file" id="nf-input" accept="application/pdf" style="display:none">'
+        + '<div id="nf-file"></div>'
+        + '<div class="nf-q">Which side?</div>'
+        + '<div class="nf-seg" id="nf-seg"><button type="button" data-side="listing">Listing</button><button type="button" data-side="both">Both</button><button type="button" data-side="buyer">Buyer</button></div>'
+        + '<button type="button" class="nf-scan" id="nf-scan" disabled>Scan the contract &rarr;</button>'
+        + '<div class="nf-err" id="nf-err"></div>'
+        + '</div>'
+        + '<div id="nf-step-scan" style="display:none">'
+        + '<div class="nf-reading"><span class="nf-spin"></span><span>Reading your contract</span></div>'
+        + '<p class="nf-sub" id="nf-scanfile" style="margin-bottom:6px"></p>'
+        + '<p class="nf-sub">Pulling the parties, price, dates, and deadlines. A few seconds, then it opens for you to confirm.</p>'
+        + '</div>'
+        + '</div>';
+      document.body.appendChild(m);
+      m.addEventListener('click', function(e){ if(e.target === m) closeNewFileModal(); });
+      document.getElementById('nf-x').addEventListener('click', closeNewFileModal);
+      var drop = document.getElementById('nf-drop'), input = document.getElementById('nf-input');
+      drop.addEventListener('click', function(){ input.click(); });
+      input.addEventListener('change', function(){ if(input.files && input.files[0]) nfPick(input.files[0]); input.value=''; });
+      ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add('over'); }); });
+      ['dragleave','drop'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.remove('over'); }); });
+      drop.addEventListener('drop', function(e){ var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if(f) nfPick(f); });
+      document.querySelectorAll('#nf-seg button').forEach(function(b){
+        b.addEventListener('click', function(){ document.querySelectorAll('#nf-seg button').forEach(function(s){ s.classList.remove('sel'); }); b.classList.add('sel'); _nfSide = b.getAttribute('data-side'); document.getElementById('nf-scan').disabled = !_nfFile; });
+      });
+      document.getElementById('nf-scan').addEventListener('click', nfScan);
+    }
+    function nfEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+    function nfPick(f){
+      if(!f) return;
+      if(f.size > 25*1024*1024){ document.getElementById('nf-err').textContent = 'That file is over 25 MB. Try a smaller PDF.'; return; }
+      _nfFile = f;
+      document.getElementById('nf-file').innerHTML = '<div class="nf-filerow"><span class="nf-pdf">PDF</span><div><div class="nf-nm">'+nfEsc(f.name)+'</div><div class="nf-mb">'+(f.size/1048576).toFixed(2)+' MB</div></div><span class="nf-rmv" id="nf-rmv">&times;</span></div>';
+      document.getElementById('nf-rmv').addEventListener('click', function(){ _nfFile=null; document.getElementById('nf-file').innerHTML=''; document.getElementById('nf-scan').disabled=true; });
+      document.getElementById('nf-dropt').textContent = 'Add a different file';
+      document.getElementById('nf-err').textContent = '';
+      document.getElementById('nf-scan').disabled = !_nfSide;
+    }
+    function resetNewFileModal(){
+      _nfFile=null; _nfSide=null; _nfBusy=false;
+      var u=document.getElementById('nf-step-upload'), s=document.getElementById('nf-step-scan');
+      if(u) u.style.display=''; if(s) s.style.display='none';
+      var fz=document.getElementById('nf-file'); if(fz) fz.innerHTML='';
+      var dt=document.getElementById('nf-dropt'); if(dt) dt.textContent='Drag and drop, or click to browse a PDF';
+      var er=document.getElementById('nf-err'); if(er) er.textContent='';
+      var sb=document.getElementById('nf-scan'); if(sb) sb.disabled=true;
+      document.querySelectorAll('#nf-seg button').forEach(function(b){ b.classList.remove('sel'); });
+    }
+    function openNewFileFlow(){ buildNewFileModal(); resetNewFileModal(); document.getElementById('nf-modal').classList.add('open'); }
+    function closeNewFileModal(){ if(_nfBusy) return; var m=document.getElementById('nf-modal'); if(m) m.classList.remove('open'); }
+    async function nfScan(){
+      if(_nfBusy || !_nfFile || !_nfSide) return;
+      _nfBusy = true; document.getElementById('nf-scan').disabled = true;
+      document.getElementById('nf-step-upload').style.display='none';
+      document.getElementById('nf-step-scan').style.display='';
+      document.getElementById('nf-scanfile').textContent = _nfFile.name;
+      try{
+        var svc = NF_SIDE_SVC[_nfSide] || NF_SIDE_SVC.buyer;
+        var ures = await _client.auth.getUser();
+        var uid = (ures && ures.data && ures.data.user && ures.data.user.id) || _profile.id;
+        var id = (crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-'+Date.now());
+        var safe = (_nfFile.name || 'contract.pdf').replace(/[^a-zA-Z0-9._-]/g,'_');
+        var path = uid + '/' + id + '/' + safe;
+        var up = await _client.storage.from('transaction-files').upload(path, _nfFile, { upsert:false, contentType:_nfFile.type||'application/pdf' });
+        if(up && up.error) throw new Error('Upload failed · ' + up.error.message);
+        var su = await _client.storage.from('transaction-files').createSignedUrl(path, 604800);
+        var signed = (su && su.data && su.data.signedUrl) || '';
+        var row = { id:id, agent_id:uid, service_type:svc.id, file_type:svc.file_type, property_address:'', assigned_tc_id:uid, is_aari_engaged:true, status:'intake_received', transaction_stage:'new',
+          raw_form_data:{ submitted_by_tc:true, tc_submitter_id:uid, represents:_nfSide, contract_url:signed, contract_filename:safe, contract_path:path, submission_id:id } };
+        var ins = await _client.from('files').insert(row).select('id').single();
+        if(ins && ins.error) throw new Error(ins.error.message);
+        try{ await _client.functions.invoke('extract-contract-fields', { body:{ file_id:id } }); }catch(exErr){ console.warn('extract skipped', exErr); }
+        var fresh = await _client.from('files').select('*').eq('id', id).single();
+        var f = (fresh && fresh.data) ? fresh.data : row;
+        if(f && f.client_type) f.client_type = String(f.client_type).toLowerCase();
+        _files.unshift(f);
+        _nfBusy = false;
+        document.getElementById('nf-modal').classList.remove('open');
+        openPlaybook(f);
+        try{ loadAndRender(); }catch(_){}
+      }catch(err){
+        _nfBusy = false;
+        var msg = (err && err.message) ? err.message : 'try again.';
+        document.getElementById('nf-step-scan').style.display='none';
+        document.getElementById('nf-step-upload').style.display='';
+        document.getElementById('nf-err').textContent = 'Could not submit · ' + msg;
+        document.getElementById('nf-scan').disabled = false;
+      }
+    }
     // Live search · filters the kanban as the TC types. Searches address,
     // client name, agent contact, and raw intake fields (lender, title).
     const searchEl = document.getElementById('file-search');
