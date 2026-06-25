@@ -2248,6 +2248,23 @@ Does the seller have either available?
       ],
       under_contract: [
         {
+          // Municipal lien search · order early with title so it clears before
+          // closing (Para 9, every FL deal, cash or financed).
+          id:'uc_lien_search_order',
+          task:'uc_lien_search',
+          thread:7,
+          label:'Municipal lien search · order with title',
+          to:'{{title_closer_name}} <{{title_email}}>',
+          cc:'{{agent_name}} <{{agent_email}}>',
+          subject:'Municipal lien search · {{street}}',
+          body:
+`{{time_of_day_greeting}} {{title_closer_first_name}},
+
+Please open the municipal lien search for {{street}} so it has time to come back and clear well ahead of closing.
+
+*Send it over once it is in and flag anything that needs to be resolved.*`,
+        },
+        {
           id:'uc_hoa_docs_followup',
           task:'uc_hoa_followup',
           thread:4,
@@ -3553,6 +3570,27 @@ Once the seller responds, I'll circulate the executed addendum on this thread.
           versionsFrom:'sale_new_agent_setup',
         },
         {
+          // Insurance binder · financed only. The lender will not fund without
+          // proof of homeowner's insurance naming them as mortgagee. Ties to the
+          // existing app_insurance_binder checklist item.
+          id:'app_insurance_binder_request',
+          showIf:(f)=>!isCashFile(f),
+          task:'app_insurance_binder',
+          thread:5,
+          label:'Insurance binder · confirm bound (financed)',
+          to:'{{agent_name}} <{{agent_email}}>',
+          cc:'{{lender_name}} <{{lender_email}}>',
+          subject:'Homeowner\'s insurance binder · {{street}}',
+          body:
+`{{time_of_day_greeting}} {{agent_first_name}},
+
+Quick one on {{street}}. Since this is a financed purchase, the lender needs the homeowner's insurance binder in place before we can clear to close, naming the lender as mortgagee.
+
+Has your buyer lined up insurance yet?
+
+*Once it is bound, please have the binder sent to the lender and title so it is on file ahead of closing.*`,
+        },
+        {
           id:'app_ordered_confirm',
           showIf:(f)=>!isCashFile(f),
           task:'app_ordered',
@@ -3923,6 +3961,25 @@ If anything is off track for {{loan_approval_deadline}}, flag now so I can addre
         },
       ],
       ctc: [
+        {
+          // Final walk-through coordination. Ties to the ctc_walkthrough_scheduled
+          // checklist item. Per Para 12(b), the day prior to (or day of) closing.
+          id:'ctc_walkthrough_coordinate',
+          task:'ctc_walkthrough_scheduled',
+          thread:6,
+          label:'Final walk-through · schedule with agent',
+          to:'{{agent_name}} <{{agent_email}}>',
+          cc:'{{listing_agent_name}} <{{listing_agent_email}}>',
+          subject:'Final walk-through · {{street}}',
+          body:
+`{{time_of_day_greeting}} {{agent_first_name}},
+
+We are coming up on closing for {{street}}, so it is time to set the final walk-through.
+
+The contract allows it the day before closing, or the morning of. Closing is set for {{closing_date}}.
+
+*Let me know a day and time that works for your buyer and I will coordinate access with the listing side.*`,
+        },
         {
           id:'ctc_title_commitment_followup',
           task:'ctc_title_commitment_received',
@@ -11042,6 +11099,7 @@ Tell me your planned move-out date and I will set the inspection.`
         _railPdf.innerHTML =
           docTabsHtml(file) +
           '<iframe id="ct-pdfframe" title="Executed contract" style="width:100%;height:calc(88vh - 220px);border:0.5px solid #e6ddc9;border-radius:8px;background:#faf7f1"></iframe>' +
+          compSignerChecklistHtml(file) +
           '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px">' +
             '<span style="display:flex;align-items:center;gap:12px;min-width:0">' +
               '<span style="font-size:10px;color:#8a857c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">&#128196; ' + esc(_ctName || 'Contract') + '</span>' +
@@ -11075,6 +11133,7 @@ Tell me your planned move-out date and I will set the inspection.`
             '<div class="ct-verify-pdf">' +
               docTabsHtml(file) +
               '<iframe id="ct-pdfframe" title="Executed contract" style="width:100%;height:600px;border:0.5px solid #e6ddc9;border-radius:8px;background:#faf7f1"></iframe>' +
+              compSignerChecklistHtml(file) +
               '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:8px">' +
                 '<span style="display:flex;align-items:center;gap:12px;min-width:0">' +
                   '<span style="font-size:10px;color:#8a857c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px">&#128196; ' + esc(_ctName || 'Contract') + '</span>' +
@@ -13255,18 +13314,49 @@ Tell me your planned move-out date and I will set the inspection.`
     const have = {}; sorted.forEach(function(d){ have[d.title] = true; });
     const missing = ['Contract','Rider','Compensation'].filter(function(t){ return !have[t]; });
     if(sorted.length < 2 && !missing.length) return '';
+    // Any signature/initials flag on the Compensation Agreement puts a small
+    // amber mark on its tab, so the TC is drawn to open it (the checklist below
+    // names the missing signer).
+    const _rflags = (((file.raw_form_data || {}).extracted_contract || {}).review_flags) || [];
+    const _compFlagged = Array.isArray(_rflags) && _rflags.some(function(f){ return f && f.doc === 'Compensation'; });
     let _addn = 0;
     const tabsHtml = sorted.map(function(d, i){
       const on = i === 0;
       const pathAttr = d.path ? (' data-doc-path="' + esc(d.path) + '"') : '';
       // Addenda are labelled by sequence letter: Addendum: A, B, C …
       const text = (d.title === 'Addendum') ? ('Addendum: ' + String.fromCharCode(65 + (_addn++))) : (lbl[d.title] || d.title);
-      return '<button type="button" data-doc-page="' + d.page + '"' + pathAttr + ' class="ct-doc-tab" style="flex:none;border:0;border-radius:20px;font-family:inherit;font-size:11px;padding:5px 11px;cursor:pointer;white-space:nowrap;' + (on ? 'background:#0f0f0f;color:#fff' : 'background:#f1ede6;color:#5f5e5a') + '">' + esc(text) + '</button>';
+      const mark = (d.title === 'Compensation' && _compFlagged) ? ' &#9888;' : '';
+      return '<button type="button" data-doc-page="' + d.page + '"' + pathAttr + ' data-doc-title="' + esc(d.title) + '" class="ct-doc-tab" style="flex:none;border:0;border-radius:20px;font-family:inherit;font-size:11px;padding:5px 11px;cursor:pointer;white-space:nowrap;' + (on ? 'background:#0f0f0f;color:#fff' : 'background:#f1ede6;color:#5f5e5a') + '">' + esc(text) + mark + '</button>';
     }).join('');
     const flagHtml = missing.map(function(t){
       return '<span title="Not found in the uploaded package" style="flex:none;border:1px solid #e6c4ba;background:#fbf1ee;color:#a3402f;border-radius:20px;font-size:11px;font-weight:600;padding:5px 11px;white-space:nowrap">&#9888; ' + esc(lbl[t]) + ' missing</span>';
     }).join('');
     return '<div id="ct-doc-tabs" style="display:flex;gap:6px;align-items:center;overflow-x:auto;padding:1px 0 9px">' + tabsHtml + flagHtml + '</div>';
+  }
+  // Signer checklist for the Compensation Agreement (Option F). Renders below the
+  // document, hidden until the Compensation tab is opened. Each required signer
+  // shows a check, or an amber "verify" when the extractor couldn't detect it.
+  function compSignerChecklistHtml(file){
+    const ec = ((file.raw_form_data || {}).extracted_contract) || {};
+    const docs = ec.documents || [];
+    if(!Array.isArray(docs) || !docs.some(function(d){ return d.title === 'Compensation'; })) return '';
+    const flags = Array.isArray(ec.review_flags) ? ec.review_flags : [];
+    const flagFor = function(slot){ return flags.find(function(f){ return f && f.doc === 'Compensation' && f.slot === slot; }); };
+    const row = function(party, slot){
+      const warn = !!flagFor(slot);
+      const mk = warn
+        ? '<span style="flex:none;width:18px;height:18px;border-radius:50%;background:#faf3e2;color:#b98a2e;display:inline-flex;align-items:center;justify-content:center;font-size:11px">&#9888;</span>'
+        : '<span style="flex:none;width:18px;height:18px;border-radius:50%;background:#eef4ef;color:#2f7a4f;display:inline-flex;align-items:center;justify-content:center;font-size:11px">&#10003;</span>';
+      const st = warn
+        ? '<span style="font-size:11px;color:#b98a2e;font-weight:600">not detected &middot; verify</span>'
+        : '<span style="font-size:11px;color:#9a958c">signed</span>';
+      return '<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-top:0.5px solid #f1ede5;font-size:13px">' + mk + '<span style="flex:1">' + esc(party) + '</span>' + st + '</div>';
+    };
+    return '<div id="ct-sig-checklist" style="display:none;background:#fff;border:0.5px solid #ece8e0;border-radius:11px;padding:11px 14px;margin-top:9px">' +
+      '<div style="font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:#7a756c;margin-bottom:4px">Signatures &amp; initials</div>' +
+      row("Seller / Seller&rsquo;s Broker", 'seller_or_sellers_broker') +
+      row("Buyer&rsquo;s Broker", 'buyers_broker') +
+      '</div>';
   }
   function isEntityName(n){ return /\b(LLC|L\.L\.C|INC|CORP|CO\.|COMPANY|TRUST|LP|LLP|PA|PLLC|ENTERPRISES?|INVESTMENTS?|PROPERTIES|HOLDINGS?|GROUP|PARTNERS?)\b/i.test(n || ''); }
   function partyFromName(name, email, phone){
@@ -14444,6 +14534,9 @@ Tell me your planned move-out date and I will set the inspection.`
       const docPath = dtab.getAttribute('data-doc-path');
       document.querySelectorAll('.ct-doc-tab').forEach(function(b){ b.style.background = '#f1ede6'; b.style.color = '#5f5e5a'; });
       dtab.style.background = '#0f0f0f'; dtab.style.color = '#fff';
+      // Signer checklist (Option F) shows only on the Compensation Agreement tab.
+      const _sig = document.getElementById('ct-sig-checklist');
+      if(_sig) _sig.style.display = (dtab.getAttribute('data-doc-title') === 'Compensation') ? '' : 'none';
       if(fr && docPath){
         (async function(){
           try {
