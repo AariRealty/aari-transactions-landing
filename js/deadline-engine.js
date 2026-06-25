@@ -14,20 +14,58 @@
 (function (global) {
   'use strict';
 
-  // Federal holidays (observed) · 2026-2027 · extend yearly.
-  const FED_HOLIDAYS = new Set([
-    '2026-01-01','2026-01-19','2026-02-16','2026-05-25','2026-06-19','2026-07-03',
-    '2026-09-07','2026-10-12','2026-11-11','2026-11-26','2026-12-25',
-    '2027-01-01','2027-01-18','2027-02-15','2027-05-31','2027-06-18','2027-07-05',
-    '2027-09-06','2027-10-11','2027-11-11','2027-11-25','2027-12-24',
-  ]);
   function ymd(d){ return d.toLocaleDateString('en-CA'); }
+  // US federal holidays (observed) generated for ANY year — not hardcoded — so
+  // deadlines roll correctly every year forever. Observance per 5 U.S.C. 6103
+  // (mirrored by FAR/BAR Standard F): a fixed-date holiday on Saturday is
+  // observed the prior Friday; on Sunday, the following Monday.
+  function _nthWeekday(year, month, weekday, n){ // month 0-based · weekday 0=Sun
+    const d = new Date(year, month, 1, 12); let c = 0;
+    while(true){ if(d.getDay() === weekday){ if(++c === n) return d; } d.setDate(d.getDate() + 1); }
+  }
+  function _lastWeekday(year, month, weekday){
+    const d = new Date(year, month + 1, 0, 12);
+    while(d.getDay() !== weekday) d.setDate(d.getDate() - 1);
+    return d;
+  }
+  function _observed(d){ const x = new Date(d.getTime()); const w = x.getDay(); if(w === 6) x.setDate(x.getDate() - 1); else if(w === 0) x.setDate(x.getDate() + 1); return x; }
+  const _holCache = {};
+  function fedHolidaysForYear(year){
+    if(_holCache[year]) return _holCache[year];
+    const dates = [];
+    // Fixed-date holidays (with weekend observance): New Year, Juneteenth, July 4, Veterans, Christmas.
+    [[0,1],[5,19],[6,4],[10,11],[11,25]].forEach(md => dates.push(_observed(new Date(year, md[0], md[1], 12))));
+    dates.push(_nthWeekday(year, 0, 1, 3));   // MLK · 3rd Monday January
+    dates.push(_nthWeekday(year, 1, 1, 3));   // Presidents · 3rd Monday February
+    dates.push(_lastWeekday(year, 4, 1));     // Memorial · last Monday May
+    dates.push(_nthWeekday(year, 8, 1, 1));   // Labor · 1st Monday September
+    dates.push(_nthWeekday(year, 9, 1, 2));   // Columbus · 2nd Monday October
+    dates.push(_nthWeekday(year, 10, 4, 4));  // Thanksgiving · 4th Thursday November
+    const set = new Set(dates.map(ymd));
+    _holCache[year] = set;
+    return set;
+  }
+  function isFedHoliday(d){ const k = ymd(d); const y = d.getFullYear(); return fedHolidaysForYear(y).has(k) || fedHolidaysForYear(y + 1).has(k); }
+  // Back-compat export · a flat set across a wide range. The live roll uses
+  // isFedHoliday(), which generates any year on demand (works past the range too).
+  const FED_HOLIDAYS = (function(){ const s = new Set(); const y = (new Date()).getFullYear(); for(let yr = y - 3; yr <= y + 12; yr++){ fedHolidaysForYear(yr).forEach(v => s.add(v)); } return s; })();
   // Florida rule: deadline on Sat/Sun/federal holiday rolls to next business day.
   function flBusinessDay(d){
     const x = new Date(d.getTime());
     for(let i = 0; i < 10; i++){
       const day = x.getDay();
-      if(day !== 0 && day !== 6 && !FED_HOLIDAYS.has(ymd(x))) return x;
+      if(day !== 0 && day !== 6 && !isFedHoliday(x)) return x;
+      x.setDate(x.getDate() + 1);
+    }
+    return x;
+  }
+  // TRID "business day" for the Closing Disclosure 3-day rule (12 CFR 1026.2(a)(6),
+  // specific definition): every calendar day EXCEPT Sundays and federal holidays.
+  // Saturdays COUNT — unlike flBusinessDay above, which also excludes Saturdays.
+  function tridBusinessDay(d){
+    const x = new Date(d.getTime());
+    for(let i = 0; i < 10; i++){
+      if(x.getDay() !== 0 && !isFedHoliday(x)) return x;
       x.setDate(x.getDate() + 1);
     }
     return x;
@@ -47,18 +85,53 @@
     { key:'survey',           label:'Survey deadline',            from:'effective', offset:5 },
     { key:'walkthrough',      label:'Walk-through',               from:'closing',   offset:-1 },
   ];
+  // Legacy → contract key aliases, so the flat keys this function returns get
+  // their dates from the contract-aware engine (single source of truth).
+  const _LEGACY_ALIAS = {
+    emd_initial:     ['init_deposit'],
+    loan_app:        ['loan_app'],
+    emd_additional:  ['additional_deposit'],
+    inspection_end:  ['inspection_end', 'feasibility_end', 'due_diligence_end'],
+    loan_approval:   ['loan_approval', 'finance_cont'],
+    tenant_lease:    ['tenant_lease'],
+    title_commitment:['title_evidence', 'buyer_title_rev', 'title_policy', 'title_commitment'],
+    estoppel:        ['estoppel', 'estoppels_due'],
+    survey:          ['survey_seller', 'survey_existing', 'survey'],
+    walkthrough:     ['walk_through', 'walkthrough'],
+  };
   // All FL-rolled deadlines for a file · {} when dates are missing.
+  // SINGLE SOURCE OF TRUTH: dates come from the contract-aware engine
+  // (contractDeadlines). The flat FAR/BAR offsets are only a fallback for the
+  // few legacy keys the contract engine does not model for this contract type,
+  // so the cards/calendar/digest now show the SAME dates as the file drawer.
   function fileDeadlines(file){
     const eff = parseDate(file.effective_date);
     const close = parseDate(file.closing_date);
     const ov = (file.deadline_overrides && typeof file.deadline_overrides === 'object') ? file.deadline_overrides : {};
+    // Contract-aware dates for this file (mirrors fileContractDeadlines' override
+    // handling: strip the absolute _dates store, pull inspection days from logistics).
+    const byKey = {};
+    const dateOv = (ov._dates && typeof ov._dates === 'object') ? ov._dates : {};
+    try {
+      const ovc = Object.assign({}, ov); delete ovc._dates;
+      const lg = file.logistics || {};
+      if(ovc.insp == null && lg.inspection_days != null && lg.inspection_days !== '') ovc.insp = Number(lg.inspection_days);
+      const rows = contractDeadlines(file.contract_type || 'frbar_asis', file.effective_date, file.closing_date, ovc) || [];
+      rows.forEach(r => { if(r && r.key && r.date) byKey[r.key] = r.date; });
+    } catch(_){ /* fall back to flat offsets below */ }
     const out = {};
     DEADLINE_DEFS.forEach(def => {
-      // Manual override wins · the TC entered the contract's actual date.
-      if(ov[def.key]){
+      // 1) Legacy absolute-date override · the TC typed the contract's actual date.
+      if(ov[def.key] && typeof ov[def.key] !== 'object'){
         const od = parseDate(ov[def.key]);
         if(od){ out[def.key] = { label: def.label, date: od, manual: true }; return; }
       }
+      const cands = _LEGACY_ALIAS[def.key] || [def.key];
+      // 2) New per-deadline absolute override (deadline_overrides._dates), contract key.
+      for(const ck of cands){ if(dateOv[ck]){ const od = parseDate(dateOv[ck]); if(od){ out[def.key] = { label: def.label, date: od, manual: true }; return; } } }
+      // 3) Contract-aware computed date (the single source).
+      for(const ck of cands){ if(byKey[ck]){ out[def.key] = { label: def.label, date: byKey[ck] }; return; } }
+      // 4) Fallback · flat offset for legacy keys the contract engine does not model.
       const base = def.from === 'effective' ? eff : close;
       if(!base) return;
       out[def.key] = { label: def.label, date: flBusinessDay(addDays(base, def.offset)) };
@@ -543,7 +616,7 @@
   function contractLabel(contractType){ return CONTRACT_LABELS[contractType] || contractType || ''; }
 
   global.AariDeadlineEngine = {
-    FED_HOLIDAYS, ymd, flBusinessDay, addDays, parseDate,
+    FED_HOLIDAYS, fedHolidaysForYear, isFedHoliday, ymd, flBusinessDay, tridBusinessDay, addDays, parseDate,
     DEADLINE_DEFS, fileDeadlines, dlState, fmtDl,
     // Fix 3 · contract-type system (Phase 1)
     CONTRACT_DEFAULTS, CONTRACT_LABELS, CONTRACT_DEADLINES,

@@ -4351,11 +4351,11 @@ Tell me when the letters will be in hand so I can keep the closing timeline hone
           body:
 `{{time_of_day_greeting}} {{title_closer_first_name}},
 
-The buyer on {{street}} is an entity, so this closing falls under the FinCEN reporting rule effective March 1, 2026.
+The buyer on {{street}} is an entity, which can trigger FinCEN residential reporting.
 
-Confirm two things for me in writing: you're set up to file the required report, and you've collected everything you need from the buyer.
+That rule was vacated by a court in March 2026 and is now under appeal, so I want your read: as things stand, does this closing require a FinCEN report?
 
-If anything's missing, flag it now so it doesn't surface at the closing table.`,
+If it does, confirm you've collected what you need from the buyer so nothing surfaces at the table.`,
         },
         {
           id:'ctc_firpta_confirm',
@@ -6165,11 +6165,11 @@ Tell me your planned move-out date and I will set the inspection.`
             if(d instanceof Date && !isNaN(d.getTime())) _dls[k] = { label: (_dls[k] && _dls[k].label) || k, date: d };
           });
         }
-      } catch(_){}
+      } catch(_e){ console.warn('[deadline] contract-aware {{dl_*}} mapping failed', _e); }
       Object.keys(_dls).forEach(k => {
         template = template.split('{{dl_' + k + '}}').join(_dls[k].date.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }));
       });
-    } catch(_){}
+    } catch(_e){ console.warn('[deadline] {{dl_*}} token interpolation failed', _e); }
     // Priority 4 · any {{dl_*}} the engine could NOT compute (file has no Effective
     // or Closing date) renders [date pending] instead of a literal {{dl_…}} token,
     // so a TC never sends an email with raw template syntax in it. The missing-field
@@ -8732,7 +8732,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // and inline day-count editing now live on the ledger row itself.
     const _stdCfg = (ENG.CONTRACT_DEFAULTS && ENG.CONTRACT_DEFAULTS[ct]) || {};
     const _whyMap = {};
-    try { ENG.contractDeadlines(ct, effISO, clsISO, overridesJson).forEach(function(d){ _whyMap[d.key] = { cite:d.citation, comp:d.computedDate, date:d.date, rolled:(d.computedDate && d.date && d.computedDate.getTime() !== d.date.getTime()) }; }); } catch(_){}
+    try { ENG.contractDeadlines(ct, effISO, clsISO, overridesJson).forEach(function(d){ _whyMap[d.key] = { cite:d.citation, comp:d.computedDate, date:d.date, rolled:(d.computedDate && d.date && d.computedDate.getTime() !== d.date.getTime()) }; }); } catch(_e){ console.warn('[deadline] why-map build failed', _e); }
     const _fmtWMD = function(d){ return d ? d.toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }) : ''; };
     const _fromTerms = function(it){
       // Walk-through and Closing derive from the Closing date the TC already
@@ -10969,7 +10969,7 @@ Tell me your planned move-out date and I will set the inspection.`
       // open to the full terms + dates without leaving the page.
       const _fmtMD2 = function(iso){ if(!iso) return ''; try { return new Date(String(iso).length === 10 ? iso + 'T00:00:00' : iso).toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } };
       let _dlCount = 0;
-      if(haveDates && ct){ try { _dlCount = ENG.contractDeadlines(ct, eff, cls, ov).length; } catch(_){ _dlCount = 0; } }
+      if(haveDates && ct){ try { _dlCount = ENG.contractDeadlines(ct, eff, cls, ov).length; } catch(_e){ console.warn('[deadline] count failed', _e); _dlCount = 0; } }
       const _datesBit = (shownEff && shownCls) ? (_fmtMD2(shownEff) + ' → ' + _fmtMD2(shownCls)) : '';
       const _pills = [ (shownCt ? ctLabelFor(shownCt) : ''), _datesBit, shownPrice, (_dlCount ? (_dlCount + ' deadline' + (_dlCount === 1 ? '' : 's')) : '') ].filter(Boolean);
       const _pillHtml = _pills.map(function(p){ return '<span style="font-size:10.5px;color:#5f5e5a;background:#f1ede6;border-radius:6px;padding:3px 8px">' + esc(p) + '</span>'; }).join('');
@@ -12550,7 +12550,7 @@ Tell me your planned move-out date and I will set the inspection.`
 
   // FL deadline engine · SHARED · lives in /js/deadline-engine.js (also used
   // by the agent portal). Do not redefine here — edit the shared file.
-  const { FED_HOLIDAYS, ymd, flBusinessDay, parseDate,
+  const { FED_HOLIDAYS, ymd, flBusinessDay, tridBusinessDay, parseDate,
           DEADLINE_DEFS, fileDeadlines, dlState, fmtDl } = window.AariDeadlineEngine;
   // (addDays not destructured · files.html has its own identical helper above)
 
@@ -13863,7 +13863,8 @@ Tell me your planned move-out date and I will set the inspection.`
     if(!lg.cd_received_date || !file.closing_date) return '';
     try {
       let clear = new Date(lg.cd_received_date + 'T12:00:00');
-      for(let i = 0; i < 3; i++){ clear = flBusinessDay(addDays(clear, 1)); }
+      // TRID 3-day rule counts Saturdays (only Sundays + federal holidays excluded).
+      for(let i = 0; i < 3; i++){ clear = tridBusinessDay(addDays(clear, 1)); }
       const close = new Date(file.closing_date + 'T12:00:00');
       const fmt = (d) => d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
       if(clear > close){
@@ -13893,9 +13894,10 @@ Tell me your planned move-out date and I will set the inspection.`
     if(_cdr){
       try {
         let d = new Date(_cdr + 'T12:00:00');
-        for(let i = 0; i < 3; i++){ d = flBusinessDay(addDays(d, 1)); }
+        // TRID 3-day rule counts Saturdays (only Sundays + federal holidays excluded).
+        for(let i = 0; i < 3; i++){ d = tridBusinessDay(addDays(d, 1)); }
         cfpbRow = '<div class="ck-dl-row"><span>CFPB 3-day clear</span><span class="ck-dl-wrap">' +
-          '<button type="button" class="ck-dl ck-dl-' + dlState(d) + '" disabled title="CD delivery + 3 FL business days">' + fmtDl(d) + '</button></span></div>';
+          '<button type="button" class="ck-dl ck-dl-' + dlState(d) + '" disabled title="CD delivery + 3 TRID business days (Saturdays count)">' + fmtDl(d) + '</button></span></div>';
       } catch(_){}
     }
     return (rows || cfpbRow)
@@ -13964,7 +13966,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // Deadlines · own section. Effective + closing editable here (recalculate the rest);
     // quiet list (Option A): name + date, weekend roll shown only when it moves.
     const _dlEng = window.AariDeadlineEngine;
-    let _dlRows = []; try { _dlRows = fileContractDeadlines(file) || []; } catch(_){ _dlRows = []; }
+    let _dlRows = []; try { _dlRows = fileContractDeadlines(file) || []; } catch(_e){ console.warn('[deadline] setup deadline rows failed', _e); _dlRows = []; }
     const _dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     const _fmtD = function(d){ try { return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(_){ return ''; } };
     const _isoD = function(d){ try { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); } catch(_){ return ''; } };
