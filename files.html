@@ -14076,9 +14076,9 @@ Tell me your planned move-out date and I will set the inspection.`
     try {
       const _ckPop = host.parentElement;
       if(_ckPop && _ckPop.classList && _ckPop.classList.contains('tpb-pop')){
-        const _emHost = document.getElementById('tpb-emails');
-        const _emEmpty = !_emHost || !_emHost.innerHTML.trim();
-        _ckPop.style.display = (_setupSale && !host.innerHTML.trim() && _emEmpty) ? 'none' : '';
+        // During Setup the right side is ONLY the "Set up this file" panel — hide the
+        // whole "Your work" block until the file moves to Under Contract.
+        _ckPop.style.display = _setupSale ? 'none' : '';
       }
     } catch(_){}
     // Work rail · re-mark the NEXT task after every checklist render.
@@ -15451,9 +15451,25 @@ Tell me your planned move-out date and I will set the inspection.`
           raw_form_data:{ submitted_by_tc:true, tc_submitter_id:uid, represents:_nfSide, contract_url:signed, contract_filename:safe, contract_path:path, submission_id:id } };
         var ins = await _client.from('files').insert(row).select('id').single();
         if(ins && ins.error) throw new Error(ins.error.message);
-        var fields=null; try{ var ec = await _client.functions.invoke('extract-contract-fields', { body:{ file_id:id } }); fields=(ec&&ec.data&&ec.data.fields)||null; }catch(exErr){ console.warn('extract skipped', exErr); }
+        var fields=null, docs=null; try{ var ec = await _client.functions.invoke('extract-contract-fields', { body:{ file_id:id } }); fields=(ec&&ec.data&&ec.data.fields)||null; docs=(ec&&ec.data&&ec.data.documents)||null; }catch(exErr){ console.warn('extract skipped', exErr); }
         nfRenderFindings(fields);
         if(fields && (fields.address || fields.street)){ var _addr = fields.address || [fields.street,fields.city,fields.state,fields.zip].filter(Boolean).join(', '); if(_addr){ try{ await _client.from('files').update({ property_address:_addr }).eq('id', id); }catch(_){ } } }
+        // Auto-confirm what the scan reliably reads (contract type, parties, financing) +
+        // set the contract type and dates, so the file lands on "3 of 4 confirmed" with
+        // only Terms & dates left to confirm and the deadline ledger computed.
+        try{
+          var _iso=function(s){ if(!s) return null; var d=new Date(s); return isNaN(d)?null:d.toISOString().slice(0,10); };
+          var _cents=function(s){ if(!s) return null; var n=parseFloat(String(s).replace(/[^0-9.]/g,'')); return isNaN(n)?null:Math.round(n*100); };
+          var _exf=fields||{}; var _now=new Date().toISOString();
+          var _financed=!!(_exf.loan_amount && parseFloat(String(_exf.loan_amount).replace(/[^0-9.]/g,''))>0);
+          var _lg=Object.assign({}, (row.logistics||{}), { terms_confirmed_at:_now, contacts_confirmed_at:_now, financing_confirmed_at:_now, financing_confirmed:(_financed?'financed':'cash') });
+          var _patch={ logistics:_lg };
+          if(docs && docs.some(function(d){return d && d.title==='Contract';})) _patch.contract_type='frbar_asis';
+          var _eff=_iso(_exf.effective_date); if(_eff) _patch.effective_date=_eff;
+          var _cls=_iso(_exf.closing_date); if(_cls) _patch.closing_date=_cls;
+          var _pc=_cents(_exf.price); if(_pc) _patch.purchase_price_cents=_pc;
+          await _client.from('files').update(_patch).eq('id', id);
+        }catch(setupErr){ console.warn('auto-confirm skipped', setupErr); }
         var fresh = await _client.from('files').select('*').eq('id', id).single();
         var f = (fresh && fresh.data) ? fresh.data : row;
         if(f && f.client_type) f.client_type = String(f.client_type).toLowerCase();
