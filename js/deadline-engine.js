@@ -559,7 +559,9 @@
     if(!v) return null;
     if(v instanceof Date) return isNaN(v.getTime()) ? null : v;
     const s = String(v);
-    const d = new Date(s.length === 10 ? (s + 'T00:00:00') : s);
+    // Anchor 10-char dates at NOON (matches parseDate), so both engines agree and
+    // daylight-saving never shifts the calendar day used by the weekend roll.
+    const d = new Date(s.length === 10 ? (s + 'T12:00:00') : s);
     return isNaN(d.getTime()) ? null : d;
   }
   // Conditional deadlines appended to residential SALE contracts. The cockpit
