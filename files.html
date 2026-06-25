@@ -13767,9 +13767,24 @@ Tell me your planned move-out date and I will set the inspection.`
         '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0 2px"><span style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#9a958c">' + esc(title) + '</span>' + editBtn + '</div>' +
         body + '</div>';
     };
+    // Parties · each buyer/seller is its own person (split "A and B"), agents with their
+    // brokerage, and the title company WITH its contact info from the contract.
+    const _split = function(s){ return String(s||'').split(/\s+and\s+|\s*&\s*|\s*;\s*/i).map(function(x){return x.trim();}).filter(Boolean); };
+    const _buyers = _split(ex.buyer); const _sellers = _split(ex.seller);
+    const _pf = [];
+    (_buyers.length ? _buyers : ['']).forEach(function(b,i){ _pf.push({f:'buyer_'+i, label:'Buyer'+(_buyers.length>1?(' '+(i+1)):''), val:b}); });
+    (_sellers.length ? _sellers : ['']).forEach(function(s,i){ _pf.push({f:'seller_'+i, label:'Seller'+(_sellers.length>1?(' '+(i+1)):''), val:s}); });
+    _pf.push({f:'seller_agent', label:'Listing agent', val:(ex.seller_agent||'')});
+    _pf.push({f:'seller_brokerage', label:'Listing brokerage', val:(ex.seller_brokerage||'')});
+    _pf.push({f:'buyer_agent', label:'Buyer agent', val:(ex.buyer_agent||'')});
+    _pf.push({f:'buyer_brokerage', label:'Buyer brokerage', val:(ex.buyer_brokerage||'')});
+    _pf.push({f:'title_name', label:'Title company', val:(ex.title_name||'')});
+    _pf.push({f:'title_email', label:'Title email', val:(ex.title_email||'')});
+    _pf.push({f:'title_phone', label:'Title phone', val:(ex.title_phone||'')});
+    _pf.push({f:'title_address', label:'Title address', val:(ex.title_address||'')});
     const listHtml =
         grp('Contract', 'contract', [{f:'__type',label:'Type',val:_type,ro:true},{f:'address',label:'Property',val:(ex.address||file.property_address||'')},{f:'county',label:'County',val:(ex.county||'')}]) +
-        grp('Parties', 'parties', [{f:'buyer',label:'Buyer',val:(ex.buyer||'')},{f:'seller',label:'Seller',val:(ex.seller||'')},{f:'seller_brokerage',label:'Listing brokerage',val:(ex.seller_brokerage||'')},{f:'buyer_brokerage',label:'Buyer brokerage',val:(ex.buyer_brokerage||'')},{f:'title_name',label:'Title',val:(ex.title_name||'')}]) +
+        grp('Parties', 'parties', _pf) +
         grp('Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),ro:true},{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}]) +
         grp('Price & dates', 'pricedates', [{f:'price',label:'Purchase price',val:_price},{f:'emd',label:'Initial deposit',val:_money(ex.emd)},{f:'balance_to_close',label:'Balance to close',val:_money(ex.balance_to_close)},{f:'effective_date',label:'Effective date',val:_eff},{f:'closing_date',label:'Closing date',val:_cls}]);
     // Deadlines · the real ledger renders into #tpb-dl-setup-body (per-deadline confirm kept).
@@ -13788,16 +13803,20 @@ Tell me your planned move-out date and I will set the inspection.`
     const raw = Object.assign({}, f.raw_form_data || {});
     const exc = Object.assign({}, (raw.extracted_contract || {}));
     const fld = Object.assign({}, (exc.fields || {}));
-    const cols = {};
+    const cols = {}; const _b = []; const _s = [];
     inputs.forEach(function(inp){
       const key = inp.getAttribute('data-nf-field'); const val = (inp.value || '').trim();
       if(!key || key.indexOf('__') === 0) return;
+      if(/^buyer_\d+$/.test(key)){ if(val) _b.push(val); return; }
+      if(/^seller_\d+$/.test(key)){ if(val) _s.push(val); return; }
       fld[key] = val;
       if(key === 'address') cols.property_address = val;
       if(key === 'effective_date'){ const d = new Date(val); if(!isNaN(d)) cols.effective_date = d.toISOString().slice(0,10); }
       if(key === 'closing_date'){ const d2 = new Date(val); if(!isNaN(d2)) cols.closing_date = d2.toISOString().slice(0,10); }
       if(key === 'price'){ const n = parseFloat(val.replace(/[^0-9.]/g,'')); if(!isNaN(n)) cols.purchase_price_cents = Math.round(n*100); }
     });
+    if(_b.length) fld.buyer = _b.join(' and ');
+    if(_s.length) fld.seller = _s.join(' and ');
     exc.fields = fld; raw.extracted_contract = exc;
     const patch = Object.assign({ raw_form_data: raw }, cols);
     try { await _client.from('files').update(patch).eq('id', f.id); } catch(_){}
