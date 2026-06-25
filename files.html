@@ -15340,20 +15340,16 @@ Tell me your planned move-out date and I will set the inspection.`
       if(!f) return;
       if(f.size > 25*1024*1024){ document.getElementById('nf-err').textContent = 'That file is over 25 MB. Try a smaller PDF.'; return; }
       _nfFile = f;
-      try{ if(_nfObjUrl) URL.revokeObjectURL(_nfObjUrl); }catch(_){}
-      _nfObjUrl = URL.createObjectURL(f);
-      var fr = document.getElementById('nf-frame'); if(fr){ try{ fr.src = _nfObjUrl + '#toolbar=0&view=FitH&navpanes=0'; }catch(_){ } }
-      var dn = document.getElementById('nf-docname'); if(dn) dn.textContent = f.name + ' · ' + (f.size/1048576).toFixed(2) + ' MB';
-      var dh = document.getElementById('nf-dochead'); if(dh) dh.style.display = 'flex';
-      var sl = document.getElementById('nf-scanline'); if(sl) sl.classList.remove('run');
-      nfShowState('nf-l-doc','nf-r-upload');
+      var dz = document.getElementById('nf-drop');
+      if(dz) dz.innerHTML = '<span class="nf-pdfchip">PDF</span><div class="nf-fname">'+nfEsc(f.name)+'</div><div style="font-size:12px;color:#8a857c">'+(f.size/1048576).toFixed(2)+' MB</div><div class="nf-rmv" id="nf-rmv">Remove</div>';
+      var rm=document.getElementById('nf-rmv'); if(rm) rm.addEventListener('click', function(e){ e.stopPropagation(); nfResetDrop(); });
+      nfShowState('nf-l-drop','nf-r-upload');
       document.getElementById('nf-err').textContent = '';
       document.getElementById('nf-scan').disabled = !_nfSide;
     }
     function nfResetDrop(){
       _nfFile=null;
-      try{ if(_nfObjUrl) URL.revokeObjectURL(_nfObjUrl); }catch(_){}
-      _nfObjUrl=null;
+      var dz=document.getElementById('nf-drop'); if(dz) dz.innerHTML='<span class="ar">&uarr;</span><div id="nf-dropt">Drop the contract here</div><div style="font-size:11px;font-weight:500;color:#a8a39a">PDF, up to 25 MB</div>';
       var fr=document.getElementById('nf-frame'); if(fr) fr.removeAttribute('src');
       var dh=document.getElementById('nf-dochead'); if(dh) dh.style.display='none';
       var sl=document.getElementById('nf-scanline'); if(sl) sl.classList.remove('run');
@@ -15363,6 +15359,25 @@ Tell me your planned move-out date and I will set the inspection.`
     function nfShowState(left,right){
       ['nf-l-drop','nf-l-doc'].forEach(function(id){ var e=document.getElementById(id); if(e) e.classList.toggle('on', id===left); });
       ['nf-r-upload','nf-r-reading'].forEach(function(id){ var e=document.getElementById(id); if(e) e.classList.toggle('on', id===right); });
+    }
+    function nfRenderFindings(fields){
+      var host=document.getElementById('nf-r-reading'); if(!host) return;
+      var inner = host.querySelector('.nf-rinner') || host;
+      function money(v){ if(!v) return ''; var s=String(v).replace(/^\$/,'').replace(/\.00$/,''); return '$'+s; }
+      var addr = fields && (fields.address || [fields.street,fields.city,fields.state,fields.zip].filter(Boolean).join(', '));
+      var rows=[];
+      if(fields){
+        if(addr) rows.push(['Property', addr]);
+        if(fields.buyer) rows.push(['Buyer', fields.buyer]);
+        if(fields.seller) rows.push(['Seller', fields.seller]);
+        if(fields.price) rows.push(['Purchase price', money(fields.price)]);
+        if(fields.emd) rows.push(['Initial deposit', money(fields.emd)]);
+        if(fields.loan_amount) rows.push(['Loan amount', money(fields.loan_amount)]);
+        if(fields.effective_date) rows.push(['Effective date', fields.effective_date]);
+        if(fields.closing_date) rows.push(['Closing date', fields.closing_date]);
+      }
+      var listHtml = rows.length ? rows.map(function(r){ return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:6px 0;border-top:0.5px solid #efeae2"><span style="color:#8a857c">'+nfEsc(r[0])+'</span><span style="font-weight:600;text-align:right">'+nfEsc(r[1])+'</span></div>'; }).join('') : '<div style="font-size:13px;color:#8a857c">Read the contract, opening setup…</div>';
+      inner.innerHTML = '<div class="nf-h">&#10003; Found everything</div><div class="nf-sub">Opening Set up this file to confirm…</div>'+listHtml;
     }
     function resetNewFileModal(){
       _nfFile=null; _nfSide=null; _nfBusy=false;
@@ -15392,21 +15407,21 @@ Tell me your planned move-out date and I will set the inspection.`
         if(up && up.error) throw new Error('Upload failed · ' + up.error.message);
         var su = await _client.storage.from('transaction-files').createSignedUrl(path, 604800);
         var signed = (su && su.data && su.data.signedUrl) || '';
-        // The contract is already previewing on the left via the local object URL; keep it.
+        // Render the real contract on the left (signed URL renders where a local blob preview is blocked).
+        var fr = document.getElementById('nf-frame'); if(fr && signed){ try{ fr.src = signed + '#toolbar=0&view=FitH&navpanes=0'; }catch(_){ } }
         var row = { id:id, agent_id:uid, service_type:svc.id, file_type:svc.file_type, property_address:'', assigned_tc_id:uid, is_aari_engaged:true, status:'intake_received', transaction_stage:'new',
           raw_form_data:{ submitted_by_tc:true, tc_submitter_id:uid, represents:_nfSide, contract_url:signed, contract_filename:safe, contract_path:path, submission_id:id } };
         var ins = await _client.from('files').insert(row).select('id').single();
         if(ins && ins.error) throw new Error(ins.error.message);
-        try{ await _client.functions.invoke('extract-contract-fields', { body:{ file_id:id } }); }catch(exErr){ console.warn('extract skipped', exErr); }
+        var fields=null; try{ var ec = await _client.functions.invoke('extract-contract-fields', { body:{ file_id:id } }); fields=(ec&&ec.data&&ec.data.fields)||null; }catch(exErr){ console.warn('extract skipped', exErr); }
+        nfRenderFindings(fields);
         var fresh = await _client.from('files').select('*').eq('id', id).single();
         var f = (fresh && fresh.data) ? fresh.data : row;
         if(f && f.client_type) f.client_type = String(f.client_type).toLowerCase();
         _files.unshift(f);
         _nfBusy = false;
-        // Hand the same full-screen workspace to the real Set up this file.
-        openPlaybook(f);
-        var mm=document.getElementById('nf-modal'); if(mm) mm.classList.remove('open');
-        try{ loadAndRender(); }catch(_){}
+        // Let her see what was found, then hand the same screen to the real Set up this file.
+        setTimeout(function(){ openPlaybook(f); var mm=document.getElementById('nf-modal'); if(mm) mm.classList.remove('open'); try{ loadAndRender(); }catch(_){} }, 1500);
       }catch(err){
         _nfBusy = false;
         var msg = (err && err.message) ? err.message : 'try again.';
