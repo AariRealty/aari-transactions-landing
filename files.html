@@ -874,6 +874,10 @@
   .uc-done-sum{list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12px;color:#9a958c;padding:8px 0 4px}
   .uc-done-sum::-webkit-details-marker{display:none}
   .uc-done[open] .uc-done-sum .uc-chev{transform:rotate(90deg)}
+  .uc-later{margin-top:6px;border-top:0.5px solid #f1ede5}
+  .uc-later-sum{list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:#5f5e5a;padding:11px 0 5px}
+  .uc-later-sum::-webkit-details-marker{display:none}
+  .uc-later[open] .uc-later-sum .uc-chev{transform:rotate(90deg)}
   .emd-quiet{display:flex;align-items:center;gap:10px;font-size:12.5px;color:#5f5e5a;padding:9px 13px;border:0.5px solid rgba(15,15,15,0.10);border-radius:10px;margin-bottom:9px}
   .emd-quiet-ok{margin-left:auto;font-size:11.5px;font-weight:600;color:#2f7a4f}
   .emd-quiet-add{background:none;border:0;color:#9a958c;font-family:inherit;font-size:11px;cursor:pointer;text-decoration:underline}
@@ -15171,7 +15175,24 @@ Tell me your planned move-out date and I will set the inspection.`
     const ordered = tasks.slice().sort(function(a, b){ return ucSeqRank(a.id) - ucSeqRank(b.id); });
     const openTasks = ordered.filter(function(t){ return !done[t.id]; });
     const doneTasks = ordered.filter(function(t){ return done[t.id]; });
-    const openRows = openTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id)); });
+    // ADHD load-cut (Option A · Now vs Later) · only what's on you NOW shows; the
+    // rest folds behind "Coming up". "Now" = the opening sequence (start-here work)
+    // plus anything overdue, due today, or due within 3 days. Everything dated
+    // further out, or undated downstream work, tucks away. Same contract order
+    // inside both, so title + inspection still sit together when both are due.
+    const _t0 = new Date(); _t0.setHours(0, 0, 0, 0);
+    const _isNow = function(t){
+      if(typeof isOpeningTaskId === 'function' && isOpeningTaskId(t.id)) return true;
+      if(t.dl && dls[t.dl] && dls[t.dl].date){
+        const dd = new Date(dls[t.dl].date.getTime()); dd.setHours(0, 0, 0, 0);
+        return Math.round((dd - _t0) / 86400000) <= 3;
+      }
+      return false;
+    };
+    const nowTasks = openTasks.filter(_isNow);
+    const laterTasks = openTasks.filter(function(t){ return !_isNow(t); });
+    const nowRows = nowTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id)); });
+    const laterRows = laterTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id)); });
     // Per-track status word for the strip (read-only summary, unchanged).
     const statusParts = [];
     UC_TRACKS.forEach(function(trk){
@@ -15185,8 +15206,12 @@ Tell me your planned move-out date and I will set the inspection.`
       else { word = openN + ' to do'; cls = 'k'; }
       statusParts.push('<span class="uc-sp ' + cls + '">' + esc(trk.label) + ' &middot; ' + esc(word) + '</span>');
     });
-    let html = '<p class="uc-needsyou-hd">Needs you &middot; ' + openRows.length + '</p>';
-    html += openRows.join('') || '<p class="ck-empty">Nothing on you right now.</p>';
+    let html = '<p class="uc-needsyou-hd">On you now &middot; ' + nowRows.length + '</p>';
+    html += nowRows.join('') || '<p class="ck-empty">Nothing urgent right now. Open Coming up for what&rsquo;s ahead.</p>';
+    if(laterRows.length){
+      html += '<details class="uc-later"><summary class="uc-later-sum">Coming up &middot; ' + laterRows.length + '<span class="uc-chev">&#8250;</span></summary>' +
+        laterRows.join('') + '</details>';
+    }
     if(statusParts.length){ html += '<div class="uc-statusbar">' + statusParts.join('') + '</div>'; }
     if(doneTasks.length){
       html += '<details class="uc-done"><summary class="uc-done-sum">' + doneTasks.length + ' done<span class="uc-chev">&#8250;</span></summary>' +
