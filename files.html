@@ -774,6 +774,16 @@
   .uc-spine-edit{margin:0 0 9px;padding:0 2px}
   .uc-back-steps{background:none;border:0;color:#185FA5;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;padding:2px 0 12px}
   .uc-spine-bottom{margin-top:12px}
+  /* Option D · accordion spine rows */
+  .uc-acc{background:#fff;border:0.5px solid rgba(15,15,15,0.12);border-radius:12px;margin-bottom:8px;overflow:hidden;transition:border-color .25s}
+  .uc-acc.open{border-color:#0f0f0f}
+  .uc-acc-hd{display:flex;align-items:center;justify-content:space-between;width:100%;background:none;border:0;font-family:inherit;cursor:pointer;padding:13px 15px;text-align:left}
+  .uc-acc-l{display:flex;align-items:center;gap:12px;font-size:13.5px;font-weight:600;color:#0f0f0f}
+  .uc-acc-chev{color:#c4bfb5;transition:transform .25s;font-size:15px}
+  .uc-acc.open .uc-acc-chev{transform:rotate(90deg)}
+  .uc-acc-bd{max-height:0;opacity:0;transition:max-height .42s cubic-bezier(.4,0,.2,1),opacity .3s}
+  .uc-acc.open .uc-acc-bd{max-height:420px;opacity:1}
+  .uc-acc-bd-in{padding:2px 15px 14px}
   /* Option B · collapsed Setup card */
   .aari-setup-card-hd{display:flex;align-items:center;justify-content:space-between;width:100%;background:none;border:0;cursor:pointer;font-family:inherit;padding:2px 0 12px}
   .aari-setup-card-hd .l{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600;color:#0f0f0f}
@@ -11259,29 +11269,33 @@ Tell me your planned move-out date and I will set the inspection.`
       // numbered rows, step 5 Under contract is the current open step (its work +
       // deadlines render below), and 6 / 7 sit locked at the bottom of the panel.
       if(confirmed && !_ctSetup){
-        if(_spineEditSec){
-          // EDIT ONE SECTION · show only the card the TC tapped (Contract / Parties /
-          // Financing / Price), exactly like Setup, with a Back to steps link.
-          host.innerHTML = _ctBackLink +
-            '<button type="button" data-spine-edit-back="1" class="uc-back-steps">&larr; Back to steps</button>' +
-            setupGroupsHtml(file, _spineEditSec);
-        } else {
-          const _stageNow = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || 'under_contract');
-          let _ci = UC_SPINE_OPS.findIndex(function(o){ return o.key === _stageNow; }); if(_ci < 0) _ci = 0;
-          let _ops = '';
-          UC_SPINE_OPS.forEach(function(o, i){
-            if(i < _ci) _ops += ucSpineRow(o.n, o.label, 'done', null);       // earlier operational stage, complete
-            else if(i === _ci) _ops += ucSpineRow(o.n, o.label, 'current');   // the open step (work + deadlines below)
-          });
-          host.innerHTML = _ctBackLink +
-            '<div class="uc-spine-top">' +
-              ucSpineRow(1, 'Contract type', 'done', 'contract') +
-              ucSpineRow(2, 'Parties', 'done', 'parties') +
-              ucSpineRow(3, 'Financing', 'done', 'financing') +
-              ucSpineRow(4, 'Terms &amp; dates', 'done', 'pricedates') +
-              _ops +
-            '</div>';
-        }
+        // Numbered spine · Option D accordion. Steps 1-4 are tap-to-open rows; the open
+        // one glides its section in below (one at a time), with a single Edit inside.
+        // Step 5 (current operational stage) is the "now" row; its work renders below.
+        const _accRow = function(n, label, section){
+          const open = (_spineEditSec === section);
+          return '<div class="uc-acc' + (open ? ' open' : '') + '">' +
+            '<button type="button" class="uc-acc-hd" data-acc-toggle="' + section + '">' +
+              '<span class="uc-acc-l"><span class="uc-step-num done">&#10003;</span>' + label + '</span>' +
+              '<span class="uc-acc-chev">&#8250;</span></button>' +
+            '<div class="uc-acc-bd"><div class="uc-acc-bd-in">' + setupGroupsHtml(file, section, true) + '</div></div>' +
+          '</div>';
+        };
+        const _stageNow = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || 'under_contract');
+        let _ci = UC_SPINE_OPS.findIndex(function(o){ return o.key === _stageNow; }); if(_ci < 0) _ci = 0;
+        let _ops = '';
+        UC_SPINE_OPS.forEach(function(o, i){
+          if(i < _ci) _ops += ucSpineRow(o.n, o.label, 'done', null);
+          else if(i === _ci) _ops += ucSpineRow(o.n, o.label, 'current');
+        });
+        host.innerHTML = _ctBackLink +
+          '<div class="uc-spine-top">' +
+            _accRow(1, 'Contract type', 'contract') +
+            _accRow(2, 'Parties', 'parties') +
+            _accRow(3, 'Financing', 'financing') +
+            _accRow(4, 'Terms &amp; dates', 'pricedates') +
+            _ops +
+          '</div>';
       } else {
         host.innerHTML = _ctBackLink + introP + termsBody;
       }
@@ -12023,10 +12037,16 @@ Tell me your planned move-out date and I will set the inspection.`
       try { var _rr = document.getElementById('rail-right'); if(_rr) _rr.scrollTop = 0; } catch(_){} return; }
     const setupCardTog = e.target.closest('[data-setup-card-toggle]');
     if(setupCardTog){ _setupCardOpen = !_setupCardOpen; try { renderContractTerms(_currentFile); } catch(_){} return; }
-    const spineEd = e.target.closest('[data-spine-edit]');
-    if(spineEd){ _spineEditSec = spineEd.getAttribute('data-spine-edit'); _setupEditSec = ''; try { renderContractTerms(_currentFile); } catch(_){} return; }
-    const spineBack = e.target.closest('[data-spine-edit-back]');
-    if(spineBack){ _spineEditSec = null; _setupEditSec = ''; try { renderContractTerms(_currentFile); } catch(_){} return; }
+    const accTog = e.target.closest('[data-acc-toggle]');
+    if(accTog){
+      const sec = accTog.getAttribute('data-acc-toggle');
+      const wrap = accTog.closest('.uc-acc');
+      const wasOpen = wrap && wrap.classList.contains('open');
+      // Toggle classes in place (no re-render) so the section glides open/closed.
+      document.querySelectorAll('.uc-acc').forEach(function(x){ x.classList.remove('open'); });
+      if(!wasOpen && wrap){ wrap.classList.add('open'); _spineEditSec = sec; } else { _spineEditSec = null; _setupEditSec = ''; }
+      return;
+    }
     const ucTrk = e.target.closest('[data-uc-track]');
     if(ucTrk){ const k = ucTrk.getAttribute('data-uc-track'); _ucOpenTrack = (_ucOpenTrack === k) ? null : k; try { renderStageChecklist(_currentFile); } catch(_){} return; }
     const sToggle = e.target.closest('[data-dl-sources-toggle]');
@@ -14249,7 +14269,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const editRow = function(fd){
       if(fd.ro) return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(fd.label) + '</span><span style="font-weight:600;text-align:right;color:#a39e95">' + esc(fd.val) + '</span></div>';
       return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5"><div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div><input data-nf-field="' + fd.f + '" value="' + esc(fd.val).replace(/"/g, '&quot;') + '" style="width:100%;font:inherit;font-size:13px;font-weight:600;padding:8px 10px;border:1px solid #d9d4ca;border-radius:8px;background:#fff;color:#0f0f0f"></div>'; };
-    const grp = function(title, key, fields){
+    const grp = function(title, key, fields, bare){
       const editing = (editSec === key);
       const editBtn = '<button type="button" data-setup-edit="' + key + '" style="background:none;border:0;color:' + (editing ? '#0f0f0f' : '#185FA5') + ';font-size:11.5px;font-weight:500;cursor:pointer;font-family:inherit">' + (editing ? 'Cancel' : 'Edit') + '</button>';
       let body;
@@ -14258,6 +14278,8 @@ Tell me your planned move-out date and I will set the inspection.`
       } else {
         body = fields.map(function(fd){ return dispRow(fd.label, fd.val); }).join('');
       }
+      // BARE · no card / no title (the accordion row header already names the section).
+      if(bare){ return body + (editing ? '' : '<div style="text-align:right;margin-top:9px">' + editBtn + '</div>'); }
       return '<div style="background:#fff;border:' + (editing ? '1.5px solid #0f0f0f' : '0.5px solid #ece8e0') + ';border-radius:11px;padding:4px 14px 11px;margin-bottom:9px">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0 2px"><span style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#9a958c">' + esc(title) + '</span>' + editBtn + '</div>' +
         body + '</div>';
@@ -14275,14 +14297,14 @@ Tell me your planned move-out date and I will set the inspection.`
     _pf.push({f:'title_email', label:'Title email', val:(ex.title_email||'')});
     _pf.push({f:'title_phone', label:'Title phone', val:(ex.title_phone||'')});
     _pf.push({f:'title_address', label:'Title address', val:(ex.title_address||'')});
-    const _groups = {
-      contract:   grp('Contract', 'contract', [{f:'__type',label:'Type',val:_type,ro:true},{f:'address',label:'Property',val:(ex.address||file.property_address||'')},{f:'county',label:'County',val:(ex.county||'')}]),
-      parties:    grp('Parties', 'parties', _pf),
-      financing:  grp('Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),ro:true},{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}]),
-      pricedates: grp('Price', 'pricedates', [{f:'price',label:'Purchase price',val:_price},{f:'emd',label:'Initial deposit',val:_money(ex.emd)},{f:'balance_to_close',label:'Balance to close',val:_money(ex.balance_to_close)}]),
+    const _defs = {
+      contract:   ['Contract', 'contract', [{f:'__type',label:'Type',val:_type,ro:true},{f:'address',label:'Property',val:(ex.address||file.property_address||'')},{f:'county',label:'County',val:(ex.county||'')}]],
+      parties:    ['Parties', 'parties', _pf],
+      financing:  ['Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),ro:true},{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}]],
+      pricedates: ['Price', 'pricedates', [{f:'price',label:'Purchase price',val:_price},{f:'emd',label:'Initial deposit',val:_money(ex.emd)},{f:'balance_to_close',label:'Balance to close',val:_money(ex.balance_to_close)}]],
     };
-    if(onlySection && _groups[onlySection]) return _groups[onlySection];
-    return _groups.contract + _groups.parties + _groups.financing + _groups.pricedates;
+    if(onlySection && _defs[onlySection]){ const d = _defs[onlySection]; return grp(d[0], d[1], d[2], bare); }
+    return ['contract','parties','financing','pricedates'].map(function(k){ const d = _defs[k]; return grp(d[0], d[1], d[2]); }).join('');
   }
   function setupReviewBar(file, ctBody){
     ctBody = ctBody || '';
@@ -14306,7 +14328,7 @@ Tell me your planned move-out date and I will set the inspection.`
       return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5"><div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div><input data-nf-field="' + fd.f + '" value="' + esc(fd.val).replace(/"/g, '&quot;') + '" style="width:100%;font:inherit;font-size:13px;font-weight:600;padding:8px 10px;border:1px solid #d9d4ca;border-radius:8px;background:#fff;color:#0f0f0f"></div>'; };
     // grp · review list by default; tap Edit → the whole group becomes editable inputs
     // at once (a list), Save writes back. No one-at-a-time stepper.
-    const grp = function(title, key, fields){
+    const grp = function(title, key, fields, bare){
       const editing = (editSec === key);
       const editBtn = '<button type="button" data-setup-edit="' + key + '" style="background:none;border:0;color:' + (editing ? '#0f0f0f' : '#185FA5') + ';font-size:11.5px;font-weight:500;cursor:pointer;font-family:inherit">' + (editing ? 'Cancel' : 'Edit') + '</button>';
       let body;
@@ -14315,6 +14337,8 @@ Tell me your planned move-out date and I will set the inspection.`
       } else {
         body = fields.map(function(fd){ return dispRow(fd.label, fd.val); }).join('');
       }
+      // BARE · no card / no title (the accordion row header already names the section).
+      if(bare){ return body + (editing ? '' : '<div style="text-align:right;margin-top:9px">' + editBtn + '</div>'); }
       return '<div style="background:#fff;border:' + (editing ? '1.5px solid #0f0f0f' : '0.5px solid #ece8e0') + ';border-radius:11px;padding:4px 14px 11px;margin-bottom:9px">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0 2px"><span style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#9a958c">' + esc(title) + '</span>' + editBtn + '</div>' +
         body + '</div>';
