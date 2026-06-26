@@ -799,6 +799,17 @@
   .uc-step-hint{font-size:11px;color:#9a958c;font-weight:600;margin-top:2px}
   .uc-step-hint.lt{color:#a3402f}
   .ck-flag-chip{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.2px;color:#0c447c;background:#eef1f6;border:0.5px solid #cfdcef;border-radius:20px;padding:2px 8px;margin-left:7px;vertical-align:middle;white-space:nowrap}
+  /* Option A · one Needs-you list across tracks */
+  .uc-needsyou-hd{font-size:11px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:#7a756c;margin:2px 0 6px}
+  .uc-tag{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.2px;text-transform:uppercase;border-radius:5px;padding:2px 6px;margin-right:8px;vertical-align:middle}
+  .uc-tag.i{background:#eef4ef;color:#2f7a4f}
+  .uc-tag.a{background:#faf3e2;color:#b98a2e}
+  .uc-tag.t{background:#eef1f6;color:#185FA5}
+  .uc-statusbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:11px;padding-top:11px;border-top:0.5px solid #f1ede6}
+  .uc-sp{font-size:10.5px;font-weight:600;border-radius:20px;padding:3px 9px}
+  .uc-sp.g{background:#eef4ef;color:#2f7a4f}
+  .uc-sp.a{background:#faf3e2;color:#b98a2e}
+  .uc-sp.k{background:#f1efe8;color:#5f5e5a}
   /* Under contract step 5 · toggle box for the Do Next work */
   .uc5{border-color:#0f0f0f}
   .uc5-now{font-size:11px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:#0f0f0f;display:flex;align-items:center;gap:8px}
@@ -14319,8 +14330,9 @@ Tell me your planned move-out date and I will set the inspection.`
       const v = e.target.value; if(v){ try { ctSaveDeadlineDate(_currentFile, 'inspection_end', v); } catch(_){} }
     }
   });
-  function ckRow(file, t, dls, done){
+  function ckRow(file, t, dls, done, tagHtml){
     let rec = done[t.id];
+    tagHtml = tagHtml || '';
     if(t.id === 'wtc_contacts_complete') return contactsTaskHtml(file);
     // Accept task auto-reflects SMS / portal acceptance (files.tc_accepted_at).
     if(!rec && t.systemCheck === 'accept' && file.tc_accepted_at){ rec = { done:true, at:file.tc_accepted_at }; }
@@ -14433,6 +14445,10 @@ Tell me your planned move-out date and I will set the inspection.`
       customCtl = cfpbWindowNote(file);
     } else if(t.id === 'insp_extension_check'){
       customCtl = inspExtendHtml(file);
+    } else if(t.id === 'uc_loan_approval_acknowledged' && typeof isCashFile === 'function' && !isCashFile(file)){
+      // The appraisal-result + loan-badge widget lives with the loan-approval task now
+      // that tracks are one flat list (no per-track box to host it).
+      try { customCtl = renderApprWidget(file); } catch(_){}
     }
     // Collapsible detail (Option A) · the sub, scope, deadlines, logistics fields and
     // email all fold behind a chevron so each task reads as one clean line. The active
@@ -14456,7 +14472,7 @@ Tell me your planned move-out date and I will set the inspection.`
     return '<div class="ck-task-wrap">' +
       '<label class="ck-task' + (rec ? ' ck-done' : '') + '">' +
         '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + ((file.status === 'archived' || _checkBlocked) ? ' disabled' : '') + '>' +
-        '<span class="ck-body"><span class="ck-label">' + esc(t.label) + _flagChip + '</span>' +
+        '<span class="ck-body"><span class="ck-label">' + tagHtml + esc(t.label) + _flagChip + '</span>' +
         (_checkBlocked ? '<span class="ck-sub" style="color:#a08a5a">' + esc(t.checkGateNote || 'Complete the required fields first.') + '</span>' : '') +
         (rec && rec.at ? '<span class="ck-stamp">' + (_soft ? esc(t.softComplete.chip) + ' ' : 'Done ') + new Date(rec.at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + '</span>' : '') +
         '</span>' + dlChip + softCtl + _chevron + '</label>' +
@@ -14973,57 +14989,48 @@ Tell me your planned move-out date and I will set the inspection.`
     if(openN === 0) return { word:'Done', cls:'g' };
     return { word: openN + (openN === 1 ? ' needs you' : ' need you'), cls:'k' };
   }
+  // Option A · ONE "Needs you" list across all tracks. Every open task in one flow,
+  // each tagged by its track (Insp / Loan / Title), so inspection and title can be
+  // worked at the same time with no opening/closing. A quiet status strip keeps the
+  // per-track read ("waiting on lender"); done folds behind a count.
+  const UC_TAGS = {
+    inspection: { lab:'Insp',  cls:'i' },
+    appraisal:  { lab:'Loan',  cls:'a' },
+    title:      { lab:'Title', cls:'t' }
+  };
   function buildUcTracksHtml(file, tasks, dls, done){
     const byId = {}; tasks.forEach(function(t){ byId[t.id] = t; });
     const used = {};
-    let html = '';
-    // Done tasks collapse behind one "N done" line so only open work shows. Tap to
-    // reveal the finished rows; they never crowd the live list.
-    const _doneFold = function(doneTks){
-      if(!doneTks.length) return '';
-      return '<details class="uc-done"><summary class="uc-done-sum">' + doneTks.length + ' done<span class="uc-chev">&#8250;</span></summary>' +
-        doneTks.map(function(t){ return ckRow(file, t, dls, done); }).join('') + '</details>';
-    };
-    // Accordion · tracks render as collapsed rows in the spine's row style, and only
-    // ONE is open at a time. Default open = the first track that still needs you.
-    const _renderable = UC_TRACKS.map(function(trk){
-      return { trk: trk, tks: trk.ids.map(function(id){ return byId[id]; }).filter(Boolean) };
-    }).filter(function(x){ return x.tks.length; });
-    let _openKey = _ucOpenTrack;
-    if(!_openKey || !_renderable.some(function(x){ return x.trk.key === _openKey; })){
-      const _firstOpen = _renderable.find(function(x){ return x.tks.some(function(t){ return !done[t.id]; }); });
-      _openKey = _firstOpen ? _firstOpen.trk.key : (_renderable[0] && _renderable[0].trk.key);
-    }
-    _renderable.forEach(function(x){
-      const trk = x.trk, tks = x.tks;
+    const openRows = []; const doneTasks = []; const statusParts = [];
+    UC_TRACKS.forEach(function(trk){
+      const tks = trk.ids.map(function(id){ return byId[id]; }).filter(Boolean);
+      if(!tks.length) return;
       tks.forEach(function(t){ used[t.id] = true; });
       const openTks = tks.filter(function(t){ return !done[t.id]; });
       const doneTks = tks.filter(function(t){ return done[t.id]; });
-      const st = ucTrackStatus(openTks.length, tks.length);
-      const isOpen = (trk.key === _openKey);
-      // Widgets render only when the track is open, so they never crowd the others.
-      let trkWidget = '';
-      if(isOpen){ try {
-        if(trk.key === 'appraisal' && !isCashFile(file)) trkWidget = renderApprWidget(file);
-        // Inspection · the credit/concession + open-permit flags were dropped per the
-        // contract review, so no remedy-flags widget here anymore.
-      } catch(_){} }
-      html += '<div class="uc-trk' + (isOpen ? ' open' : '') + '">' +
-        '<button type="button" class="uc-trk-hd" data-uc-track="' + trk.key + '"><span class="l"><span class="uc-dot ' + st.cls + '"></span>' + trk.label + '</span>' +
-        '<span class="r"><span class="uc-st ' + st.cls + '">' + esc(st.word) + '</span><span class="uc-chev">&#8250;</span></span></button>' +
-        (isOpen ? ('<div class="uc-trk-bd">' + trkWidget +
-          openTks.map(function(t){ return ckRow(file, t, dls, done); }).join('') +
-          _doneFold(doneTks) + '</div>') : '') +
-        '</div>';
+      doneTks.forEach(function(t){ doneTasks.push(t); });
+      const tag = UC_TAGS[trk.key] || { lab:trk.label, cls:'t' };
+      const tagHtml = '<span class="uc-tag ' + tag.cls + '">' + tag.lab + '</span>';
+      openTks.forEach(function(t){ openRows.push(ckRow(file, t, dls, done, tagHtml)); });
+      // Per-track status word for the strip.
+      let word = '', cls = 'k';
+      if(!openTks.length){ word = 'done'; cls = 'g'; }
+      else if(trk.key === 'appraisal' && !isCashFile(file)
+              && (done['uc_loan_app']) && !(done['uc_loan_approval_acknowledged'])){ word = 'waiting on lender'; cls = 'a'; }
+      else { word = openTks.length + ' to do'; cls = 'k'; }
+      statusParts.push('<span class="uc-sp ' + cls + '">' + esc(trk.label) + ' &middot; ' + esc(word) + '</span>');
     });
+    // Leftover (weekly etc.) — fold into the same flow.
     const left = tasks.filter(function(t){ return !used[t.id]; });
-    if(left.length){
-      const leftOpen = left.filter(function(t){ return !done[t.id]; });
-      const leftDone = left.filter(function(t){ return done[t.id]; });
-      html += '<div class="uc-ongoing">' +
-        leftOpen.map(function(t){ return ckRow(file, t, dls, done); }).join('') +
-        _doneFold(leftDone) +
-      '</div>';
+    left.filter(function(t){ return !done[t.id]; }).forEach(function(t){ openRows.push(ckRow(file, t, dls, done, '')); });
+    left.filter(function(t){ return done[t.id]; }).forEach(function(t){ doneTasks.push(t); });
+
+    let html = '<p class="uc-needsyou-hd">Needs you &middot; ' + openRows.length + '</p>';
+    html += openRows.join('') || '<p class="ck-empty">Nothing on you right now.</p>';
+    if(statusParts.length){ html += '<div class="uc-statusbar">' + statusParts.join('') + '</div>'; }
+    if(doneTasks.length){
+      html += '<details class="uc-done"><summary class="uc-done-sum">' + doneTasks.length + ' done<span class="uc-chev">&#8250;</span></summary>' +
+        doneTasks.map(function(t){ return ckRow(file, t, dls, done, ''); }).join('') + '</details>';
     }
     return html;
   }
