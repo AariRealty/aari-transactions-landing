@@ -11254,18 +11254,21 @@ Tell me your planned move-out date and I will set the inspection.`
       // numbered rows, step 5 Under contract is the current open step (its work +
       // deadlines render below), and 6 / 7 sit locked at the bottom of the panel.
       if(confirmed && !_ctSetup){
-        const _spineRow = function(n, label){
-          return '<div class="uc-step"><span class="uc-step-l"><span class="uc-step-num done">&#10003;</span>' + esc(label) + '</span>' +
-            '<button type="button" data-setup-card-toggle="1" class="uc-step-edit">Edit</button></div>';
-        };
+        const _stageNow = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || 'under_contract');
+        let _ci = UC_SPINE_OPS.findIndex(function(o){ return o.key === _stageNow; }); if(_ci < 0) _ci = 0;
+        let _ops = '';
+        UC_SPINE_OPS.forEach(function(o, i){
+          if(i < _ci) _ops += ucSpineRow(o.n, o.label, 'done', false);      // earlier operational stage, complete
+          else if(i === _ci) _ops += ucSpineRow(o.n, o.label, 'current');   // the open step (work + deadlines below)
+        });
         host.innerHTML = _ctBackLink +
           '<div class="uc-spine-top">' +
-            _spineRow(1, 'Contract type') +
-            _spineRow(2, 'Parties') +
-            _spineRow(3, 'Financing') +
-            _spineRow(4, 'Terms &amp; dates') +
+            ucSpineRow(1, 'Contract type', 'done', true) +
+            ucSpineRow(2, 'Parties', 'done', true) +
+            ucSpineRow(3, 'Financing', 'done', true) +
+            ucSpineRow(4, 'Terms &amp; dates', 'done', true) +
             (_setupCardOpen ? '<div class="uc-spine-edit">' + introP + termsBody + '</div>' : '') +
-            '<div class="uc-step current"><span class="uc-step-l"><span class="uc-step-num cur">5</span>Under contract</span><span class="uc-step-now">now</span></div>' +
+            _ops +
           '</div>';
       } else {
         host.innerHTML = _ctBackLink + introP + termsBody;
@@ -14486,6 +14489,34 @@ Tell me your planned move-out date and I will set the inspection.`
     uc_lender_followup:1, app_ordered:1, app_status_followup:1, app_deadline_watch:1,
     app_satisfactory_confirm:1, app_final_approval_followup:1, app_loan_approved:1,
     uc_loan_approval_confirmed:1 };
+  // Numbered file spine · the operational stages after Setup.
+  const UC_SPINE_OPS = [
+    { n:5, key:'under_contract', label:'Under contract' },
+    { n:6, key:'ctc',           label:'Clear to close' },
+    { n:7, key:'closed',        label:'Closed' },
+  ];
+  function ucSpineRow(n, label, kind, withEdit){
+    if(kind === 'done'){
+      return '<div class="uc-step"><span class="uc-step-l"><span class="uc-step-num done">&#10003;</span>' + label + '</span>' +
+        (withEdit ? '<button type="button" data-setup-card-toggle="1" class="uc-step-edit">Edit</button>' : '') + '</div>';
+    }
+    if(kind === 'current'){
+      return '<div class="uc-step current"><span class="uc-step-l"><span class="uc-step-num cur">' + n + '</span>' + label + '</span><span class="uc-step-now">now</span></div>';
+    }
+    return '<div class="uc-step locked"><span class="uc-step-l"><span class="uc-step-num lock">' + n + '</span>' + label + '</span><span class="uc-step-lock">&#128274;</span></div>';
+  }
+  // Steps that sit BELOW the current focus (locked), rendered at the bottom of the
+  // panel. In Setup all three operational steps are locked; past Setup, only the
+  // ones after the current stage.
+  function ucSpineBottomHtml(file){
+    const ft = file.file_type || 'sale';
+    if(ft !== 'sale') return '';
+    const rawSetup = ['', 'new', 'intake_received', 'waiting_for_tc'].indexOf((file.transaction_stage || '').toLowerCase()) !== -1;
+    if(rawSetup){ return UC_SPINE_OPS.map(function(o){ return ucSpineRow(o.n, o.label, 'locked'); }).join(''); }
+    const stage = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || 'under_contract');
+    let ci = UC_SPINE_OPS.findIndex(function(o){ return o.key === stage; }); if(ci < 0) ci = 0;
+    return UC_SPINE_OPS.filter(function(o, i){ return i > ci; }).map(function(o){ return ucSpineRow(o.n, o.label, 'locked'); }).join('');
+  }
   function ucTrackStatus(openN, total){
     if(total === 0) return { word:'Not started', cls:'soft' };
     if(openN === 0) return { word:'Done', cls:'g' };
