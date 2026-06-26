@@ -798,6 +798,7 @@
   .dw-fold{font-size:11.5px;color:#9a958c;padding:8px 0 0}
   .uc-step-hint{font-size:11px;color:#9a958c;font-weight:600;margin-top:2px}
   .uc-step-hint.lt{color:#a3402f}
+  .ck-flag-chip{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.2px;color:#0c447c;background:#eef1f6;border:0.5px solid #cfdcef;border-radius:20px;padding:2px 8px;margin-left:7px;vertical-align:middle;white-space:nowrap}
   /* Under contract step 5 · toggle box for the Do Next work */
   .uc5{border-color:#0f0f0f}
   .uc5-now{font-size:11px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:#0f0f0f;display:flex;align-items:center;gap:8px}
@@ -12318,7 +12319,26 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   // Email flags · written by the always-on Gmail scan (email-flag edge fn) when it
   // spots a transaction update (extension, repairs, loan, appraisal, title, closing).
-  // Shows on the file with a Dismiss; tap opens nothing, it's a heads-up.
+  // Each kind maps to the task it concerns so the task can show a "flagged" chip.
+  const FLAG_KIND_TASK = {
+    extension:  'insp_extension_check',
+    repair:     'insp_decision_followup',
+    inspection: 'insp_decision_followup',
+    loan:       'uc_loan_approval_acknowledged',
+    appraisal:  'uc_loan_approval_acknowledged',
+    title:      'uc_title_commitment_reminder',
+    closing:    'ctc_closing_confirmed'
+  };
+  let _emailFlagsByFile = {};
+  async function loadEmailFlags(fileId){
+    try {
+      const res = await _client.from('file_email_flags')
+        .select('id, kind, label, detail, source_from, source_at, status')
+        .eq('file_id', fileId).eq('status', 'open').order('source_at', { ascending: false });
+      _emailFlagsByFile[fileId] = res.data || [];
+    } catch(_){ _emailFlagsByFile[fileId] = []; }
+    return _emailFlagsByFile[fileId];
+  }
   async function renderEmailFlagsBanner(){
     const right = document.getElementById('rail-right');
     if(!right || !_currentFile) return;
@@ -12330,16 +12350,14 @@ Tell me your planned move-out date and I will set the inspection.`
         const b = e.target.closest && e.target.closest('[data-eflag-done]'); if(!b) return;
         b.disabled = true;
         try { await _client.from('file_email_flags').update({ status:'dismissed' }).eq('id', b.getAttribute('data-eflag-done')); } catch(_){}
+        const fid = _currentFile && _currentFile.id; if(fid){ await loadEmailFlags(fid); }
         renderEmailFlagsBanner();
+        try { renderStageChecklist(_currentFile); } catch(_){} // refresh the per-task chips
       });
     }
     el.innerHTML = '';
     try {
-      const res = await _client.from('file_email_flags')
-        .select('id, kind, label, detail, source_from, source_at')
-        .eq('file_id', _currentFile.id).eq('status','open')
-        .order('source_at', { ascending: false });
-      const rows = res.data || [];
+      const rows = _emailFlagsByFile[_currentFile.id] || (await loadEmailFlags(_currentFile.id));
       if(!rows.length){ el.style.display = 'none'; return; }
       const _when = function(s){ try { return new Date(s).toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(_){ return ''; } };
       el.style.display = 'block';
@@ -14424,10 +14442,21 @@ Tell me your planned move-out date and I will set the inspection.`
     const _detailInner = _subHtml + scopeChip + (_soft ? '' : allDl) + lgHtml + customCtl + emailHtml;
     const _hasDetail = !!(_detailInner && _detailInner.trim());
     const _chevron = _hasDetail ? '<button type="button" class="ck-toggle" data-ck-toggle aria-label="Toggle details">&#9662;</button>' : '';
+    // Email-scan flag chip · if the always-on scan flagged something that maps to
+    // this task (e.g. a possible extension on the on-track/extend task), show a chip.
+    let _flagChip = '';
+    try {
+      const _flags = (_emailFlagsByFile[(file || {}).id]) || [];
+      const _ff = _flags.filter(function(x){ return FLAG_KIND_TASK[x.kind] === t.id; });
+      if(_ff.length){
+        const _f = _ff[0];
+        _flagChip = ' <span class="ck-flag-chip" title="' + esc((_f.label || 'Email flag') + ' · ' + (_f.source_from || '') + (_f.detail ? (' · ' + _f.detail) : '')) + '">&#9993; ' + esc(_f.label || 'flagged') + '</span>';
+      }
+    } catch(_){}
     return '<div class="ck-task-wrap">' +
       '<label class="ck-task' + (rec ? ' ck-done' : '') + '">' +
         '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + ((file.status === 'archived' || _checkBlocked) ? ' disabled' : '') + '>' +
-        '<span class="ck-body"><span class="ck-label">' + esc(t.label) + '</span>' +
+        '<span class="ck-body"><span class="ck-label">' + esc(t.label) + _flagChip + '</span>' +
         (_checkBlocked ? '<span class="ck-sub" style="color:#a08a5a">' + esc(t.checkGateNote || 'Complete the required fields first.') + '</span>' : '') +
         (rec && rec.at ? '<span class="ck-stamp">' + (_soft ? esc(t.softComplete.chip) + ' ' : 'Done ') + new Date(rec.at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + '</span>' : '') +
         '</span>' + dlChip + softCtl + _chevron + '</label>' +
@@ -15747,6 +15776,8 @@ Tell me your planned move-out date and I will set the inspection.`
     renderContractTerms(file);
     resolveContractUrl(file).then(function(){ if(_currentFile && _currentFile.id === file.id && file._resolvedContract) renderContractTerms(file); });
 
+    // Load the scan's email flags first so each matching task can show its chip.
+    try { await loadEmailFlags(file.id); } catch(_){}
     // Stage checklist · per-kanban-column tasks (TC sale files) · now with each
     // task's email attached inline beneath it.
     renderStageChecklist(file);
