@@ -3001,7 +3001,7 @@ Thank you for confirming.
         {
           id:'uc_loan_approval_confirmed',
           showIf:(f)=>!isCashFile(f),
-          task:'uc_loan_approval_acknowledged',
+          task:'uc_loan_approval_confirmed',
           thread:4,
           label:'Loan approval · confirmed',
           to:'{{listing_agent_name}} <{{listing_agent_email}}>; {{title_closer_name}} <{{title_email}}>; {{lender_name}} <{{lender_email}}>',
@@ -9515,6 +9515,18 @@ Tell me your planned move-out date and I will set the inspection.`
       const notes = lg.dl_notes || (lg.dl_notes = {});
       if(note && note.trim()) notes[key] = note.trim(); else delete notes[key];
       await _client.from('files').update({ logistics: lg }).eq('id', file.id);
+      // Audit log · deadline confirmed/unconfirmed. Append-only, FREC-defensible —
+      // records who marked which deadline met, the real date, and any note.
+      try {
+        writeAuditLog(completedIso ? 'deadline_confirmed' : 'deadline_unconfirmed', file.id, {
+          deadline_key: key,
+          actual_date: actualDateISO || null,
+          due_date: rec.due_date || null,
+          note: (note && note.trim()) || null,
+          contract_type: file.contract_type || null,
+          property_address: file.property_address || null,
+        });
+      } catch(_){}
     } catch(err){ console.warn('[files] markDeadlineDone failed', err); }
     renderDeadlinesForFile(file);
     try { renderHubStatus(file); } catch(_){}
@@ -12385,7 +12397,12 @@ Tell me your planned move-out date and I will set the inspection.`
     const _gateMsg2 = hardStageGate(file, newStage);
     if(_gateMsg2){ alert(_gateMsg2); return; }
     // Opening-sequence gate now enforced by hardStageGate (Item 15).
-    if(!(await appConfirm('Move this file to ' + (STAGE_LABELS[newStage] || newStage) + '?', { ok:'Move file' }))) return;
+    // Soft warnings (EMD / inspection) · surfaced in the confirm, never a hard block.
+    const _soft = (typeof softStageWarn === 'function') ? softStageWarn(file, newStage) : [];
+    const _confirmMsg = _soft.length
+      ? '<b>Heads up before Clear to Close</b><br>' + _soft.map(function(s){ return '&middot; ' + esc(s); }).join('<br>') + '<br><br>Move anyway?'
+      : 'Move this file to ' + (STAGE_LABELS[newStage] || newStage) + '?';
+    if(!(await appConfirm(_confirmMsg, { ok: _soft.length ? 'Move anyway' : 'Move file' }))) return;
     file.transaction_stage = newStage;
     try { renderKanban(); } catch(_){}
     try {
@@ -13077,15 +13094,23 @@ Tell me your planned move-out date and I will set the inspection.`
       const next = order[(order.indexOf(stored) + 1) % order.length];
       const patch = which === 'additional' ? { additional_status: next } : { status: next };
       saveEmd(patch);
-      // Confirmed in Writing → auto-check the matching checklist task, timestamped.
-      if(next === 'confirmed' && which !== 'additional'){
+      // Confirmed in Writing → check the VISIBLE deposit row (uc_emd_followup) plus
+      // the legacy confirm task, so the row's checkbox and the status never disagree.
+      // Cycling back to received/pending clears them again.
+      if(which !== 'additional'){
         const cur = (_currentFile.stage_tasks && typeof _currentFile.stage_tasks === 'object') ? { ..._currentFile.stage_tasks } : {};
-        if(!cur['uc_emd_confirmed']){
-          cur['uc_emd_confirmed'] = { done: true, at: new Date().toISOString(), by: (_profile && (_profile.first_name || _profile.email)) || 'TC' };
-          _currentFile.stage_tasks = cur;
-          _client.from('files').update({ stage_tasks: cur }).eq('id', _currentFile.id)
-            .then(r => { if(r && r.error) console.warn('[emd] auto-check failed', r.error.message); });
+        if(next === 'confirmed'){
+          const stamp = { done: true, at: new Date().toISOString(), by: (_profile && (_profile.first_name || _profile.email)) || 'TC' };
+          if(!cur['uc_emd_confirmed']) cur['uc_emd_confirmed'] = stamp;
+          if(!cur['uc_emd_followup']) cur['uc_emd_followup'] = stamp;
+        } else {
+          delete cur['uc_emd_confirmed'];
+          delete cur['uc_emd_followup'];
         }
+        _currentFile.stage_tasks = cur;
+        try { renderStageChecklist(_currentFile); } catch(_){}
+        _client.from('files').update({ stage_tasks: cur }).eq('id', _currentFile.id)
+          .then(r => { if(r && r.error) console.warn('[emd] auto-check failed', r.error.message); });
       }
       return;
     }
@@ -13304,6 +13329,24 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     return '';
   }
+  // SOFT warnings before Clear to Close · not contract blockers (AS-IS lets a buyer
+  // proceed with no notice), but real-world misses worth a "move anyway?" prompt.
+  // Returns a list of plain-language issues; empty when clean.
+  function softStageWarn(file, newStage){
+    if(newStage !== 'ctc' || (file.file_type || 'sale') !== 'sale') return [];
+    const dt = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    const out = [];
+    if(!isCashFile(file) || (emdData(file).amount)){
+      const emdOk = (typeof emdEffStatus === 'function' && emdEffStatus(file, 'initial') === 'confirmed') || dt['uc_emd_followup'] || dt['uc_emd_confirmed'];
+      if(!emdOk) out.push('The initial deposit (EMD) is not confirmed.');
+    }
+    const waived = (typeof inspectionWaived === 'function') && inspectionWaived(file);
+    const insp = (file.logistics || {}).inspection_decision;
+    if(!waived && !insp && !dt['insp_decision_followup']){
+      out.push('The inspection decision (proceed or cancel) is not logged.');
+    }
+    return out;
+  }
 
   const STAGE_CHECKLISTS = {
     sale: {
@@ -13415,8 +13458,8 @@ Tell me your planned move-out date and I will set the inspection.`
           checkGate:(f)=>{ const lg = f.logistics || {}; return !!(lg.inspection_date && lg.inspection_time && lg.inspector_name && lg.inspector_company && lg.inspector_phone); },
           checkGateNote:'Enter inspector name, company, phone, date, and time first.',
           sub:'Save them in Closing Logistics below — they auto-fill the scheduling email.' },
-        { id:'insp_deadline_watch', label:'Inspection deadline · notify', dl:'inspection_end',
-          sub:'Day 15 from Effective Date unless the contract says otherwise — tap the date in Stage 1&rsquo;s table to correct.' },
+        { id:'insp_deadline_watch', label:'Inspection deadline · watch', dl:'inspection_end',
+          sub:'Day 15 from Effective Date unless the contract says otherwise — tap the date in Stage 1&rsquo;s table to correct. This is a watch only; the decision + any notice are the tasks below.' },
         { id:'insp_review_report',  label:'Review inspection report',
           sub:'Read the full report before asking the agent for a decision. Know what is in it.' },
         { id:'insp_extension_check', label:'On track, or extend?', dl:'inspection_end',
