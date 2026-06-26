@@ -11443,6 +11443,21 @@ Tell me your planned move-out date and I will set the inspection.`
     return { text: text, tone: tone, tier: tier };
   }
 
+  // Board status tag · once a file is in Under contract the inspection/appraisal
+  // tracks run inside it, so the board column no longer tells you where the money is.
+  // This light tag, derived from the work done, restores that at-a-glance read.
+  function ucBoardTag(f){
+    try {
+      if(deriveStage(f) !== 'under_contract') return '';
+      const t = f.stage_tasks || {}; const lg = f.logistics || {};
+      let label = '';
+      if(lg.appraisal_result || t.app_loan_approved || t.app_ordered || t.app_status_followup) label = 'Appraisal in';
+      else if(t.insp_review_report || t.insp_decision_followup || lg.inspection_decision || t.rem_addendum_confirmed || t.rem_asis_accepted) label = 'Inspection done';
+      else if(t.insp_scheduled) label = 'Inspection set';
+      if(!label) return '';
+      return '<span style="display:inline-block;font-size:8.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:#6f6a61;background:#efece6;border:0.5px solid #ddd6c8;border-radius:3px;padding:1px 6px;margin-left:6px;vertical-align:middle">' + label + '</span>';
+    } catch(_){ return ''; }
+  }
   function cardHtml(f){
     var addr = f.property_address || 'Untitled file';
     var cash = isCashFile(f);
@@ -11485,7 +11500,7 @@ Tell me your planned move-out date and I will set the inspection.`
     return '<div class="card' + (cash ? ' cash' : '') + '" draggable="true" data-file-id="' + esc(f.id) + '">' +
       '<div class="cardv2-face">' +
         '<div class="cardv2-top">' +
-          '<p class="cardv2-addr" title="' + esc(addr) + '">' + esc(addr.split(',')[0]) + cashBadge + payBadge + saBadge + testBadge + '</p>' +
+          '<p class="cardv2-addr" title="' + esc(addr) + '">' + esc(addr.split(',')[0]) + cashBadge + payBadge + saBadge + testBadge + ucBoardTag(f) + '</p>' +
           scoreBadge +
         '</div>' +
         nameLine +
@@ -14465,6 +14480,21 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     // Seamless single-box look for the Setup review (CSS removes the panel dividers).
     try { const _pv = document.getElementById('tpb-popview'); if(_pv) _pv.classList.toggle('setup-flow', _isSetupStage && (file.file_type || 'sale') === 'sale'); } catch(_){}
+    // Option A · Under contract is the merged operational stage: pull the inspection,
+    // appraisal and remedy tasks in so they live inside the three tracks. showIf still
+    // gates each one, dups are skipped, and only one Weekly update survives.
+    if(stage === 'under_contract' && (file.file_type || 'sale') === 'sale' && tasks){
+      const _seen = {}; const _merged = [];
+      const _add = function(t){
+        if(!t || _seen[t.id] || UC_MERGE_SKIP[t.id]) return;
+        if(/_weekly_update$/.test(t.id) && t.id !== 'uc_weekly_update') return; // one weekly only
+        if(t.showIf && !t.showIf(file)) return;
+        _seen[t.id] = true; _merged.push(t);
+      };
+      tasks.forEach(_add);
+      ['inspection','appraisal','remedy'].forEach(function(s){ (ckTasksFor(file, s) || []).forEach(_add); });
+      tasks = _merged;
+    }
     const done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
     const dls = fileDeadlines(file);
     const stages = STAGES_BY_TYPE[file.file_type || 'sale'] || STAGES_BY_TYPE.sale;
@@ -14607,7 +14637,10 @@ Tell me your planned move-out date and I will set the inspection.`
     // Move-to-next-stage button · same guards as the kanban drag. Closed is
     // excluded on purpose — its 5-task protective gate stays on the board drag.
     const _stO = STAGES_BY_TYPE[file.file_type || 'sale'] || STAGES_BY_TYPE.sale, _stI = _stO.indexOf(stage);
-    const _stNext = (_stI >= 0) ? _stO[_stI + 1] : null;
+    let _stNext = (_stI >= 0) ? _stO[_stI + 1] : null;
+    // Inspection + appraisal now live INSIDE Under contract as tracks, so the next
+    // move from Under contract jumps straight to Clear to close (skips the merged stages).
+    if(stage === 'under_contract' && (file.file_type || 'sale') === 'sale') _stNext = 'ctc';
     // During Setup the Move action lives at the END of the deadlines panel (Option A,
     // after the dates) — so it is suppressed here. Past Setup it renders inline.
     // Use the RAW stage (same as setupReviewBar) — deriveStage jumps ahead once the scan
@@ -14635,9 +14668,12 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     // Draft update + Due-soon don't belong in Setup (no agent update to send yet, no
     // cross-stage deadlines in play). They return once the file is past Setup.
+    // Under contract now contains the inspection/appraisal tracks, so the "due soon
+    // from other stages" strip would just duplicate them — suppress it there.
+    const _showDueSoon = !_isSetupStage && stage !== 'under_contract';
     host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget + (_isSetupStage ? '' : updateBtnHtml(file)) +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
-      (_isSetupStage ? '' : dueSoon) + moveBtn;
+      (_showDueSoon ? dueSoon : '') + moveBtn;
     // During Setup, hide the whole "Your work" pop when it has nothing to show (no
     // pending setup steps, no standalone emails) — kills the orphaned empty header.
     try {
@@ -15113,12 +15149,22 @@ Tell me your planned move-out date and I will set the inspection.`
       } else if(stage === 'under_contract'){
         const _opening = (ftPlaybook.waiting_for_tc || []).filter(function(e){ return _isOpeningEmail(e) && (typeof e.showIf === 'function' ? e.showIf(file) : true); });
         list = _opening.concat(list);
+        // Inspection + appraisal + remedy now live INSIDE Under contract as tracks, so
+        // their emails must travel with them or the Send buttons would vanish.
+        ['inspection','appraisal','remedy'].forEach(function(s){
+          (ftPlaybook[s] || []).forEach(function(e){ if(typeof e.showIf === 'function' ? e.showIf(file) : true) list.push(e); });
+        });
       }
     }
     const agent = await loadAgentForFile(file.agent_id);
     _drawerFile = file; _drawerAgent = agent; _emailStage = stage;
     _emailTplById = {}; list.forEach(e => { _emailTplById[e.id] = e; });
-    const stageTaskIds = new Set((ckTasksFor(file, stage) || [])
+    // For Under contract, the task-id set spans the merged stages so the inspection/
+    // appraisal emails match their tasks (and don't fall into "Other emails").
+    const _ckSrc = (ft === 'sale' && stage === 'under_contract')
+      ? ['under_contract','inspection','appraisal','remedy'].reduce(function(a, s){ return a.concat(ckTasksFor(file, s) || []); }, [])
+      : (ckTasksFor(file, stage) || []);
+    const stageTaskIds = new Set(_ckSrc
       .filter(t => !t.showIf || t.showIf(file)).map(t => t.id));
     _emailByTask = {};
     const standaloneEmails = [];
