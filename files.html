@@ -12312,6 +12312,26 @@ Tell me your planned move-out date and I will set the inspection.`
       document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; });
       if(m) m.hidden = !wasHidden; return; }
     if(!(e.target.closest && e.target.closest('[data-del-menu]'))){ document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; }); }
+    // Stage pill dropdown · open + close, and set the file's stage.
+    const stog = e.target.closest && e.target.closest('[data-stage-toggle]');
+    if(stog){ e.preventDefault(); const m = stog.parentNode.querySelector('[data-stage-menu]'); const wh = m && m.hidden; document.querySelectorAll('[data-stage-menu]').forEach(function(x){ x.hidden = true; }); if(m) m.hidden = !wh; return; }
+    if(!(e.target.closest && e.target.closest('[data-stage-menu]'))){ document.querySelectorAll('[data-stage-menu]').forEach(function(x){ x.hidden = true; }); }
+    const sset = e.target.closest && e.target.closest('[data-set-stage]');
+    if(sset && _currentFile){
+      e.preventDefault();
+      const ns = sset.getAttribute('data-set-stage');
+      try {
+        const { error } = await _client.from('files').update({ transaction_stage: ns }).eq('id', _currentFile.id);
+        if(error){ alert('Stage change failed: ' + (error.message || 'permission')); return; }
+        _currentFile.transaction_stage = ns;
+        const f3 = (_files || []).find(function(x){ return x.id === _currentFile.id; }); if(f3) f3.transaction_stage = ns;
+        try { writeAuditLog('stage_changed', _currentFile.id, { transaction_stage: ns }); } catch(_){}
+        document.querySelectorAll('[data-stage-menu]').forEach(function(x){ x.hidden = true; });
+        try { renderPlaybook(_currentFile); } catch(_){}
+        try { renderPriorityQueue(); } catch(_){}
+      } catch(err){ alert('Stage change failed'); console.warn('[files] stage change failed', err); }
+      return;
+    }
     // Broker · assign this file to a TC (or back to the claim pool).
     const atc = e.target.closest && e.target.closest('[data-assign-tc]');
     if(atc && _currentFile){
@@ -15209,8 +15229,20 @@ Tell me your planned move-out date and I will set the inspection.`
       try { _stg = (typeof deriveStage === 'function') ? deriveStage(_currentFile) : (_currentFile.transaction_stage || 'new'); } catch(_){ _stg = _currentFile.transaction_stage || 'new'; }
       try { _lbl = (typeof stageLabel === 'function') ? stageLabel(_currentFile.file_type || 'sale', _stg) : ''; } catch(_){ _lbl = ''; }
       if(!_lbl) _lbl = 'New';
+      // Stage pill is now a dropdown · click it to move the file to another stage.
+      const _ft = _currentFile.file_type || 'sale';
+      const _stages = (typeof STAGES_BY_TYPE === 'object' && STAGES_BY_TYPE[_ft]) ? STAGES_BY_TYPE[_ft] : ['new'];
+      let _opts = '';
+      _stages.forEach(function(s){
+        const lab = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[s]) ? STAGE_LABELS[s] : s;
+        const on = (s === _stg);
+        _opts += '<button type="button" data-set-stage="' + esc(s) + '" style="display:block;width:100%;text-align:left;border:0;background:' + (on ? '#f1ede6' : '#fff') + ';font-family:inherit;font-size:12px;color:#0f0f0f;padding:7px 12px;cursor:pointer;white-space:nowrap;border-radius:6px">' + (on ? '&#10003; ' : '') + esc(lab) + '</button>';
+      });
       ad.innerHTML = esc(_addr) +
-        '<span style="display:inline-flex;align-items:center;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:#fff;background:#0f0f0f;border-radius:20px;padding:3px 10px;margin-left:10px;vertical-align:middle;font-family:Inter,system-ui,sans-serif">' + esc(_lbl) + '</span>';
+        '<span style="position:relative;display:inline-block;margin-left:10px;vertical-align:middle">' +
+          '<button type="button" data-stage-toggle style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:#fff;background:#0f0f0f;border:0;border-radius:20px;padding:4px 11px;cursor:pointer;font-family:Inter,system-ui,sans-serif">' + esc(_lbl) + ' <span style="font-size:8px;line-height:1">&#9662;</span></button>' +
+          '<div data-stage-menu hidden style="position:absolute;left:50%;transform:translateX(-50%);top:28px;background:#fff;border:0.5px solid rgba(15,15,15,0.14);border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:4px;min-width:150px;z-index:70">' + _opts + '</div>' +
+        '</span>';
     }
     markNextTask();
     pv.hidden = false;
