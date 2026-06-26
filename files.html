@@ -12258,7 +12258,19 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     if(!head) return;
     if(_profile && _profile.role === 'broker'){
-      head.innerHTML = delMenu('<a href="#" data-del-link style="display:block;font-size:12.5px;color:#a3402f;padding:8px 11px;border-radius:6px;text-decoration:none">Delete file</a>');
+      // Broker-only: assign this file to a TC (or back to the claim pool), plus delete.
+      var _cur = (file.assigned_tc_id && _tcsById) ? _tcsById[file.assigned_tc_id] : null;
+      var _curName = _cur ? (((_cur.first_name || '') + ' ' + (_cur.last_name || '')).trim() || 'a TC') : 'Unassigned';
+      var _items = '<div style="font-size:10px;letter-spacing:.3px;text-transform:uppercase;color:#9a958c;padding:5px 11px 3px;white-space:nowrap">Assigned &middot; ' + esc(_curName) + '</div>';
+      Object.keys(_tcsById || {}).forEach(function(tid){
+        if(tid === file.assigned_tc_id) return;
+        var t = _tcsById[tid]; var nm = ((t.first_name || '') + ' ' + (t.last_name || '')).trim() || 'TC';
+        _items += '<a href="#" data-assign-tc="' + esc(tid) + '" style="display:block;font-size:12.5px;color:#0f0f0f;padding:7px 11px;border-radius:6px;text-decoration:none;white-space:nowrap">Assign to ' + esc(nm) + '</a>';
+      });
+      if(file.assigned_tc_id) _items += '<a href="#" data-assign-tc="__none__" style="display:block;font-size:12.5px;color:#5f5e5a;padding:7px 11px;border-radius:6px;text-decoration:none;white-space:nowrap">Move to claim pool</a>';
+      _items += '<div style="height:1px;background:#f1ede6;margin:4px 6px"></div>';
+      _items += '<a href="#" data-del-link style="display:block;font-size:12.5px;color:#a3402f;padding:7px 11px;border-radius:6px;text-decoration:none">Delete file</a>';
+      head.innerHTML = delMenu(_items);
     } else if(_profile && _profile.role === 'tc'){
       head.innerHTML = req
         ? '<span style="font-size:10.5px;color:#9a7c3a;margin-right:2px">Deletion requested</span>'
@@ -12273,6 +12285,25 @@ Tell me your planned move-out date and I will set the inspection.`
       document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; });
       if(m) m.hidden = !wasHidden; return; }
     if(!(e.target.closest && e.target.closest('[data-del-menu]'))){ document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; }); }
+    // Broker · assign this file to a TC (or back to the claim pool).
+    const atc = e.target.closest && e.target.closest('[data-assign-tc]');
+    if(atc && _currentFile){
+      e.preventDefault();
+      const raw = atc.getAttribute('data-assign-tc');
+      const tcId = (raw === '__none__') ? null : raw;
+      const nm = tcId && _tcsById[tcId] ? (((_tcsById[tcId].first_name || '') + ' ' + (_tcsById[tcId].last_name || '')).trim()) : 'the claim pool';
+      try {
+        const { error } = await _client.from('files').update({ assigned_tc_id: tcId, tc_accepted_at: null }).eq('id', _currentFile.id);
+        if(error){ alert('Assign failed: ' + (error.message || 'permission')); return; }
+        _currentFile.assigned_tc_id = tcId;
+        const f2 = (_files || []).find(function(x){ return x.id === _currentFile.id; }); if(f2) f2.assigned_tc_id = tcId;
+        try { writeAuditLog('tc_assigned', _currentFile.id, { assigned_tc_id: tcId }); } catch(_){}
+        document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; });
+        try { renderDeleteZone(_currentFile); } catch(_){}
+        try { renderPriorityQueue(); } catch(_){}
+      } catch(err){ alert('Assign failed'); console.warn('[files] assign tc failed', err); }
+      return;
+    }
     const dreq = e.target.closest && e.target.closest('[data-del-request]');
     if(dreq && _currentFile){
       e.preventDefault();
