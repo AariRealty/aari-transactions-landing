@@ -8731,6 +8731,53 @@ Tell me your planned move-out date and I will set the inspection.`
     const ds = document.getElementById('rd-disc-set');
     if(ds) ds.addEventListener('click', function(){ ctSave(file, {}, { rental_deposit_received_date: new Date().toISOString().slice(0,10) }).then(function(){ try { renderPlaybook(file); } catch(_){} }); });
   }
+  // ===== Deadline WATCH (past Setup) · the dates live inside step 4 of the spine.
+  // A read-only countdown grouped Late / Due soon / Coming up / Done — no confirm
+  // queue (confirming dates is Setup work). Drives both the step-4 body and the
+  // small "N late · next" hint on the Under contract step.
+  function deadlineWatchData(file){
+    let items = []; try { items = fileContractDeadlines(file) || []; } catch(_){}
+    const status = _deadlinesByFile[file.id] || {};
+    const t0 = new Date(); t0.setHours(0,0,0,0);
+    const out = { late:[], soon:[], coming:[], done:[] };
+    items.forEach(function(d){
+      if(!d || !d.date) return;
+      const rec = status[d.key];
+      const isDone = !!(rec && rec.completed_at);
+      const dd = new Date(d.date.getTime()); dd.setHours(0,0,0,0);
+      const days = Math.round((dd - t0) / 86400000);
+      const row = { name:d.name, date:d.date, days:days };
+      if(isDone) out.done.push(row);
+      else if(days < 0) out.late.push(row);
+      else if(days <= 3) out.soon.push(row);
+      else out.coming.push(row);
+    });
+    out.late.sort(function(a,b){ return a.days - b.days; });
+    out.soon.sort(function(a,b){ return a.days - b.days; });
+    out.coming.sort(function(a,b){ return a.days - b.days; });
+    return out;
+  }
+  function deadlineWatchStats(file){
+    const w = deadlineWatchData(file);
+    const next = w.soon[0] || w.coming[0] || null;
+    return { lateCount: w.late.length, next: next };
+  }
+  function _wDay(n){ return n === 0 ? 'today' : (n === 1 ? 'in 1 day' : (n < 0 ? (Math.abs(n) + (n===-1?' day':' days') + ' late') : ('in ' + n + ' days'))); }
+  function deadlineWatchHtml(file){
+    const w = deadlineWatchData(file);
+    const _fmt = function(d){ try { return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(_){ return ''; } };
+    const _row = function(r, late){
+      return '<div class="dw-row"><span><span class="dw-nm">' + esc(r.name) + '</span> <span class="dw-sub' + (late ? ' lt' : '') + '">due ' + _fmt(r.date) + '</span></span>' +
+        '<span class="dw-badge' + (late ? ' lt' : '') + '">' + _wDay(r.days) + '</span></div>';
+    };
+    let html = '';
+    if(w.late.length){ html += '<div class="dw-glabel lt">Late &middot; ' + w.late.length + '</div>' + w.late.map(function(r){ return _row(r, true); }).join(''); }
+    if(w.soon.length){ html += '<div class="dw-glabel soon">Due soon</div>' + w.soon.map(function(r){ return _row(r, false); }).join(''); }
+    const _rest = w.coming.length + w.done.length;
+    if(_rest){ html += '<div class="dw-fold">Coming up &middot; ' + w.coming.length + ' &middot; Done &middot; ' + w.done.length + '</div>'; }
+    if(!html) html = '<div class="dw-fold">No deadlines on the clock.</div>';
+    return '<div class="dw">' + html + '</div>';
+  }
   function renderDeadlinesForFile(file){
     // During Setup the ledger nests inside section 4 (host #tpb-dl-setup-body in the
     // setup bar); past Setup it renders in the standalone bottom panel (#tpb-dl-body).
@@ -8764,7 +8811,10 @@ Tell me your planned move-out date and I will set the inspection.`
       if(_bottomWrap) _bottomWrap.style.display = 'none';
       if(!setupBody){ if(metaEl) metaEl.textContent = ''; return; } // section 4 not active yet
     } else {
-      if(_bottomWrap) _bottomWrap.style.display = '';
+      // Past Setup · the deadlines now live inside step 4 (Terms & dates) of the spine
+      // as a watch. The bottom dashboard is retired, so keep it hidden and stop here.
+      if(_bottomWrap) _bottomWrap.style.display = 'none';
+      if(!setupBody) return;
     }
 
     const _dlRaw = file.raw_form_data || {};
