@@ -8892,6 +8892,26 @@ Tell me your planned move-out date and I will set the inspection.`
       else { calc = 'Set from the contract dates.'; }
       const dayEdit = _isDayBased ? ('<div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:11px;color:#a39e95"><span>Days</span><input type="number" data-dlday="' + esc(_shortKey) + '" value="' + esc(_curDays) + '" min="0" max="365" style="width:50px;padding:3px 7px;font-size:12px;border:0.5px solid #d9d4ca;border-radius:6px;font-family:inherit;-moz-appearance:textfield"><span>change if your contract differs</span></div>') : '';
       const citeLine = (showCites && it.citation) ? ('<div style="margin-top:8px;font-size:11px;color:#a39e95">' + esc(it.citation) + '</div>') : '';
+      // EXTEND · quick chips (Option D). Set a new date for this deadline (e.g. an
+      // inspection extension). Saved as a per-deadline override; resettable.
+      let extendBlock = '';
+      if(!it.scheduled && !done){
+        const _curIso = it.date.toISOString().slice(0,10);
+        const _isOv = !!((((file.deadline_overrides || {})._dates) || {})[it.key]);
+        if(_dlExtendKey === it.key){
+          const _chip = 'flex:none;font-size:11.5px;font-weight:600;border:0.5px solid #d9d4ca;background:#fff;border-radius:20px;padding:5px 12px;cursor:pointer;font-family:inherit';
+          extendBlock = '<div style="margin-top:9px"><div style="font-size:11px;color:#a39e95;margin-bottom:6px">Extend to</div>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+              '<button type="button" data-dl-ext-add="' + esc(it.key) + '" data-dl-cur="' + _curIso + '" data-dl-n="1" style="' + _chip + '">+1 day</button>' +
+              '<button type="button" data-dl-ext-add="' + esc(it.key) + '" data-dl-cur="' + _curIso + '" data-dl-n="2" style="' + _chip + '">+2 days</button>' +
+              '<button type="button" data-dl-ext-add="' + esc(it.key) + '" data-dl-cur="' + _curIso + '" data-dl-n="3" style="' + _chip + '">+3 days</button>' +
+              '<input type="date" data-dl-ext-date="' + esc(it.key) + '" value="' + _curIso + '" style="font:inherit;font-size:12px;font-weight:600;border:0.5px solid #d9d4ca;border-radius:8px;padding:4px 8px;color:#0f0f0f">' +
+              (_isOv ? ('<button type="button" data-dl-ext-reset="' + esc(it.key) + '" style="flex:none;background:none;border:0;font-size:11px;color:#8a857c;cursor:pointer;font-family:inherit;text-decoration:underline">reset</button>') : '') +
+            '</div></div>';
+        } else {
+          extendBlock = '<div style="margin-top:8px"><button type="button" data-dl-extend-open="' + esc(it.key) + '" style="background:none;border:0;padding:0;font-family:inherit;font-size:11px;color:#185FA5;cursor:pointer">Extend &rsaquo;</button></div>';
+        }
+      }
       let detailAct = '';
       if(!it.scheduled){
         detailAct = confirmedRow
@@ -8918,7 +8938,7 @@ Tell me your planned move-out date and I will set the inspection.`
       const actLine = [detailAct, recvCtl, schedCtl].filter(Boolean).join('<span style="display:inline-block;width:14px"></span>');
       return restRow +
         '<div style="margin:0 0 8px;padding:10px 12px;background:#f6f4ef;border-radius:9px;font-size:11.5px;color:#6f6a61;line-height:1.5">' +
-          calc + dayEdit + citeLine +
+          calc + dayEdit + citeLine + extendBlock +
           (actLine ? ('<div style="margin-top:9px;display:flex;align-items:center;gap:4px;flex-wrap:wrap">' + actLine + '</div>') : '') +
         '</div>';
     };
@@ -9013,6 +9033,11 @@ Tell me your planned move-out date and I will set the inspection.`
 
     // Per-row "Why this date" toggle + inline day-count edit (merged from Contingency days).
     hostEl.querySelectorAll('[data-dlwhy]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-dlwhy'); _dlWhyOpen[k] = !_dlWhyOpen[k]; renderDeadlinesForFile(file); }); });
+    // Extend quick-chips (Option D)
+    hostEl.querySelectorAll('[data-dl-extend-open]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-dl-extend-open'); _dlExtendKey = (_dlExtendKey === k) ? null : k; renderDeadlinesForFile(file); }); });
+    hostEl.querySelectorAll('[data-dl-ext-add]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-dl-ext-add'); const cur = this.getAttribute('data-dl-cur'); const n = parseInt(this.getAttribute('data-dl-n'), 10) || 0; try { const ENG = window.AariDeadlineEngine; const nd = ENG.flBusinessDay(ENG.addDays(ENG.parseDate(cur), n)); ctSaveDeadlineDate(file, k, ENG.ymd(nd)); } catch(_){} }); });
+    hostEl.querySelectorAll('[data-dl-ext-date]').forEach(function(b){ b.addEventListener('change', function(){ const k = this.getAttribute('data-dl-ext-date'); if(this.value) ctSaveDeadlineDate(file, k, this.value); }); });
+    hostEl.querySelectorAll('[data-dl-ext-reset]').forEach(function(b){ b.addEventListener('click', function(){ ctSaveDeadlineDate(file, this.getAttribute('data-dl-ext-reset'), ''); }); });
     hostEl.querySelectorAll('[data-dlday]').forEach(function(inp){ inp.addEventListener('change', function(){ ctSaveDays(file, this.getAttribute('data-dlday'), this.value); }); });
     const citesBtn = document.getElementById('tpb-dl-cites');
     if(citesBtn) citesBtn.addEventListener('click', function(){ _dlShowCites = !_dlShowCites; renderDeadlinesForFile(file); });
@@ -12038,7 +12063,7 @@ Tell me your planned move-out date and I will set the inspection.`
     renderServiceStage();
     _openPopKey = null;
     _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null; _ctConfStep = 0; _revEdit = false; _partyStep = 0; _partyEdit = false; _finStep = 0; _setupEditSec = ''; _setupStep = 'review'; _dlSourcesOpen = false; _dlDateEditKey = null;
-    _dlCalcOpen = false; _dlGroupOpen = { coming:false, done:false }; _dlWhyOpen = {};
+    _dlCalcOpen = false; _dlGroupOpen = { coming:false, done:false }; _dlWhyOpen = {}; _dlExtendKey = null;
     document.body.classList.add('tpb-open');
     renderPlaybook(file);
     renderDeleteZone(file);
