@@ -13345,7 +13345,40 @@ Tell me your planned move-out date and I will set the inspection.`
   // contact slots so a file with no parties data migrates cleanly on first edit.
   // The free contract extractor (extract-contract-fields edge fn) drops a DRAFT
   // at raw_form_data.extracted_contract.fields. These helpers read it for pre-fill.
-  function extractedFields(file){ const e = ((file.raw_form_data || {}).extracted_contract || {}).fields; return (e && typeof e === 'object') ? e : null; }
+  // Uniform formatting for ALL extracted fields — addresses get the address
+  // formatter, emails lowercase, phones a standard shape, county/city + clearly
+  // ALL-CAPS or all-lowercase names get Title Case. Names already in mixed case
+  // are left alone so brand/entity names (EXP Realty LLC) are never mangled.
+  function _fmtPhone(s){ var d = String(s||'').replace(/\D/g,''); if(d.length===11 && d[0]==='1') d = d.slice(1); return d.length===10 ? (d.slice(0,3)+'-'+d.slice(3,6)+'-'+d.slice(6)) : String(s||'').trim(); }
+  function _smartTitle(s){ s = String(s||'').trim(); if(!s) return s; if(/[a-z]/.test(s) && /[A-Z]/.test(s)) return s; return s.split(/\s+/).map(function(w){ return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase(); }).join(' '); }
+  function _smartName(s){ s = String(s||'').trim(); if(!s) return s;
+    if(/[a-z]/.test(s) && /[A-Z]/.test(s)) return s; // already mixed-case → leave brand/entity names alone
+    var ENT = /^(LLC|L\.L\.C|INC|CORP|CO|LP|LLP|PA|PLLC|LC|PLC|LTD)$/i;
+    return s.split(/(\s+|-)/).map(function(tok){
+      if(/^\s+$/.test(tok) || tok === '-') return tok;
+      var bare = tok.replace(/[.,]/g,'');
+      if(ENT.test(bare)) return tok.toUpperCase();
+      if(/^(and|&|of|the|de|la|von|van)$/i.test(bare)) return bare.toLowerCase();
+      if(/^\d/.test(bare)) return tok;
+      return tok.charAt(0).toUpperCase()+tok.slice(1).toLowerCase();
+    }).join('');
+  }
+  function normalizeExtractedFields(e){
+    if(!e || typeof e !== 'object') return e;
+    var o = {};
+    Object.keys(e).forEach(function(k){
+      var v = e[k];
+      if(typeof v !== 'string' || !v){ o[k] = v; return; }
+      if(k === 'address' || k === 'title_address') o[k] = normalizeAddress(v);
+      else if(/email/i.test(k)) o[k] = v.trim().toLowerCase();
+      else if(/phone|fax/i.test(k)) o[k] = _fmtPhone(v);
+      else if(k === 'county' || k === 'city') o[k] = _smartTitle(v);
+      else if(/buyer|seller|agent|broker|title_name|^name$/i.test(k)) o[k] = _smartName(v);
+      else o[k] = v;
+    });
+    return o;
+  }
+  function extractedFields(file){ const e = ((file.raw_form_data || {}).extracted_contract || {}).fields; return (e && typeof e === 'object') ? normalizeExtractedFields(e) : null; }
   // Tab chips for a bundled upload split into its component documents (Contract,
   // Addendum, Rider, Compensation). Tapping a chip jumps the PDF iframe to that
   // document's first page. Empty when the upload is a single document.
