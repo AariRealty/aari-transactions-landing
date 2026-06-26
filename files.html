@@ -11259,27 +11259,26 @@ Tell me your planned move-out date and I will set the inspection.`
       // numbered rows, step 5 Under contract is the current open step (its work +
       // deadlines render below), and 6 / 7 sit locked at the bottom of the panel.
       if(confirmed && !_ctSetup){
-        if(_setupCardOpen){
-          // EDIT MODE · show the SAME grouped setup cards (Contract / Parties / Financing
-          // / Price) used during Setup, on their own with a Back to steps link — no
-          // duplicate rows, and it matches exactly what Setup looks like.
+        if(_spineEditSec){
+          // EDIT ONE SECTION · show only the card the TC tapped (Contract / Parties /
+          // Financing / Price), exactly like Setup, with a Back to steps link.
           host.innerHTML = _ctBackLink +
-            '<button type="button" data-setup-card-toggle="1" class="uc-back-steps">&larr; Back to steps</button>' +
-            setupGroupsHtml(file);
+            '<button type="button" data-spine-edit-back="1" class="uc-back-steps">&larr; Back to steps</button>' +
+            setupGroupsHtml(file, _spineEditSec);
         } else {
           const _stageNow = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || 'under_contract');
           let _ci = UC_SPINE_OPS.findIndex(function(o){ return o.key === _stageNow; }); if(_ci < 0) _ci = 0;
           let _ops = '';
           UC_SPINE_OPS.forEach(function(o, i){
-            if(i < _ci) _ops += ucSpineRow(o.n, o.label, 'done', false);      // earlier operational stage, complete
+            if(i < _ci) _ops += ucSpineRow(o.n, o.label, 'done', null);       // earlier operational stage, complete
             else if(i === _ci) _ops += ucSpineRow(o.n, o.label, 'current');   // the open step (work + deadlines below)
           });
           host.innerHTML = _ctBackLink +
             '<div class="uc-spine-top">' +
-              ucSpineRow(1, 'Contract type', 'done', true) +
-              ucSpineRow(2, 'Parties', 'done', true) +
-              ucSpineRow(3, 'Financing', 'done', true) +
-              ucSpineRow(4, 'Terms &amp; dates', 'done', true) +
+              ucSpineRow(1, 'Contract type', 'done', 'contract') +
+              ucSpineRow(2, 'Parties', 'done', 'parties') +
+              ucSpineRow(3, 'Financing', 'done', 'financing') +
+              ucSpineRow(4, 'Terms &amp; dates', 'done', 'pricedates') +
               _ops +
             '</div>';
         }
@@ -12024,6 +12023,10 @@ Tell me your planned move-out date and I will set the inspection.`
       try { var _rr = document.getElementById('rail-right'); if(_rr) _rr.scrollTop = 0; } catch(_){} return; }
     const setupCardTog = e.target.closest('[data-setup-card-toggle]');
     if(setupCardTog){ _setupCardOpen = !_setupCardOpen; try { renderContractTerms(_currentFile); } catch(_){} return; }
+    const spineEd = e.target.closest('[data-spine-edit]');
+    if(spineEd){ _spineEditSec = spineEd.getAttribute('data-spine-edit'); _setupEditSec = ''; try { renderContractTerms(_currentFile); } catch(_){} return; }
+    const spineBack = e.target.closest('[data-spine-edit-back]');
+    if(spineBack){ _spineEditSec = null; _setupEditSec = ''; try { renderContractTerms(_currentFile); } catch(_){} return; }
     const ucTrk = e.target.closest('[data-uc-track]');
     if(ucTrk){ const k = ucTrk.getAttribute('data-uc-track'); _ucOpenTrack = (_ucOpenTrack === k) ? null : k; try { renderStageChecklist(_currentFile); } catch(_){} return; }
     const sToggle = e.target.closest('[data-dl-sources-toggle]');
@@ -12206,7 +12209,7 @@ Tell me your planned move-out date and I will set the inspection.`
     renderAgentRequestsBanner();
     renderServiceStage();
     _openPopKey = null;
-    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null; _ctConfStep = 0; _revEdit = false; _partyStep = 0; _partyEdit = false; _finStep = 0; _setupEditSec = ''; _setupStep = 'review'; _dlSourcesOpen = false; _dlDateEditKey = null;
+    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null; _ctConfStep = 0; _revEdit = false; _partyStep = 0; _partyEdit = false; _finStep = 0; _setupEditSec = ''; _setupStep = 'review'; _dlSourcesOpen = false; _dlDateEditKey = null; _spineEditSec = null; _ucOpenTrack = null;
     _dlCalcOpen = false; _dlGroupOpen = { coming:false, done:false }; _dlWhyOpen = {}; _dlExtendKey = null;
     document.body.classList.add('tpb-open');
     renderPlaybook(file);
@@ -13476,6 +13479,7 @@ Tell me your planned move-out date and I will set the inspection.`
   let _ctTermsExpanded = false;   // confirmed terms · collapsed summary → expand
   let _setupCardOpen = false;     // Option B · Setup card collapsed at top once confirmed
   let _ucOpenTrack = null;        // accordion · which Under contract track is open (one at a time)
+  let _spineEditSec = null;       // spine · which single setup section is open for edit (null = show rows)
   let _ctContactsStep = false;    // confirmed terms · advanced to the contacts step
   let _ctReviewIdx = null;        // confirmed terms · one-at-a-time review stepper index (null = off)
   let _ctConfStep = 0;            // UNconfirmed terms · one-at-a-time confirm stepper index
@@ -14233,7 +14237,7 @@ Tell me your planned move-out date and I will set the inspection.`
   // The grouped setup cards (Contract / Parties / Financing / Price) with inline edit.
   // Single source of truth · used by setupReviewBar (during Setup) AND by the numbered
   // spine's Edit view past Setup, so editing a confirmed file looks exactly like Setup.
-  function setupGroupsHtml(file){
+  function setupGroupsHtml(file, onlySection){
     const ex = (typeof extractedFields === 'function' ? (extractedFields(file) || {}) : {});
     const editSec = _setupEditSec;
     const _money = function(v){ if(v==null||v==='') return ''; var s=String(v).replace(/^\$/,'').replace(/\.00$/,''); return '$'+s; };
@@ -14271,10 +14275,14 @@ Tell me your planned move-out date and I will set the inspection.`
     _pf.push({f:'title_email', label:'Title email', val:(ex.title_email||'')});
     _pf.push({f:'title_phone', label:'Title phone', val:(ex.title_phone||'')});
     _pf.push({f:'title_address', label:'Title address', val:(ex.title_address||'')});
-    return grp('Contract', 'contract', [{f:'__type',label:'Type',val:_type,ro:true},{f:'address',label:'Property',val:(ex.address||file.property_address||'')},{f:'county',label:'County',val:(ex.county||'')}]) +
-      grp('Parties', 'parties', _pf) +
-      grp('Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),ro:true},{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}]) +
-      grp('Price', 'pricedates', [{f:'price',label:'Purchase price',val:_price},{f:'emd',label:'Initial deposit',val:_money(ex.emd)},{f:'balance_to_close',label:'Balance to close',val:_money(ex.balance_to_close)}]);
+    const _groups = {
+      contract:   grp('Contract', 'contract', [{f:'__type',label:'Type',val:_type,ro:true},{f:'address',label:'Property',val:(ex.address||file.property_address||'')},{f:'county',label:'County',val:(ex.county||'')}]),
+      parties:    grp('Parties', 'parties', _pf),
+      financing:  grp('Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),ro:true},{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}]),
+      pricedates: grp('Price', 'pricedates', [{f:'price',label:'Purchase price',val:_price},{f:'emd',label:'Initial deposit',val:_money(ex.emd)},{f:'balance_to_close',label:'Balance to close',val:_money(ex.balance_to_close)}]),
+    };
+    if(onlySection && _groups[onlySection]) return _groups[onlySection];
+    return _groups.contract + _groups.parties + _groups.financing + _groups.pricedates;
   }
   function setupReviewBar(file, ctBody){
     ctBody = ctBody || '';
@@ -14574,10 +14582,10 @@ Tell me your planned move-out date and I will set the inspection.`
     { n:6, key:'ctc',           label:'Clear to close' },
     { n:7, key:'closed',        label:'Closed' },
   ];
-  function ucSpineRow(n, label, kind, withEdit){
+  function ucSpineRow(n, label, kind, editSection){
     if(kind === 'done'){
       return '<div class="uc-step"><span class="uc-step-l"><span class="uc-step-num done">&#10003;</span>' + label + '</span>' +
-        (withEdit ? '<button type="button" data-setup-card-toggle="1" class="uc-step-edit">Edit</button>' : '') + '</div>';
+        (editSection ? '<button type="button" data-spine-edit="' + editSection + '" class="uc-step-edit">Edit</button>' : '') + '</div>';
     }
     if(kind === 'current'){
       return '<div class="uc-step current"><span class="uc-step-l"><span class="uc-step-num cur">' + n + '</span>' + label + '</span><span class="uc-step-now">now</span></div>';
