@@ -1145,7 +1145,7 @@
 
   // ============== STAGE CONFIG (file-type aware) ==============
   const STAGES_BY_TYPE = {
-    sale:      ['new','waiting_for_tc','under_contract','inspection','appraisal','ctc','closed'], // remedy hidden until fully built — tasks/emails remain in code below
+    sale:      ['new','waiting_for_tc','under_contract','ctc','closed'], // inspection + appraisal are now PARALLEL TRACKS inside Under contract (UC_TRACKS), not pipeline columns; remedy folds in too. Their tasks/emails still live in STAGE_CHECKLISTS/EMAIL_PLAYBOOK and render inside the tracks.
     listing:   ['new','active','pending','closed','cancelled'],
     lease:     ['new','active','signed','occupied','expired'],
     rental:    ['new','active','signed','occupied','closed'],
@@ -9343,10 +9343,10 @@ Tell me your planned move-out date and I will set the inspection.`
       const today = new Date(); today.setHours(0,0,0,0);
       const close = new Date(String(f.closing_date).length===10 ? (f.closing_date+'T00:00:00') : f.closing_date);
       const days = Math.round((close - today)/86400000);
-      if(days < 0) return 'ctc';
+      // Inspection + appraisal are now parallel tracks inside Under contract, not
+      // their own pipeline stages, so the date fallback only resolves to the live
+      // operational stages: Clear to close near closing, else Under contract.
       if(days <= 5) return 'ctc';
-      if(days <= 14) return 'appraisal';
-      if(days <= 21) return 'inspection';
       return 'under_contract';
     }
     // For non-sale file_types with no explicit stage, default to first lane
@@ -11393,8 +11393,22 @@ Tell me your planned move-out date and I will set the inspection.`
   function stageProgress(f){
     try {
       const stage = deriveStage(f);
-      const tasks = ((STAGE_CHECKLISTS[(f.file_type || 'sale')] || {})[stage] || [])
-        .filter(t => !t.showIf || t.showIf(f));
+      const ft = f.file_type || 'sale';
+      let tasks;
+      // Under contract spans the merged inspection/appraisal/remedy tracks, so the
+      // card count must too — otherwise "X of Y" only reflects the title work.
+      if(stage === 'under_contract' && ft === 'sale'){
+        const seen = {}; tasks = [];
+        const add = function(t){
+          if(!t || seen[t.id] || (typeof UC_MERGE_SKIP !== 'undefined' && UC_MERGE_SKIP[t.id])) return;
+          if(/_weekly_update$/.test(t.id) && t.id !== 'uc_weekly_update') return;
+          if(t.showIf && !t.showIf(f)) return;
+          seen[t.id] = true; tasks.push(t);
+        };
+        ['under_contract','inspection','appraisal','remedy'].forEach(function(s){ (((STAGE_CHECKLISTS[ft] || {})[s]) || []).forEach(add); });
+      } else {
+        tasks = ((STAGE_CHECKLISTS[ft] || {})[stage] || []).filter(t => !t.showIf || t.showIf(f));
+      }
       if(!tasks.length) return null;
       const dt = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
       return { done: tasks.filter(t => dt[t.id]).length, total: tasks.length };
