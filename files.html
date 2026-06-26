@@ -9388,7 +9388,13 @@ Tell me your planned move-out date and I will set the inspection.`
     if(!el) return;
     const counts = {};
     FILE_TYPES.forEach(t => { counts[t.id] = 0; });
-    _files.forEach(f => { const t = (f.file_type || 'sale'); counts[t] = (counts[t]||0)+1; });
+    // Count only ACTIVE files per type — archived, closed, and test-pool files were
+    // inflating the tab (e.g. "Sales 30" when only 2 are live).
+    _files.forEach(f => {
+      if(f.status === 'archived' || f.status === 'closed') return;
+      if((f.raw_form_data || {}).test_pool) return;
+      const t = (f.file_type || 'sale'); counts[t] = (counts[t]||0)+1;
+    });
     el.innerHTML = FILE_TYPES.map(t => {
       const cls = t.id === _fileTypeFilter ? 'ft-pill active' : 'ft-pill';
       return '<button type="button" class="'+cls+'" data-ft="'+t.id+'">'+esc(t.label)+'<span class="count">'+counts[t.id]+'</span></button>';
@@ -12531,6 +12537,13 @@ Tell me your planned move-out date and I will set the inspection.`
     const d = emdData(file);
     const stored = which === 'additional' ? (d.additional_status || 'pending') : (d.status || 'pending');
     if(stored !== 'pending') return stored;
+    // Task-driven fallback · if the EMD confirm task is already checked, the deposit
+    // is settled even if the widget badge was never tapped. Stops a done EMD from
+    // showing as "Overdue" at the top of Do next.
+    const _dt = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    const _confTask = which === 'additional' ? 'uc_addl_confirmed' : 'uc_emd_confirmed';
+    const _followTask = which === 'additional' ? 'uc_addl_followup' : 'uc_emd_followup';
+    if((_dt[_confTask] && _dt[_confTask].done) || (_dt[_followTask] && _dt[_followTask].done)) return 'confirmed';
     const dls = fileDeadlines(file);
     const key = which === 'additional' ? 'emd_additional' : 'emd_initial';
     if(dls[key] && dlState(dls[key].date) === 'overdue') return 'overdue';
@@ -13049,6 +13062,8 @@ Tell me your planned move-out date and I will set the inspection.`
           sub:'Go through every executed addendum. Check every signature and initial. No exceptions.' },
         { id:'app_confirm_contacts', label:'Confirm contacts current',
           sub:'Verify title closer, lender, both agents, buyer, and seller contact information has not changed. Update anything that has.' },
+        { id:'app_insurance_binder', label:'Confirm insurance binder', showIf:(f)=>!isCashFile(f),
+          sub:'Financed deals · the lender needs the hazard insurance binder, named as mortgagee, before Clear to Close. Confirm it is bound and sent to the lender and title.' },
         { id:'app_missing_info',     label:'Flag any missing information to agent',
           showIf:(f)=>{ try { const mf = (typeof missingFieldsFor === 'function') ? missingFieldsFor({}, f) : []; return !!(mf && mf.length); } catch(_){ return false; } },
           sub:'If the system flags missing items on this file, send the agent a request for what is still needed.' },
@@ -14424,12 +14439,16 @@ Tell me your planned move-out date and I will set the inspection.`
   const UC_TRACKS = [
     { key:'inspection', label:'Inspection', ids:['insp_utilities_on','insp_scheduled','insp_deadline_watch','insp_review_report','insp_decision_followup','insp_proceed_confirmed','insp_proceed_notice','insp_cancel_confirmed','insp_cancel_notice','insp_deposit_return','insp_permits','rem_asis_accepted','rem_addendum_confirmed','rem_permits_followup'] },
     { key:'appraisal',  label:'Appraisal &amp; loan', ids:['uc_add_lender_contact','uc_loan_app','uc_lender_followup','uc_loan_approval_acknowledged','uc_loan_approval_confirmed','insp_lender_update','rem_lender_progress','app_ordered','app_status_followup','app_deadline_watch','app_satisfactory_confirm','app_final_approval_followup','app_low_notify','app_low_decision','app_low_addendum','app_low_deposit_return','app_loan_approved','app_no_approval_notice','app_review_approval_letter'] },
-    { key:'title',      label:'Title &amp; survey', ids:['uc_emd_wiring','uc_emd_followup','uc_addl_followup','uc_title_commitment_reminder','uc_comp_agreement','uc_lien_search','uc_tenant_lease','uc_tenant_estoppel_request','uc_hoa_followup','uc_survey_received','uc_missing_info','rem_title_search','app_title_commitment','app_verify_signatures','app_confirm_contacts'] },
+    { key:'title',      label:'Title &amp; survey', ids:['uc_emd_wiring','uc_emd_followup','uc_addl_followup','uc_title_commitment_reminder','uc_comp_agreement','uc_lien_search','uc_tenant_lease','uc_tenant_estoppel_request','uc_hoa_followup','uc_survey_received','uc_missing_info','rem_title_search','app_title_commitment','app_insurance_binder','app_verify_signatures','app_confirm_contacts'] },
   ];
   // Tasks pulled in from the inspection/appraisal/remedy stages that DUPLICATE an
   // under_contract task — skipped in the merge so the merged Under contract list
-  // never shows the same action twice.
-  const UC_MERGE_SKIP = { app_missing_info:1 };
+  // never shows the same action twice. Their emails suppress automatically (the
+  // standalone-email pass drops emails whose task is defined-but-not-shown).
+  //   app_missing_info  → same as uc_missing_info
+  //   insp_lender_update, rem_lender_progress → same recurring "check with lender" as uc_lender_followup
+  //   rem_title_search  → same title-commitment chase as uc_title_commitment_reminder
+  const UC_MERGE_SKIP = { app_missing_info:1, insp_lender_update:1, rem_lender_progress:1, rem_title_search:1 };
   function ucTrackStatus(openN, total){
     if(total === 0) return { word:'Not started', cls:'soft' };
     if(openN === 0) return { word:'Done', cls:'g' };
