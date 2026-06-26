@@ -780,6 +780,10 @@
   .uc-trk[open] .uc-chev{transform:rotate(90deg)}
   .uc-trk-bd{margin-top:9px}
   .uc-ongoing{margin-top:4px}
+  .uc-done{margin-top:2px}
+  .uc-done-sum{list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px;font-size:12px;color:#9a958c;padding:8px 0 4px}
+  .uc-done-sum::-webkit-details-marker{display:none}
+  .uc-done[open] .uc-done-sum .uc-chev{transform:rotate(90deg)}
   .move-anyway{display:inline-block;font-size:11.5px;color:#9a958c;margin-top:9px;text-decoration:underline;cursor:pointer;font-family:inherit;background:none;border:0}
   .move-locked{font-size:12.5px;font-weight:600;color:#a39e95;background:#f1ede6;border:0;border-radius:9px;padding:9px 15px;font-family:inherit}
   .rail-close{display:none;border:0;background:none;font-size:20px;color:#8a857c;cursor:pointer;line-height:1;padding:0 2px;font-family:inherit}
@@ -14458,12 +14462,20 @@ Tell me your planned move-out date and I will set the inspection.`
     const byId = {}; tasks.forEach(function(t){ byId[t.id] = t; });
     const used = {};
     let html = '';
+    // Done tasks collapse behind one "N done" line so only open work shows. Tap to
+    // reveal the finished rows; they never crowd the live list.
+    const _doneFold = function(doneTks){
+      if(!doneTks.length) return '';
+      return '<details class="uc-done"><summary class="uc-done-sum">' + doneTks.length + ' done<span class="uc-chev">&#8250;</span></summary>' +
+        doneTks.map(function(t){ return ckRow(file, t, dls, done); }).join('') + '</details>';
+    };
     UC_TRACKS.forEach(function(trk){
       const tks = trk.ids.map(function(id){ return byId[id]; }).filter(Boolean);
-      if(!tks.length) return; // skip a track with no visible tasks (e.g. Inspection this slice)
+      if(!tks.length) return; // skip a track with no visible tasks
       tks.forEach(function(t){ used[t.id] = true; });
-      const openN = tks.filter(function(t){ return !done[t.id]; }).length;
-      const st = ucTrackStatus(openN, tks.length);
+      const openTks = tks.filter(function(t){ return !done[t.id]; });
+      const doneTks = tks.filter(function(t){ return done[t.id]; });
+      const st = ucTrackStatus(openTks.length, tks.length);
       // The controls that drive each track's branch tasks live with the track:
       // the appraisal result + loan badge widget in Appraisal & loan, the inspection
       // outcome flags in Inspection. Both are delegated, so they work inline here.
@@ -14472,13 +14484,23 @@ Tell me your planned move-out date and I will set the inspection.`
         if(trk.key === 'appraisal' && !isCashFile(file)) trkWidget = renderApprWidget(file);
         else if(trk.key === 'inspection') trkWidget = renderRemedyFlags(file);
       } catch(_){}
-      html += '<details class="uc-trk"' + (openN > 0 ? ' open' : '') + '>' +
+      html += '<details class="uc-trk"' + (openTks.length > 0 ? ' open' : '') + '>' +
         '<summary class="uc-trk-hd"><span class="l"><span class="uc-dot ' + st.cls + '"></span>' + trk.label + '</span>' +
         '<span class="r"><span class="uc-st ' + st.cls + '">' + esc(st.word) + '</span><span class="uc-chev">&#8250;</span></span></summary>' +
-        '<div class="uc-trk-bd">' + trkWidget + tks.map(function(t){ return ckRow(file, t, dls, done); }).join('') + '</div></details>';
+        '<div class="uc-trk-bd">' + trkWidget +
+          openTks.map(function(t){ return ckRow(file, t, dls, done); }).join('') +
+          _doneFold(doneTks) +
+        '</div></details>';
     });
     const left = tasks.filter(function(t){ return !used[t.id]; });
-    if(left.length){ html += '<div class="uc-ongoing">' + left.map(function(t){ return ckRow(file, t, dls, done); }).join('') + '</div>'; }
+    if(left.length){
+      const leftOpen = left.filter(function(t){ return !done[t.id]; });
+      const leftDone = left.filter(function(t){ return done[t.id]; });
+      html += '<div class="uc-ongoing">' +
+        leftOpen.map(function(t){ return ckRow(file, t, dls, done); }).join('') +
+        _doneFold(leftDone) +
+      '</div>';
+    }
     return html;
   }
 
