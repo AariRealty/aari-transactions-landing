@@ -805,6 +805,7 @@
   .uc-tag.i{background:#eef4ef;color:#2f7a4f}
   .uc-tag.a{background:#faf3e2;color:#b98a2e}
   .uc-tag.t{background:#eef1f6;color:#185FA5}
+  .uc-tag.o{background:#f1efe8;color:#6b6760}
   .uc-statusbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:11px;padding-top:11px;border-top:0.5px solid #f1ede6}
   .uc-sp{font-size:10.5px;font-weight:600;border-radius:20px;padding:3px 9px}
   .uc-sp.g{background:#eef4ef;color:#2f7a4f}
@@ -14938,8 +14939,8 @@ Tell me your planned move-out date and I will set the inspection.`
     // Below-value and no-approval branches stay (gated, invisible unless triggered).
     // The routine lender pings (loan-in-process, lender-status, appraisal-ordered,
     // appraisal-results, deadline-watch, announce, weekly) are cut via UC_MERGE_SKIP.
-    { key:'appraisal',  label:'Appraisal &amp; loan', ids:['uc_add_lender_contact','uc_loan_app','uc_loan_approval_acknowledged','app_review_approval_letter','app_no_approval_notice','app_low_notify','app_low_decision','app_low_addendum','app_low_deposit_return'] },
-    { key:'title',      label:'Title &amp; survey', ids:['uc_emd_wiring','uc_emd_followup','uc_addl_followup','uc_title_commitment_reminder','uc_comp_agreement','uc_lien_search','uc_tenant_lease','uc_tenant_estoppel_request','uc_hoa_followup','uc_survey_received','uc_missing_info','rem_title_search','app_title_commitment','app_insurance_binder','app_verify_signatures','app_confirm_contacts'] },
+    { key:'appraisal',  label:'Appraisal & loan', ids:['uc_add_lender_contact','uc_loan_app','uc_loan_approval_acknowledged','app_review_approval_letter','app_no_approval_notice','app_low_notify','app_low_decision','app_low_addendum','app_low_deposit_return'] },
+    { key:'title',      label:'Title & survey', ids:['uc_emd_wiring','uc_emd_followup','uc_addl_followup','uc_title_commitment_reminder','uc_comp_agreement','uc_lien_search','uc_tenant_lease','uc_tenant_estoppel_request','uc_hoa_followup','uc_survey_received','uc_missing_info','app_insurance_binder','app_verify_signatures','app_confirm_contacts'] },
   ];
   // Tasks pulled in from the inspection/appraisal/remedy stages that DUPLICATE an
   // under_contract task — skipped in the merge so the merged Under contract list
@@ -14947,8 +14948,10 @@ Tell me your planned move-out date and I will set the inspection.`
   // standalone-email pass drops emails whose task is defined-but-not-shown).
   //   app_missing_info  → same as uc_missing_info
   //   insp_lender_update, rem_lender_progress → same recurring "check with lender" as uc_lender_followup
-  //   rem_title_search  → same title-commitment chase as uc_title_commitment_reminder
-  const UC_MERGE_SKIP = { app_missing_info:1, insp_lender_update:1, rem_lender_progress:1, rem_title_search:1,
+  //   rem_title_search, app_title_commitment → same title-commitment chase as uc_title_commitment_reminder
+  //     (app_title_commitment also rendered alongside the reminder while the commitment
+  //      was still open — a visible duplicate; the receipt copy lives in CTC).
+  const UC_MERGE_SKIP = { app_missing_info:1, insp_lender_update:1, rem_lender_progress:1, rem_title_search:1, app_title_commitment:1,
     // Routine lender babysitting · cut per contract review (not contractually required).
     uc_lender_followup:1, app_ordered:1, app_status_followup:1, app_deadline_watch:1,
     app_satisfactory_confirm:1, app_final_approval_followup:1, app_loan_approved:1,
@@ -14996,7 +14999,8 @@ Tell me your planned move-out date and I will set the inspection.`
   const UC_TAGS = {
     inspection: { lab:'Insp',  cls:'i' },
     appraisal:  { lab:'Loan',  cls:'a' },
-    title:      { lab:'Title', cls:'t' }
+    title:      { lab:'Title', cls:'t' },
+    open:       { lab:'Open',  cls:'o' }
   };
   function buildUcTracksHtml(file, tasks, dls, done){
     const byId = {}; tasks.forEach(function(t){ byId[t.id] = t; });
@@ -15020,9 +15024,13 @@ Tell me your planned move-out date and I will set the inspection.`
       else { word = openTks.length + ' to do'; cls = 'k'; }
       statusParts.push('<span class="uc-sp ' + cls + '">' + esc(trk.label) + ' &middot; ' + esc(word) + '</span>');
     });
-    // Leftover (weekly etc.) — fold into the same flow.
+    // Leftover (opening sequence, weekly) — fold into the same flow. The opening
+    // tasks (wtc_*) carry into Under contract by design but sit outside the three
+    // tracks, so tag them "Open" instead of leaving them label-less.
     const left = tasks.filter(function(t){ return !used[t.id]; });
-    left.filter(function(t){ return !done[t.id]; }).forEach(function(t){ openRows.push(ckRow(file, t, dls, done, '')); });
+    const _leftTag = function(t){ return (typeof isOpeningTaskId === 'function' && isOpeningTaskId(t.id))
+      ? '<span class="uc-tag o">' + UC_TAGS.open.lab + '</span>' : ''; };
+    left.filter(function(t){ return !done[t.id]; }).forEach(function(t){ openRows.push(ckRow(file, t, dls, done, _leftTag(t))); });
     left.filter(function(t){ return done[t.id]; }).forEach(function(t){ doneTasks.push(t); });
 
     let html = '<p class="uc-needsyou-hd">Needs you &middot; ' + openRows.length + '</p>';
