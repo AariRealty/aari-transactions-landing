@@ -15123,43 +15123,74 @@ Tell me your planned move-out date and I will set the inspection.`
     title:      { lab:'Title', cls:'t' },
     open:       { lab:'Open',  cls:'o' }
   };
+  // Contract-sequence order · the fixed Effective-Date timeline the deal actually
+  // runs on (NOT a live date sort that reshuffles). Open the file first, then
+  // deposit, financing application + survey, inspection, title, loan approval,
+  // pre-close. Tasks render top-to-bottom in this order so nothing time-sensitive
+  // hides at the bottom and the opening work is never last.
+  const UC_SEQUENCE = [
+    // Open the file (Effective + 1)
+    'wtc_agent_confirm','wtc_opening_email','wtc_escrow_instructions','wtc_buyer_deposit_title',
+    'wtc_other_agent_intro','wtc_processor_intro','wtc_hoa_request','wtc_condo_docs',
+    'wtc_survey_title_request','wtc_title_insurance_request','uc_add_lender_contact',
+    // Deposit (Effective + 3)
+    'uc_emd_wiring','uc_emd_followup','uc_addl_followup',
+    // Financing application + survey (Effective + 5)
+    'uc_loan_app','uc_survey_received','uc_tenant_lease','uc_tenant_estoppel_request',
+    // Inspection (Effective + 15)
+    'insp_scheduled','insp_deadline_watch','insp_extension_check','insp_decision_followup',
+    'insp_proceed_confirmed','insp_cancel_confirmed','insp_deposit_return',
+    // Title (≈15 days before closing)
+    'uc_title_commitment_reminder','uc_lien_search','uc_comp_agreement','uc_hoa_followup',
+    // Loan approval (Effective + 30)
+    'uc_loan_approval_acknowledged','uc_loan_approval_confirmed','app_review_approval_letter',
+    'app_no_approval_notice','app_low_notify','app_low_decision','app_low_addendum','app_low_deposit_return',
+    'app_insurance_binder',
+    // Pre-close prep
+    'app_verify_signatures','app_confirm_contacts','uc_missing_info',
+    // Ongoing
+    'uc_weekly_update'
+  ];
+  const UC_SEQ_INDEX = (function(){ const m = {}; UC_SEQUENCE.forEach(function(id, i){ m[id] = i; }); return m; })();
+  function ucSeqRank(id){ const r = UC_SEQ_INDEX[id]; return (r == null) ? 9999 : r; }
+  // id → track tag, derived from UC_TRACKS (opening tasks tag "Open").
+  const UC_TAG_OF = (function(){
+    const m = {};
+    UC_TRACKS.forEach(function(trk){ const tag = UC_TAGS[trk.key] || { lab:trk.label, cls:'t' }; trk.ids.forEach(function(id){ if(!m[id]) m[id] = tag; }); });
+    return m;
+  })();
+  function ucTagHtml(id){
+    let tag = UC_TAG_OF[id];
+    if(!tag && typeof isOpeningTaskId === 'function' && isOpeningTaskId(id)) tag = UC_TAGS.open;
+    return tag ? '<span class="uc-tag ' + tag.cls + '">' + tag.lab + '</span>' : '';
+  }
   function buildUcTracksHtml(file, tasks, dls, done){
-    const byId = {}; tasks.forEach(function(t){ byId[t.id] = t; });
-    const used = {};
-    const openRows = []; const doneTasks = []; const statusParts = [];
+    // ONE list, ordered by the contract sequence above (opening → deposit →
+    // financing → inspection → title → approval → pre-close). Tags keep the
+    // per-track read; the status strip keeps the per-track "waiting on lender".
+    const ordered = tasks.slice().sort(function(a, b){ return ucSeqRank(a.id) - ucSeqRank(b.id); });
+    const openTasks = ordered.filter(function(t){ return !done[t.id]; });
+    const doneTasks = ordered.filter(function(t){ return done[t.id]; });
+    const openRows = openTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id)); });
+    // Per-track status word for the strip (read-only summary, unchanged).
+    const statusParts = [];
     UC_TRACKS.forEach(function(trk){
-      const tks = trk.ids.map(function(id){ return byId[id]; }).filter(Boolean);
+      const tks = trk.ids.map(function(id){ return tasks.find(function(t){ return t.id === id; }); }).filter(Boolean);
       if(!tks.length) return;
-      tks.forEach(function(t){ used[t.id] = true; });
-      const openTks = tks.filter(function(t){ return !done[t.id]; });
-      const doneTks = tks.filter(function(t){ return done[t.id]; });
-      doneTks.forEach(function(t){ doneTasks.push(t); });
-      const tag = UC_TAGS[trk.key] || { lab:trk.label, cls:'t' };
-      const tagHtml = '<span class="uc-tag ' + tag.cls + '">' + tag.lab + '</span>';
-      openTks.forEach(function(t){ openRows.push(ckRow(file, t, dls, done, tagHtml)); });
-      // Per-track status word for the strip.
+      const openN = tks.filter(function(t){ return !done[t.id]; }).length;
       let word = '', cls = 'k';
-      if(!openTks.length){ word = 'done'; cls = 'g'; }
+      if(!openN){ word = 'done'; cls = 'g'; }
       else if(trk.key === 'appraisal' && !isCashFile(file)
               && (done['uc_loan_app']) && !(done['uc_loan_approval_acknowledged'])){ word = 'waiting on lender'; cls = 'a'; }
-      else { word = openTks.length + ' to do'; cls = 'k'; }
+      else { word = openN + ' to do'; cls = 'k'; }
       statusParts.push('<span class="uc-sp ' + cls + '">' + esc(trk.label) + ' &middot; ' + esc(word) + '</span>');
     });
-    // Leftover (opening sequence, weekly) — fold into the same flow. The opening
-    // tasks (wtc_*) carry into Under contract by design but sit outside the three
-    // tracks, so tag them "Open" instead of leaving them label-less.
-    const left = tasks.filter(function(t){ return !used[t.id]; });
-    const _leftTag = function(t){ return (typeof isOpeningTaskId === 'function' && isOpeningTaskId(t.id))
-      ? '<span class="uc-tag o">' + UC_TAGS.open.lab + '</span>' : ''; };
-    left.filter(function(t){ return !done[t.id]; }).forEach(function(t){ openRows.push(ckRow(file, t, dls, done, _leftTag(t))); });
-    left.filter(function(t){ return done[t.id]; }).forEach(function(t){ doneTasks.push(t); });
-
     let html = '<p class="uc-needsyou-hd">Needs you &middot; ' + openRows.length + '</p>';
     html += openRows.join('') || '<p class="ck-empty">Nothing on you right now.</p>';
     if(statusParts.length){ html += '<div class="uc-statusbar">' + statusParts.join('') + '</div>'; }
     if(doneTasks.length){
       html += '<details class="uc-done"><summary class="uc-done-sum">' + doneTasks.length + ' done<span class="uc-chev">&#8250;</span></summary>' +
-        doneTasks.map(function(t){ return ckRow(file, t, dls, done, ''); }).join('') + '</details>';
+        doneTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id)); }).join('') + '</details>';
     }
     return html;
   }
