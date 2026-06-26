@@ -781,8 +781,8 @@
   .uc-acc-l{display:flex;align-items:center;gap:12px;font-size:13.5px;font-weight:600;color:#0f0f0f}
   .uc-acc-chev{color:#c4bfb5;transition:transform .25s;font-size:15px}
   .uc-acc.open .uc-acc-chev{transform:rotate(90deg)}
-  .uc-acc-bd{max-height:0;opacity:0;transition:max-height .42s cubic-bezier(.4,0,.2,1),opacity .3s}
-  .uc-acc.open .uc-acc-bd{max-height:420px;opacity:1}
+  .uc-acc-bd{max-height:0;opacity:0;overflow:hidden;transition:max-height .5s cubic-bezier(.4,0,.2,1),opacity .3s}
+  .uc-acc.open .uc-acc-bd{max-height:2600px;opacity:1}
   .uc-acc-bd-in{padding:2px 15px 14px}
   /* Deadline watch inside step 4 + the late hint on step 5 */
   .dw{margin-top:10px;border-top:0.5px solid #f1ede5;padding-top:8px}
@@ -12128,6 +12128,13 @@ Tell me your planned move-out date and I will set the inspection.`
       try { var _rr = document.getElementById('rail-right'); if(_rr) _rr.scrollTop = 0; } catch(_){} return; }
     const setupCardTog = e.target.closest('[data-setup-card-toggle]');
     if(setupCardTog){ _setupCardOpen = !_setupCardOpen; try { renderContractTerms(_currentFile); } catch(_){} return; }
+    const cellEd = e.target.closest('[data-cell-edit]');
+    if(cellEd){ _setupCellEdit = cellEd.getAttribute('data-cell-edit'); try { renderContractTerms(_currentFile); } catch(_){}
+      setTimeout(function(){ var el = document.getElementById('nf-cell-active'); if(el){ el.focus(); try { el.select(); } catch(_){} } }, 0); return; }
+    const cellSave = e.target.closest('[data-cell-save]');
+    if(cellSave && _currentFile){ try { nfSaveGroup(); } catch(_){} return; }
+    const cellCancel = e.target.closest('[data-cell-cancel]');
+    if(cellCancel){ _setupCellEdit = null; try { renderContractTerms(_currentFile); } catch(_){} return; }
     const accTog = e.target.closest('[data-acc-toggle]');
     if(accTog){
       const sec = accTog.getAttribute('data-acc-toggle');
@@ -12320,7 +12327,7 @@ Tell me your planned move-out date and I will set the inspection.`
     renderAgentRequestsBanner();
     renderServiceStage();
     _openPopKey = null;
-    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null; _ctConfStep = 0; _revEdit = false; _partyStep = 0; _partyEdit = false; _finStep = 0; _setupEditSec = ''; _setupStep = 'review'; _dlSourcesOpen = false; _dlDateEditKey = null; _spineEditSec = null; _ucOpenTrack = null;
+    _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null; _ctConfStep = 0; _revEdit = false; _partyStep = 0; _partyEdit = false; _finStep = 0; _setupEditSec = ''; _setupStep = 'review'; _dlSourcesOpen = false; _dlDateEditKey = null; _spineEditSec = null; _ucOpenTrack = null; _setupCellEdit = null;
     _dlCalcOpen = false; _dlGroupOpen = { coming:false, done:false }; _dlWhyOpen = {}; _dlExtendKey = null;
     document.body.classList.add('tpb-open');
     renderPlaybook(file);
@@ -13591,6 +13598,7 @@ Tell me your planned move-out date and I will set the inspection.`
   let _setupCardOpen = false;     // Option B · Setup card collapsed at top once confirmed
   let _ucOpenTrack = null;        // accordion · which Under contract track is open (one at a time)
   let _spineEditSec = null;       // spine · which single setup section is open for edit (null = show rows)
+  let _setupCellEdit = null;      // setup cards · which single field value is being edited inline (tap the value)
   let _ctContactsStep = false;    // confirmed terms · advanced to the contacts step
   let _ctReviewIdx = null;        // confirmed terms · one-at-a-time review stepper index (null = off)
   let _ctConfStep = 0;            // UNconfirmed terms · one-at-a-time confirm stepper index
@@ -14361,18 +14369,29 @@ Tell me your planned move-out date and I will set the inspection.`
       if(fd.ro) return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(fd.label) + '</span><span style="font-weight:600;text-align:right;color:#a39e95">' + esc(fd.val) + '</span></div>';
       return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5"><div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div><input data-nf-field="' + fd.f + '" value="' + esc(fd.val).replace(/"/g, '&quot;') + '" style="width:100%;font:inherit;font-size:13px;font-weight:600;padding:8px 10px;border:1px solid #d9d4ca;border-radius:8px;background:#fff;color:#0f0f0f"></div>'; };
     const grp = function(title, key, fields, bare){
-      const editing = (editSec === key);
-      const editBtn = '<button type="button" data-setup-edit="' + key + '" style="background:none;border:0;color:' + (editing ? '#0f0f0f' : '#185FA5') + ';font-size:11.5px;font-weight:500;cursor:pointer;font-family:inherit">' + (editing ? 'Cancel' : 'Edit') + '</button>';
-      let body;
-      if(editing){
-        body = fields.map(editRow).join('') + '<div style="text-align:right;margin-top:11px"><button type="button" data-nf-save="' + key + '" style="background:#0f0f0f;color:#fff;border:0;border-radius:8px;font-family:inherit;font-size:13px;font-weight:600;padding:9px 18px;cursor:pointer">Save changes</button></div>';
-      } else {
-        body = fields.map(function(fd){ return dispRow(fd.label, fd.val); }).join('');
-      }
-      // BARE · no card / no title (the accordion row header already names the section).
-      if(bare){ return body + (editing ? '' : '<div style="text-align:right;margin-top:9px">' + editBtn + '</div>'); }
-      return '<div style="background:#fff;border:' + (editing ? '1.5px solid #0f0f0f' : '0.5px solid #ece8e0') + ';border-radius:11px;padding:4px 14px 11px;margin-bottom:9px">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0 2px"><span style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#9a958c">' + esc(title) + '</span>' + editBtn + '</div>' +
+      // Per-field inline edit · tap a VALUE to turn just that field into an input
+      // (no group Edit button). While one cell is open, the rest of the group renders
+      // hidden inputs so the existing group save keeps every sibling intact.
+      const groupHasEdit = fields.some(function(fd){ return fd.f === _setupCellEdit; });
+      const cell = function(fd){
+        if(fd.ro) return dispRow(fd.label, fd.val);
+        if(_setupCellEdit === fd.f){
+          return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5">' +
+            '<div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div>' +
+            '<div style="display:flex;gap:8px;align-items:center">' +
+              '<input data-nf-field="' + fd.f + '" id="nf-cell-active" value="' + esc(fd.val).replace(/"/g, '&quot;') + '" style="flex:1;min-width:0;font:inherit;font-size:13px;font-weight:600;padding:8px 10px;border:1px solid #0f0f0f;border-radius:8px;background:#fff;color:#0f0f0f">' +
+              '<button type="button" data-cell-save="1" style="flex:none;font-size:12px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:7px;padding:7px 12px;cursor:pointer;font-family:inherit">Save</button>' +
+              '<button type="button" data-cell-cancel="1" style="flex:none;font-size:12px;color:#9a958c;background:none;border:0;cursor:pointer;font-family:inherit">Cancel</button>' +
+            '</div></div>';
+        }
+        const hidden = groupHasEdit ? '<input type="hidden" data-nf-field="' + fd.f + '" value="' + esc(fd.val).replace(/"/g, '&quot;') + '">' : '';
+        return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(fd.label) + '</span>' +
+          '<span data-cell-edit="' + fd.f + '" title="Tap to edit" style="font-weight:600;text-align:right;cursor:pointer;border-bottom:1px dashed #c9c4ba">' + (esc(fd.val) || '&mdash;') + '</span>' + hidden + '</div>';
+      };
+      const body = fields.map(cell).join('');
+      if(bare){ return body; }
+      return '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:11px;padding:4px 14px 11px;margin-bottom:9px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0 2px"><span style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#9a958c">' + esc(title) + '</span></div>' +
         body + '</div>';
     };
     const _split = function(s){ return String(s||'').split(/\s+and\s+|\s*&\s*|\s*;\s*/i).map(function(x){return x.trim();}).filter(Boolean); };
@@ -14468,18 +14487,29 @@ Tell me your planned move-out date and I will set the inspection.`
     // grp · review list by default; tap Edit → the whole group becomes editable inputs
     // at once (a list), Save writes back. No one-at-a-time stepper.
     const grp = function(title, key, fields, bare){
-      const editing = (editSec === key);
-      const editBtn = '<button type="button" data-setup-edit="' + key + '" style="background:none;border:0;color:' + (editing ? '#0f0f0f' : '#185FA5') + ';font-size:11.5px;font-weight:500;cursor:pointer;font-family:inherit">' + (editing ? 'Cancel' : 'Edit') + '</button>';
-      let body;
-      if(editing){
-        body = fields.map(editRow).join('') + '<div style="text-align:right;margin-top:11px"><button type="button" data-nf-save="' + key + '" style="background:#0f0f0f;color:#fff;border:0;border-radius:8px;font-family:inherit;font-size:13px;font-weight:600;padding:9px 18px;cursor:pointer">Save changes</button></div>';
-      } else {
-        body = fields.map(function(fd){ return dispRow(fd.label, fd.val); }).join('');
-      }
-      // BARE · no card / no title (the accordion row header already names the section).
-      if(bare){ return body + (editing ? '' : '<div style="text-align:right;margin-top:9px">' + editBtn + '</div>'); }
-      return '<div style="background:#fff;border:' + (editing ? '1.5px solid #0f0f0f' : '0.5px solid #ece8e0') + ';border-radius:11px;padding:4px 14px 11px;margin-bottom:9px">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0 2px"><span style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#9a958c">' + esc(title) + '</span>' + editBtn + '</div>' +
+      // Per-field inline edit · tap a VALUE to turn just that field into an input
+      // (no group Edit button). While one cell is open, the rest of the group renders
+      // hidden inputs so the existing group save keeps every sibling intact.
+      const groupHasEdit = fields.some(function(fd){ return fd.f === _setupCellEdit; });
+      const cell = function(fd){
+        if(fd.ro) return dispRow(fd.label, fd.val);
+        if(_setupCellEdit === fd.f){
+          return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5">' +
+            '<div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div>' +
+            '<div style="display:flex;gap:8px;align-items:center">' +
+              '<input data-nf-field="' + fd.f + '" id="nf-cell-active" value="' + esc(fd.val).replace(/"/g, '&quot;') + '" style="flex:1;min-width:0;font:inherit;font-size:13px;font-weight:600;padding:8px 10px;border:1px solid #0f0f0f;border-radius:8px;background:#fff;color:#0f0f0f">' +
+              '<button type="button" data-cell-save="1" style="flex:none;font-size:12px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:7px;padding:7px 12px;cursor:pointer;font-family:inherit">Save</button>' +
+              '<button type="button" data-cell-cancel="1" style="flex:none;font-size:12px;color:#9a958c;background:none;border:0;cursor:pointer;font-family:inherit">Cancel</button>' +
+            '</div></div>';
+        }
+        const hidden = groupHasEdit ? '<input type="hidden" data-nf-field="' + fd.f + '" value="' + esc(fd.val).replace(/"/g, '&quot;') + '">' : '';
+        return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(fd.label) + '</span>' +
+          '<span data-cell-edit="' + fd.f + '" title="Tap to edit" style="font-weight:600;text-align:right;cursor:pointer;border-bottom:1px dashed #c9c4ba">' + (esc(fd.val) || '&mdash;') + '</span>' + hidden + '</div>';
+      };
+      const body = fields.map(cell).join('');
+      if(bare){ return body; }
+      return '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:11px;padding:4px 14px 11px;margin-bottom:9px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0 2px"><span style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#9a958c">' + esc(title) + '</span></div>' +
         body + '</div>';
     };
     // Parties · each buyer/seller is its own person (split "A and B"), agents with their
@@ -14594,9 +14624,13 @@ Tell me your planned move-out date and I will set the inspection.`
     const patch = Object.assign({ raw_form_data: raw }, cols);
     try { await _client.from('files').update(patch).eq('id', f.id); } catch(_){}
     f.raw_form_data = raw; Object.keys(cols).forEach(function(k){ f[k] = cols[k]; });
-    _setupEditSec = '';
+    _setupEditSec = ''; _setupCellEdit = null;
     try { renderContractTerms(f); } catch(_){ try { openPlaybook(f); } catch(__){} }
   }
+  // Enter in an inline cell editor saves it.
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Enter' && e.target && e.target.id === 'nf-cell-active' && _currentFile){ e.preventDefault(); try { nfSaveGroup(); } catch(_){} }
+  });
   document.addEventListener('click', function(e){
     const sv = e.target && e.target.closest && e.target.closest('[data-nf-save]');
     if(sv && _currentFile){ nfSaveGroup(); }
