@@ -801,6 +801,9 @@
   .ck-flag-chip{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.2px;color:#0c447c;background:#eef1f6;border:0.5px solid #cfdcef;border-radius:20px;padding:2px 8px;margin-left:7px;vertical-align:middle;white-space:nowrap}
   /* Calm (Option B) · day line + emphasized top row */
   .uc-day{font-size:11px;font-weight:600;color:#9a958c;margin:0 0 11px}
+  .ck-lock{font-size:11.5px;font-weight:600;color:#185FA5;margin:1px 0 7px 29px;cursor:pointer}
+  .ck-lock-go{text-decoration:underline}
+  .uc-wait{display:flex;align-items:center;gap:8px;font-size:12px;color:#8a6a1f;background:#faf6ea;border:0.5px solid #ecdcb8;border-radius:9px;padding:8px 12px;margin:11px 0 0}
   .uc-top .ck-label{font-weight:700}
   /* ADHD top · time anchor + progress + anchor card (legacy, unused in B) */
   .uc-timeline{display:flex;align-items:center;gap:9px;font-size:11px;font-weight:600;color:#6b6760;margin:0 0 9px}
@@ -14515,6 +14518,19 @@ Tell me your planned move-out date and I will set the inspection.`
       '<div style="font-size:10.5px;color:#9a958c;margin-top:7px">Moving the date assumes the seller has signed an extension addendum.</div>' +
     '</div>';
   }
+  // Locked-prerequisite jump (Fix 2) · the "open it" hint on a gated task scrolls to
+  // the prerequisite task, opening any fold it's tucked in, and expands it.
+  document.addEventListener('click', function(e){
+    const gt = e.target && e.target.closest && e.target.closest('[data-goto-task]');
+    if(!gt) return;
+    const id = gt.getAttribute('data-goto-task');
+    let sel; try { sel = (window.CSS && CSS.escape) ? CSS.escape(id) : id; } catch(_){ sel = id; }
+    const cb = document.querySelector('[data-ck-task="' + sel + '"]');
+    if(!cb) return;
+    let d = cb.closest('details'); while(d){ d.open = true; d = d.parentElement && d.parentElement.closest('details'); }
+    const wrap = cb.closest('.ck-task-wrap');
+    if(wrap){ wrap.classList.add('ck-open'); try { wrap.scrollIntoView({ behavior:'smooth', block:'center' }); } catch(_){} }
+  });
   document.addEventListener('click', function(e){
     const o = e.target && e.target.closest && e.target.closest('[data-insp-ext-open]');
     if(o){ _inspExtOpen = (o.getAttribute('data-insp-ext-open') === '1'); try { renderStageChecklist(_currentFile); } catch(_){} return; }
@@ -14679,6 +14695,20 @@ Tell me your planned move-out date and I will set the inspection.`
         _flagChip = ' <span class="ck-flag-chip" title="' + esc((_f.label || 'Email flag') + ' · ' + (_f.source_from || '') + (_f.detail ? (' · ' + _f.detail) : '')) + '">&#9993; ' + esc(_f.label || 'flagged') + '</span>';
       }
     } catch(_){}
+    // Locked-prerequisite hint (visible on the row, Fix 2) · when this task's email is
+    // gated on another task that isn't done, show a one-line tappable note that jumps
+    // to that step, so the prerequisite never hides in Coming up while this task is up top.
+    let _lockHint = '';
+    if(!rec && t.emailGate){
+      const _blocked = t.emailGate.requiresFn ? !t.emailGate.requiresFn(file, done)
+        : t.emailGate.requiresLogistics ? !((file.logistics || {})[t.emailGate.requiresLogistics])
+        : !(done[t.emailGate.requires] || ((file.logistics || {}).contacts_confirmed_at));
+      if(_blocked){
+        const _req = t.emailGate.requires || '';
+        _lockHint = '<div class="ck-lock"' + (_req ? ' data-goto-task="' + esc(_req) + '"' : '') + '>&#128274; ' +
+          esc(t.emailGate.note || 'A prerequisite step is needed first.') + (_req ? ' <span class="ck-lock-go">open it &rsaquo;</span>' : '') + '</div>';
+      }
+    }
     return '<div class="ck-task-wrap">' +
       '<label class="ck-task' + (rec ? ' ck-done' : '') + '">' +
         '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + ((file.status === 'archived' || _checkBlocked) ? ' disabled' : '') + '>' +
@@ -14686,6 +14716,7 @@ Tell me your planned move-out date and I will set the inspection.`
         (_checkBlocked ? '<span class="ck-sub" style="color:#a08a5a">' + esc(t.checkGateNote || 'Complete the required fields first.') + '</span>' : '') +
         (rec && rec.at ? '<span class="ck-stamp">' + (_soft ? esc(t.softComplete.chip) + ' ' : 'Done ') + new Date(rec.at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + '</span>' : '') +
         '</span>' + dlChip + (t.id === 'uc_emd_followup' ? emdRowBtn(file) : '') + softCtl + _chevron + '</label>' +
+      _lockHint +
       (_hasDetail ? '<div class="ck-detail">' + _detailInner + '</div>' : '') +
     '</div>';
   }
@@ -15304,6 +15335,11 @@ Tell me your planned move-out date and I will set the inspection.`
       }
     } else {
       html += '<p class="ck-empty">Nothing urgent right now. You&rsquo;re ahead.</p>';
+    }
+    // Waiting-on-lender cue (Fix 3) · one quiet line when a financed file has applied
+    // but isn't approved yet, so a deal parked on the lender doesn't read as "behind."
+    if(!isCashFile(file) && done['uc_loan_app'] && !done['uc_loan_approval_acknowledged']){
+      html += '<div class="uc-wait">&#128340; Loan approval is with the lender &middot; nothing on you here</div>';
     }
     // Deadline check · right under the list, one collapsed line (green when clean,
     // red the moment a deadline is past due) so it's glanceable without scrolling.
