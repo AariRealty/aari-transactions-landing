@@ -766,6 +766,22 @@
   .aari-setup-card.open .aari-setup-card-hd .chev{transform:rotate(90deg)}
   .aari-setup-card-bd{display:none}
   .aari-setup-card.open .aari-setup-card-bd{display:block}
+  /* Option A · parallel tracks inside Under contract */
+  .uc-trk{border:0.5px solid rgba(15,15,15,0.12);border-radius:11px;padding:11px 13px;margin-bottom:8px}
+  .uc-trk-hd{display:flex;align-items:center;justify-content:space-between;cursor:pointer;list-style:none}
+  .uc-trk-hd::-webkit-details-marker{display:none}
+  .uc-trk-hd .l{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:600;color:#0f0f0f}
+  .uc-trk-hd .r{display:flex;align-items:center;gap:7px}
+  .uc-dot{width:8px;height:8px;border-radius:50%;flex:none;background:#0f0f0f}
+  .uc-dot.g{background:#2f7a4f}.uc-dot.a{background:#b98a2e}.uc-dot.k{background:#0f0f0f}.uc-dot.soft{background:#cfcabf}
+  .uc-st{font-size:11.5px;font-weight:600}
+  .uc-st.g{color:#2f7a4f}.uc-st.a{color:#b98a2e}.uc-st.k{color:#0f0f0f}.uc-st.soft{color:#9a958c}
+  .uc-chev{color:#c4bfb5;transition:transform .15s;display:inline-block}
+  .uc-trk[open] .uc-chev{transform:rotate(90deg)}
+  .uc-trk-bd{margin-top:9px}
+  .uc-ongoing{margin-top:4px}
+  .move-anyway{display:inline-block;font-size:11.5px;color:#9a958c;margin-top:9px;text-decoration:underline;cursor:pointer;font-family:inherit;background:none;border:0}
+  .move-locked{font-size:12.5px;font-weight:600;color:#a39e95;background:#f1ede6;border:0;border-radius:9px;padding:9px 15px;font-family:inherit}
   .rail-close{display:none;border:0;background:none;font-size:20px;color:#8a857c;cursor:pointer;line-height:1;padding:0 2px;font-family:inherit}
   .tpb-popmodal.rail .rail-close{display:inline-block}
   .rail-pdf-toggle{display:none;border:0.5px solid rgba(15,15,15,0.25);background:#fff;border-radius:6px;font-size:11px;padding:4px 10px;cursor:pointer;font-family:inherit;color:#0f0f0f}
@@ -11997,6 +12013,28 @@ Tell me your planned move-out date and I will set the inspection.`
     try { renderPlaybook(file); } catch(_){}
   });
 
+  // Move anyway · the escape hatch on the hard gate. Advances the file even with
+  // tasks still open (e.g. waiting on a slow lender) and logs an audit note so the
+  // early move is on the record. Still respects the protective hardStageGate locks.
+  document.addEventListener('click', async function(e){
+    const mb = e.target && e.target.closest && e.target.closest('[data-move-anyway]');
+    if(!mb || !_currentFile) return;
+    const file = _currentFile;
+    const newStage = mb.getAttribute('data-move-anyway');
+    const _gateMsg = (typeof hardStageGate === 'function') ? hardStageGate(file, newStage) : '';
+    if(_gateMsg){ alert(_gateMsg); return; }
+    if(!(await appConfirm('Move to ' + (STAGE_LABELS[newStage] || newStage) + ' with tasks still open? A note is logged on the file.', { ok:'Move anyway' }))) return;
+    const _from = file.transaction_stage;
+    file.transaction_stage = newStage;
+    try { renderKanban(); } catch(_){}
+    try {
+      const r = await _client.from('files').update({ transaction_stage: newStage }).eq('id', file.id);
+      if(r && r.error){ file.transaction_stage = _from; alert('Not saved — the database rejected the move (RLS).'); return; }
+    } catch(_){}
+    try { writeAuditLog('stage_moved_early', file.id, { from:_from, to:newStage }); } catch(_){}
+    try { renderPlaybook(file); } catch(_){}
+  });
+
   // ============== PLAYBOOK ==============
   // Inbound agent → TC requests (direction='to_tc') · banner at the top of the rail
   // so the TC sees what the agent asked for the moment they open the file.
@@ -14349,6 +14387,41 @@ Tell me your planned move-out date and I will set the inspection.`
       '</div>' +
     '</div>';
   }
+  // ===== Option A · parallel tracks inside Under contract =====
+  // Inspection, Appraisal & loan, and Title & survey run at the same time, so the
+  // Under contract task list is grouped into three collapsible tracks, each with a
+  // status word, instead of one flat wall. (Inspection track fills in once the
+  // inspection-stage tasks are folded in — next slice.)
+  const UC_TRACKS = [
+    { key:'inspection', label:'Inspection', ids:[] },
+    { key:'appraisal',  label:'Appraisal &amp; loan', ids:['uc_add_lender_contact','uc_loan_app','uc_lender_followup','uc_loan_approval_acknowledged','uc_loan_approval_confirmed'] },
+    { key:'title',      label:'Title &amp; survey', ids:['uc_emd_wiring','uc_emd_followup','uc_addl_followup','uc_title_commitment_reminder','uc_comp_agreement','uc_lien_search','uc_tenant_lease','uc_tenant_estoppel_request','uc_hoa_followup','uc_survey_received','uc_missing_info'] },
+  ];
+  function ucTrackStatus(openN, total){
+    if(total === 0) return { word:'Not started', cls:'soft' };
+    if(openN === 0) return { word:'Done', cls:'g' };
+    return { word: openN + (openN === 1 ? ' needs you' : ' need you'), cls:'k' };
+  }
+  function buildUcTracksHtml(file, tasks, dls, done){
+    const byId = {}; tasks.forEach(function(t){ byId[t.id] = t; });
+    const used = {};
+    let html = '';
+    UC_TRACKS.forEach(function(trk){
+      const tks = trk.ids.map(function(id){ return byId[id]; }).filter(Boolean);
+      if(!tks.length) return; // skip a track with no visible tasks (e.g. Inspection this slice)
+      tks.forEach(function(t){ used[t.id] = true; });
+      const openN = tks.filter(function(t){ return !done[t.id]; }).length;
+      const st = ucTrackStatus(openN, tks.length);
+      html += '<details class="uc-trk"' + (openN > 0 ? ' open' : '') + '>' +
+        '<summary class="uc-trk-hd"><span class="l"><span class="uc-dot ' + st.cls + '"></span>' + trk.label + '</span>' +
+        '<span class="r"><span class="uc-st ' + st.cls + '">' + esc(st.word) + '</span><span class="uc-chev">&#8250;</span></span></summary>' +
+        '<div class="uc-trk-bd">' + tks.map(function(t){ return ckRow(file, t, dls, done); }).join('') + '</div></details>';
+    });
+    const left = tasks.filter(function(t){ return !used[t.id]; });
+    if(left.length){ html += '<div class="uc-ongoing">' + left.map(function(t){ return ckRow(file, t, dls, done); }).join('') + '</div>'; }
+    return html;
+  }
+
   function renderStageChecklist(file){
     const host = document.getElementById('tpb-checklist');
     const head = document.getElementById('tpb-ck-meta');
@@ -14515,7 +14588,9 @@ Tell me your planned move-out date and I will set the inspection.`
               return t.id === 'cl_funds_recorded' ? row
                 : '<div style="opacity:0.4;pointer-events:none">' + row + '</div>';
             }).join('')
-          : tasks.map(t => ckRow(file, t, dls, done)).join(''))
+          : (stage === 'under_contract'
+              ? buildUcTracksHtml(file, tasks, dls, done)
+              : tasks.map(t => ckRow(file, t, dls, done)).join('')))
       : '<p class="ck-empty">Checklist for the ' + esc(STAGE_LABELS[stage] || stage) + ' stage ships next.</p>';
     // Move-to-next-stage button · same guards as the kanban drag. Closed is
     // excluded on purpose — its 5-task protective gate stays on the board drag.
@@ -14526,9 +14601,26 @@ Tell me your planned move-out date and I will set the inspection.`
     // Use the RAW stage (same as setupReviewBar) — deriveStage jumps ahead once the scan
     // auto-confirms, which would wrongly un-hide Your work while setup is still showing.
     const _setupSale = (['','new','intake_received','waiting_for_tc'].indexOf((file.transaction_stage||'').toLowerCase()) !== -1) && (file.file_type || 'sale') === 'sale';
-    const moveBtn = (_stNext && _stNext !== 'closed' && file.status !== 'archived' && !anyLock && !_setupSale)
-      ? '<div style="padding:14px 0 4px;border-top:0.5px solid #f1ede6;margin-top:14px;text-align:right"><button type="button" class="move-stage-btn" data-move-next-stage="' + esc(_stNext) + '">Move to ' + esc(STAGE_LABELS[_stNext] || _stNext) + ' &rarr;</button></div>'
-      : '';
+    // Hard gate · the Move button stays locked until every task that is on YOU is
+    // done (weekly update + lender/third-party follow-ups don't count, so a slow
+    // lender never traps the file). When locked, a quiet "Move anyway" link advances
+    // the file and logs an audit note. Same rule on every operational stage.
+    const _gateOpen = tasks ? tasks.filter(function(t){
+      return !done[t.id] && !/_weekly_update$/.test(t.id) && !/_followup$|_lender$|_status$/.test(t.id);
+    }).length : 0;
+    let moveBtn = '';
+    if(_stNext && _stNext !== 'closed' && file.status !== 'archived' && !anyLock && !_setupSale){
+      const _nextLbl = esc(STAGE_LABELS[_stNext] || _stNext);
+      if(_gateOpen === 0){
+        moveBtn = '<div style="padding:14px 0 4px;border-top:0.5px solid #f1ede6;margin-top:14px;text-align:right">' +
+          '<button type="button" class="move-stage-btn" data-move-next-stage="' + esc(_stNext) + '">Move to ' + _nextLbl + ' &rarr;</button></div>';
+      } else {
+        moveBtn = '<div style="padding:14px 0 4px;border-top:0.5px solid #f1ede6;margin-top:14px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;text-align:left">' +
+          '<span style="font-size:12px;color:#9a958c;line-height:1.4;flex:1">Finish the ' + _gateOpen + ' task' + (_gateOpen === 1 ? '' : 's') + ' on you above, then this file moves to <b style="color:#0f0f0f;font-weight:600">' + _nextLbl + '</b>.' +
+            '<br><button type="button" class="move-anyway" data-move-anyway="' + esc(_stNext) + '">Move anyway (logs a note) &rsaquo;</button></span>' +
+          '<button type="button" class="move-locked" disabled>Move &middot; locked</button></div>';
+      }
+    }
     // Draft update + Due-soon don't belong in Setup (no agent update to send yet, no
     // cross-stage deadlines in play). They return once the file is past Setup.
     host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget + (_isSetupStage ? '' : updateBtnHtml(file)) +
