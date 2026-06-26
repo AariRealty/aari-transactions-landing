@@ -15199,6 +15199,13 @@ Tell me your planned move-out date and I will set the inspection.`
       : (ckTasksFor(file, stage) || []);
     const stageTaskIds = new Set(_ckSrc
       .filter(t => !t.showIf || t.showIf(file)).map(t => t.id));
+    // EVERY task id defined for this file type, ignoring showIf and UC_MERGE_SKIP. An
+    // email whose task lives here but isn't currently shown (branch inactive, e.g. the
+    // buyer-canceling email when the buyer is proceeding, or a deduped task) is
+    // suppressed rather than dumped into "Other emails". Only emails with no real task
+    // anywhere stay standalone.
+    const _definedIds = new Set();
+    Object.keys(STAGE_CHECKLISTS[ft] || {}).forEach(function(s){ (STAGE_CHECKLISTS[ft][s] || []).forEach(function(t){ _definedIds.add(t.id); }); });
     _emailByTask = {};
     const standaloneEmails = [];
     list.forEach(e => {
@@ -15207,7 +15214,10 @@ Tell me your planned move-out date and I will set the inspection.`
       const keys = Array.isArray(e.tasks) && e.tasks.length ? e.tasks : [e.task || e.id];
       let matched = false;
       keys.forEach(function(k){ if(stageTaskIds.has(k)){ (_emailByTask[k] = _emailByTask[k] || []).push(e); matched = true; } });
-      if(!matched) standaloneEmails.push(e);
+      if(matched) return;
+      // Task exists but is hidden / deduped right now → suppress the email.
+      if(keys.some(function(k){ return _definedIds.has(k); })) return;
+      standaloneEmails.push(e);
     });
     wireEmailDelegation();
     wireLogisticsDelegation();
