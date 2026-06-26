@@ -799,6 +799,26 @@
   .uc-step-hint{font-size:11px;color:#9a958c;font-weight:600;margin-top:2px}
   .uc-step-hint.lt{color:#a3402f}
   .ck-flag-chip{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.2px;color:#0c447c;background:#eef1f6;border:0.5px solid #cfdcef;border-radius:20px;padding:2px 8px;margin-left:7px;vertical-align:middle;white-space:nowrap}
+  /* Deadline integrity panel (read-only) */
+  .di{border:0.5px solid rgba(15,15,15,0.12);border-radius:11px;margin:0 0 12px;background:#fff;overflow:hidden}
+  .di-sum{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:4px}
+  .di-sum::-webkit-details-marker{display:none}
+  .di-verdict{flex:1;font-size:12px;font-weight:700;border-radius:8px;padding:8px 11px}
+  .di-verdict.ok{background:#eef4ef;color:#2f7a4f}
+  .di-verdict.bad{background:#f7ecea;color:#a3402f}
+  .di-chev{flex:none;font-size:15px;color:#b8b2a7;transition:transform .15s;padding-right:8px}
+  .di[open] .di-chev{transform:rotate(90deg)}
+  .di-bd{padding:2px 12px 10px}
+  .di-dq{font-size:11px;color:#8a6a1f;background:#fbf6ea;border:0.5px solid #ecdcb8;border-radius:8px;padding:7px 10px;margin:6px 0}
+  .di-row{display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-top:0.5px solid #f2eee7}
+  .di-stat{flex:none;width:70px;font-size:9px;font-weight:800;letter-spacing:.2px;text-transform:uppercase;border-radius:6px;padding:4px 0;text-align:center;margin-top:1px}
+  .di-stat.met{background:#eef4ef;color:#2f7a4f} .di-stat.over{background:#f7ecea;color:#a3402f} .di-stat.today{background:#faf3e2;color:#b98a2e} .di-stat.up{background:#f1efe8;color:#5f5e5a}
+  .di-grow{flex:1;min-width:0}
+  .di-nm{font-size:12.5px;font-weight:600;display:block}
+  .di-cite{font-size:10px;color:#9a958c;display:block;margin-top:1px}
+  .di-flag{font-size:10px;color:#a3402f;display:block;margin-top:2px}
+  .di-when{font-size:11px;font-weight:600;color:#444;white-space:nowrap;margin-left:6px}
+  .di-foot{font-size:10px;color:#b0aaa0;margin:9px 0 0}
   /* Option A · one Needs-you list across tracks */
   .uc-needsyou-hd{font-size:11px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:#7a756c;margin:2px 0 6px}
   .uc-tag{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.2px;text-transform:uppercase;border-radius:5px;padding:2px 6px;margin-right:8px;vertical-align:middle}
@@ -8766,6 +8786,66 @@ Tell me your planned move-out date and I will set the inspection.`
     const ds = document.getElementById('rd-disc-set');
     if(ds) ds.addEventListener('click', function(){ ctSave(file, {}, { rental_deposit_received_date: new Date().toISOString().slice(0,10) }).then(function(){ try { renderPlaybook(file); } catch(_){} }); });
   }
+  // ===== Deadline INTEGRITY (read-only) · the "are we behind on the contract"
+  // headline shown at the top of the Under contract work list. Reuses the same
+  // contract engine (fileContractDeadlines) + completion cache (_deadlinesByFile)
+  // the cockpit already loads, so the dates always match. Writes nothing.
+  // Every applicable contract deadline, its paragraph cite, and its real status:
+  // past-due-and-unconfirmed sorts to the top in red. Also surfaces data-quality
+  // problems — completions logged in one batch (not confirmed one at a time) and
+  // a logged date that disagrees with the contract — so a record is never trusted
+  // blindly.
+  function deadlineIntegrityHtml(file){
+    if((file.file_type || 'sale') !== 'sale') return '';
+    let items = []; try { items = fileContractDeadlines(file) || []; } catch(_){ }
+    items = items.filter(function(d){ return d && d.date; });
+    if(!items.length) return '';
+    const status = _deadlinesByFile[file.id] || {};
+    const ENG = window.AariDeadlineEngine;
+    const ymd = function(d){ try { return ENG.ymd(d); } catch(_){ return ''; } };
+    const fmt = function(d){ try { return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } };
+    const t0 = new Date(); t0.setHours(0,0,0,0);
+    const rows = items.map(function(d){
+      const rec = status[d.key];
+      const done = !!(rec && rec.completed_at);
+      let st, lab, when, flag = '';
+      if(done){
+        st = 'met'; lab = 'Confirmed'; when = 'Met';
+        if(rec.due_date && ymd(d.date) && String(rec.due_date).slice(0,10) !== ymd(d.date)){
+          flag = 'Logged ' + String(rec.due_date).slice(0,10) + ', contract says ' + ymd(d.date);
+        }
+      } else {
+        const dd = new Date(d.date.getTime()); dd.setHours(0,0,0,0);
+        const days = Math.round((dd - t0) / 86400000);
+        if(days < 0){ st = 'over'; lab = 'Past due'; when = 'Was due ' + fmt(d.date); }
+        else if(days === 0){ st = 'today'; lab = 'Today'; when = 'Due today'; }
+        else { st = 'up'; lab = 'Upcoming'; when = 'Due ' + fmt(d.date); }
+      }
+      return { d:d, st:st, lab:lab, when:when, flag:flag, t:d.date.getTime() };
+    });
+    const rank = { over:0, today:1, up:2, met:3 };
+    rows.sort(function(a,b){ return (rank[a.st] - rank[b.st]) || (a.t - b.t); });
+    const missed = rows.filter(function(r){ return r.st === 'over'; }).length;
+    // Data quality · only flag when there's something to flag.
+    let dq = '';
+    const stamps = []; Object.keys(status).forEach(function(k){ if(status[k] && status[k].completed_at) stamps.push(status[k].completed_at); });
+    const uniq = stamps.filter(function(v,i){ return stamps.indexOf(v) === i; });
+    if(stamps.length >= 2 && uniq.length === 1){ dq += '<div class="di-dq">Completions were logged in one batch, not confirmed one at a time. Treat &ldquo;Confirmed&rdquo; here as unverified.</div>'; }
+    const staleN = rows.filter(function(r){ return r.flag; }).length;
+    if(staleN){ dq += '<div class="di-dq">' + staleN + ' confirmed record' + (staleN > 1 ? 's have' : ' has') + ' a logged date that differs from the contract.</div>'; }
+    const verdict = missed
+      ? '<div class="di-verdict bad">&#9888; ' + missed + ' deadline' + (missed > 1 ? 's' : '') + ' past due, not confirmed</div>'
+      : '<div class="di-verdict ok">&#10003; Every applicable deadline is accounted for</div>';
+    const rowsHtml = rows.map(function(r){
+      return '<div class="di-row"><span class="di-stat ' + r.st + '">' + r.lab + '</span>' +
+        '<span class="di-grow"><span class="di-nm">' + esc(r.d.name) + '</span>' +
+        (r.d.citation ? '<span class="di-cite">' + esc(r.d.citation) + '</span>' : '') +
+        (r.flag ? '<span class="di-flag">' + esc(r.flag) + '</span>' : '') +
+        '</span><span class="di-when">' + esc(r.when) + '</span></div>';
+    }).join('');
+    return '<details class="di"><summary class="di-sum">' + verdict + '<span class="di-chev">&#8250;</span></summary>' +
+      '<div class="di-bd">' + dq + rowsHtml + '<p class="di-foot">Read only. Computed from the contract, not from checkboxes.</p></div></details>';
+  }
   // ===== Deadline WATCH (past Setup) · the dates live inside step 4 of the spine.
   // A read-only countdown grouped Late / Due soon / Coming up / Done — no confirm
   // queue (confirming dates is Setup work). Drives both the step-4 body and the
@@ -15228,7 +15308,7 @@ Tell me your planned move-out date and I will set the inspection.`
                 : '<div style="opacity:0.4;pointer-events:none">' + row + '</div>';
             }).join('')
           : (stage === 'under_contract'
-              ? buildUcTracksHtml(file, tasks, dls, done)
+              ? (deadlineIntegrityHtml(file) + buildUcTracksHtml(file, tasks, dls, done))
               : tasks.map(t => ckRow(file, t, dls, done)).join('')))
       : '<p class="ck-empty">Checklist for the ' + esc(STAGE_LABELS[stage] || stage) + ' stage ships next.</p>';
     // Move-to-next-stage button · same guards as the kanban drag. Closed is
@@ -15849,6 +15929,9 @@ Tell me your planned move-out date and I will set the inspection.`
     // The spine's step-4 watch + step-5 late hint read deadline completion, which just
     // loaded — refresh the terms panel so they reflect what's actually done.
     try { renderContractTerms(file); } catch(_){}
+    // The Under contract integrity panel reads the same completion cache — re-render
+    // the checklist now that it's loaded so the panel shows confirmed, not unconfirmed.
+    try { renderStageChecklist(file); } catch(_){}
 
     // Contract Verification (top 10 v1)
     await loadVerificationsForFile(file.id);
