@@ -6314,9 +6314,9 @@ Tell me your planned move-out date and I will set the inspection.`
     // which differs on "submit on behalf" files.
     const _ourAgentKey = isBuyerSide ? 'buyer_agent' : (isSellerSide ? 'listing_agent' : '');
     const _agentRec = agent ? ((agent.first_name || '') + ' ' + (agent.last_name || '')).trim() : '';
-    const agentName = (_ourAgentKey && _ccGet(_ourAgentKey,'name')) || _rfd.pa_agent_name || _agentRec || '[agent name]';
+    const agentName = (_ourAgentKey && _ccGet(_ourAgentKey,'name')) || _rfd.pa_agent_name || _rfd.agent_name || _agentRec || '[agent name]';
     const agentFirst = (agentName && agentName.indexOf('[') !== 0) ? agentName.split(' ')[0] : '[agent]';
-    const agentEmail = (_ourAgentKey && _ccGet(_ourAgentKey,'email')) || _rfd.pa_agent_email || (agent ? (agent.email || '') : '') || '[agent email]';
+    const agentEmail = (_ourAgentKey && _ccGet(_ourAgentKey,'email')) || _rfd.pa_agent_email || _rfd.agent_email || (agent ? (agent.email || '') : '') || '[agent email]';
     // ===== Structured contacts · pull from raw_form_data first (intake form),
     // then fall back to free-text lender_contact / title_contact columns.
     const raw = file.raw_form_data || {};
@@ -14428,10 +14428,29 @@ Tell me your planned move-out date and I will set the inspection.`
     const done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
     let n = 0; Object.keys(done).forEach(function(k){ if(done[k]) n++; });
     if(!n) return ''; // nothing done yet · nothing to update the agent about
-    return '<div style="display:flex;align-items:center;gap:10px;background:#fff;border:0.5px solid #ece8e0;border-radius:11px;padding:11px 13px;margin-bottom:13px">' +
-        '<span style="flex:1;font-size:12px;color:#5f5e5a">' + n + ' done · update the agent</span>' +
+    return '<div style="display:flex;align-items:center;gap:10px;background:#fff;border:0.5px solid #ece8e0;border-radius:11px;padding:11px 13px;margin:14px 0 4px">' +
+        '<span style="flex:1;font-size:12px;color:#5f5e5a">Keep the agent posted</span>' +
         '<button type="button" data-draft-update="1" style="flex:none;font-size:11px;font-weight:500;color:#fff;background:#0f0f0f;border:0;border-radius:20px;padding:6px 14px;cursor:pointer;font-family:inherit">&#9993; Draft update</button>' +
       '</div><div id="upd-draft-host"></div>';
+  }
+  // The deal milestones an agent actually cares about, in order, each only added once
+  // it has actually happened. Drives the "Done so far" block of the agent update.
+  function agentMilestones(file){
+    const dt = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    const lg = file.logistics || {};
+    const M = [];
+    const dn = function(id){ return !!(dt[id] && dt[id].done); };
+    const at = function(){ for(let i=0;i<arguments.length;i++){ const r=dt[arguments[i]]; if(r && r.at) return _recapDate(r.at); } return ''; };
+    const add = function(cond, label, when){ if(cond) M.push(label + (when ? (', ' + when) : '')); };
+    add(file.effective_date, 'Under contract', file.effective_date ? _recapDate(file.effective_date) : '');
+    add((typeof emdEffStatus==='function' && emdEffStatus(file,'initial')==='confirmed') || dn('uc_emd_followup'), 'Earnest money received', at('uc_emd_followup','uc_emd_confirmed'));
+    add(dn('insp_review_report') || dn('insp_decision_followup'), 'Inspection completed', at('insp_review_report','insp_decision_followup'));
+    add(dn('rem_addendum_confirmed') || dn('rem_asis_accepted') || (lg.inspection_decision==='proceed'), 'Repairs resolved, moving forward', at('rem_addendum_confirmed'));
+    add(dn('uc_loan_app'), 'Loan application confirmed', at('uc_loan_app'));
+    add(!!lg.appraisal_result, 'Appraisal ' + (lg.appraisal_result==='below' ? 'received' : 'in at value'), '');
+    add(dn('uc_loan_approval_acknowledged') || (typeof loanEffStatus==='function' && loanEffStatus(file)==='approved'), 'Loan approved', at('uc_loan_approval_acknowledged'));
+    add(dn('uc_title_commitment_reminder') || dn('app_title_commitment'), 'Title commitment received', at('uc_title_commitment_reminder'));
+    return M;
   }
   function buildUpdateEmail(file, agent){
     const street = String(file.property_address || '').split(',')[0].trim() || 'your file';
@@ -14439,17 +14458,10 @@ Tell me your planned move-out date and I will set the inspection.`
     try { to = fillEmailVars('{{agent_name}} <{{agent_email}}>', file, agent); } catch(_){ to = ''; }
     let first = (agent && (agent.first_name || String(agent.name || '').split(' ')[0])) || '';
     if(!first){ try { first = String(fillEmailVars('{{agent_name}}', file, agent) || '').split(' ')[0]; } catch(_){} }
-    const done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
-    const stages = STAGES_BY_TYPE[file.file_type || 'sale'] || STAGES_BY_TYPE.sale;
-    const cur = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || '');
-    const curIdx = stages.indexOf(cur);
-    const doneLines = [];
-    for(let i = 0; i <= curIdx && i < stages.length; i++){
-      let st = ckTasksFor(file, stages[i]);
-      if(st) st = st.filter(function(t){ return !t.showIf || t.showIf(file); });
-      (st || []).forEach(function(t){ if(done[t.id]){ const rec = done[t.id]; doneLines.push((t.label || t.id) + ((rec && rec.at) ? (', ' + _recapDate(rec.at)) : '')); } });
-    }
-    recapMetDates(file).forEach(function(m){ doneLines.push(m.name + ', ' + m.when); });
+    // Agent-facing MILESTONES only · not the internal checklist. The agent wants the
+    // deal story (under contract, deposit in, inspection done, loan status), never the
+    // back-office steps (accept file, verify signatures, review contract).
+    const doneLines = agentMilestones(file);
     const comingLines = [];
     try {
       const status = _deadlinesByFile[file.id] || {};
@@ -14814,9 +14826,11 @@ Tell me your planned move-out date and I will set the inspection.`
     // Under contract now contains the inspection/appraisal tracks, so the "due soon
     // from other stages" strip would just duplicate them — suppress it there.
     const _showDueSoon = !_isSetupStage && stage !== 'under_contract';
-    host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget + (_isSetupStage ? '' : updateBtnHtml(file)) +
+    // "Update the agent" is a communication action, not a task — it sits at the BOTTOM
+    // of the work (after the tracks, just above Move), not crowding the top of Do next.
+    host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
-      (_showDueSoon ? dueSoon : '') + moveBtn;
+      (_showDueSoon ? dueSoon : '') + (_isSetupStage ? '' : updateBtnHtml(file)) + moveBtn;
     // During Setup, hide the whole "Your work" pop when it has nothing to show (no
     // pending setup steps, no standalone emails) — kills the orphaned empty header.
     try {
