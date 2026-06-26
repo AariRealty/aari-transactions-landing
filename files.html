@@ -9608,6 +9608,22 @@ Tell me your planned move-out date and I will set the inspection.`
     _calLoaded = true;
     try { renderTcCalendar(); renderCalHeatmap(); } catch(_){}
   }
+  // Derived (non-contract) calendar reminders. The inspection check-in lands 3 days
+  // before the inspection deadline so the TC decides on-track-or-extend in time. Only
+  // while the inspection decision is still open, and never written to the file ledger.
+  function _calExtraItems(f){
+    const out = [];
+    try {
+      if(deriveStage(f) !== 'under_contract') return out;
+      const lg = f.logistics || {}; const dt = f.stage_tasks || {};
+      if(lg.inspection_decision || (dt.insp_extension_check && dt.insp_extension_check.done) || (dt.insp_decision_followup && dt.insp_decision_followup.done)) return out;
+      let insp = null; (fileContractDeadlines(f) || []).forEach(function(d){ if(d.key === 'inspection_end' && d.date instanceof Date) insp = d.date; });
+      if(!insp || isNaN(insp.getTime())) return out;
+      const d = new Date(insp.getTime()); d.setDate(d.getDate() - 3); d.setHours(0, 0, 0, 0);
+      out.push({ date:d, key:'insp_checkin', label:'Inspection check-in · on track or extend?', address:f.property_address || '', fileId:f.id });
+    } catch(_){}
+    return out;
+  }
   function _tcCalDeadlines(){
     const out = [];
     (_files || []).forEach(function(f){
@@ -9621,6 +9637,7 @@ Tell me your planned move-out date and I will set the inspection.`
           if(rec && rec.completed_at) return; // done · no longer a live deadline
           out.push({ date:d.date, key:d.key, label:d.name || 'Deadline', address:f.property_address || '', fileId:f.id });
         });
+        _calExtraItems(f).forEach(function(x){ out.push(x); });
       } catch(_){}
     });
     out.sort(function(a, b){ return a.date - b.date; });
@@ -9655,6 +9672,10 @@ Tell me your planned move-out date and I will set the inspection.`
           const rec = status[d.key]; if(rec && rec.completed_at) return;
           const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); const xt = x.getTime();
           if(xt < t0) overdue++; else if(xt === t0) todayN++; else if(!next || x < next.date) next = { name:d.name, date:x };
+        });
+        _calExtraItems(f).forEach(function(it){
+          const x = new Date(it.date.getTime()); x.setHours(0, 0, 0, 0); const xt = x.getTime();
+          if(xt < t0) overdue++; else if(xt === t0) todayN++; else if(!next || x < next.date) next = { name:it.label, date:x };
         });
       } catch(_){}
       // A freshly-submitted / not-yet-confirmed file needs SETUP — that's an action,
@@ -14194,6 +14215,41 @@ Tell me your planned move-out date and I will set the inspection.`
     const { error } = await _client.from('files').update({ logistics: lg, stage_tasks: st }).eq('id', file.id);
     if(error){ alert('Could not confirm contacts — check your connection and try again.'); }
   }
+  // Extend control for the "On track, or extend?" inspection task · moves the
+  // inspection_end deadline by +1/+2/+3 business days or to a picked date, and
+  // recalculates. Assumes an extension addendum is signed by the seller.
+  function _inspEndDate(file){ let cur = null; try { (fileContractDeadlines(file) || []).forEach(function(d){ if(d.key === 'inspection_end') cur = d.date; }); } catch(_){} return cur; }
+  function inspExtendHtml(file){
+    const cur = _inspEndDate(file);
+    const _iso = function(d){ try { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); } catch(_){ return ''; } };
+    const _fmt = function(d){ try { return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(_){ return ''; } };
+    const chip = 'display:inline-block;font-size:12px;font-weight:600;border:0.5px solid rgba(15,15,15,0.18);background:#f6f4ef;border-radius:20px;padding:6px 13px;cursor:pointer';
+    return '<div style="margin:8px 0 4px 28px">' +
+      '<div style="font-size:11px;color:#8a857c;margin-bottom:7px">Current inspection date: <b style="color:#0f0f0f">' + (cur ? _fmt(cur) : '—') + '</b></div>' +
+      '<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center">' +
+        '<span data-insp-ext-add="1" style="' + chip + '">+1 day</span>' +
+        '<span data-insp-ext-add="2" style="' + chip + '">+2 days</span>' +
+        '<span data-insp-ext-add="3" style="' + chip + '">+3 days</span>' +
+        '<input type="date" data-insp-ext-date value="' + (cur ? _iso(cur) : '') + '" style="font:inherit;font-size:13px;font-weight:600;border:1px solid #d9d4ca;border-radius:8px;padding:6px 9px;color:#0f0f0f">' +
+      '</div>' +
+      '<div style="font-size:10.5px;color:#9a958c;margin-top:7px">Moving the date assumes the seller has signed an extension addendum.</div>' +
+    '</div>';
+  }
+  document.addEventListener('click', function(e){
+    const c = e.target && e.target.closest && e.target.closest('[data-insp-ext-add]');
+    if(!c || !_currentFile) return;
+    const n = parseInt(c.getAttribute('data-insp-ext-add'), 10) || 0;
+    const cur = _inspEndDate(_currentFile); if(!cur) return;
+    const ENG = window.AariDeadlineEngine; if(!ENG) return;
+    let nd = ENG.addDays(cur, n); try { nd = ENG.flBusinessDay(nd); } catch(_){}
+    const iso = nd.getFullYear() + '-' + String(nd.getMonth()+1).padStart(2,'0') + '-' + String(nd.getDate()).padStart(2,'0');
+    try { ctSaveDeadlineDate(_currentFile, 'inspection_end', iso); } catch(_){}
+  });
+  document.addEventListener('change', function(e){
+    if(e.target && e.target.hasAttribute && e.target.hasAttribute('data-insp-ext-date') && _currentFile){
+      const v = e.target.value; if(v){ try { ctSaveDeadlineDate(_currentFile, 'inspection_end', v); } catch(_){} }
+    }
+  });
   function ckRow(file, t, dls, done){
     let rec = done[t.id];
     if(t.id === 'wtc_contacts_complete') return contactsTaskHtml(file);
@@ -14306,6 +14362,8 @@ Tell me your planned move-out date and I will set the inspection.`
         : '<div class="ck-sub" style="margin-left:28px;color:#a08a5a">No Stripe link configured for this service type.</div>';
     } else if(t.id === 'ctc_cd_received'){
       customCtl = cfpbWindowNote(file);
+    } else if(t.id === 'insp_extension_check'){
+      customCtl = inspExtendHtml(file);
     }
     // Collapsible detail (Option A) · the sub, scope, deadlines, logistics fields and
     // email all fold behind a chevron so each task reads as one clean line. The active
@@ -14778,7 +14836,7 @@ Tell me your planned move-out date and I will set the inspection.`
   const UC_TRACKS = [
     // Trimmed to the contract spine (Para 12) + key best-practice. See UC_MERGE_SKIP
     // for what was dropped (utilities, open-permit, AS-IS-accept, duplicate notices).
-    { key:'inspection', label:'Inspection', ids:['insp_scheduled','insp_deadline_watch','insp_review_report','insp_extension_check','insp_decision_followup','insp_proceed_confirmed','insp_cancel_confirmed','insp_deposit_return'] },
+    { key:'inspection', label:'Inspection', ids:['insp_scheduled','insp_deadline_watch','insp_extension_check','insp_decision_followup','insp_proceed_confirmed','insp_cancel_confirmed','insp_deposit_return'] },
     // Trimmed to what the contract (FR/BAR Para 8 Financing) actually obligates:
     // confirm loan application, confirm loan approval, clear conditions if conditional.
     // Below-value and no-approval branches stay (gated, invisible unless triggered).
@@ -14801,7 +14859,7 @@ Tell me your planned move-out date and I will set the inspection.`
     uc_loan_approval_confirmed:1,
     // Inspection · dropped per contract review (not Para 12, or duplicate notices).
     insp_utilities_on:1, insp_proceed_notice:1, insp_cancel_notice:1, insp_permits:1,
-    rem_asis_accepted:1, rem_addendum_confirmed:1, rem_permits_followup:1 };
+    insp_review_report:1, rem_asis_accepted:1, rem_addendum_confirmed:1, rem_permits_followup:1 };
   // Numbered file spine · the operational stages after Setup.
   const UC_SPINE_OPS = [
     { n:5, key:'under_contract', label:'Under contract' },
