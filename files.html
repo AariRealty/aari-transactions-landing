@@ -12316,6 +12316,47 @@ Tell me your planned move-out date and I will set the inspection.`
         }).join('') + '</div>';
     } catch(_){ el.style.display = 'none'; }
   }
+  // Email flags · written by the always-on Gmail scan (email-flag edge fn) when it
+  // spots a transaction update (extension, repairs, loan, appraisal, title, closing).
+  // Shows on the file with a Dismiss; tap opens nothing, it's a heads-up.
+  async function renderEmailFlagsBanner(){
+    const right = document.getElementById('rail-right');
+    if(!right || !_currentFile) return;
+    let el = document.getElementById('rail-email-flags');
+    if(!el){
+      el = document.createElement('div'); el.id = 'rail-email-flags';
+      right.insertBefore(el, right.firstChild);
+      el.addEventListener('click', async function(e){
+        const b = e.target.closest && e.target.closest('[data-eflag-done]'); if(!b) return;
+        b.disabled = true;
+        try { await _client.from('file_email_flags').update({ status:'dismissed' }).eq('id', b.getAttribute('data-eflag-done')); } catch(_){}
+        renderEmailFlagsBanner();
+      });
+    }
+    el.innerHTML = '';
+    try {
+      const res = await _client.from('file_email_flags')
+        .select('id, kind, label, detail, source_from, source_at')
+        .eq('file_id', _currentFile.id).eq('status','open')
+        .order('source_at', { ascending: false });
+      const rows = res.data || [];
+      if(!rows.length){ el.style.display = 'none'; return; }
+      const _when = function(s){ try { return new Date(s).toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(_){ return ''; } };
+      el.style.display = 'block';
+      el.innerHTML = '<div style="background:#eef1f6;border:1px solid #cfdcef;border-radius:10px;padding:12px 14px;margin:0 0 14px">' +
+        '<p style="font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#0c447c;font-weight:700;margin:0 0 8px">&#9993; Email flags &middot; ' + rows.length + '</p>' +
+        rows.map(function(r){
+          return '<div style="padding:7px 0;border-top:0.5px solid #dde6f2">' +
+            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
+              '<span style="font-size:12.5px;font-weight:600;color:#0f0f0f">' + esc(r.label || 'Email update') + '</span>' +
+              '<button type="button" data-eflag-done="' + esc(r.id) + '" style="border:0;background:#fff;color:#0c447c;border:0.5px solid #cfdcef;font-size:10.5px;font-weight:600;border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;flex:none">Dismiss</button>' +
+            '</div>' +
+            '<div style="font-size:11px;color:#5f6b7c;margin-top:2px">' + esc(r.source_from || '') + (r.source_at ? (' &middot; ' + _when(r.source_at)) : '') + '</div>' +
+            (r.detail ? ('<div style="font-size:11.5px;color:#444;margin-top:3px">' + esc(r.detail) + '</div>') : '') +
+          '</div>';
+        }).join('') + '</div>';
+    } catch(_){ el.style.display = 'none'; }
+  }
 
   // ===== SERVICE STAGE · non-TC files · TC advances the stage the agent sees =====
   const TC_SVC_TRACKS = {
@@ -12367,6 +12408,7 @@ Tell me your planned move-out date and I will set the inspection.`
   function openPlaybook(file){
     _currentFile = file;
     renderAgentRequestsBanner();
+    renderEmailFlagsBanner();
     renderServiceStage();
     _openPopKey = null;
     _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null; _ctConfStep = 0; _revEdit = false; _partyStep = 0; _partyEdit = false; _finStep = 0; _setupEditSec = ''; _setupStep = 'review'; _dlSourcesOpen = false; _dlDateEditKey = null; _spineEditSec = null; _ucOpenTrack = null; _setupCellEdit = null; _uc5Open = true; _inspExtOpen = false;
