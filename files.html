@@ -772,6 +772,7 @@
   .uc-step.locked .uc-step-l{color:#b3aea4}
   .uc-step-lock{color:#c4bfb5;font-size:13px}
   .uc-spine-edit{margin:0 0 9px;padding:0 2px}
+  .uc-back-steps{background:none;border:0;color:#185FA5;font-family:inherit;font-size:12.5px;font-weight:500;cursor:pointer;padding:2px 0 12px}
   .uc-spine-bottom{margin-top:12px}
   /* Option B · collapsed Setup card */
   .aari-setup-card-hd{display:flex;align-items:center;justify-content:space-between;width:100%;background:none;border:0;cursor:pointer;font-family:inherit;padding:2px 0 12px}
@@ -11258,22 +11259,30 @@ Tell me your planned move-out date and I will set the inspection.`
       // numbered rows, step 5 Under contract is the current open step (its work +
       // deadlines render below), and 6 / 7 sit locked at the bottom of the panel.
       if(confirmed && !_ctSetup){
-        const _stageNow = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || 'under_contract');
-        let _ci = UC_SPINE_OPS.findIndex(function(o){ return o.key === _stageNow; }); if(_ci < 0) _ci = 0;
-        let _ops = '';
-        UC_SPINE_OPS.forEach(function(o, i){
-          if(i < _ci) _ops += ucSpineRow(o.n, o.label, 'done', false);      // earlier operational stage, complete
-          else if(i === _ci) _ops += ucSpineRow(o.n, o.label, 'current');   // the open step (work + deadlines below)
-        });
-        host.innerHTML = _ctBackLink +
-          '<div class="uc-spine-top">' +
-            ucSpineRow(1, 'Contract type', 'done', true) +
-            ucSpineRow(2, 'Parties', 'done', true) +
-            ucSpineRow(3, 'Financing', 'done', true) +
-            ucSpineRow(4, 'Terms &amp; dates', 'done', true) +
-            (_setupCardOpen ? '<div class="uc-spine-edit">' + introP + termsBody + '</div>' : '') +
-            _ops +
-          '</div>';
+        if(_setupCardOpen){
+          // EDIT MODE · show the SAME grouped setup cards (Contract / Parties / Financing
+          // / Price) used during Setup, on their own with a Back to steps link — no
+          // duplicate rows, and it matches exactly what Setup looks like.
+          host.innerHTML = _ctBackLink +
+            '<button type="button" data-setup-card-toggle="1" class="uc-back-steps">&larr; Back to steps</button>' +
+            setupGroupsHtml(file);
+        } else {
+          const _stageNow = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || 'under_contract');
+          let _ci = UC_SPINE_OPS.findIndex(function(o){ return o.key === _stageNow; }); if(_ci < 0) _ci = 0;
+          let _ops = '';
+          UC_SPINE_OPS.forEach(function(o, i){
+            if(i < _ci) _ops += ucSpineRow(o.n, o.label, 'done', false);      // earlier operational stage, complete
+            else if(i === _ci) _ops += ucSpineRow(o.n, o.label, 'current');   // the open step (work + deadlines below)
+          });
+          host.innerHTML = _ctBackLink +
+            '<div class="uc-spine-top">' +
+              ucSpineRow(1, 'Contract type', 'done', true) +
+              ucSpineRow(2, 'Parties', 'done', true) +
+              ucSpineRow(3, 'Financing', 'done', true) +
+              ucSpineRow(4, 'Terms &amp; dates', 'done', true) +
+              _ops +
+            '</div>';
+        }
       } else {
         host.innerHTML = _ctBackLink + introP + termsBody;
       }
@@ -14221,6 +14230,52 @@ Tell me your planned move-out date and I will set the inspection.`
   // section open at a time; the active (or re-opened) section's body nests INSIDE
   // its own row. `ctBody` is the Contract type stepper, passed in from
   // renderContractTerms so it can sit under the Contract type row like the others.
+  // The grouped setup cards (Contract / Parties / Financing / Price) with inline edit.
+  // Single source of truth · used by setupReviewBar (during Setup) AND by the numbered
+  // spine's Edit view past Setup, so editing a confirmed file looks exactly like Setup.
+  function setupGroupsHtml(file){
+    const ex = (typeof extractedFields === 'function' ? (extractedFields(file) || {}) : {});
+    const editSec = _setupEditSec;
+    const _money = function(v){ if(v==null||v==='') return ''; var s=String(v).replace(/^\$/,'').replace(/\.00$/,''); return '$'+s; };
+    const _ctLabels = { frbar_asis:'AS IS Residential (FR/BAR 7x)', frbar_standard:'Residential (FR/BAR Standard)', frbar_crsp:'Vacant Land / CRSP', nabor:'NABOR Residential' };
+    const _type = file.contract_type ? (_ctLabels[file.contract_type] || file.contract_type) : (ex.__t || 'AS IS Residential');
+    const _financed = !!(ex.loan_amount && parseFloat(String(ex.loan_amount).replace(/[^0-9.]/g,'')) > 0) || !isCashFile(file);
+    const _price = file.purchase_price_cents ? ('$' + Number(file.purchase_price_cents/100).toLocaleString()) : _money(ex.price);
+    const dispRow = function(k, v){ return v ? ('<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(k) + '</span><span style="font-weight:600;text-align:right">' + esc(v) + '</span></div>') : ''; };
+    const editRow = function(fd){
+      if(fd.ro) return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(fd.label) + '</span><span style="font-weight:600;text-align:right;color:#a39e95">' + esc(fd.val) + '</span></div>';
+      return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5"><div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div><input data-nf-field="' + fd.f + '" value="' + esc(fd.val).replace(/"/g, '&quot;') + '" style="width:100%;font:inherit;font-size:13px;font-weight:600;padding:8px 10px;border:1px solid #d9d4ca;border-radius:8px;background:#fff;color:#0f0f0f"></div>'; };
+    const grp = function(title, key, fields){
+      const editing = (editSec === key);
+      const editBtn = '<button type="button" data-setup-edit="' + key + '" style="background:none;border:0;color:' + (editing ? '#0f0f0f' : '#185FA5') + ';font-size:11.5px;font-weight:500;cursor:pointer;font-family:inherit">' + (editing ? 'Cancel' : 'Edit') + '</button>';
+      let body;
+      if(editing){
+        body = fields.map(editRow).join('') + '<div style="text-align:right;margin-top:11px"><button type="button" data-nf-save="' + key + '" style="background:#0f0f0f;color:#fff;border:0;border-radius:8px;font-family:inherit;font-size:13px;font-weight:600;padding:9px 18px;cursor:pointer">Save changes</button></div>';
+      } else {
+        body = fields.map(function(fd){ return dispRow(fd.label, fd.val); }).join('');
+      }
+      return '<div style="background:#fff;border:' + (editing ? '1.5px solid #0f0f0f' : '0.5px solid #ece8e0') + ';border-radius:11px;padding:4px 14px 11px;margin-bottom:9px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0 2px"><span style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#9a958c">' + esc(title) + '</span>' + editBtn + '</div>' +
+        body + '</div>';
+    };
+    const _split = function(s){ return String(s||'').split(/\s+and\s+|\s*&\s*|\s*;\s*/i).map(function(x){return x.trim();}).filter(Boolean); };
+    const _buyers = _split(ex.buyer); const _sellers = _split(ex.seller);
+    const _pf = [];
+    (_buyers.length ? _buyers : ['']).forEach(function(b,i){ _pf.push({f:'buyer_'+i, label:'Buyer'+(_buyers.length>1?(' '+(i+1)):''), val:b}); });
+    (_sellers.length ? _sellers : ['']).forEach(function(s,i){ _pf.push({f:'seller_'+i, label:'Seller'+(_sellers.length>1?(' '+(i+1)):''), val:s}); });
+    _pf.push({f:'seller_agent', label:'Listing agent', val:(ex.seller_agent||'')});
+    _pf.push({f:'seller_brokerage', label:'Listing brokerage', val:(ex.seller_brokerage||'')});
+    _pf.push({f:'buyer_agent', label:'Buyer agent', val:(ex.buyer_agent||'')});
+    _pf.push({f:'buyer_brokerage', label:'Buyer brokerage', val:(ex.buyer_brokerage||'')});
+    _pf.push({f:'title_name', label:'Title company', val:(ex.title_name||'')});
+    _pf.push({f:'title_email', label:'Title email', val:(ex.title_email||'')});
+    _pf.push({f:'title_phone', label:'Title phone', val:(ex.title_phone||'')});
+    _pf.push({f:'title_address', label:'Title address', val:(ex.title_address||'')});
+    return grp('Contract', 'contract', [{f:'__type',label:'Type',val:_type,ro:true},{f:'address',label:'Property',val:(ex.address||file.property_address||'')},{f:'county',label:'County',val:(ex.county||'')}]) +
+      grp('Parties', 'parties', _pf) +
+      grp('Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),ro:true},{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}]) +
+      grp('Price', 'pricedates', [{f:'price',label:'Purchase price',val:_price},{f:'emd',label:'Initial deposit',val:_money(ex.emd)},{f:'balance_to_close',label:'Balance to close',val:_money(ex.balance_to_close)}]);
+  }
   function setupReviewBar(file, ctBody){
     ctBody = ctBody || '';
     if((file.file_type || 'sale') !== 'sale') return ctBody;
@@ -14271,11 +14326,7 @@ Tell me your planned move-out date and I will set the inspection.`
     _pf.push({f:'title_email', label:'Title email', val:(ex.title_email||'')});
     _pf.push({f:'title_phone', label:'Title phone', val:(ex.title_phone||'')});
     _pf.push({f:'title_address', label:'Title address', val:(ex.title_address||'')});
-    const listHtml =
-        grp('Contract', 'contract', [{f:'__type',label:'Type',val:_type,ro:true},{f:'address',label:'Property',val:(ex.address||file.property_address||'')},{f:'county',label:'County',val:(ex.county||'')}]) +
-        grp('Parties', 'parties', _pf) +
-        grp('Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),ro:true},{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}]) +
-        grp('Price', 'pricedates', [{f:'price',label:'Purchase price',val:_price},{f:'emd',label:'Initial deposit',val:_money(ex.emd)},{f:'balance_to_close',label:'Balance to close',val:_money(ex.balance_to_close)}]);
+    const listHtml = setupGroupsHtml(file);
     // Deadlines · own section. Effective + closing editable here (recalculate the rest);
     // quiet list (Option A): name + date, weekend roll shown only when it moves.
     const _dlEng = window.AariDeadlineEngine;
