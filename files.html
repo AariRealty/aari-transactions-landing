@@ -799,7 +799,10 @@
   .uc-step-hint{font-size:11px;color:#9a958c;font-weight:600;margin-top:2px}
   .uc-step-hint.lt{color:#a3402f}
   .ck-flag-chip{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.2px;color:#0c447c;background:#eef1f6;border:0.5px solid #cfdcef;border-radius:20px;padding:2px 8px;margin-left:7px;vertical-align:middle;white-space:nowrap}
-  /* ADHD top · time anchor + progress + anchor card */
+  /* Calm (Option B) · day line + emphasized top row */
+  .uc-day{font-size:11px;font-weight:600;color:#9a958c;margin:0 0 11px}
+  .uc-top .ck-label{font-weight:700}
+  /* ADHD top · time anchor + progress + anchor card (legacy, unused in B) */
   .uc-timeline{display:flex;align-items:center;gap:9px;font-size:11px;font-weight:600;color:#6b6760;margin:0 0 9px}
   .uc-tl-bar{flex:1;height:5px;background:#e4dfd5;border-radius:3px;overflow:hidden}
   .uc-tl-bar span{display:block;height:100%;background:#0f0f0f;border-radius:3px}
@@ -15265,10 +15268,10 @@ Tell me your planned move-out date and I will set the inspection.`
     return '<p class="uc-day">' + dayTxt + ' &middot; closing ' + fmt(c) + '</p>';
   }
   function buildUcTracksHtml(file, tasks, dls, done){
-    // Contract-sequence order (opening → deposit → financing → inspection → title
-    // → approval → pre-close), then the ADHD top: time anchor + progress + a single
-    // "Start here" anchor card for the most-urgent item + a capped, single-urgency
-    // "On you now" list. Coming up / status / done fold below.
+    // Option B · "Just the list" (calm). One day line, then "On you now" sorted by
+    // urgency (most overdue first) with the top row emphasized, the rest as quiet
+    // neutral rows. Coming up + done fold. The deadline check sits at the bottom,
+    // one tap away. No anchor card, no progress bar, no track status strip.
     const ordered = tasks.slice().sort(function(a, b){ return ucSeqRank(a.id) - ucSeqRank(b.id); });
     const openTasks = ordered.filter(function(t){ return !done[t.id]; });
     const doneTasks = ordered.filter(function(t){ return done[t.id]; });
@@ -15278,74 +15281,40 @@ Tell me your planned move-out date and I will set the inspection.`
       return null;
     };
     const _isNow = function(t){ if(typeof isOpeningTaskId === 'function' && isOpeningTaskId(t.id)) return true; const d = _days(t); return d != null && d <= 3; };
-    const nowTasks = openTasks.filter(_isNow);
+    let nowTasks = openTasks.filter(_isNow);
     const laterTasks = openTasks.filter(function(t){ return !_isNow(t); });
-
-    // Anchor · the single most urgent open task (most overdue / soonest dated, else
-    // the first opening task) is pulled out into a "Start here" card.
-    let anchor = null, anchorT = Infinity;
-    nowTasks.forEach(function(t){ const d = _days(t); if(d != null && d < anchorT){ anchorT = d; anchor = t; } });
-    if(!anchor) anchor = nowTasks[0] || null;
-    const restNow = nowTasks.filter(function(t){ return t !== anchor; });
+    // Urgency order within "now": most overdue / soonest first, undated last.
+    nowTasks = nowTasks.slice().sort(function(a, b){ const da = _days(a), db = _days(b); return (da == null ? 1e9 : da) - (db == null ? 1e9 : db); });
 
     let html = ucTimelineHtml(file);
-    // Progress (momentum) · how much of the stage is cleared + a calm overdue cue.
-    const totalN = openTasks.length + doneTasks.length;
-    if(totalN){
-      const doneN = doneTasks.length;
-      const pct = Math.round(doneN / totalN * 100);
-      const overdueN = nowTasks.filter(function(t){ const d = _days(t); return d != null && d < 0; }).length;
-      const cue = overdueN ? (overdueN + ' overdue') : 'nothing overdue';
-      html += '<div class="uc-prog"><span class="uc-pb"><span style="width:' + pct + '%"></span></span><span>' + doneN + ' of ' + totalN + ' done &middot; ' + esc(cue) + '</span></div>';
-    }
-    // Deadline integrity check (read-only) · placed after the timeline so orientation leads.
-    html += deadlineIntegrityHtml(file);
-    // Anchor card · the one obvious next move, with its real row (and email) inside.
-    if(anchor){
-      const d = _days(anchor);
-      let urg = '';
-      if(d != null){ urg = (d < 0) ? (Math.abs(d) + ' day' + (Math.abs(d) === 1 ? '' : 's') + ' overdue') : (d === 0 ? 'due today' : 'due in ' + d + ' day' + (d === 1 ? '' : 's')); }
-      const overdue = (d != null && d < 0);
-      html += '<div class="uc-anchor' + (overdue ? ' over' : '') + '"><p class="uc-anchor-k">Start here' + (urg ? ' &middot; ' + esc(urg) : '') + '</p>' +
-        ckRow(file, anchor, dls, done, ucTagHtml(anchor.id)) + '</div>';
-    }
-    // "On you now" · the rest, capped at 5, dates muted (single-urgency).
-    const CAP = 5;
-    const shown = restNow.slice(0, CAP);
-    const extra = restNow.slice(CAP);
-    html += '<p class="uc-needsyou-hd">' + (anchor ? 'Then, on you now' : 'On you now') + ' &middot; ' + restNow.length + '</p>';
-    if(restNow.length){
-      html += shown.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id), true); }).join('');
+    const CAP = 6;
+    const shown = nowTasks.slice(0, CAP);
+    const extra = nowTasks.slice(CAP);
+    html += '<p class="uc-needsyou-hd">On you now &middot; ' + nowTasks.length + '</p>';
+    if(nowTasks.length){
+      // Top row keeps its real (colored) date + bold label; the rest are muted.
+      html += shown.map(function(t, i){
+        return i === 0
+          ? '<div class="uc-top">' + ckRow(file, t, dls, done, ucTagHtml(t.id)) + '</div>'
+          : ckRow(file, t, dls, done, ucTagHtml(t.id), true);
+      }).join('');
       if(extra.length){
         html += '<details class="uc-later"><summary class="uc-later-sum">+ ' + extra.length + ' more now<span class="uc-chev">&#8250;</span></summary>' +
           extra.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id), true); }).join('') + '</details>';
       }
-    } else if(!anchor){
+    } else {
       html += '<p class="ck-empty">Nothing urgent right now. You&rsquo;re ahead.</p>';
     }
-    // Coming up · everything not yet on the clock.
     if(laterTasks.length){
       html += '<details class="uc-later"><summary class="uc-later-sum">Coming up &middot; ' + laterTasks.length + '<span class="uc-chev">&#8250;</span></summary>' +
         laterTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id), true); }).join('') + '</details>';
     }
-    // Per-track status word for the strip (read-only summary, unchanged).
-    const statusParts = [];
-    UC_TRACKS.forEach(function(trk){
-      const tks = trk.ids.map(function(id){ return tasks.find(function(t){ return t.id === id; }); }).filter(Boolean);
-      if(!tks.length) return;
-      const openN = tks.filter(function(t){ return !done[t.id]; }).length;
-      let word = '', cls = 'k';
-      if(!openN){ word = 'done'; cls = 'g'; }
-      else if(trk.key === 'appraisal' && !isCashFile(file)
-              && (done['uc_loan_app']) && !(done['uc_loan_approval_acknowledged'])){ word = 'waiting on lender'; cls = 'a'; }
-      else { word = openN + ' to do'; cls = 'k'; }
-      statusParts.push('<span class="uc-sp ' + cls + '">' + esc(trk.label) + ' &middot; ' + esc(word) + '</span>');
-    });
-    if(statusParts.length){ html += '<div class="uc-statusbar">' + statusParts.join('') + '</div>'; }
     if(doneTasks.length){
       html += '<details class="uc-done"><summary class="uc-done-sum">' + doneTasks.length + ' done<span class="uc-chev">&#8250;</span></summary>' +
         doneTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id)); }).join('') + '</details>';
     }
+    // Deadline check · one tap away at the bottom, not sitting on top of the list.
+    html += deadlineIntegrityHtml(file);
     return html;
   }
 
