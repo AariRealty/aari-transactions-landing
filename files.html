@@ -14013,6 +14013,8 @@ Tell me your planned move-out date and I will set the inspection.`
   let _uc5Open = true;            // spine · Under contract step (5) work box open/closed
   let _inspExtOpen = false;       // inspection · extend controls revealed (Option D · tap to open)
   let _diConfirmKey = null;       // deadline integrity · which deadline has its inline Confirm date input open
+  let _inspAddOpen = false;       // inspection · extension-addendum draft panel open
+  let _inspAddTo = '';            // inspection · addendum target (new) date
   let _ctContactsStep = false;    // confirmed terms · advanced to the contacts step
   let _ctReviewIdx = null;        // confirmed terms · one-at-a-time review stepper index (null = off)
   let _ctConfStep = 0;            // UNconfirmed terms · one-at-a-time confirm stepper index
@@ -14588,6 +14590,50 @@ Tell me your planned move-out date and I will set the inspection.`
   // inspection_end deadline by +1/+2/+3 business days or to a picked date, and
   // recalculates. Assumes an extension addendum is signed by the seller.
   function _inspEndDate(file){ let cur = null; try { (fileContractDeadlines(file) || []).forEach(function(d){ if(d.key === 'inspection_end') cur = d.date; }); } catch(_){} return cur; }
+  // Extension addendum draft · the paper that justifies moving the inspection date.
+  // Audit-ready FR/BAR-aligned language, parties + property + dates filled from the
+  // file, ending with the standard "all other terms unchanged" clause.
+  function inspAddendumText(file, fromDate, toDate){
+    const P = (typeof partiesOf === 'function') ? partiesOf(file) : { buyers:[], sellers:[] };
+    const join = function(arr){ try { return (arr || []).map(function(p){ return (p && (p.name || p.entity_name || p.entity)) || ''; }).filter(Boolean).join(' and '); } catch(_){ return ''; } };
+    const buyers = join(P.buyers) || '[Buyer]';
+    const sellers = join(P.sellers) || '[Seller]';
+    const addr = file.property_address || '[Property Address]';
+    const full = function(d){ if(!(d instanceof Date) || isNaN(d.getTime())) return ''; try { return d.toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' }); } catch(_){ return ''; } };
+    const eff = file.effective_date ? full(new Date(String(file.effective_date).slice(0, 10) + 'T12:00:00')) : '[Effective Date]';
+    const fromS = full(fromDate) || '[current inspection deadline]';
+    const toS = full(toDate) || '[new inspection deadline]';
+    return 'ADDENDUM TO CONTRACT\n\n' +
+      'Property: ' + addr + '\n' +
+      'Buyer(s): ' + buyers + '\n' +
+      'Seller(s): ' + sellers + '\n' +
+      'Effective Date of Contract: ' + eff + '\n\n' +
+      'The Buyer and Seller agree to amend the Contract as follows.\n\n' +
+      'The Inspection Period referenced in Paragraph 12 (Property Inspection and Right to Cancel) is extended from ' + fromS + ' to ' + toS + '. The Buyer’s right to cancel under Paragraph 12 remains available through 5:00 p.m. on ' + toS + '.\n\n' +
+      'All other terms and conditions of the Contract shall remain unchanged and in full force and effect.\n\n' +
+      'Buyer: _____________________   Date: __________\n' +
+      'Buyer: _____________________   Date: __________\n' +
+      'Seller: ____________________   Date: __________\n' +
+      'Seller: ____________________   Date: __________';
+  }
+  function inspExtAddendumHtml(file){
+    if(!_inspAddOpen){
+      return '<div style="margin:7px 0 2px 0"><button type="button" data-insp-add-open="1" style="background:none;border:0;color:#185FA5;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer;padding:0">&#128196; Draft the extension addendum &rsaquo;</button></div>';
+    }
+    const ENG = window.AariDeadlineEngine;
+    const from = _inspEndDate(file);
+    const _iso = function(d){ try { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); } catch(_){ return ''; } };
+    const to = _inspAddTo ? new Date(_inspAddTo + 'T12:00:00') : (from && ENG ? ENG.addDays(from, 3) : from);
+    const text = inspAddendumText(file, from, to);
+    return '<div style="margin:8px 0 2px 0;background:#fff;border:0.5px solid #e7e1d4;border-radius:10px;padding:11px 13px">' +
+      '<div style="display:flex;align-items:center;gap:9px;margin-bottom:8px;flex-wrap:wrap"><span style="font-size:11px;font-weight:700;color:#0f0f0f">Extension addendum</span>' +
+        '<span style="font-size:11px;color:#8a857c">New date</span><input type="date" data-insp-add-to value="' + (to ? _iso(to) : '') + '" style="font:inherit;font-size:12px;border:1px solid #d9d4ca;border-radius:7px;padding:4px 8px;color:#0f0f0f">' +
+        '<button type="button" data-insp-add-open="0" style="margin-left:auto;background:none;border:0;color:#9a958c;font-family:inherit;font-size:11px;cursor:pointer">Close</button></div>' +
+      '<textarea readonly id="insp-add-text" style="width:100%;height:200px;font-family:inherit;font-size:11.5px;line-height:1.55;color:#33312e;border:0.5px solid #e2ddd3;border-radius:8px;padding:9px 11px;background:#faf8f4;resize:vertical">' + esc(text) + '</textarea>' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap"><button type="button" data-insp-add-copy style="font-size:11.5px;font-weight:700;color:#fff;background:#0f0f0f;border:0;border-radius:8px;padding:7px 13px;font-family:inherit;cursor:pointer">Copy addendum</button>' +
+      '<span style="font-size:10.5px;color:#9a958c">Send for buyer and seller signature, then move the date above once it&rsquo;s signed.</span></div>' +
+    '</div>';
+  }
   function inspExtendHtml(file){
     // Option D · quiet by default. Just a small "Extend the date" link; the chips and
     // date picker only appear once the TC taps it (the buyer needs more time).
@@ -14608,6 +14654,7 @@ Tell me your planned move-out date and I will set the inspection.`
         '<input type="date" data-insp-ext-date value="' + (cur ? _iso(cur) : '') + '" style="font:inherit;font-size:13px;font-weight:600;border:1px solid #d9d4ca;border-radius:8px;padding:6px 9px;color:#0f0f0f">' +
       '</div>' +
       '<div style="font-size:10.5px;color:#9a958c;margin-top:7px">Moving the date assumes the seller has signed an extension addendum.</div>' +
+      inspExtAddendumHtml(file) +
     '</div>';
   }
   // Locked-prerequisite jump (Fix 2) · the "open it" hint on a gated task scrolls to
@@ -14626,6 +14673,11 @@ Tell me your planned move-out date and I will set the inspection.`
   document.addEventListener('click', function(e){
     const o = e.target && e.target.closest && e.target.closest('[data-insp-ext-open]');
     if(o){ _inspExtOpen = (o.getAttribute('data-insp-ext-open') === '1'); try { renderStageChecklist(_currentFile); } catch(_){} return; }
+    // Extension-addendum draft · open/close + copy.
+    const ao = e.target && e.target.closest && e.target.closest('[data-insp-add-open]');
+    if(ao){ _inspAddOpen = (ao.getAttribute('data-insp-add-open') === '1'); if(!_inspAddOpen) _inspAddTo = ''; try { renderStageChecklist(_currentFile); } catch(_){} return; }
+    const acp = e.target && e.target.closest && e.target.closest('[data-insp-add-copy]');
+    if(acp){ try { const ta = document.getElementById('insp-add-text'); if(ta){ ta.select(); if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(ta.value); } else { document.execCommand('copy'); } acp.textContent = 'Copied ✓'; setTimeout(function(){ acp.textContent = 'Copy addendum'; }, 2000); } } catch(_){} return; }
     const c = e.target && e.target.closest && e.target.closest('[data-insp-ext-add]');
     if(!c || !_currentFile) return;
     const n = parseInt(c.getAttribute('data-insp-ext-add'), 10) || 0;
@@ -14638,6 +14690,10 @@ Tell me your planned move-out date and I will set the inspection.`
   document.addEventListener('change', function(e){
     if(e.target && e.target.hasAttribute && e.target.hasAttribute('data-insp-ext-date') && _currentFile){
       const v = e.target.value; if(v){ try { ctSaveDeadlineDate(_currentFile, 'inspection_end', v); } catch(_){} }
+    }
+    // Addendum target date · re-render so the draft text reflects the new date.
+    if(e.target && e.target.hasAttribute && e.target.hasAttribute('data-insp-add-to') && _currentFile){
+      _inspAddTo = e.target.value || ''; try { renderStageChecklist(_currentFile); } catch(_){}
     }
   });
   // Undated tasks the deal wants done up front (Fix 5) · they have no contract date
