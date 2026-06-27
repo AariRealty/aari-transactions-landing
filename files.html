@@ -9974,6 +9974,30 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){ return ''; }
   }
   // ---- Month HEATMAP calendar (replaces the kanban) · #calHeatmap ----
+  // Compact chip label for a calendar deadline · keeps the grid readable.
+  // Ordered so specific keys win before generic substrings (loan_application
+  // before loan_approval). Falls back to the first word of the label.
+  function _calChipTag(key, label){
+    const k = String(key || '').replace(/__chase$/, '').toLowerCase();
+    const TAGS = [
+      ['inspection','Insp'],['insp','Insp'],
+      ['loan_application','L.App'],['loan_approval','Loan'],['lappr','Loan'],['loan','Loan'],['financing','Fin'],
+      ['appraisal','Apprl'],['appr','Apprl'],
+      ['title_commitment','Title'],['title_evidence','Title'],['title','Title'],
+      ['survey','Survey'],
+      ['additional_deposit','Dep2'],['second_deposit','Dep2'],
+      ['init_deposit','EMD'],['initial_deposit','EMD'],['emd','EMD'],['deposit','Dep'],
+      ['estoppel','Estop'],['hoa','HOA'],['condo','HOA'],['association','HOA'],
+      ['walk','Walk'],['insurance','Ins'],['binder','Ins'],
+      ['closing_disclosure','CD'],['closing','Close'],['close','Close'],
+      ['feasibility','Feas'],['due_diligence','DD']
+    ];
+    for(let i = 0; i < TAGS.length; i++){ if(k.indexOf(TAGS[i][0]) !== -1) return TAGS[i][1]; }
+    let lb = String(label || '').replace(/^follow up\s*[·•\-]\s*/i, '').trim();
+    let w = (lb.split(/\s+/)[0] || 'Item');
+    w = w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+    return w.slice(0, 5);
+  }
   function renderCalHeatmap(){
     const host = document.getElementById('calHeatmap'); if(!host) return;
     const all = _tcCalDeadlines();
@@ -10006,23 +10030,26 @@ Tell me your planned move-out date and I will set the inspection.`
       const ts = new Date(Y, M, d).setHours(0, 0, 0, 0);
       const _items = byDay[ts] || [];
       const c = _items.length, isToday = ts === t0, isSel = ts === _calSelDay;
-      const _hasReal = _items.some(function(x){ return !x.isChase; });   // a real contract deadline
-      const _chaseOnly = c > 0 && !_hasReal;                            // only follow-up entries
-      const isOver = ts < t0 && _hasReal;
-      let s = 'aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:11px;position:relative;border-radius:7px;cursor:pointer;';
-      if(isToday) s += 'background:#fff;color:#0f0f0f;font-weight:700;box-shadow:inset 0 0 0 2px #0f0f0f;';
-      else if(isOver) s += 'background:#fff;border:1px solid #d98b81;color:#a3402f;font-weight:600;';
-      else if(_chaseOnly) s += 'background:#faf3e2;color:#8a6a1f;font-weight:600;';   // follow-up day · amber
-      else if(c >= 6) s += 'background:#ddd5c6;color:#0f0f0f;font-weight:600;';
-      else if(c >= 3) s += 'background:#ece6da;color:#0f0f0f;';
-      else if(c > 0) s += 'background:#f6f3ec;color:#5f5e5a;';
-      else s += 'color:#0f0f0f;';
-      if(isSel && !isToday) s += 'box-shadow:inset 0 0 0 1.5px #0f0f0f;';
-      const badge = c ? '<span style="position:absolute;bottom:3px;font-size:8px;color:' + (isToday ? '#0f0f0f' : (isOver ? '#a3402f' : '#a39e95')) + '">' + c + '</span>' : '';
-      cells += '<div data-cal-day="' + ts + '" style="' + s + '">' + d + badge + '</div>';
+      const _real = _items.filter(function(x){ return !x.isChase; });    // real contract deadlines
+      const _hasReal = _real.length > 0;
+      const isOver = ts < t0 && _hasReal;                               // a real deadline already passed
+      const rep = _hasReal ? _real[0] : _items[0];                      // representative item for the chip
+      let s = 'aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:11px;position:relative;border-radius:7px;cursor:pointer;color:#0f0f0f;';
+      if(isToday) s += 'font-weight:700;box-shadow:inset 0 0 0 2px #0f0f0f;';
+      else if(isSel) s += 'box-shadow:inset 0 0 0 1.5px #0f0f0f;';
+      let chip = '';
+      if(rep){
+        const tag = _calChipTag(rep.key, rep.label) + (c > 1 ? ' +' + (c - 1) : '');
+        let cs;
+        if(isOver) cs = 'background:#a3402f;color:#fff;';               // overdue · red, only when truly late
+        else if(rep.isChase) cs = 'background:#f6edd9;color:#8a6a1f;';  // follow-up · the one amber accent
+        else cs = 'background:#0f0f0f;color:#fff;';                     // deadline · ink
+        chip = '<span style="max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:7.5px;font-weight:800;letter-spacing:.2px;text-transform:uppercase;line-height:1;padding:2px 4px;border-radius:4px;' + cs + '">' + esc(tag) + '</span>';
+      }
+      cells += '<div data-cal-day="' + ts + '" style="' + s + '"><span style="line-height:1">' + d + '</span>' + chip + '</div>';
     }
     html += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">' + cells + '</div>';
-    html += '<div style="font-size:9.5px;color:#a39e95;margin-top:9px">Darker = busier · tap a day to see it</div></div>';
+    html += '<div style="font-size:9.5px;color:#a39e95;margin-top:9px">Today is ringed · tap a day to see it</div></div>';
     // RIGHT · overdue + selected day, pinned
     const rowHtml = function(d, right, rc){
       return '<div data-cal-open="' + esc(d.fileId) + '" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
