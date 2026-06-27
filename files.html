@@ -10591,17 +10591,40 @@ Tell me your planned move-out date and I will set the inspection.`
     try {
       const ov = Object.assign({}, file.deadline_overrides || {});
       const dates = Object.assign({}, ov._dates || {});
-      if(!isoDate){ delete dates[key]; } else { dates[key] = isoDate; }
+      // Auto-roll guard · a hand-set deadline that lands on a weekend or legal holiday
+      // moves to the next business day, the same as the engine (FR/BAR Standard F), so a
+      // manual date can never pin a contract deadline to a Saturday. A note is shown when
+      // it rolls. (Skipped for the closing date, which is its own field and time-of-essence.)
+      let _rolledNote = '';
+      if(!isoDate){
+        delete dates[key];
+      } else {
+        let finalIso = isoDate;
+        try {
+          const ENG = window.AariDeadlineEngine;
+          if(ENG && ENG.flBusinessDay && key !== 'closing'){
+            const rolled = ENG.flBusinessDay(new Date(isoDate + 'T12:00:00'));
+            const rolledIso = ENG.ymd ? ENG.ymd(rolled) : isoDate;
+            if(rolledIso && rolledIso !== isoDate){
+              const _f = function(s){ try { return new Date(s + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }); } catch(_){ return s; } };
+              _rolledNote = _f(isoDate) + ' is a weekend or holiday, so this deadline moved to ' + _f(rolledIso) + ', the next business day (FR/BAR Standard F). The contract due date never lands on a non-business day.';
+              finalIso = rolledIso;
+            }
+          }
+        } catch(_){}
+        dates[key] = finalIso;
+      }
       if(Object.keys(dates).length) ov._dates = dates; else delete ov._dates;
       file.deadline_overrides = ov;
       if(_currentFile && _currentFile.id === file.id) _currentFile.deadline_overrides = ov;
       const { error } = await _client.from('files').update({ deadline_overrides: ov }).eq('id', file.id);
       if(error) throw error;
-      writeAuditLog('contract_term_confirmed', file.id, { deadline_date_override: { key: key, date: (isoDate || null) } });
+      writeAuditLog('contract_term_confirmed', file.id, { deadline_date_override: { key: key, date: (dates[key] || null), entered: (isoDate || null), rolled: !!_rolledNote } });
       _dlDateEditKey = null; _dlExtendKey = null;
       try { renderDeadlinesForFile(file); } catch(_){}
       try { renderContractTerms(file); } catch(_){ try { renderPlaybook(file); } catch(__){} }
       try { gcalSyncDeadlines(file.id); } catch(_){}
+      if(_rolledNote){ try { alert(_rolledNote); } catch(_){} }
     } catch(err){ console.warn('[files] deadline date override save failed', err); alert('Save failed: ' + (err && err.message || 'unknown')); }
   }
   // Day-count fields a TC confirms off the executed contract, in display order.
@@ -14867,14 +14890,16 @@ Tell me your planned move-out date and I will set the inspection.`
       const _cd = chaseDateFor(dls[t.dl].date);
       if(_cd) _chaseLine = '<span class="ck-followup">&#128340; Follow up by ' + fmtDl(_cd) + '</span>';
     }
+    // Row is a DIV (not a label) so clicking the title never checks the box. Only the
+    // checkbox itself completes the task; clicking the body opens the detail toggle.
     return '<div class="ck-task-wrap">' +
-      '<label class="ck-task' + (rec ? ' ck-done' : '') + '">' +
+      '<div class="ck-task' + (rec ? ' ck-done' : '') + '">' +
         '<input type="checkbox" data-ck-task="' + esc(t.id) + '"' + (rec ? ' checked' : '') + ((file.status === 'archived' || _checkBlocked) ? ' disabled' : '') + '>' +
-        '<span class="ck-body"><span class="ck-label">' + tagHtml + esc(t.label) + (t.id === 'uc_emd_followup' ? emdAmtChip(file) : '') + ((EARLY_TASK_IDS[t.id] && !rec) ? ' <span class="ck-early">Start early</span>' : '') + _flagChip + '</span>' +
+        '<span class="ck-body"' + (_hasDetail ? ' data-ck-toggle role="button" tabindex="0"' : '') + '><span class="ck-label">' + tagHtml + esc(t.label) + (t.id === 'uc_emd_followup' ? emdAmtChip(file) : '') + ((EARLY_TASK_IDS[t.id] && !rec) ? ' <span class="ck-early">Start early</span>' : '') + _flagChip + '</span>' +
         (_checkBlocked ? '<span class="ck-sub" style="color:#a08a5a">' + esc(t.checkGateNote || 'Complete the required fields first.') + '</span>' : '') +
         (rec && rec.at ? '<span class="ck-stamp">' + (_soft ? esc(t.softComplete.chip) + ' ' : 'Done ') + new Date(rec.at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) + '</span>' : '') +
         _chaseLine +
-        '</span>' + dlChip + (t.id === 'uc_emd_followup' ? emdRowBtn(file) : '') + softCtl + _chevron + '</label>' +
+        '</span>' + dlChip + (t.id === 'uc_emd_followup' ? emdRowBtn(file) : '') + softCtl + _chevron + '</div>' +
       _lockHint +
       (_hasDetail ? '<div class="ck-detail">' + _detailInner + '</div>' : '') +
     '</div>';
@@ -16494,7 +16519,7 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   function markNextTask(){
     document.querySelectorAll('#tpb-checklist .ck-task-wrap.ck-next').forEach(function(w){ w.classList.remove('ck-next'); });
-    const lab = document.querySelector('#tpb-checklist label.ck-task:not(.ck-done)');
+    const lab = document.querySelector('#tpb-checklist .ck-task:not(.ck-done)');
     if(lab){ const w = lab.closest('.ck-task-wrap'); if(w){ w.classList.add('ck-next'); w.classList.add('ck-open'); } }
   }
   function openWorkRail(){
