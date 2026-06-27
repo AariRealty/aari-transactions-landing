@@ -16107,9 +16107,10 @@ Tell me your planned move-out date and I will set the inspection.`
     const stages = STAGES_BY_TYPE[file.file_type || 'sale'] || STAGES_BY_TYPE.sale;
     const curIdx = stages.indexOf(stage);
 
-    // Archive · prior stages with defined checklists, collapsed.
+    // Archive · prior stages with defined checklists, collapsed. Listing/compliance use a
+    // single grouped Completed list instead (their stages share one task set).
     let archive = '';
-    stages.slice(0, Math.max(curIdx, 0)).forEach(s => {
+    if(['listing','compliance'].indexOf(file.file_type || '') === -1) stages.slice(0, Math.max(curIdx, 0)).forEach(s => {
       let ts = ckTasksFor(file, s);
       if(ts) ts = ts.filter(t => !t.showIf || t.showIf(file));
       if(!ts || !ts.length) return;
@@ -16282,9 +16283,25 @@ Tell me your planned move-out date and I will set the inspection.`
     const _showDueSoon = !_isSetupStage && stage !== 'under_contract';
     // "Update the agent" is a communication action, not a task — it sits at the BOTTOM
     // of the work (after the tracks, just above Move), not crowding the top of Do next.
+    // Listing / compliance · checked tasks leave the active list and collect in a
+    // Completed list at the bottom (tap one to reopen), instead of vanishing.
+    let completedHtml = '';
+    if(['listing','compliance'].indexOf(file.file_type || '') !== -1){
+      const _grps = (file.file_type === 'listing') ? listingGroups(file) : complianceGroups(file);
+      const _all = (file.file_type === 'listing') ? LISTING_TASKS : COMPLIANCE_TASKS;
+      const _doneRows = [];
+      _grps.forEach(function(g){ g.ids.forEach(function(id){
+        const t = _all.find(function(x){ return x.id === id; });
+        if(!t || (t.showIf && !t.showIf(file))) return;
+        if(done[id] && (done[id].done || done[id].at)) _doneRows.push(ckRow(file, t, dls, done));
+      }); });
+      if(_doneRows.length){
+        completedHtml = '<details class="ck-archive-wrap" style="margin-top:14px"><summary>Completed &middot; ' + _doneRows.length + '</summary>' + _doneRows.join('') + '</details>';
+      }
+    }
     host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
-      (_showDueSoon ? dueSoon : '') + (_isSetupStage ? '' : updateBtnHtml(file)) + moveBtn;
+      (_showDueSoon ? dueSoon : '') + (_isSetupStage ? '' : updateBtnHtml(file)) + moveBtn + completedHtml;
     // During Setup, hide the whole "Your work" pop when it has nothing to show (no
     // pending setup steps, no standalone emails) — kills the orphaned empty header.
     try {
