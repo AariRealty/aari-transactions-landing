@@ -9759,6 +9759,18 @@ Tell me your planned move-out date and I will set the inspection.`
     _calLoaded = true;
     try { renderTcCalendar(); renderCalHeatmap(); } catch(_){}
   }
+  // TC chase rule · for the deadlines a coordinator actually chases someone on, the
+  // task surfaces 3 BUSINESS days before the due date (so weekends are skipped going
+  // back, landing on the weekday before). The contract due date itself never moves.
+  const CHASE_KEYS = { emd_initial:1, init_deposit:1, loan_app:1, loan_approval:1, title_commitment:1, title_evidence:1, survey:1, survey_notice:1, survey_seller:1, estoppel:1 };
+  function chaseDateFor(due){
+    if(!(due instanceof Date) || isNaN(due.getTime())) return null;
+    const ENG = window.AariDeadlineEngine;
+    const d = new Date(due.getTime()); d.setHours(0, 0, 0, 0);
+    let n = 3;
+    while(n > 0){ d.setDate(d.getDate() - 1); const dow = d.getDay(); const hol = (ENG && ENG.isFedHoliday) ? ENG.isFedHoliday(d) : false; if(dow !== 0 && dow !== 6 && !hol) n--; }
+    return d;
+  }
   // Derived (non-contract) calendar reminders. The inspection check-in lands 3 days
   // before the inspection deadline so the TC decides on-track-or-extend in time. Only
   // while the inspection decision is still open, and never written to the file ledger.
@@ -9777,6 +9789,7 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   function _tcCalDeadlines(){
     const out = [];
+    const _t0c = (function(){ const t = new Date(); t.setHours(0, 0, 0, 0); return t.getTime(); })();
     (_files || []).forEach(function(f){
       try {
         if(deriveStage(f) === 'closed' || f.status === 'archived') return;
@@ -9787,6 +9800,13 @@ Tell me your planned move-out date and I will set the inspection.`
           const rec = status[d.key];
           if(rec && rec.completed_at) return; // done · no longer a live deadline
           out.push({ date:d.date, key:d.key, label:d.name || 'Deadline', address:f.property_address || '', fileId:f.id });
+          // Chase-able deadlines also get a "Follow up" entry 3 business days early.
+          if(CHASE_KEYS[d.key]){
+            const cd = chaseDateFor(d.date);
+            if(cd && cd.getTime() >= _t0c){
+              out.push({ date:cd, key:d.key + '__chase', label:'Follow up · ' + (d.name || 'Deadline'), address:f.property_address || '', fileId:f.id, isChase:true, dueDate:d.date });
+            }
+          }
         });
         _calExtraItems(f).forEach(function(x){ out.push(x); });
       } catch(_){}
@@ -9819,7 +9839,9 @@ Tell me your planned move-out date and I will set the inspection.`
         if(!d || !d.fileId || !d.key || !(d.date instanceof Date)) return;
         let ds = ''; try { ds = window.AariDeadlineEngine.ymd(d.date); } catch(_){ return; }
         if(!ds) return;
-        ev.push({ file_id: d.fileId, key: d.key, summary: (d.label || 'Deadline') + ' · ' + String(d.address || '').split(',')[0], description: String(d.address || ''), date: ds });
+        let _desc = String(d.address || '');
+        try { if(d.isChase && d.dueDate) _desc += ' · due ' + window.AariDeadlineEngine.ymd(d.dueDate); } catch(_){}
+        ev.push({ file_id: d.fileId, key: d.key, summary: (d.label || 'Deadline') + ' · ' + String(d.address || '').split(',')[0], description: _desc, date: ds });
       });
       if(!ev.length) return { ok:true, count:0 };
       const { data, error } = await _client.functions.invoke('gcal-sync', { body: { action:'bulk', events: ev } });
@@ -15396,7 +15418,16 @@ Tell me your planned move-out date and I will set the inspection.`
     // Clear to Close is the closing sprint — everything is on you now, so don't split
     // it into "Coming up." Under contract keeps the opening + due-within-3-days rule.
     const _allNow = _stage === 'ctc';
-    const _isNow = function(t){ if(_allNow) return true; if(typeof isOpeningTaskId === 'function' && isOpeningTaskId(t.id)) return true; const d = _days(t); return d != null && d <= 3; };
+    const _isNow = function(t){
+      if(_allNow) return true;
+      if(typeof isOpeningTaskId === 'function' && isOpeningTaskId(t.id)) return true;
+      // Chase-able task surfaces from its follow-up date (3 business days before due).
+      if(t.dl && CHASE_KEYS[t.dl] && dls[t.dl] && dls[t.dl].date){
+        const cd = chaseDateFor(dls[t.dl].date);
+        if(cd){ const c = new Date(cd.getTime()); c.setHours(0, 0, 0, 0); return c <= _t0; }
+      }
+      const d = _days(t); return d != null && d <= 3;
+    };
     let nowTasks = openTasks.filter(_isNow);
     const laterTasks = openTasks.filter(function(t){ return !_isNow(t); });
     // Under contract: urgency order within "now" (most overdue / soonest first).
