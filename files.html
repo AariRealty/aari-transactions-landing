@@ -13667,22 +13667,26 @@ Tell me your planned move-out date and I will set the inspection.`
       showIf:(f)=>lstFull(f),
       sub:'Amend the listing agreement and update the MLS whenever price, dates, or terms change.' },
   ];
-  // Shared numbered-spine row renderer (listing + compliance), same look as the sale spine.
-  function _spineRowHtml(n, label, state){
-    var circle, card, title, tail = '';
+  // Shared numbered-spine row renderer (listing + compliance), matched to the sale spine:
+  // done = black check + chevron, now = number + status sub-line + NOW + chevron, locked = lock.
+  function _spineRowHtml(n, label, state, sub){
+    var circle, card, title, tail = '', chev = '';
+    var subHtml = (sub && sub.text) ? '<div style="font-size:13px;font-weight:500;margin-top:3px;color:' + (sub.late ? '#a3402f' : '#8a857c') + '">' + sub.text + '</div>' : '';
     if(state === 'done'){
       card = 'border:1px solid #ece8e0;background:#fff;'; title = 'color:#0f0f0f;';
-      circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px">&#10003;</span>';
+      circle = '<span style="flex:none;width:30px;height:30px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px">&#10003;</span>';
+      chev = '<span style="flex:none;color:#c9c3b8;font-size:19px;line-height:1">&rsaquo;</span>';
     } else if(state === 'now'){
-      card = 'border:2px solid #2f4ad0;background:#fff;'; title = 'color:#0f0f0f;';
-      circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;border:1.5px solid #0f0f0f;color:#0f0f0f;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600">' + n + '</span>';
+      card = 'border:2px solid #0f0f0f;background:#fff;'; title = 'color:#0f0f0f;';
+      circle = '<span style="flex:none;width:30px;height:30px;border-radius:50%;border:1.5px solid #0f0f0f;color:#0f0f0f;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600">' + n + '</span>';
       tail = '<span style="flex:none;font-size:12px;font-weight:700;letter-spacing:.4px;color:#0f0f0f">NOW</span>';
+      chev = '<span style="flex:none;color:#c9c3b8;font-size:19px;line-height:1">&rsaquo;</span>';
     } else {
       card = 'border:1px solid #ece8e0;background:#f1ede6;'; title = 'color:#b3aea4;';
-      circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;border:1.5px solid #cfc9bf;color:#cfc9bf;display:flex;align-items:center;justify-content:center;font-size:13px">' + n + '</span>';
-      tail = '<span style="flex:none;color:#b9a96a;font-size:14px">&#128274;</span>';
+      circle = '<span style="flex:none;width:30px;height:30px;border-radius:50%;border:1.5px solid #cfc9bf;color:#cfc9bf;display:flex;align-items:center;justify-content:center;font-size:14px">' + n + '</span>';
+      tail = '<span style="flex:none;color:#b9a96a;font-size:15px">&#128274;</span>';
     }
-    return '<div style="display:flex;align-items:center;gap:15px;border-radius:13px;padding:15px 18px;margin-bottom:10px;' + card + '">' + circle + '<div style="flex:1;font-size:15px;font-weight:600;' + title + '">' + label + '</div>' + tail + '</div>';
+    return '<div style="display:flex;align-items:center;gap:16px;border-radius:14px;padding:18px 20px;margin-bottom:11px;' + card + '">' + circle + '<div style="flex:1;min-width:0;' + title + '"><div style="font-size:16px;font-weight:600">' + label + '</div>' + subHtml + '</div>' + tail + chev + '</div>';
   }
   // Listing lifecycle as ordered task GROUPS (service-aware). The spine and the checklist
   // both come from these, so the current step's tasks sit under the NOW step like a sale.
@@ -13707,23 +13711,39 @@ Tell me your planned move-out date and I will set the inspection.`
     return ids.every(function(id){ var r = st[id]; return !!(r && (r.done || r.at)); });
   }
   function listingSpineRows(file){
+    // Per Marlenyi: the listing spine ends at Active on market. No Under contract / Closed;
+    // once it goes under contract the work hands off to a separate sale file.
     var rows = listingGroups(file).map(function(g){ return { label:g.label, key:g.key, kind:'group', done:_lstGrpDone(file, g) }; });
-    if(lstMls(file) || lstFull(file)){
-      var s = deriveStage(file);
-      rows.push({ label:'Under contract', key:'_uc', kind:'outcome', done:(s === 'closed') });
-      rows.push({ label:'Closed', key:'_closed', kind:'outcome', done:(s === 'closed') });
-    }
     var cur = rows.findIndex(function(r){ return !r.done; }); if(cur < 0) cur = rows.length - 1;
     rows.forEach(function(r, i){ r.n = i + 1; r.state = i < cur ? 'done' : (i === cur ? 'now' : 'locked'); });
+    if(rows[cur]) rows[cur].sub = listingNowSub(file, rows[cur]);
     rows._cur = cur;
     return rows;
   }
   function currentListingGroup(file){ var rows = listingSpineRows(file); var r = rows[rows._cur]; return (r && r.kind === 'group') ? r.key : null; }
-  // Top = done rows + the current NOW row (the checklist tasks render right under it,
-  // in the Your-work section). Bottom = the locked rows, rendered after the tasks.
+  // Status line under the NOW step. During setup steps: the next open task. On the
+  // Active-on-market step: the listing clock (days live + expiration), red when expiry nears.
+  function listingNowSub(file, row){
+    if(row && row.key === 'active'){
+      var lg = file.logistics || {}, raw = file.raw_form_data || {};
+      var listed = lg.list_date || raw.list_date, exp = lg.list_expiration || raw.list_expiration;
+      var parts = [], late = false;
+      if(listed){ var dl = new Date(listed); if(!isNaN(dl)){ parts.push('Live ' + Math.max(0, Math.round((Date.now() - dl) / 86400000)) + ' days'); } }
+      if(exp){ var de = new Date(exp); if(!isNaN(de)){ var dd = Math.round((de - Date.now()) / 86400000); late = dd <= 7; parts.push(dd < 0 ? ('expired ' + (-dd) + ' days ago') : ('expires in ' + dd + ' days')); } }
+      return parts.length ? { text: parts.join(' · '), late: late } : { text: 'On market · keep status updates current', late: false };
+    }
+    var g = listingGroups(file).find(function(x){ return x.key === (row && row.key); });
+    if(g){ var st = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+      var ids = _lstApplicableIds(file, g);
+      for(var i = 0; i < ids.length; i++){ var r = st[ids[i]]; if(!(r && (r.done || r.at))){ var t = LISTING_TASKS.find(function(x){ return x.id === ids[i]; }); if(t) return { text: 'next: ' + String(t.label).replace(/&middot;|&amp;/g, function(m){ return m === '&amp;' ? '&' : '·'; }), late: false }; } }
+    }
+    return null;
+  }
+  // Top = done rows + the current NOW row (its tasks render right under it, in Your work).
+  // Bottom = the locked rows, rendered after the tasks.
   function buildListingSpine(file){
     var rows = listingSpineRows(file);
-    return '<div style="padding:2px 0">' + rows.filter(function(r){ return r.state !== 'locked'; }).map(function(r){ return _spineRowHtml(r.n, r.label, r.state); }).join('') + '</div>';
+    return '<div style="padding:2px 0">' + rows.filter(function(r){ return r.state !== 'locked'; }).map(function(r){ return _spineRowHtml(r.n, r.label, r.state, r.sub); }).join('') + '</div>';
   }
   function buildListingSpineBottom(file){
     var rows = listingSpineRows(file).filter(function(r){ return r.state === 'locked'; });
@@ -13789,13 +13809,16 @@ Tell me your planned move-out date and I will set the inspection.`
     var rows = complianceGroups(file).map(function(g){ return { label:g.label, key:g.key, done:_compGrpDone(file, g) }; });
     var cur = rows.findIndex(function(r){ return !r.done; }); if(cur < 0) cur = rows.length - 1;
     rows.forEach(function(r, i){ r.n = i + 1; r.state = i < cur ? 'done' : (i === cur ? 'now' : 'locked'); });
+    if(rows[cur]){ var gg = complianceGroups(file).find(function(x){ return x.key === rows[cur].key; }); var st = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+      if(gg){ for(var i = 0; i < gg.ids.length; i++){ var r0 = st[gg.ids[i]]; if(!(r0 && (r0.done || r0.at))){ var t = COMPLIANCE_TASKS.find(function(x){ return x.id === gg.ids[i]; }); if(t){ rows[cur].sub = { text: 'next: ' + t.label, late: false }; break; } } } }
+    }
     rows._cur = cur;
     return rows;
   }
   function currentComplianceGroup(file){ var rows = complianceSpineRows(file); var r = rows[rows._cur]; return r ? r.key : null; }
   function buildComplianceSpine(file){
     var rows = complianceSpineRows(file);
-    return '<div style="padding:2px 0">' + rows.filter(function(r){ return r.state !== 'locked'; }).map(function(r){ return _spineRowHtml(r.n, r.label, r.state); }).join('') + '</div>';
+    return '<div style="padding:2px 0">' + rows.filter(function(r){ return r.state !== 'locked'; }).map(function(r){ return _spineRowHtml(r.n, r.label, r.state, r.sub); }).join('') + '</div>';
   }
   function buildComplianceSpineBottom(file){
     var rows = complianceSpineRows(file).filter(function(r){ return r.state === 'locked'; });
