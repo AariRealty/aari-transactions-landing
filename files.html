@@ -17365,7 +17365,20 @@ Tell me your planned move-out date and I will set the inspection.`
       ['dragleave','drop'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.remove('over'); }); });
       drop.addEventListener('drop', function(e){ var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if(f) nfPick(f); });
       document.querySelectorAll('#nf-sides .nf-sidecard').forEach(function(b){
-        b.addEventListener('click', function(){ document.querySelectorAll('#nf-sides .nf-sidecard').forEach(function(s){ s.classList.remove('sel'); }); b.classList.add('sel'); _nfSide = b.getAttribute('data-side'); document.getElementById('nf-scan').disabled = !_nfFile; });
+        b.addEventListener('click', function(){
+          document.querySelectorAll('#nf-sides .nf-sidecard').forEach(function(s){ s.classList.remove('sel'); });
+          b.classList.add('sel'); _nfSide = b.getAttribute('data-side');
+          var ls = document.getElementById('nf-lstsvc');
+          if(_nfSide === 'listing'){ if(ls) ls.style.display = 'block'; }
+          else { if(ls) ls.style.display = 'none'; _nfLstSvc = null; document.querySelectorAll('#nf-lstsvc .nf-sidecard').forEach(function(s){ s.classList.remove('sel'); }); }
+          nfSyncScanBtn();
+        });
+      });
+      document.querySelectorAll('#nf-lstsvc .nf-sidecard').forEach(function(b){
+        b.addEventListener('click', function(){
+          document.querySelectorAll('#nf-lstsvc .nf-sidecard').forEach(function(s){ s.classList.remove('sel'); });
+          b.classList.add('sel'); _nfLstSvc = b.getAttribute('data-lsvc'); nfSyncScanBtn();
+        });
       });
       document.getElementById('nf-scan').addEventListener('click', nfScan);
       document.getElementById('nf-rmv2').addEventListener('click', function(e){ e.stopPropagation(); nfResetDrop(); });
@@ -17380,7 +17393,7 @@ Tell me your planned move-out date and I will set the inspection.`
       var rm=document.getElementById('nf-rmv'); if(rm) rm.addEventListener('click', function(e){ e.stopPropagation(); nfResetDrop(); });
       nfShowState('nf-l-drop','nf-r-upload');
       document.getElementById('nf-err').textContent = '';
-      document.getElementById('nf-scan').disabled = !_nfSide;
+      nfSyncScanBtn();
     }
     function nfResetDrop(){
       _nfFile=null;
@@ -17420,11 +17433,12 @@ Tell me your planned move-out date and I will set the inspection.`
       return 250 + 5*step + 350;
     }
     function resetNewFileModal(){
-      _nfFile=null; _nfSide=null; _nfBusy=false;
+      _nfFile=null; _nfSide=null; _nfLstSvc=null; _nfBusy=false;
       nfResetDrop(); nfShowState('nf-l-drop','nf-r-upload');
       var er=document.getElementById('nf-err'); if(er) er.textContent='';
       var sb=document.getElementById('nf-scan'); if(sb) sb.disabled=true;
-      document.querySelectorAll('#nf-sides .nf-sidecard').forEach(function(b){ b.classList.remove('sel'); });
+      document.querySelectorAll('#nf-sides .nf-sidecard, #nf-lstsvc .nf-sidecard').forEach(function(b){ b.classList.remove('sel'); });
+      var ls=document.getElementById('nf-lstsvc'); if(ls) ls.style.display='none';
       var fr=document.getElementById('nf-frame'); if(fr) fr.removeAttribute('src');
     }
     function openNewFileFlow(){
@@ -17455,12 +17469,15 @@ Tell me your planned move-out date and I will set the inspection.`
       try{ closePlaybook(); }catch(_){}
     }
     async function nfScan(){
-      if(_nfBusy || !_nfFile || !_nfSide) return;
+      if(_nfBusy || !nfReady()) return;
       _nfBusy = true;
       // No loading screen — the button itself shows it's working, then the list appears.
       var _sb=document.getElementById('nf-scan'); if(_sb){ _sb.disabled=true; _sb.innerHTML='<span class="nf-spin" style="display:inline-block;width:13px;height:13px;vertical-align:-2px;margin-right:8px"></span>Setting up&hellip;'; }
       try{
-        var svc = NF_SIDE_SVC[_nfSide] || NF_SIDE_SVC.buyer;
+        // Listing side carries the specific service the TC picked ($225/$99/$149);
+        // the sale sides keep their fixed TC service. service_type drives spine + checklist + pricing.
+        var svcId = (_nfSide === 'listing') ? _nfLstSvc : ((NF_SIDE_SVC[_nfSide] || NF_SIDE_SVC.buyer).id);
+        var svcFileType = (_nfSide === 'listing') ? 'listing' : ((NF_SIDE_SVC[_nfSide] || NF_SIDE_SVC.buyer).file_type);
         var ures = await _client.auth.getUser();
         var uid = (ures && ures.data && ures.data.user && ures.data.user.id) || _profile.id;
         var id = (crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-'+Date.now());
@@ -17472,7 +17489,7 @@ Tell me your planned move-out date and I will set the inspection.`
         var signed = (su && su.data && su.data.signedUrl) || '';
         // Render the real contract on the left (signed URL renders where a local blob preview is blocked).
         var fr = document.getElementById('nf-frame'); if(fr && signed){ try{ fr.src = signed + '#toolbar=0&view=FitH&navpanes=0'; }catch(_){ } }
-        var row = { id:id, agent_id:uid, service_type:svc.id, file_type:svc.file_type, property_address:'', assigned_tc_id:uid, is_aari_engaged:true, status:'intake_received', transaction_stage:'new',
+        var row = { id:id, agent_id:uid, service_type:svcId, file_type:svcFileType, property_address:'', assigned_tc_id:uid, is_aari_engaged:true, status:'intake_received', transaction_stage:'new',
           raw_form_data:{ submitted_by_tc:true, tc_submitter_id:uid, represents:_nfSide, contract_url:signed, contract_filename:safe, contract_path:path, submission_id:id } };
         var ins = await _client.from('files').insert(row).select('id').single();
         if(ins && ins.error) throw new Error(ins.error.message);
@@ -17481,7 +17498,8 @@ Tell me your planned move-out date and I will set the inspection.`
         // Auto-confirm what the scan reliably reads (contract type, parties, financing) +
         // set the contract type and dates, so the file lands on "3 of 4 confirmed" with
         // only Terms & dates left to confirm and the deadline ledger computed.
-        try{
+        // Sale-only: a listing has no purchase contract, financing, or price to confirm.
+        if(_nfSide !== 'listing') try{
           var _iso=function(s){ if(!s) return null; var d=new Date(s); return isNaN(d)?null:d.toISOString().slice(0,10); };
           var _cents=function(s){ if(!s) return null; var n=parseFloat(String(s).replace(/[^0-9.]/g,'')); return isNaN(n)?null:Math.round(n*100); };
           var _exf=fields||{}; var _now=new Date().toISOString();
