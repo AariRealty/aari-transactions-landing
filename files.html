@@ -11390,22 +11390,10 @@ Tell me your planned move-out date and I will set the inspection.`
     if(!host) return;
     if((file.file_type || 'sale') !== 'sale'){
       if((file.file_type || '') === 'rental'){ renderRentalDetails(file, host, meta); try { renderRentalDocPane(file); } catch(_){} return; }
-      if((file.file_type || '') === 'listing'){
-        host.innerHTML = buildListingSpine(file) + complianceArchiveHtml(file);
-        if(meta) meta.textContent = '';
-        var _lai = document.getElementById('comp-arch-input');
-        if(_lai) _lai.addEventListener('change', function(){ complianceArchiveUpload(file, _lai.files); });
-        try { renderComplianceArchive(file); } catch(_){}
-        return;
-      }
-      if((file.file_type || '') === 'compliance'){
-        host.innerHTML = buildComplianceSpine(file) + complianceArchiveHtml(file);
-        if(meta) meta.textContent = '';
-        var _ai = document.getElementById('comp-arch-input');
-        if(_ai) _ai.addEventListener('change', function(){ complianceArchiveUpload(file, _ai.files); });
-        try { renderComplianceArchive(file); } catch(_){}
-        return;
-      }
+      // Spine only in this slot — the document archive renders at the BOTTOM (renderListingBottom)
+      // so it never wedges between the spine and the task on you.
+      if((file.file_type || '') === 'listing'){ host.innerHTML = buildListingSpine(file); if(meta) meta.textContent = ''; return; }
+      if((file.file_type || '') === 'compliance'){ host.innerHTML = buildComplianceSpine(file); if(meta) meta.textContent = ''; return; }
       host.innerHTML = '<p class="tpb-empty">Contract terms apply to sale files.</p>';
       if(meta) meta.textContent = '';
       return;
@@ -14008,6 +13996,18 @@ Tell me your planned move-out date and I will set the inspection.`
     try { await _client.from('files').update({ raw_form_data: raw }).eq('id', file.id); } catch(err){ console.warn('[files] archive persist failed', err); }
     renderComplianceArchive(file);
   }
+  // Renders the bottom of a listing/compliance file into #tpb-spine-bottom: the locked spine
+  // steps, then the document archive — so the archive sits at the very bottom, never between
+  // the spine and the task. Re-run on open and after a task toggle.
+  function renderListingBottom(file){
+    var sb = document.getElementById('tpb-spine-bottom'); if(!sb) return;
+    var ft = file.file_type || '';
+    var locked = (ft === 'listing') ? buildListingSpineBottom(file) : (ft === 'compliance') ? buildComplianceSpineBottom(file) : '';
+    sb.innerHTML = locked + complianceArchiveHtml(file);
+    var ai = document.getElementById('comp-arch-input');
+    if(ai) ai.addEventListener('change', function(){ complianceArchiveUpload(file, ai.files); });
+    try { renderComplianceArchive(file); } catch(_){}
+  }
   const STAGE_CHECKLISTS = {
     sale: {
       new: [
@@ -16467,7 +16467,7 @@ Tell me your planned move-out date and I will set the inspection.`
     renderStageChecklist(_currentFile);
     if(['listing','compliance'].indexOf(_currentFile.file_type || '') !== -1){
       try { renderContractTerms(_currentFile); } catch(_){}
-      try { const _sb = document.getElementById('tpb-spine-bottom'); if(_sb) _sb.innerHTML = (_currentFile.file_type === 'listing') ? buildListingSpineBottom(_currentFile) : buildComplianceSpineBottom(_currentFile); } catch(_){}
+      try { renderListingBottom(_currentFile); } catch(_){}
     }
     const r = await _client.from('files').update({ stage_tasks: cur }).eq('id', _currentFile.id);
     _ckSaving = false;
@@ -16559,7 +16559,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // NOW step advances live and any open review panel reflects the change.
     if(['listing','compliance'].indexOf(_currentFile.file_type || '') !== -1){
       try { renderContractTerms(_currentFile); } catch(_){}
-      try { const _sb = document.getElementById('tpb-spine-bottom'); if(_sb) _sb.innerHTML = (_currentFile.file_type === 'listing') ? buildListingSpineBottom(_currentFile) : buildComplianceSpineBottom(_currentFile); } catch(_){}
+      try { renderListingBottom(_currentFile); } catch(_){}
     }
     const r = await _client.from('files').update({ stage_tasks: cur }).eq('id', _currentFile.id);
     _ckSaving = false;
@@ -17030,7 +17030,7 @@ Tell me your planned move-out date and I will set the inspection.`
     renderDoNext(file);
     renderHubStatus(file);
     // Numbered spine · steps 6 & 7 (and, during Setup, 5/6/7) locked at the bottom.
-    try { const _sb = document.getElementById('tpb-spine-bottom'); if(_sb){ const _ft = file.file_type || 'sale'; _sb.innerHTML = (_ft === 'listing') ? buildListingSpineBottom(file) : (_ft === 'compliance') ? buildComplianceSpineBottom(file) : ucSpineBottomHtml(file); } } catch(_){}
+    try { const _ftSB = file.file_type || 'sale'; if(_ftSB === 'listing' || _ftSB === 'compliance'){ renderListingBottom(file); } else { const _sb = document.getElementById('tpb-spine-bottom'); if(_sb) _sb.innerHTML = ucSpineBottomHtml(file); } } catch(_){}
     // Under contract step 5 · its work box obeys the toggle on the step-5 header.
     try { const _ck = document.getElementById('tpb-checklist'); const _pop = _ck ? _ck.closest('.tpb-pop') : null; if(_pop) _pop.style.display = _uc5Open ? '' : 'none'; } catch(_){}
     wireHubNav();
