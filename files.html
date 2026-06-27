@@ -13667,42 +13667,68 @@ Tell me your planned move-out date and I will set the inspection.`
       showIf:(f)=>lstFull(f),
       sub:'Amend the listing agreement and update the MLS whenever price, dates, or terms change.' },
   ];
-  // Listing spine · the same numbered stage look as a sale, but the listing lifecycle.
-  // Milestone rows are done from their task completion (service-aware); the tail outcome
-  // rows (Under contract / Closed) come from the file's stage. First not-done row = NOW.
-  function buildListingSpine(file){
-    const st = (file && file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
-    const td = function(id){ const r = st[id]; return !!(r && (r.done || r.at)); };
-    const rows = [];
-    rows.push({ label:'Listing details', done: td('lst_details') });
-    if(typeof lstMlsOnly === 'function' && lstMlsOnly(file)) rows.push({ label:'Collect signed docs', done: td('lst_collect_docs') });
-    if(typeof lstDrafts === 'function' && lstDrafts(file)){
-      rows.push({ label:'Listing package', done: td('lst_package_executed') });
-      rows.push({ label:'Compliance review', done: td('lst_compliance') });
+  // Shared numbered-spine row renderer (listing + compliance), same look as the sale spine.
+  function _spineRowHtml(n, label, state){
+    var circle, card, title, tail = '';
+    if(state === 'done'){
+      card = 'border:1px solid #ece8e0;background:#fff;'; title = 'color:#0f0f0f;';
+      circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px">&#10003;</span>';
+    } else if(state === 'now'){
+      card = 'border:2px solid #2f4ad0;background:#fff;'; title = 'color:#0f0f0f;';
+      circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;border:1.5px solid #0f0f0f;color:#0f0f0f;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600">' + n + '</span>';
+      tail = '<span style="flex:none;font-size:12px;font-weight:700;letter-spacing:.4px;color:#0f0f0f">NOW</span>';
+    } else {
+      card = 'border:1px solid #ece8e0;background:#f1ede6;'; title = 'color:#b3aea4;';
+      circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;border:1.5px solid #cfc9bf;color:#cfc9bf;display:flex;align-items:center;justify-content:center;font-size:13px">' + n + '</span>';
+      tail = '<span style="flex:none;color:#b9a96a;font-size:14px">&#128274;</span>';
     }
-    if(typeof lstMls === 'function' && lstMls(file)) rows.push({ label:'MLS &amp; marketing', done: td('lst_mls_input') || td('lst_showings') });
-    const stage = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || 'active');
-    rows.push({ label:'Under contract', done: (stage === 'closed') });
-    rows.push({ label:'Closed', done: (stage === 'closed') });
-    let cur = rows.findIndex(function(r){ return !r.done; }); if(cur < 0) cur = rows.length - 1;
-    let html = '<div style="padding:2px 0">';
-    rows.forEach(function(r, i){
-      const n = i + 1; let circle, card, title, tail = '';
-      if(i < cur){
-        card = 'border:1px solid #ece8e0;background:#fff;'; title = 'color:#0f0f0f;';
-        circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px">&#10003;</span>';
-      } else if(i === cur){
-        card = 'border:2px solid #2f4ad0;background:#fff;'; title = 'color:#0f0f0f;';
-        circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;border:1.5px solid #0f0f0f;color:#0f0f0f;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600">' + n + '</span>';
-        tail = '<span style="flex:none;font-size:12px;font-weight:700;letter-spacing:.4px;color:#0f0f0f">NOW</span>';
-      } else {
-        card = 'border:1px solid #ece8e0;background:#f1ede6;'; title = 'color:#b3aea4;';
-        circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;border:1.5px solid #cfc9bf;color:#cfc9bf;display:flex;align-items:center;justify-content:center;font-size:13px">' + n + '</span>';
-        tail = '<span style="flex:none;color:#b9a96a;font-size:14px">&#128274;</span>';
-      }
-      html += '<div style="display:flex;align-items:center;gap:15px;border-radius:13px;padding:15px 18px;margin-bottom:10px;' + card + '">' + circle + '<div style="flex:1;font-size:15px;font-weight:600;' + title + '">' + r.label + '</div>' + tail + '</div>';
-    });
-    return html + '</div>';
+    return '<div style="display:flex;align-items:center;gap:15px;border-radius:13px;padding:15px 18px;margin-bottom:10px;' + card + '">' + circle + '<div style="flex:1;font-size:15px;font-weight:600;' + title + '">' + label + '</div>' + tail + '</div>';
+  }
+  // Listing lifecycle as ordered task GROUPS (service-aware). The spine and the checklist
+  // both come from these, so the current step's tasks sit under the NOW step like a sale.
+  function listingGroups(file){
+    var g = [{ key:'details', label:'Listing details', ids:['lst_details'] }];
+    if(lstMlsOnly(file)) g.push({ key:'collect', label:'Collect signed docs', ids:['lst_collect_docs'] });
+    if(lstDrafts(file)){
+      g.push({ key:'package', label:'Listing package', ids:['lst_agreement','lst_disclosures','lst_brokerage_docs','lst_package_executed'] });
+      g.push({ key:'compliance', label:'Compliance review', ids:['lst_compliance'] });
+    }
+    if(lstMls(file)) g.push({ key:'mls', label:'MLS &amp; marketing', ids:['lst_hoa','lst_mls_input','lst_showings'] });
+    if(lstFull(file)) g.push({ key:'active', label:'Active on market', ids:['lst_status','lst_changes'] });
+    return g;
+  }
+  function _lstApplicableIds(file, g){
+    return g.ids.filter(function(id){ var t = LISTING_TASKS.find(function(x){ return x.id === id; }); return t && (!t.showIf || t.showIf(file)); });
+  }
+  function _lstGrpDone(file, g){
+    var st = (file && file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    if(g.key === 'active'){ var s = deriveStage(file); if(s === 'pending' || s === 'closed') return true; }
+    var ids = _lstApplicableIds(file, g); if(!ids.length) return true;
+    return ids.every(function(id){ var r = st[id]; return !!(r && (r.done || r.at)); });
+  }
+  function listingSpineRows(file){
+    var rows = listingGroups(file).map(function(g){ return { label:g.label, key:g.key, kind:'group', done:_lstGrpDone(file, g) }; });
+    if(lstMls(file) || lstFull(file)){
+      var s = deriveStage(file);
+      rows.push({ label:'Under contract', key:'_uc', kind:'outcome', done:(s === 'closed') });
+      rows.push({ label:'Closed', key:'_closed', kind:'outcome', done:(s === 'closed') });
+    }
+    var cur = rows.findIndex(function(r){ return !r.done; }); if(cur < 0) cur = rows.length - 1;
+    rows.forEach(function(r, i){ r.n = i + 1; r.state = i < cur ? 'done' : (i === cur ? 'now' : 'locked'); });
+    rows._cur = cur;
+    return rows;
+  }
+  function currentListingGroup(file){ var rows = listingSpineRows(file); var r = rows[rows._cur]; return (r && r.kind === 'group') ? r.key : null; }
+  // Top = done rows + the current NOW row (the checklist tasks render right under it,
+  // in the Your-work section). Bottom = the locked rows, rendered after the tasks.
+  function buildListingSpine(file){
+    var rows = listingSpineRows(file);
+    return '<div style="padding:2px 0">' + rows.filter(function(r){ return r.state !== 'locked'; }).map(function(r){ return _spineRowHtml(r.n, r.label, r.state); }).join('') + '</div>';
+  }
+  function buildListingSpineBottom(file){
+    var rows = listingSpineRows(file).filter(function(r){ return r.state === 'locked'; });
+    if(!rows.length) return '';
+    return '<div style="padding:2px 0;margin-top:12px">' + rows.map(function(r){ return _spineRowHtml(r.n, r.label, 'locked'); }).join('') + '</div>';
   }
   // Compliance review files · Standalone Review ($149, broker file audit) and File
   // Organization ($99, paperless upload + DA submission). Not a transaction: no contract,
@@ -13739,41 +13765,42 @@ Tell me your planned move-out date and I will set the inspection.`
       showIf:(f)=>compIsFileOrg(f),
       sub:'Send the file through the paid-at-closing / disbursement step so commission is released.' },
   ];
-  // Compliance spine · same numbered look, the audit lifecycle. Done from task completion.
-  function buildComplianceSpine(file){
-    const st = (file && file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
-    const td = function(id){ const r = st[id]; return !!(r && (r.done || r.at)); };
-    const rows = [];
-    rows.push({ label:'Documents in', done: td('comp_docs_in') });
+  // Compliance audit as ordered task groups (service-aware), same split as the listing:
+  // done + NOW on top, the step's tasks under it, locked steps below.
+  function complianceGroups(file){
+    var g = [{ key:'docs', label:'Documents in', ids:['comp_docs_in'] }];
     if(compIsReview(file)){
-      rows.push({ label:'File audit', done: td('comp_audit') });
-      rows.push({ label:'Checklist verified', done: td('comp_checklist') && td('comp_flag') });
-      rows.push({ label:'Archived', done: td('comp_archive') });
+      g.push({ key:'audit', label:'File audit', ids:['comp_audit'] });
+      g.push({ key:'checklist', label:'Checklist verified', ids:['comp_checklist','comp_flag'] });
+      g.push({ key:'archive', label:'Archived', ids:['comp_archive'] });
     } else {
-      rows.push({ label:'Uploaded to paperless', done: td('comp_upload') });
-      rows.push({ label:'Execution verified', done: td('comp_execution') });
-      rows.push({ label:'Broker review', done: td('comp_broker_submit') });
-      rows.push({ label:'Submitted for DA', done: td('comp_da_submit') });
+      g.push({ key:'upload', label:'Uploaded to paperless', ids:['comp_upload'] });
+      g.push({ key:'execution', label:'Execution verified', ids:['comp_execution'] });
+      g.push({ key:'broker', label:'Broker review', ids:['comp_broker_submit'] });
+      g.push({ key:'da', label:'Submitted for DA', ids:['comp_da_submit'] });
     }
-    let cur = rows.findIndex(function(r){ return !r.done; }); if(cur < 0) cur = rows.length - 1;
-    let html = '<div style="padding:2px 0">';
-    rows.forEach(function(r, i){
-      const n = i + 1; let circle, card, title, tail = '';
-      if(i < cur){
-        card = 'border:1px solid #ece8e0;background:#fff;'; title = 'color:#0f0f0f;';
-        circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px">&#10003;</span>';
-      } else if(i === cur){
-        card = 'border:2px solid #2f4ad0;background:#fff;'; title = 'color:#0f0f0f;';
-        circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;border:1.5px solid #0f0f0f;color:#0f0f0f;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600">' + n + '</span>';
-        tail = '<span style="flex:none;font-size:12px;font-weight:700;letter-spacing:.4px;color:#0f0f0f">NOW</span>';
-      } else {
-        card = 'border:1px solid #ece8e0;background:#f1ede6;'; title = 'color:#b3aea4;';
-        circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;border:1.5px solid #cfc9bf;color:#cfc9bf;display:flex;align-items:center;justify-content:center;font-size:13px">' + n + '</span>';
-        tail = '<span style="flex:none;color:#b9a96a;font-size:14px">&#128274;</span>';
-      }
-      html += '<div style="display:flex;align-items:center;gap:15px;border-radius:13px;padding:15px 18px;margin-bottom:10px;' + card + '">' + circle + '<div style="flex:1;font-size:15px;font-weight:600;' + title + '">' + r.label + '</div>' + tail + '</div>';
-    });
-    return html + '</div>';
+    return g;
+  }
+  function _compGrpDone(file, g){
+    var st = (file && file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    return g.ids.every(function(id){ var r = st[id]; return !!(r && (r.done || r.at)); });
+  }
+  function complianceSpineRows(file){
+    var rows = complianceGroups(file).map(function(g){ return { label:g.label, key:g.key, done:_compGrpDone(file, g) }; });
+    var cur = rows.findIndex(function(r){ return !r.done; }); if(cur < 0) cur = rows.length - 1;
+    rows.forEach(function(r, i){ r.n = i + 1; r.state = i < cur ? 'done' : (i === cur ? 'now' : 'locked'); });
+    rows._cur = cur;
+    return rows;
+  }
+  function currentComplianceGroup(file){ var rows = complianceSpineRows(file); var r = rows[rows._cur]; return r ? r.key : null; }
+  function buildComplianceSpine(file){
+    var rows = complianceSpineRows(file);
+    return '<div style="padding:2px 0">' + rows.filter(function(r){ return r.state !== 'locked'; }).map(function(r){ return _spineRowHtml(r.n, r.label, r.state); }).join('') + '</div>';
+  }
+  function buildComplianceSpineBottom(file){
+    var rows = complianceSpineRows(file).filter(function(r){ return r.state === 'locked'; });
+    if(!rows.length) return '';
+    return '<div style="padding:2px 0;margin-top:12px">' + rows.map(function(r){ return _spineRowHtml(r.n, r.label, 'locked'); }).join('') + '</div>';
   }
   // Compliance document archive · upload + list the closing docs inside the compliance view.
   // TC uploads land in transaction-files under <file>/archive and are tracked in
@@ -15969,6 +15996,20 @@ Tell me your planned move-out date and I will set the inspection.`
     const stage = deriveStage(file);
     let tasks = ckTasksFor(file, stage);
     if(tasks) tasks = tasks.filter(t => !t.showIf || t.showIf(file));
+    // Listing / compliance · show ONLY the current spine step's tasks, so the work sits
+    // under the NOW step like a sale instead of dumping every task in one flat list.
+    const _ft0 = file.file_type || 'sale';
+    if(_ft0 === 'listing' && tasks){
+      const _gk = currentListingGroup(file);
+      const _grp = listingGroups(file).find(function(g){ return g.key === _gk; });
+      const _ids = _grp ? _grp.ids : [];
+      tasks = tasks.filter(function(t){ return _ids.indexOf(t.id) !== -1; });
+    } else if(_ft0 === 'compliance' && tasks){
+      const _gk = currentComplianceGroup(file);
+      const _grp = complianceGroups(file).find(function(g){ return g.key === _gk; });
+      const _ids = _grp ? _grp.ids : [];
+      tasks = tasks.filter(function(t){ return _ids.indexOf(t.id) !== -1; });
+    }
     // Setup = CONFIRMATION ONLY. While the file is in Setup and the contract type,
     // parties and financing aren't all confirmed, show just the parties/financing
     // confirmation (contract type is in the panel above). The opening work (opening
@@ -16796,7 +16837,7 @@ Tell me your planned move-out date and I will set the inspection.`
     renderDoNext(file);
     renderHubStatus(file);
     // Numbered spine · steps 6 & 7 (and, during Setup, 5/6/7) locked at the bottom.
-    try { const _sb = document.getElementById('tpb-spine-bottom'); if(_sb) _sb.innerHTML = ucSpineBottomHtml(file); } catch(_){}
+    try { const _sb = document.getElementById('tpb-spine-bottom'); if(_sb){ const _ft = file.file_type || 'sale'; _sb.innerHTML = (_ft === 'listing') ? buildListingSpineBottom(file) : (_ft === 'compliance') ? buildComplianceSpineBottom(file) : ucSpineBottomHtml(file); } } catch(_){}
     // Under contract step 5 · its work box obeys the toggle on the step-5 header.
     try { const _ck = document.getElementById('tpb-checklist'); const _pop = _ck ? _ck.closest('.tpb-pop') : null; if(_pop) _pop.style.display = _uc5Open ? '' : 'none'; } catch(_){}
     wireHubNav();
@@ -16934,9 +16975,9 @@ Tell me your planned move-out date and I will set the inspection.`
       // Your Work. Returns next build as a read-only log auto-filled from tasks.
       if(k === 'fd' || k === 'next'){ if(!wasOpen) p.hidden = true; }
       else if(k === 'vf'){ p.hidden = true; }
-      // Contract deadlines are sale-only. The terms slot stays visible for non-sale files:
-      // a listing renders its numbered spine there, a rental renders its details there.
-      else if(k === 'dl' && !_isSaleFile){ p.hidden = true; }
+      // Contract deadlines and closing logistics are sale-only. The terms slot stays visible
+      // for non-sale files: a listing/compliance renders its spine there, a rental its details.
+      else if((k === 'dl' || k === 'lg') && !_isSaleFile){ p.hidden = true; }
       else p.hidden = false;
     });
     const tt = document.getElementById('tpb-poptitle'); if(tt) tt.textContent = '';
