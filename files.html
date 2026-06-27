@@ -10153,8 +10153,14 @@ Tell me your planned move-out date and I will set the inspection.`
     host.querySelectorAll('[data-cal-group]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-cal-group'); _calOpen[k] = !_calOpen[k]; renderTcCalendar(); }); });
     host.querySelectorAll('[data-cal-view]').forEach(function(b){ b.addEventListener('click', function(){ const v = this.getAttribute('data-cal-view'); if(v === _calView) return; _calView = v; try { localStorage.setItem('aari_cal_view_' + ((_profile && _profile.id) ? _profile.id : 'anon'), v); } catch(_){} if(v === 'week' && !_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(); base.setHours(0, 0, 0, 0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; } renderCalHeatmap(); }); });
     host.querySelectorAll('[data-cal-nav]').forEach(function(b){ b.addEventListener('click', function(){ const dir = this.getAttribute('data-cal-nav') === 'next' ? 1 : -1; if(_calView === 'week'){ const ws = _calWeekStart ? new Date(_calWeekStart) : new Date(); ws.setHours(0, 0, 0, 0); ws.setDate(ws.getDate() + 7 * dir); _calWeekStart = ws; } else { _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() + dir, 1); } renderCalHeatmap(); }); });
-    host.querySelectorAll('[data-cal-day]').forEach(function(b){ b.addEventListener('click', function(){ _calSelDay = parseInt(this.getAttribute('data-cal-day'), 10); renderCalHeatmap(); }); });
-    host.querySelectorAll('[data-cal-open]').forEach(function(r){ r.addEventListener('click', function(){ const id = this.getAttribute('data-cal-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f){ openPlaybook(f); /* land on the actionable tasks (Your work); no-op if still in setup */ try { openSectionPop('ck'); } catch(_){} } }); });
+    host.querySelectorAll('[data-cal-day]').forEach(function(b){ b.addEventListener('click', function(){
+      const ts = parseInt(this.getAttribute('data-cal-day'), 10);
+      // One deadline on the day → open that file directly (like Week). Several → preview them on the right to pick.
+      const items = (_tcCalDeadlines() || []).filter(function(d){ const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); return x.getTime() === ts; });
+      if(items.length === 1){ const f = (_files || []).find(function(x){ return x.id === items[0].fileId; }); if(f){ openPlaybook(f); try { openSectionPop('ck', true); } catch(_){} return; } }
+      _calSelDay = ts; renderCalHeatmap();
+    }); });
+    host.querySelectorAll('[data-cal-open]').forEach(function(r){ r.addEventListener('click', function(){ const id = this.getAttribute('data-cal-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f){ openPlaybook(f); /* land on the actionable tasks (Your work); no-op if still in setup */ try { openSectionPop('ck', true); } catch(_){} } }); });
     host.querySelectorAll('[data-file-open]').forEach(function(r){ r.addEventListener('click', function(e){ if(e.target.closest && e.target.closest('[data-claim-file]')) return; const id = this.getAttribute('data-file-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f) openPlaybook(f); }); });
   }
   document.addEventListener('click', (e) => {
@@ -16709,7 +16715,7 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   // In rail mode every section is already visible — "opening" one scrolls to it.
   // fd/next stay collapsed and toggle. Non-rail fallback keeps the old behavior.
-  function openSectionPop(key){
+  function openSectionPop(key, instant){
     const pv = document.getElementById('tpb-popview'), bd = document.getElementById('tpb-pop-backdrop');
     if(!pv) return;
     if(_railMode){
@@ -16717,7 +16723,8 @@ Tell me your planned move-out date and I will set the inspection.`
       const sect = pv.querySelector('.tpb-pop[data-pop="' + key + '"]');
       if(sect){
         if(key === 'fd' || key === 'next') sect.hidden = !sect.hidden;
-        if(!sect.hidden){ try { sect.scrollIntoView({ behavior:'smooth', block:'start' }); } catch(_){} }
+        // instant on the initial file-open landing (no animated jump = no flicker); smooth on manual section nav
+        if(!sect.hidden){ try { sect.scrollIntoView({ behavior: instant ? 'auto' : 'smooth', block:'start' }); } catch(_){} }
       }
       if(key === 'terms' && _currentFile){ try { renderContractTerms(_currentFile); } catch(_){} }
       return;
