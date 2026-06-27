@@ -17451,26 +17451,63 @@ Tell me your planned move-out date and I will set the inspection.`
     // The Start-intake button needs a file, a side, and (for a listing) a chosen service.
     function nfReady(){ return !!(_nfFile && _nfSide && (_nfSide !== 'listing' || _nfLstSvc)); }
     function nfSyncScanBtn(){ var b = document.getElementById('nf-scan'); if(b) b.disabled = !nfReady(); }
-    // The left pane reacts to the chosen service. Listing Coordinator (you draft the docs)
-    // makes upload optional and shows the skip; Docs and MLS expect the signed package.
-    function nfSyncLeftPane(){
-      var h = document.getElementById('nf-lh'), s = document.getElementById('nf-lsub'),
-          op = document.getElementById('nf-optag'), sk = document.getElementById('nf-skipwrap');
-      if(!h) return;
-      var showOpt = false, showSkip = false, head = 'Upload a Purchase Contract or Listing Agreement',
-          sub = 'I read the dates, parties, and deadlines and set the file up for you.';
-      if(_nfSide === 'listing'){
-        if(_nfLstSvc === 'listing_coordinator'){ head = 'Listing Coordinator'; sub = 'Have the signed listing agreement already? Upload it. If not, I draft the full package for you.'; showOpt = true; showSkip = true; }
-        else if(_nfLstSvc === 'listing_docs'){ head = 'Listing Docs Only'; sub = 'Upload the signed listing package so I can review it.'; }
-        else if(_nfLstSvc === 'mls_setup'){ head = 'MLS Setup Only'; sub = 'Upload the signed listing package so I can enter it into MLS.'; }
-        else { head = 'New listing file'; sub = 'Pick a service on the right, then upload the docs or start blank.'; }
+    // Single-column, two-step new-file flow (ADHD-calm). Step 1 picks Listing or a sale;
+    // step 2 shows only that path — the service or side, then the upload — on one screen.
+    var _nfStep = 1, _nfPath = '';
+    function nfDropHtml(optional){
+      if(_nfFile){
+        return '<div class="nf-drop" id="nf-drop"><span class="nf-pdfchip">PDF</span><div class="nf-fname">' + nfEsc(_nfFile.name) + '</div><div style="font-size:12px;color:#8a857c">' + (_nfFile.size/1048576).toFixed(2) + ' MB</div><div class="nf-rmv" id="nf-rmv">Remove</div></div>';
       }
-      h.textContent = head; if(s) s.textContent = sub;
-      if(op) op.style.display = showOpt ? '' : 'none';
-      if(sk) sk.style.display = showSkip ? '' : 'none';
-      // The doc-preview tabs (if that pane ever shows) match the file type.
-      var tabs = (_nfSide === 'listing') ? ['Listing Agreement','Disclosures','Brokerage'] : ['AS IS Contract','Rider','Compensation'];
-      for(var ti=0; ti<3; ti++){ var te = document.getElementById('nf-tab'+ti); if(te) te.textContent = tabs[ti]; }
+      return '<div class="nf-drop" id="nf-drop">' + (optional ? '<span class="nf-optag">Optional</span>' : '') + '<span class="ar">&uarr;</span><div>Drag and drop, or click to browse</div><div style="font-size:11px;font-weight:500;color:#a8a39a;margin-top:4px">PDF, up to 10 files, 25 MB each</div></div>';
+    }
+    function nfWireDrop(){
+      var drop = document.getElementById('nf-drop'), input = document.getElementById('nf-input');
+      if(!drop || !input || _nfFile) return;
+      drop.addEventListener('click', function(){ input.click(); });
+      ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add('over'); }); });
+      ['dragleave','drop'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.remove('over'); }); });
+      drop.addEventListener('drop', function(e){ var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]; if(f) nfPick(f); });
+    }
+    function nfRenderStep(){
+      var host = document.getElementById('nf-step'); if(!host) return;
+      var bk = document.getElementById('tpb-popback');
+      var html = '';
+      if(_nfStep === 1){
+        if(bk){ bk.innerHTML = '&larr; All files'; bk.onclick = closeNewFileModal; }
+        html = '<p class="nf-bigq">Listing or a sale?</p><p class="nf-bigsub">Start with the big one.</p>'
+          + '<div class="nf-blk" data-go="listing"><div class="bt">Listing</div><div class="bp">A seller listing you are running</div></div>'
+          + '<div class="nf-blk" data-go="sale"><div class="bt">A sale</div><div class="bp">Buyer or both sides, transaction coordination</div></div>';
+      } else {
+        if(bk){ bk.innerHTML = '&larr; Back'; bk.onclick = function(){ _nfStep = 1; _nfFile = null; _nfSkip = false; nfRenderStep(); }; }
+        if(_nfPath === 'listing'){
+          var svcs = [['listing_coordinator','Listing Coordinator','End to end. Package, compliance, MLS.','$225'],['listing_docs','Listing Docs Only','Package prep and signed review.','$99'],['mls_setup','MLS Setup Only','MLS input, ShowingTime, syndication.','$149']];
+          var rows = svcs.map(function(s){ return '<div class="nf-row' + (_nfLstSvc === s[0] ? ' sel' : '') + '" data-lsvc="' + s[0] + '"><div class="rt">' + s[1] + '<div class="rp">' + s[2] + '</div></div><span class="rpr">' + s[3] + '</span></div>'; }).join('');
+          var optional = (_nfLstSvc === 'listing_coordinator');
+          var canStart = false, goLabel = 'Pick a service';
+          if(_nfLstSvc){ if(_nfFile){ canStart = true; goLabel = 'Start intake'; } else if(optional){ canStart = true; goLabel = 'Start without a document'; } else { goLabel = 'Add the package to start'; } }
+          html = '<p class="nf-bigq">Listing file</p><p class="nf-bigsub">Pick the service, then add the docs or start blank.</p>'
+            + rows
+            + '<div style="margin-top:16px">' + nfDropHtml(optional) + '</div>'
+            + '<button type="button" class="nf-go" id="nf-go"' + (canStart ? '' : ' disabled') + '>' + goLabel + ' &rarr;</button>'
+            + '<div class="nf-err" id="nf-err"></div>';
+        } else {
+          var sides = [['buyer','Buyer side','TC, one side'],['both','Both sides','TC, both sides']];
+          var rows2 = sides.map(function(s){ return '<div class="nf-row' + (_nfSide === s[0] ? ' sel' : '') + '" data-side="' + s[0] + '"><div class="rt">' + s[1] + '<div class="rp">' + s[2] + '</div></div></div>'; }).join('');
+          var canStart2 = !!(_nfSide && _nfFile);
+          html = '<p class="nf-bigq">Sale file</p><p class="nf-bigsub">Pick the side, then add the contract.</p>'
+            + rows2
+            + '<div style="margin-top:16px">' + nfDropHtml(false) + '</div>'
+            + '<button type="button" class="nf-go" id="nf-go"' + (canStart2 ? '' : ' disabled') + '>Start intake &rarr;</button>'
+            + '<div class="nf-err" id="nf-err"></div>';
+        }
+      }
+      host.innerHTML = html;
+      host.querySelectorAll('[data-go]').forEach(function(b){ b.onclick = function(){ _nfPath = b.getAttribute('data-go'); _nfStep = 2; _nfSide = (_nfPath === 'listing') ? 'listing' : null; _nfLstSvc = null; _nfFile = null; _nfSkip = false; nfRenderStep(); }; });
+      host.querySelectorAll('[data-lsvc]').forEach(function(b){ b.onclick = function(){ _nfLstSvc = b.getAttribute('data-lsvc'); nfRenderStep(); }; });
+      host.querySelectorAll('[data-side]').forEach(function(b){ b.onclick = function(){ _nfSide = b.getAttribute('data-side'); nfRenderStep(); }; });
+      nfWireDrop();
+      var go = document.getElementById('nf-go'); if(go) go.onclick = function(){ if(go.disabled) return; _nfSkip = !_nfFile; nfScan(); };
+      var rm = document.getElementById('nf-rmv'); if(rm) rm.onclick = function(e){ e.stopPropagation(); _nfFile = null; nfRenderStep(); };
     }
     function buildNewFileModal(){
       if(document.getElementById('nf-cover')) return;
