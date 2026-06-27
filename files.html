@@ -1284,6 +1284,7 @@
     lease:     ['new','active','signed','occupied','expired'],
     rental:    ['new','active','signed','occupied','closed'],
     buyer_rep: ['signed','active','representing','expired'],
+    compliance:['new','in_review','submitted','closed'],
   };
   const STAGE_LABELS = {
     // Sale
@@ -1295,6 +1296,8 @@
     'signed':'Signed', 'occupied':'Occupied', 'expired':'Expired',
     // Buyer rep
     'representing':'Representing',
+    // Compliance
+    'in_review':'In review', 'submitted':'Submitted',
   };
   const STAGE_SUBS = {
     // Sale
@@ -1307,6 +1310,8 @@
     'signed':'lease executed', 'occupied':'tenant in', 'expired':'lease term ended',
     // Buyer rep
     'representing':'actively repping',
+    // Compliance
+    'in_review':'audit underway', 'submitted':'sent to broker',
   };
   const FILE_TYPES = [
     { id:'sale',      label:'Sales' },
@@ -9913,7 +9918,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const fileRow = function(it, kind){
       const f = it.f; const addr = String(f.property_address || 'Untitled file').split(',')[0];
       const cash = ((f.file_type || 'sale') === 'sale' && typeof isCashFile === 'function' && isCashFile(f)) ? ' <span style="font-size:9px;font-weight:600;letter-spacing:.3px;color:#854f0b;background:#faeeda;border-radius:4px;padding:1px 5px">CASH</span>' : '';
-      const TYL = { sale:'Sale', listing:'Listing', rental:'Rental', lease:'Lease', buyer_rep:'Buyer rep' };
+      const TYL = { sale:'Sale', listing:'Listing', rental:'Rental', lease:'Lease', buyer_rep:'Buyer rep', compliance:'Compliance' };
       const ty = TYL[f.file_type] || 'Sale';
       let sub = '', sc = '#8a857c';
       if(kind === 'needstc'){ sub = (f.created_at ? ('Submitted ' + fmt(new Date(f.created_at)) + ' · ') : '') + 'no coordinator yet'; }
@@ -13690,6 +13695,77 @@ Tell me your planned move-out date and I will set the inspection.`
     });
     return html + '</div>';
   }
+  // Compliance review files · Standalone Review ($149, broker file audit) and File
+  // Organization ($99, paperless upload + DA submission). Not a transaction: no contract,
+  // no deadlines. Just the audit checklist and the document archive.
+  function _compSvc(f){ return String((f && f.service_type) || 'standalone_review').toLowerCase(); }
+  function compIsFileOrg(f){ return _compSvc(f) === 'file_organization'; }
+  function compIsReview(f){ return _compSvc(f) === 'standalone_review'; }
+  function isComplianceFile(f){ if(!f) return false; if((f.file_type || '') === 'compliance') return true; var s = _compSvc(f); return s === 'standalone_review' || s === 'file_organization'; }
+  const COMPLIANCE_TASKS = [
+    { id:'comp_docs_in', label:'Collect every file document from the agent',
+      sub:'Get the full set: contract, addenda, disclosures, and closing documents. Nothing is audited until the file is complete.' },
+    { id:'comp_audit', label:'Audit the file for accuracy and completeness',
+      showIf:(f)=>compIsReview(f),
+      sub:'Read the file end to end. Confirm every required document is present, correct, and consistent with the contract.' },
+    { id:'comp_checklist', label:'Verify the closing checklist line by line',
+      showIf:(f)=>compIsReview(f),
+      sub:'Work the broker closing checklist item by item. Confirm each requirement is met before sign-off.' },
+    { id:'comp_flag', label:'Flag missing signatures, initials, or documents',
+      showIf:(f)=>compIsReview(f),
+      sub:'Note every gap and send it back to the agent to cure. Do not sign off on an incomplete file.' },
+    { id:'comp_archive', label:'Archive the full set of closing documents',
+      showIf:(f)=>compIsReview(f),
+      sub:'Store the complete, executed file so it is audit ready and retrievable.' },
+    { id:'comp_upload', label:'Upload every document to the paperless system',
+      showIf:(f)=>compIsFileOrg(f),
+      sub:'Load the full file into the brokerage paperless system, named and ordered.' },
+    { id:'comp_execution', label:'Confirm full execution on every document',
+      showIf:(f)=>compIsFileOrg(f),
+      sub:'Check every signature and initial. Confirm each document is fully executed by all parties.' },
+    { id:'comp_broker_submit', label:'Submit the file for broker review',
+      showIf:(f)=>compIsFileOrg(f),
+      sub:'Route the organized, executed file to the broker for review.' },
+    { id:'comp_da_submit', label:'Submit for paid at closing / commission disbursement',
+      showIf:(f)=>compIsFileOrg(f),
+      sub:'Send the file through the paid-at-closing / disbursement step so commission is released.' },
+  ];
+  // Compliance spine · same numbered look, the audit lifecycle. Done from task completion.
+  function buildComplianceSpine(file){
+    const st = (file && file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    const td = function(id){ const r = st[id]; return !!(r && (r.done || r.at)); };
+    const rows = [];
+    rows.push({ label:'Documents in', done: td('comp_docs_in') });
+    if(compIsReview(file)){
+      rows.push({ label:'File audit', done: td('comp_audit') });
+      rows.push({ label:'Checklist verified', done: td('comp_checklist') && td('comp_flag') });
+      rows.push({ label:'Archived', done: td('comp_archive') });
+    } else {
+      rows.push({ label:'Uploaded to paperless', done: td('comp_upload') });
+      rows.push({ label:'Execution verified', done: td('comp_execution') });
+      rows.push({ label:'Broker review', done: td('comp_broker_submit') });
+      rows.push({ label:'Submitted for DA', done: td('comp_da_submit') });
+    }
+    let cur = rows.findIndex(function(r){ return !r.done; }); if(cur < 0) cur = rows.length - 1;
+    let html = '<div style="padding:2px 0">';
+    rows.forEach(function(r, i){
+      const n = i + 1; let circle, card, title, tail = '';
+      if(i < cur){
+        card = 'border:1px solid #ece8e0;background:#fff;'; title = 'color:#0f0f0f;';
+        circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px">&#10003;</span>';
+      } else if(i === cur){
+        card = 'border:2px solid #2f4ad0;background:#fff;'; title = 'color:#0f0f0f;';
+        circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;border:1.5px solid #0f0f0f;color:#0f0f0f;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600">' + n + '</span>';
+        tail = '<span style="flex:none;font-size:12px;font-weight:700;letter-spacing:.4px;color:#0f0f0f">NOW</span>';
+      } else {
+        card = 'border:1px solid #ece8e0;background:#f1ede6;'; title = 'color:#b3aea4;';
+        circle = '<span style="flex:none;width:28px;height:28px;border-radius:50%;border:1.5px solid #cfc9bf;color:#cfc9bf;display:flex;align-items:center;justify-content:center;font-size:13px">' + n + '</span>';
+        tail = '<span style="flex:none;color:#b9a96a;font-size:14px">&#128274;</span>';
+      }
+      html += '<div style="display:flex;align-items:center;gap:15px;border-radius:13px;padding:15px 18px;margin-bottom:10px;' + card + '">' + circle + '<div style="flex:1;font-size:15px;font-weight:600;' + title + '">' + r.label + '</div>' + tail + '</div>';
+    });
+    return html + '</div>';
+  }
   const STAGE_CHECKLISTS = {
     sale: {
       new: [
@@ -14035,6 +14111,15 @@ Tell me your planned move-out date and I will set the inspection.`
       cancelled: [
         { id:'lst_cancel_doc', label:'Document the cancellation',
           sub:'Confirm the cancellation or withdrawal paperwork is signed and on the file, then archive.' },
+      ],
+    },
+    compliance: {
+      new: COMPLIANCE_TASKS,
+      in_review: COMPLIANCE_TASKS,
+      submitted: COMPLIANCE_TASKS,
+      closed: [
+        { id:'comp_done', label:'Review complete, file archived',
+          sub:'The audit is signed off and the file is stored. Locks the file read-only.' },
       ],
     },
   };
