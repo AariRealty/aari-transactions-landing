@@ -97,6 +97,7 @@
     title_commitment:['title_evidence', 'buyer_title_rev', 'title_policy', 'title_commitment'],
     estoppel:        ['estoppel', 'estoppels_due'],
     survey:          ['survey_seller', 'survey_existing', 'survey'],
+    compensation:    ['compensation_agreement'],
     walkthrough:     ['walk_through', 'walkthrough'],
   };
   // All FL-rolled deadlines for a file · {} when dates are missing.
