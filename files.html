@@ -12601,6 +12601,14 @@ Tell me your planned move-out date and I will set the inspection.`
       Promise.resolve(markDeadlineDone(_currentFile, k, '')).then(function(){ try { renderStageChecklist(_currentFile); } catch(_){} });
       return;
     }
+    // Tap a completed listing/compliance step to review and edit its tasks inline.
+    const spRev = e.target.closest('[data-spine-review]');
+    if(spRev && !e.target.closest('input,label')){
+      const k = spRev.getAttribute('data-spine-review');
+      _spineReviewKey = (_spineReviewKey === k) ? null : k;
+      try { renderContractTerms(_currentFile); } catch(_){}
+      return;
+    }
     const accTog = e.target.closest('[data-acc-toggle]');
     if(accTog){
       const sec = accTog.getAttribute('data-acc-toggle');
@@ -13667,27 +13675,24 @@ Tell me your planned move-out date and I will set the inspection.`
       showIf:(f)=>lstFull(f),
       sub:'Amend the listing agreement and update the MLS whenever price, dates, or terms change.' },
   ];
-  // Shared numbered-spine row renderer (listing + compliance), matched to the sale spine:
-  // done = black check + chevron, now = number + status sub-line + NOW + chevron, locked = lock.
-  function _spineRowHtml(n, label, state, sub){
-    var circle, card, title, tail = '', chev = '';
-    var subHtml = (sub && sub.text) ? '<div style="font-size:13px;font-weight:500;margin-top:3px;color:' + (sub.late ? '#a3402f' : '#8a857c') + '">' + sub.text + '</div>' : '';
-    if(state === 'done'){
-      card = 'border:1px solid #ece8e0;background:#fff;'; title = 'color:#0f0f0f;';
-      circle = '<span style="flex:none;width:30px;height:30px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px">&#10003;</span>';
-      chev = '<span style="flex:none;color:#c9c3b8;font-size:19px;line-height:1">&rsaquo;</span>';
-    } else if(state === 'now'){
-      card = 'border:2px solid #0f0f0f;background:#fff;'; title = 'color:#0f0f0f;';
-      circle = '<span style="flex:none;width:30px;height:30px;border-radius:50%;border:1.5px solid #0f0f0f;color:#0f0f0f;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600">' + n + '</span>';
-      tail = '<span style="flex:none;font-size:12px;font-weight:700;letter-spacing:.4px;color:#0f0f0f">NOW</span>';
-      chev = '<span style="flex:none;color:#c9c3b8;font-size:19px;line-height:1">&rsaquo;</span>';
-    } else {
-      card = 'border:1px solid #ece8e0;background:#f1ede6;'; title = 'color:#b3aea4;';
-      circle = '<span style="flex:none;width:30px;height:30px;border-radius:50%;border:1.5px solid #cfc9bf;color:#cfc9bf;display:flex;align-items:center;justify-content:center;font-size:14px">' + n + '</span>';
-      tail = '<span style="flex:none;color:#b9a96a;font-size:15px">&#128274;</span>';
-    }
-    return '<div style="display:flex;align-items:center;gap:16px;border-radius:14px;padding:18px 20px;margin-bottom:11px;' + card + '">' + circle + '<div style="flex:1;min-width:0;' + title + '"><div style="font-size:16px;font-weight:600">' + label + '</div>' + subHtml + '</div>' + tail + chev + '</div>';
+  // Shared numbered-spine row renderer (listing + compliance) · reuses the SALE's compact
+  // .uc-step classes so the tiles look identical and the same size as the buyer side.
+  // Done rows are tappable (chevron) to review/edit that step's tasks inline.
+  function _spineRowHtml(n, label, state, sub, key, reviewing, reviewBody){
+    var hint = (sub && sub.text) ? '<div class="uc-step-hint' + (sub.late ? ' lt' : '') + '">' + sub.text + '</div>' : '';
+    var numCls = state === 'done' ? 'done' : (state === 'now' ? 'cur' : 'lock');
+    var num = state === 'done' ? '&#10003;' : n;
+    var chev = '<span class="uc-acc-chev"' + (reviewing ? ' style="transform:rotate(90deg)"' : '') + '>&#8250;</span>';
+    var right = state === 'now' ? ('<span class="uc-step-now">now</span>' + chev)
+      : state === 'locked' ? '<span class="uc-step-lock">&#128274;</span>'
+      : chev;
+    var rowCls = 'uc-step' + (state === 'now' ? ' current' : (state === 'locked' ? ' locked' : ''));
+    var tap = (state === 'done' && key) ? ' data-spine-review="' + key + '" role="button" tabindex="0" style="cursor:pointer"' : '';
+    var row = '<div class="' + rowCls + '"' + tap + '><span class="uc-step-l"><span class="uc-step-num ' + numCls + '">' + num + '</span><span>' + label + hint + '</span></span><span style="display:flex;align-items:center;gap:9px;flex:none">' + right + '</span></div>';
+    if(reviewing && reviewBody){ row += '<div style="margin:-3px 0 8px;padding:6px 14px 10px;background:#fff;border:0.5px solid rgba(15,15,15,0.12);border-top:0;border-radius:0 0 11px 11px">' + reviewBody + '</div>'; }
+    return row;
   }
+  let _spineReviewKey = null; // which completed spine step is expanded for review/edit
   // Listing lifecycle as ordered task GROUPS (service-aware). The spine and the checklist
   // both come from these, so the current step's tasks sit under the NOW step like a sale.
   function listingGroups(file){
@@ -13739,11 +13744,25 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     return null;
   }
+  // A completed step expands inline to its tasks (review/edit), checkboxes wired to the
+  // normal task handler so unchecking reopens the work, just like tapping a done sale step.
+  function listingReviewBody(file, key){
+    var g = listingGroups(file).find(function(x){ return x.key === key; }); if(!g) return '';
+    var st = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    return _lstApplicableIds(file, g).map(function(id){
+      var t = LISTING_TASKS.find(function(x){ return x.id === id; }); if(!t) return '';
+      var done = !!(st[id] && (st[id].done || st[id].at));
+      return '<label style="display:flex;align-items:center;gap:9px;padding:7px 2px;font-size:13px;cursor:pointer"><input type="checkbox" data-ck-task="' + id + '"' + (done ? ' checked' : '') + '><span style="' + (done ? 'color:#8a857c' : '') + '">' + t.label + '</span></label>';
+    }).join('');
+  }
   // Top = done rows + the current NOW row (its tasks render right under it, in Your work).
   // Bottom = the locked rows, rendered after the tasks.
   function buildListingSpine(file){
     var rows = listingSpineRows(file);
-    return '<div style="padding:2px 0">' + rows.filter(function(r){ return r.state !== 'locked'; }).map(function(r){ return _spineRowHtml(r.n, r.label, r.state, r.sub); }).join('') + '</div>';
+    return '<div style="padding:2px 0">' + rows.filter(function(r){ return r.state !== 'locked'; }).map(function(r){
+      var reviewing = (r.state === 'done' && r.kind === 'group' && _spineReviewKey === r.key);
+      return _spineRowHtml(r.n, r.label, r.state, r.sub, (r.kind === 'group' ? r.key : null), reviewing, reviewing ? listingReviewBody(file, r.key) : '');
+    }).join('') + '</div>';
   }
   function buildListingSpineBottom(file){
     var rows = listingSpineRows(file).filter(function(r){ return r.state === 'locked'; });
@@ -13816,9 +13835,21 @@ Tell me your planned move-out date and I will set the inspection.`
     return rows;
   }
   function currentComplianceGroup(file){ var rows = complianceSpineRows(file); var r = rows[rows._cur]; return r ? r.key : null; }
+  function complianceReviewBody(file, key){
+    var g = complianceGroups(file).find(function(x){ return x.key === key; }); if(!g) return '';
+    var st = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    return g.ids.map(function(id){
+      var t = COMPLIANCE_TASKS.find(function(x){ return x.id === id; }); if(!t) return '';
+      var done = !!(st[id] && (st[id].done || st[id].at));
+      return '<label style="display:flex;align-items:center;gap:9px;padding:7px 2px;font-size:13px;cursor:pointer"><input type="checkbox" data-ck-task="' + id + '"' + (done ? ' checked' : '') + '><span style="' + (done ? 'color:#8a857c' : '') + '">' + t.label + '</span></label>';
+    }).join('');
+  }
   function buildComplianceSpine(file){
     var rows = complianceSpineRows(file);
-    return '<div style="padding:2px 0">' + rows.filter(function(r){ return r.state !== 'locked'; }).map(function(r){ return _spineRowHtml(r.n, r.label, r.state, r.sub); }).join('') + '</div>';
+    return '<div style="padding:2px 0">' + rows.filter(function(r){ return r.state !== 'locked'; }).map(function(r){
+      var reviewing = (r.state === 'done' && _spineReviewKey === r.key);
+      return _spineRowHtml(r.n, r.label, r.state, r.sub, r.key, reviewing, reviewing ? complianceReviewBody(file, r.key) : '');
+    }).join('') + '</div>';
   }
   function buildComplianceSpineBottom(file){
     var rows = complianceSpineRows(file).filter(function(r){ return r.state === 'locked'; });
@@ -16028,16 +16059,14 @@ Tell me your planned move-out date and I will set the inspection.`
     // Listing / compliance · show ONLY the current spine step's tasks, so the work sits
     // under the NOW step like a sale instead of dumping every task in one flat list.
     const _ft0 = file.file_type || 'sale';
-    if(_ft0 === 'listing' && tasks){
-      const _gk = currentListingGroup(file);
-      const _grp = listingGroups(file).find(function(g){ return g.key === _gk; });
+    if((_ft0 === 'listing' || _ft0 === 'compliance') && tasks){
+      const _gk = (_ft0 === 'listing') ? currentListingGroup(file) : currentComplianceGroup(file);
+      const _grp = ((_ft0 === 'listing') ? listingGroups(file) : complianceGroups(file)).find(function(g){ return g.key === _gk; });
       const _ids = _grp ? _grp.ids : [];
-      tasks = tasks.filter(function(t){ return _ids.indexOf(t.id) !== -1; });
-    } else if(_ft0 === 'compliance' && tasks){
-      const _gk = currentComplianceGroup(file);
-      const _grp = complianceGroups(file).find(function(g){ return g.key === _gk; });
-      const _ids = _grp ? _grp.ids : [];
-      tasks = tasks.filter(function(t){ return _ids.indexOf(t.id) !== -1; });
+      const _dt0 = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+      // Current step's tasks only, and a checked task drops out (review it by tapping the
+      // completed step in the spine), exactly like the buyer side.
+      tasks = tasks.filter(function(t){ return _ids.indexOf(t.id) !== -1 && !(_dt0[t.id] && (_dt0[t.id].done || _dt0[t.id].at)); });
     }
     // Setup = CONFIRMATION ONLY. While the file is in Setup and the contract type,
     // parties and financing aren't all confirmed, show just the parties/financing
