@@ -9746,6 +9746,8 @@ Tell me your planned move-out date and I will set the inspection.`
   let _calSearch = '';                // file-list search
   let _calMonth = null;   // heatmap displayed month
   let _calSelDay = null;  // heatmap selected day
+  let _calView = (function(){ try { return localStorage.getItem('aari_cal_view') === 'week' ? 'week' : 'month'; } catch(_){ return 'month'; } })();  // Month | Week toggle
+  let _calWeekStart = null;  // Sunday of the week shown in Week view
   let _calLoaded = false;
   async function loadCalDeadlines(){
     try {
@@ -9998,6 +10000,41 @@ Tell me your planned move-out date and I will set the inspection.`
     w = w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
     return w.slice(0, 5);
   }
+  // Week view · horizontal timeline · the 7 days of _calWeekStart as stops on a
+  // line, each deadline a left-accent card (ink deadline, amber follow-up, red
+  // overdue). Cards open the file. Scrolls sideways on narrow screens.
+  function _calWeekHtml(byDay, t0){
+    const ws = new Date(_calWeekStart.getTime()); ws.setHours(0, 0, 0, 0);
+    const dn = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const days = [];
+    for(let i = 0; i < 7; i++){ const d = new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() + i); d.setHours(0, 0, 0, 0); days.push(d); }
+    let stops = '';
+    days.forEach(function(d, i){
+      const ts = d.getTime(); const items = byDay[ts] || []; const isToday = ts === t0; const has = items.length > 0;
+      const mk = isToday
+        ? '<div style="width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:inset 0 0 0 2px #0f0f0f;margin:16px auto 10px;position:relative;z-index:1"></div>'
+        : '<div style="width:11px;height:11px;border-radius:50%;background:' + (has ? '#0f0f0f' : '#d6d1c8') + ';margin:17px auto 10px;position:relative;z-index:1"></div>';
+      let evs = '';
+      items.forEach(function(e){
+        const type = e.isChase ? 'fu' : (ts < t0 ? 'ov' : 'dl');
+        const ac = type === 'fu' ? '#caa14e' : (type === 'ov' ? '#a3402f' : '#0f0f0f');
+        evs += '<div data-cal-open="' + esc(e.fileId) + '" style="border:1px solid #f3f0ea;border-left:3px solid ' + ac + ';border-radius:8px;padding:6px 7px;margin-bottom:6px;font-size:11px;cursor:pointer">' +
+          '<div style="font-weight:600;color:#0f0f0f;line-height:1.2">' + esc(e.label) + '</div>' +
+          (e.address ? '<div style="font-size:9px;color:#9a958c;margin-top:1px">' + esc(String(e.address).split(',')[0]) + '</div>' : '') + '</div>';
+      });
+      if(!has) evs = '<div style="font-size:10px;color:#d6d1c8;text-align:center">&mdash;</div>';
+      stops += '<div style="flex:1;min-width:88px;padding:0 6px;position:relative">' + mk +
+        '<div style="text-align:center;font-size:11px;font-weight:700;margin-bottom:8px;color:#0f0f0f"><small style="display:block;font-size:8.5px;text-transform:uppercase;color:#9a958c;font-weight:700">' + dn[i] + '</small>' + d.getDate() + '</div>' + evs + '</div>';
+    });
+    const last = days[6];
+    const sameMonth = days[0].getMonth() === last.getMonth();
+    const rangeLab = days[0].toLocaleDateString('en-US', { month:'short', day:'numeric' }) + ' &ndash; ' +
+      last.toLocaleDateString('en-US', sameMonth ? { day:'numeric' } : { month:'short', day:'numeric' }) + ', ' + last.getFullYear();
+    return '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:15px 16px">' +
+      '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:15px;font-weight:600;color:#0f0f0f;margin-bottom:11px">' + rangeLab + '</div>' +
+      '<div style="overflow-x:auto"><div style="display:flex;min-width:640px;position:relative">' +
+      '<div style="position:absolute;left:12px;right:12px;top:22px;height:2px;background:#f3f0ea"></div>' + stops + '</div></div></div>';
+  }
   function renderCalHeatmap(){
     const host = document.getElementById('calHeatmap'); if(!host) return;
     const all = _tcCalDeadlines();
@@ -10010,13 +10047,21 @@ Tell me your planned move-out date and I will set the inspection.`
     all.forEach(function(d){ const x = dayOf(d); (byDay[x] = byDay[x] || []).push(d); if(x < t0) overdue.push(d); });
     overdue.sort(function(a, b){ return a.date - b.date; });
     if(!all.length){ host.innerHTML = ''; return; }   // agenda already shows the empty message
-    // header
+    // header · title · Month/Week toggle · prev/next
+    const _segBtn = function(v, label){ const on = _calView === v; return '<button type="button" data-cal-view="' + v + '" style="border:0;background:' + (on ? '#fff' : 'transparent') + ';' + (on ? 'box-shadow:0 1px 2px rgba(0,0,0,.06);color:#0f0f0f;' : 'color:#6f6a61;') + 'font:inherit;font-size:12px;font-weight:600;padding:5px 13px;border-radius:18px;cursor:pointer">' + label + '</button>'; };
     let html = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">' +
       '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:17px;font-weight:600;color:#0f0f0f">Calendar</span>' +
+      '<span style="display:inline-flex;background:#f4f1ec;border-radius:20px;padding:3px;margin-right:2px">' + _segBtn('month', 'Month') + _segBtn('week', 'Week') + '</span>' +
       '<button type="button" data-cal-nav="prev" style="width:30px;height:30px;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;cursor:pointer;font-size:15px;color:#0f0f0f;font-family:inherit">&#8249;</button>' +
       '<button type="button" data-cal-nav="next" style="width:30px;height:30px;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;cursor:pointer;font-size:15px;color:#0f0f0f;font-family:inherit">&#8250;</button></div>';
     // Next closings · pinned at the very top of the calendar, above the grid.
     html += nextClosingsHtml();
+    // ---- WEEK view · full-width timeline, no right agenda column ----
+    if(_calView === 'week'){
+      if(!_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(t0); base.setHours(0, 0, 0, 0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; }
+      html += _calWeekHtml(byDay, t0);
+      host.innerHTML = html; _wireCal(host); return;
+    }
     // ---- two columns: heatmap (left) · today + overdue pinned (right) ----
     html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:15px 16px"><div style="display:grid;grid-template-columns:1fr 1.05fr;gap:22px;align-items:start">';
     // LEFT · month heatmap
@@ -10083,7 +10128,8 @@ Tell me your planned move-out date and I will set the inspection.`
       else { console.warn('[gcal] sync failed', res); _back('&#9888; Failed'); }
     });
     host.querySelectorAll('[data-cal-group]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-cal-group'); _calOpen[k] = !_calOpen[k]; renderTcCalendar(); }); });
-    host.querySelectorAll('[data-cal-nav]').forEach(function(b){ b.addEventListener('click', function(){ const dir = this.getAttribute('data-cal-nav') === 'next' ? 1 : -1; _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() + dir, 1); renderCalHeatmap(); }); });
+    host.querySelectorAll('[data-cal-view]').forEach(function(b){ b.addEventListener('click', function(){ const v = this.getAttribute('data-cal-view'); if(v === _calView) return; _calView = v; try { localStorage.setItem('aari_cal_view', v); } catch(_){} if(v === 'week' && !_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(); base.setHours(0, 0, 0, 0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; } renderCalHeatmap(); }); });
+    host.querySelectorAll('[data-cal-nav]').forEach(function(b){ b.addEventListener('click', function(){ const dir = this.getAttribute('data-cal-nav') === 'next' ? 1 : -1; if(_calView === 'week'){ const ws = _calWeekStart ? new Date(_calWeekStart) : new Date(); ws.setHours(0, 0, 0, 0); ws.setDate(ws.getDate() + 7 * dir); _calWeekStart = ws; } else { _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() + dir, 1); } renderCalHeatmap(); }); });
     host.querySelectorAll('[data-cal-day]').forEach(function(b){ b.addEventListener('click', function(){ _calSelDay = parseInt(this.getAttribute('data-cal-day'), 10); renderCalHeatmap(); }); });
     host.querySelectorAll('[data-cal-open]').forEach(function(r){ r.addEventListener('click', function(){ const id = this.getAttribute('data-cal-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f){ openPlaybook(f); /* land on the actionable tasks (Your work); no-op if still in setup */ try { openSectionPop('ck'); } catch(_){} } }); });
     host.querySelectorAll('[data-file-open]').forEach(function(r){ r.addEventListener('click', function(e){ if(e.target.closest && e.target.closest('[data-claim-file]')) return; const id = this.getAttribute('data-file-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f) openPlaybook(f); }); });
