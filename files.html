@@ -9550,6 +9550,8 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(err){ console.warn('[files] markDeadlineDone failed', err); }
     renderDeadlinesForFile(file);
     try { renderHubStatus(file); } catch(_){}
+    // Live calendar · a confirmed deadline drops off the calendar; un-confirming re-adds it.
+    try { if(actualDateISO) gcalDeleteDeadline(file.id, key); else gcalSyncDeadlines(file.id); } catch(_){}
   }
   async function toggleDeadlineDone(file, key, dueISO){
     const status = _deadlinesByFile[file.id] || (_deadlinesByFile[file.id] = {});
@@ -9803,6 +9805,31 @@ Tell me your planned move-out date and I will set the inspection.`
     });
     return s + 'END:VCALENDAR';
   }
+  // ---- Live Google Calendar push · writes the TC's open deadlines straight into
+  // their shared "Aari Deadlines" calendar via the gcal-sync edge function. Each
+  // event has a stable id (file+key) so re-syncing updates, never duplicates.
+  // Auth is the logged-in Supabase session (no secret in the page). ----
+  async function gcalSyncDeadlines(fileIdOpt){
+    try {
+      if(!_client || !_client.functions) return { ok:false, error:'no client' };
+      let items = _tcCalDeadlines() || [];
+      if(fileIdOpt) items = items.filter(function(d){ return d.fileId === fileIdOpt; });
+      const ev = [];
+      items.forEach(function(d){
+        if(!d || !d.fileId || !d.key || !(d.date instanceof Date)) return;
+        let ds = ''; try { ds = window.AariDeadlineEngine.ymd(d.date); } catch(_){ return; }
+        if(!ds) return;
+        ev.push({ file_id: d.fileId, key: d.key, summary: (d.label || 'Deadline') + ' · ' + String(d.address || '').split(',')[0], description: String(d.address || ''), date: ds });
+      });
+      if(!ev.length) return { ok:true, count:0 };
+      const { data, error } = await _client.functions.invoke('gcal-sync', { body: { action:'bulk', events: ev } });
+      if(error) return { ok:false, error: (error && error.message) || String(error) };
+      return data || { ok:false };
+    } catch(err){ return { ok:false, error: String(err && err.message || err) }; }
+  }
+  async function gcalDeleteDeadline(fileId, key){
+    try { if(_client && _client.functions) await _client.functions.invoke('gcal-sync', { body: { action:'delete', event: { file_id: fileId, key: key } } }); } catch(_){}
+  }
   // ---- FILE-FIRST triage · one row per FILE (not per deadline), grouped by the
   // action it needs: Needs a TC (unassigned) · Needs you (overdue/today) · On track.
   // Each row shows the file's STAGE + its deadline health. · #fileCalendar ----
@@ -9960,7 +9987,14 @@ Tell me your planned move-out date and I will set the inspection.`
     const ss = host.querySelector('#cal-search');
     if(ss) ss.addEventListener('input', function(){ _calSearch = this.value; const pos = this.selectionStart; renderTcCalendar(); const e = document.querySelector('#fileCalendar #cal-search'); if(e){ e.focus(); try { e.setSelectionRange(pos, pos); } catch(_){} } });
     const sync = host.querySelector('#cal-sync');
-    if(sync) sync.addEventListener('click', function(){ try { const blob = new Blob([_calIcs()], { type:'text/calendar' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'aari-deadlines.ics'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(url); }, 1000); } catch(_){} });
+    if(sync) sync.addEventListener('click', async function(){
+      sync.disabled = true;
+      const _back = function(label){ sync.innerHTML = label; setTimeout(function(){ sync.innerHTML = '&#128197; Sync'; sync.disabled = false; }, 2600); };
+      sync.innerHTML = 'Syncing&hellip;';
+      const res = await gcalSyncDeadlines();
+      if(res && res.ok) _back('&#10003; Synced ' + (res.count || 0));
+      else { console.warn('[gcal] sync failed', res); _back('&#9888; Failed'); }
+    });
     host.querySelectorAll('[data-cal-group]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-cal-group'); _calOpen[k] = !_calOpen[k]; renderTcCalendar(); }); });
     host.querySelectorAll('[data-cal-nav]').forEach(function(b){ b.addEventListener('click', function(){ const dir = this.getAttribute('data-cal-nav') === 'next' ? 1 : -1; _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() + dir, 1); renderCalHeatmap(); }); });
     host.querySelectorAll('[data-cal-day]').forEach(function(b){ b.addEventListener('click', function(){ _calSelDay = parseInt(this.getAttribute('data-cal-day'), 10); renderCalHeatmap(); }); });
@@ -10512,6 +10546,7 @@ Tell me your planned move-out date and I will set the inspection.`
       _dlDateEditKey = null; _dlExtendKey = null;
       try { renderDeadlinesForFile(file); } catch(_){}
       try { renderContractTerms(file); } catch(_){ try { renderPlaybook(file); } catch(__){} }
+      try { gcalSyncDeadlines(file.id); } catch(_){}
     } catch(err){ console.warn('[files] deadline date override save failed', err); alert('Save failed: ' + (err && err.message || 'unknown')); }
   }
   // Day-count fields a TC confirms off the executed contract, in display order.
