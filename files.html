@@ -15344,7 +15344,16 @@ Tell me your planned move-out date and I will set the inspection.`
     // Ongoing
     'uc_weekly_update'
   ];
-  const UC_SEQ_INDEX = (function(){ const m = {}; UC_SEQUENCE.forEach(function(id, i){ m[id] = i; }); return m; })();
+  // Clear to Close · the closing run, in order. Title cleared → walk-through → CD's
+  // 3-day clock → wire-fraud warning → confirm closing → final review. Conditionals
+  // (estoppels, FinCEN, FIRPTA, turnkey, warranty) slot in and stay hidden until they apply.
+  const CTC_SEQUENCE = [
+    'ctc_title_commitment_received', 'ctc_title_review', 'ctc_title_exceptions_notify', 'ctc_title_exceptions_resolved',
+    'ctc_open_permits', 'ctc_estoppels', 'ctc_walkthrough', 'ctc_turnkey_walkthrough', 'ctc_home_warranty',
+    'ctc_cd_received', 'ctc_wire_warning', 'ctc_closing_confirmed', 'ctc_fincen', 'ctc_firpta',
+    'ctc_file_review', 'ctc_payment_link', 'ctc_weekly_update'
+  ];
+  const UC_SEQ_INDEX = (function(){ const m = {}; UC_SEQUENCE.concat(CTC_SEQUENCE).forEach(function(id, i){ m[id] = i; }); return m; })();
   function ucSeqRank(id){ const r = UC_SEQ_INDEX[id]; return (r == null) ? 9999 : r; }
   // id → track tag, derived from UC_TRACKS (opening tasks tag "Open").
   const UC_TAG_OF = (function(){
@@ -15383,14 +15392,19 @@ Tell me your planned move-out date and I will set the inspection.`
       if(t.dl && dls[t.dl] && dls[t.dl].date){ const dd = new Date(dls[t.dl].date.getTime()); dd.setHours(0, 0, 0, 0); return Math.round((dd - _t0) / 86400000); }
       return null;
     };
-    const _isNow = function(t){ if(typeof isOpeningTaskId === 'function' && isOpeningTaskId(t.id)) return true; const d = _days(t); return d != null && d <= 3; };
+    const _stage = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || '');
+    // Clear to Close is the closing sprint — everything is on you now, so don't split
+    // it into "Coming up." Under contract keeps the opening + due-within-3-days rule.
+    const _allNow = _stage === 'ctc';
+    const _isNow = function(t){ if(_allNow) return true; if(typeof isOpeningTaskId === 'function' && isOpeningTaskId(t.id)) return true; const d = _days(t); return d != null && d <= 3; };
     let nowTasks = openTasks.filter(_isNow);
     const laterTasks = openTasks.filter(function(t){ return !_isNow(t); });
-    // Urgency order within "now": most overdue / soonest first, undated last.
-    nowTasks = nowTasks.slice().sort(function(a, b){ const da = _days(a), db = _days(b); return (da == null ? 1e9 : da) - (db == null ? 1e9 : db); });
+    // Under contract: urgency order within "now" (most overdue / soonest first).
+    // Clear to Close: keep the closing-run sequence (do them in order), don't reshuffle.
+    if(!_allNow) nowTasks = nowTasks.slice().sort(function(a, b){ const da = _days(a), db = _days(b); return (da == null ? 1e9 : da) - (db == null ? 1e9 : db); });
 
     let html = ucTimelineHtml(file);
-    const CAP = 6;
+    const CAP = _allNow ? 14 : 6;
     const shown = nowTasks.slice(0, CAP);
     const extra = nowTasks.slice(CAP);
     html += '<p class="uc-needsyou-hd">On you now &middot; ' + nowTasks.length + '</p>';
@@ -15410,7 +15424,7 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     // Waiting-on-lender cue (Fix 3) · one quiet line when a financed file has applied
     // but isn't approved yet, so a deal parked on the lender doesn't read as "behind."
-    if(!isCashFile(file) && done['uc_loan_app'] && !done['uc_loan_approval_acknowledged']){
+    if(_stage === 'under_contract' && !isCashFile(file) && done['uc_loan_app'] && !done['uc_loan_approval_acknowledged']){
       html += '<div class="uc-wait">&#128340; Loan approval is with the lender &middot; nothing on you here</div>';
     }
     // Deadline check · right under the list, one collapsed line (green when clean,
@@ -15612,7 +15626,7 @@ Tell me your planned move-out date and I will set the inspection.`
               return t.id === 'cl_funds_recorded' ? row
                 : '<div style="opacity:0.4;pointer-events:none">' + row + '</div>';
             }).join('')
-          : (stage === 'under_contract'
+          : ((stage === 'under_contract' || stage === 'ctc')
               ? buildUcTracksHtml(file, tasks, dls, done)
               : tasks.map(t => ckRow(file, t, dls, done)).join('')))
       : '<p class="ck-empty">Checklist for the ' + esc(STAGE_LABELS[stage] || stage) + ' stage ships next.</p>';
