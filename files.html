@@ -16106,6 +16106,34 @@ Tell me your planned move-out date and I will set the inspection.`
     return html;
   }
 
+  // Listing / compliance Your Work · same On you now / Coming up / N done structure as the
+  // buyer (buildUcTracksHtml), but split by spine STEP instead of by deadline.
+  function buildListingTracksHtml(file, tasks, dls, done){
+    const isList = (file.file_type === 'listing');
+    const groups = isList ? listingGroups(file) : complianceGroups(file);
+    const curKey = isList ? currentListingGroup(file) : currentComplianceGroup(file);
+    let curIdx = groups.findIndex(function(g){ return g.key === curKey; }); if(curIdx < 0) curIdx = 0;
+    const idGroup = {}; groups.forEach(function(g, gi){ g.ids.forEach(function(id){ idGroup[id] = gi; }); });
+    const openTasks = tasks.filter(function(t){ return !done[t.id]; });
+    const doneTasks = tasks.filter(function(t){ return done[t.id]; });
+    const nowTasks = openTasks.filter(function(t){ return (idGroup[t.id] == null ? 0 : idGroup[t.id]) === curIdx; });
+    const laterTasks = openTasks.filter(function(t){ return (idGroup[t.id] == null ? 0 : idGroup[t.id]) > curIdx; });
+    let html = '<p class="uc-needsyou-hd">On you now &middot; ' + nowTasks.length + '</p>';
+    if(nowTasks.length){
+      html += nowTasks.map(function(t, i){ return i === 0 ? '<div class="uc-top">' + ckRow(file, t, dls, done) + '</div>' : ckRow(file, t, dls, done, '', true); }).join('');
+    } else {
+      html += '<p class="ck-empty">Nothing on you right now. You&rsquo;re ahead.</p>';
+    }
+    if(laterTasks.length){
+      html += '<details class="uc-later"><summary class="uc-later-sum">Coming up &middot; ' + laterTasks.length + '<span class="uc-chev">&#8250;</span></summary>' +
+        laterTasks.map(function(t){ return ckRow(file, t, dls, done, '', true); }).join('') + '</details>';
+    }
+    if(doneTasks.length){
+      html += '<details class="uc-done"><summary class="uc-done-sum">' + doneTasks.length + ' done<span class="uc-chev">&#8250;</span></summary>' +
+        doneTasks.map(function(t){ return ckRow(file, t, dls, done); }).join('') + '</details>';
+    }
+    return html;
+  }
   function renderStageChecklist(file){
     const host = document.getElementById('tpb-checklist');
     const head = document.getElementById('tpb-ck-meta');
@@ -16287,6 +16315,7 @@ Tell me your planned move-out date and I will set the inspection.`
         }
       }
     } catch(_){}
+    const _ftTasks = file.file_type || 'sale';
     const tasksHtml = tasks
       ? (closingLock
           ? tasks.map(t => {
@@ -16294,9 +16323,11 @@ Tell me your planned move-out date and I will set the inspection.`
               return t.id === 'cl_funds_recorded' ? row
                 : '<div style="opacity:0.4;pointer-events:none">' + row + '</div>';
             }).join('')
-          : ((stage === 'under_contract' || stage === 'ctc')
-              ? buildUcTracksHtml(file, tasks, dls, done)
-              : tasks.map(t => ckRow(file, t, dls, done)).join('')))
+          : (_ftTasks === 'listing' || _ftTasks === 'compliance')
+              ? buildListingTracksHtml(file, tasks, dls, done)
+              : ((stage === 'under_contract' || stage === 'ctc')
+                  ? buildUcTracksHtml(file, tasks, dls, done)
+                  : tasks.map(t => ckRow(file, t, dls, done)).join('')))
       : '<p class="ck-empty">Checklist for the ' + esc(STAGE_LABELS[stage] || stage) + ' stage ships next.</p>';
     // Move-to-next-stage button · same guards as the kanban drag. Closed is
     // excluded on purpose — its 5-task protective gate stays on the board drag.
@@ -16337,25 +16368,9 @@ Tell me your planned move-out date and I will set the inspection.`
     const _showDueSoon = !_isSetupStage && stage !== 'under_contract';
     // "Update the agent" is a communication action, not a task — it sits at the BOTTOM
     // of the work (after the tracks, just above Move), not crowding the top of Do next.
-    // Listing / compliance · checked tasks leave the active list and collect in a
-    // Completed list at the bottom (tap one to reopen), instead of vanishing.
-    let completedHtml = '';
-    if(['listing','compliance'].indexOf(file.file_type || '') !== -1){
-      const _grps = (file.file_type === 'listing') ? listingGroups(file) : complianceGroups(file);
-      const _all = (file.file_type === 'listing') ? LISTING_TASKS : COMPLIANCE_TASKS;
-      const _doneRows = [];
-      _grps.forEach(function(g){ g.ids.forEach(function(id){
-        const t = _all.find(function(x){ return x.id === id; });
-        if(!t || (t.showIf && !t.showIf(file))) return;
-        if(done[id] && (done[id].done || done[id].at)) _doneRows.push(ckRow(file, t, dls, done));
-      }); });
-      if(_doneRows.length){
-        completedHtml = '<details class="ck-archive-wrap" style="margin-top:14px"><summary>Completed &middot; ' + _doneRows.length + '</summary>' + _doneRows.join('') + '</details>';
-      }
-    }
     host.innerHTML = roBanner + saBanner + payBanner + closingBanner + gate + widget +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
-      (_showDueSoon ? dueSoon : '') + (_isSetupStage ? '' : updateBtnHtml(file)) + moveBtn + completedHtml;
+      (_showDueSoon ? dueSoon : '') + (_isSetupStage ? '' : updateBtnHtml(file)) + moveBtn;
     // During Setup, hide the whole "Your work" pop when it has nothing to show (no
     // pending setup steps, no standalone emails) — kills the orphaned empty header.
     try {
