@@ -11330,7 +11330,14 @@ Tell me your planned move-out date and I will set the inspection.`
     if((file.file_type || 'sale') !== 'sale'){
       if((file.file_type || '') === 'rental'){ renderRentalDetails(file, host, meta); try { renderRentalDocPane(file); } catch(_){} return; }
       if((file.file_type || '') === 'listing'){ host.innerHTML = buildListingSpine(file); if(meta) meta.textContent = ''; return; }
-      if((file.file_type || '') === 'compliance'){ host.innerHTML = buildComplianceSpine(file); if(meta) meta.textContent = ''; return; }
+      if((file.file_type || '') === 'compliance'){
+        host.innerHTML = buildComplianceSpine(file) + complianceArchiveHtml(file);
+        if(meta) meta.textContent = '';
+        var _ai = document.getElementById('comp-arch-input');
+        if(_ai) _ai.addEventListener('change', function(){ complianceArchiveUpload(file, _ai.files); });
+        try { renderComplianceArchive(file); } catch(_){}
+        return;
+      }
       host.innerHTML = '<p class="tpb-empty">Contract terms apply to sale files.</p>';
       if(meta) meta.textContent = '';
       return;
@@ -13766,6 +13773,80 @@ Tell me your planned move-out date and I will set the inspection.`
       html += '<div style="display:flex;align-items:center;gap:15px;border-radius:13px;padding:15px 18px;margin-bottom:10px;' + card + '">' + circle + '<div style="flex:1;font-size:15px;font-weight:600;' + title + '">' + r.label + '</div>' + tail + '</div>';
     });
     return html + '</div>';
+  }
+  // Compliance document archive · upload + list the closing docs inside the compliance view.
+  // TC uploads land in transaction-files under <file>/archive and are tracked in
+  // raw_form_data.archive_docs; any agent uploads in file_documents also surface here.
+  function complianceArchiveHtml(file){
+    return '<div style="margin-top:22px">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+      +   '<span style="font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#7a756c">Document archive</span>'
+      +   '<label style="font-size:12.5px;font-weight:600;color:#0f0f0f;background:#fff;border:0.5px solid rgba(15,15,15,.22);border-radius:9px;padding:8px 14px;cursor:pointer">Add documents<input type="file" id="comp-arch-input" multiple style="display:none"></label>'
+      + '</div>'
+      + '<div id="comp-arch-list"><p style="font-size:12.5px;color:#8a857c;padding:6px 0">Loading documents&hellip;</p></div>'
+      + '</div>';
+  }
+  async function renderComplianceArchive(file){
+    var host = document.getElementById('comp-arch-list'); if(!host) return;
+    var docs = [];
+    var raw = file.raw_form_data || {};
+    (Array.isArray(raw.archive_docs) ? raw.archive_docs : []).forEach(function(d){ if(d && d.path) docs.push({ name:d.name||'Document', path:d.path, bucket:'transaction-files', at:d.at, size:d.size, removable:true }); });
+    try {
+      var r = await _client.from('file_documents').select('filename, storage_path, uploaded_at, size_bytes').eq('file_id', file.id).order('uploaded_at', { ascending:false });
+      ((r && r.data) || []).forEach(function(d){ if(d.storage_path && !docs.some(function(x){ return x.path === d.storage_path; })) docs.push({ name:d.filename||'Document', path:d.storage_path, bucket:'file-documents', at:d.uploaded_at, size:d.size_bytes, removable:false }); });
+    } catch(_){}
+    if(!docs.length){ host.innerHTML = '<p style="font-size:12.5px;color:#8a857c;padding:6px 0">No documents yet. Add the closing documents to build the archive.</p>'; return; }
+    host.innerHTML = docs.map(function(d){
+      var meta = [];
+      if(d.at){ try { meta.push(new Date(d.at).toLocaleDateString('en-US', { month:'short', day:'numeric' })); } catch(_){} }
+      if(d.size){ meta.push((d.size/1048576).toFixed(1) + ' MB'); }
+      return '<div style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #ece8e0;border-radius:11px;padding:11px 14px;margin-bottom:8px">'
+        + '<span style="flex:1;min-width:0;font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(d.name) + (meta.length ? '<span style="font-weight:400;color:#8a857c;font-size:12px"> &middot; ' + meta.join(' &middot; ') + '</span>' : '') + '</span>'
+        + '<button type="button" data-arch-open="' + esc(d.path) + '" data-arch-bucket="' + esc(d.bucket) + '" style="flex:none;font:inherit;font-size:12px;font-weight:600;color:#0f0f0f;background:#f1efe8;border:0.5px solid #e6e1d6;border-radius:8px;padding:6px 11px;cursor:pointer">Open</button>'
+        + (d.removable ? '<button type="button" data-arch-rm="' + esc(d.path) + '" style="flex:none;font:inherit;font-size:12px;color:#a3402f;background:none;border:0;cursor:pointer">Remove</button>' : '')
+        + '</div>';
+    }).join('');
+    host.querySelectorAll('[data-arch-open]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var w = window.open('about:blank', '_blank');
+        (async function(){
+          try { var r = await _client.storage.from(b.getAttribute('data-arch-bucket') || 'transaction-files').createSignedUrl(b.getAttribute('data-arch-open'), 3600); if(r && r.data && r.data.signedUrl){ w.location = r.data.signedUrl; return; } } catch(_){}
+          try { w.close(); } catch(_){}
+          alert('Could not open this document. It may have been removed from storage.');
+        })();
+      });
+    });
+    host.querySelectorAll('[data-arch-rm]').forEach(function(b){
+      b.addEventListener('click', async function(){
+        var p = b.getAttribute('data-arch-rm');
+        if(!confirm('Remove this document from the archive?')) return;
+        try { await _client.storage.from('transaction-files').remove([p]); } catch(_){}
+        var rw = file.raw_form_data || {}; rw.archive_docs = (Array.isArray(rw.archive_docs) ? rw.archive_docs : []).filter(function(d){ return d.path !== p; });
+        file.raw_form_data = rw; if(_currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = rw;
+        try { await _client.from('files').update({ raw_form_data: rw }).eq('id', file.id); } catch(_){}
+        renderComplianceArchive(file);
+      });
+    });
+  }
+  async function complianceArchiveUpload(file, fileList){
+    if(!fileList || !fileList.length) return;
+    var host = document.getElementById('comp-arch-list'); if(host) host.innerHTML = '<p style="font-size:12.5px;color:#8a857c;padding:6px 0">Uploading&hellip;</p>';
+    var raw = file.raw_form_data || {}; var arr = Array.isArray(raw.archive_docs) ? raw.archive_docs.slice() : [];
+    for(var i=0;i<fileList.length;i++){
+      var fl = fileList[i];
+      if(fl.size > 25*1024*1024){ alert('"' + fl.name + '" is over 25 MB and was skipped.'); continue; }
+      var safe = (fl.name || 'document').replace(/[^a-zA-Z0-9._-]/g,'_');
+      var path = file.id + '/archive/' + Date.now() + '-' + safe;
+      try {
+        var up = await _client.storage.from('transaction-files').upload(path, fl, { upsert:false, contentType: fl.type || 'application/octet-stream' });
+        if(up && up.error) throw up.error;
+        arr.push({ name: fl.name, path: path, at: new Date().toISOString(), size: fl.size, type: fl.type || '' });
+      } catch(err){ console.warn('[files] archive upload failed', err); alert('Upload failed for "' + fl.name + '". Check your connection and try again.'); }
+    }
+    raw.archive_docs = arr; file.raw_form_data = raw;
+    if(_currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = raw;
+    try { await _client.from('files').update({ raw_form_data: raw }).eq('id', file.id); } catch(err){ console.warn('[files] archive persist failed', err); }
+    renderComplianceArchive(file);
   }
   const STAGE_CHECKLISTS = {
     sale: {
