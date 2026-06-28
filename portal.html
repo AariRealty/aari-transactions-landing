@@ -4246,9 +4246,16 @@
     var payload=add.map(function(r){
       var rfd={ agent_name:r.agent, source:'master_import', side:r.side };
       if(r.propType) rfd.property_type=r.propType;
-      if(r.listPrice!=null && r.listPrice!=='') rfd.list_price=r.listPrice;
-      if(r.salePrice!=null && r.salePrice!=='') rfd.sale_price=r.salePrice;
-      return { property_address:r.addr, file_type:_impFileType(r.side), service_type:_impServiceType(r.side), status:r.status, client_type:(r.side==='seller'?'seller':'buyer'), agent_id:null, raw_form_data:rfd };
+      // Price · listing → List Price; sale → Sale Price (fall back to whichever is present). Stored
+      // in purchase_price_cents (the column the production board + cockpit actually read).
+      var priceN = _impNum(r.side==='seller' ? r.listPrice : r.salePrice) || _impNum(r.listPrice) || _impNum(r.salePrice);
+      var listDate=_impDate(r.listDate), expDate=_impDate(r.expDate), closeDate=_impDate(r.closeDate);
+      if(listDate) rfd.list_date=listDate;
+      var rec = { property_address:r.addr, file_type:_impFileType(r.side), service_type:_impServiceType(r.side), status:r.status, client_type:(r.side==='seller'?'seller':'buyer'), agent_id:null, raw_form_data:rfd };
+      if(priceN) rec.purchase_price_cents = Math.round(priceN*100);
+      if(closeDate) rec.closing_date = closeDate;
+      if(listDate || expDate) rec.logistics = { list_date:listDate, list_expiration:expDate };
+      return rec;
     });
     var res=await _client.from('files').insert(payload).select('id');
     return res.error ? { error:res.error.message } : { count:(res.data||[]).length };
