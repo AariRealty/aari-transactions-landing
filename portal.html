@@ -4179,9 +4179,14 @@
     // A genuine team sale always has a separate selling agent and TC, so it still counts.
     const isTcCoord = function(f){ var r=f.raw_form_data||{}; if(r.submitted_by_tc===true || r.submitted_by_tc==='true') return true; return !!(f.agent_id && f.assigned_tc_id && String(f.agent_id)===String(f.assigned_tc_id)); };
     const files = (_teamFiles || []).filter(function(f){ return !isTcCoord(f); });
+    // Ownerless imported files are coordination (not production) when the agent name on the file
+    // matches the assigned TC — e.g. Milennys self-coordinating her own listings. Exclude those so
+    // the producing board stays selling-agent only.
+    const pendingIsCoord = function(f){ var r=f.raw_form_data||{}; var an=String(r.agent_name||'').trim().toLowerCase(); var t=(_teamAgents||{})[f.assigned_tc_id]; if(an && t){ var tn=((t.first_name||'')+' '+(t.last_name||'')).trim().toLowerCase(); if(tn && an===tn) return true; } return false; };
+    const _pendProd = (_pendingFiles || []).filter(function(f){ return !pendingIsCoord(f); });
     // Production shows even when no files are linked to agent ACCOUNTS yet · ownerless imported
     // files (grouped by agent name below) still count as production for the broker.
-    if(!files.length && !((_pendingFiles || []).length)){ host.innerHTML = '<div class="tx-empty">No active team files yet.</div>'; return; }
+    if(!files.length && !_pendProd.length){ host.innerHTML = '<div class="tx-empty">No active team files yet.</div>'; return; }
     const totalPipe = files.reduce((s,f) => s + teamPrice(f), 0);
     const totalComm = files.reduce((s,f) => s + teamComm(f), 0);
     // Funnel
@@ -4202,7 +4207,7 @@
     const unsigned = Object.keys(_teamAgents).filter(id => !_teamAgents[id].agreement_signed_at).length;
     // Hero gauge · GCI to goal (falls back to pipeline if no commission rates set)
     const heroComm = totalComm > 0;
-    const heroVal = heroComm ? totalComm : (totalPipe + (_pendingFiles||[]).reduce(function(s,f){ return s + teamPrice(f); }, 0));
+    const heroVal = heroComm ? totalComm : (totalPipe + _pendProd.reduce(function(s,f){ return s + teamPrice(f); }, 0));
     const unit = heroComm ? 25000 : 250000;
     const goal = Math.max(unit, Math.ceil(heroVal/unit + 0.5) * unit);
     const pct = Math.max(0, Math.min(100, goal ? heroVal/goal*100 : 0));
