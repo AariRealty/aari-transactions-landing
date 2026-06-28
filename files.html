@@ -16304,20 +16304,23 @@ Tell me your planned move-out date and I will set the inspection.`
   function isCreditCovered(f){ return f && _creditCoverByFile[f.id] === 'covered'; }
   // Meter for the file's own cycle (so a file from a prior month shows that month's usage).
   function creditMeter(f){ return (f && (_creditMeterByFile[f.id] || (f.agent_id ? _creditMeterByAgent[f.agent_id] : null))) || null; }
-  // $50 off applies only to TC files, only for an active member.
-  function memberTcDiscount(f){ return (fileMembership(f) && isTcService(f)) ? MEMBER_TC_DISCOUNT : 0; }
+  // $50 off applies only to OUTSIDE TC clients on a membership. In-house Aari Realty agents who
+  // order full TC pay full price, no discount.
+  function memberTcDiscount(f){ return (isOutsideFile(f) && fileMembership(f) && isTcService(f)) ? MEMBER_TC_DISCOUNT : 0; }
   function svcPrice(f){ return SERVICE_PRICE[(f && f.service_type) || ''] || 0; }
   function chargedPrice(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? (p - memberTcDiscount(f)) : 0; } // what the client actually pays
   function atTcCut(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? (Math.round(p * AT_TC_PCT / 100) - memberTcDiscount(f)) : 0; } // TC 40% less the member $50; $0 if credit-covered
   function atCoCut(f){ var p = chargedPrice(f); return p ? (p - atTcCut(f)) : 0; } // AT keeps the remainder (= full 60%)
   function isFileOrgFile(f){ return ((f.file_type || '') === 'compliance' || (f.service_type || '') === 'file_organization'); }
   function isOutsideFile(f){ return !isAariRealtyFile(f); }
-  // Outside, non-file-org files carry the 40% service split (these drive the AT P&L total).
-  function isSplitFile(f){ return isOutsideFile(f) && !isFileOrgFile(f); }
-  // File Organization pay = a flat $80 to the coordinator. Applies to explicit File Organization /
-  // compliance files AND to every in-house Aari Realty file (in-house coordination IS file org work).
+  // A billable service file (full price, 40% TC split): ANY full-TC service (in-house agents who
+  // order full TC pay full price, no discount), plus outside non-file-org services. In-house NON-TC
+  // coordination (MLS, listing prep) is the $80 file-org rate, not this.
+  function isSplitFile(f){ return !isFileOrgFile(f) && !(isAariRealtyFile(f) && !isTcService(f)); }
+  // File Organization pay = a flat $80 to the coordinator: explicit File Organization / compliance
+  // files, AND in-house Aari Realty coordination that is NOT a full-TC service.
   var FILE_ORG_PAY = 80;
-  function paysFileOrg(f){ return !isCreditCovered(f) && (isFileOrgFile(f) || isAariRealtyFile(f)); }
+  function paysFileOrg(f){ return !isCreditCovered(f) && (isFileOrgFile(f) || (isAariRealtyFile(f) && !isTcService(f))); }
   // What the coordinating TC earns on a file, regardless of who is viewing.
   function tcPayFor(f){
     if(isCreditCovered(f)) return 0;       // membership credit covered it · no TC pay
@@ -16342,12 +16345,13 @@ Tell me your planned move-out date and I will set the inspection.`
       if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">$80</span><span style="' + sub + '">TC pay &middot; ' + foLbl + '</span></div>';
       return '<div style="' + col + '"><span style="' + big + '">$80</span><span style="' + sub + '">' + foLbl + '</span></div>';
     }
-    if(isOutsideFile(f)){
+    if(isSplitFile(f)){
       var p = svcPrice(f);
       if(!p) return '<span style="' + faint + '">price not set</span>';
-      var disc = memberTcDiscount(f);                 // $50 if a member's TC file
-      var charged = chargedPrice(f);                  // what the client pays
-      if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">$' + charged + '</span><span style="' + sub + '">' + (disc ? 'member &middot; ' : '') + 'keep $' + atCoCut(f) + ' &middot; ' + AT_TC_PCT + '% TC</span></div>';
+      var disc = memberTcDiscount(f);                 // $50 only for an outside member's TC file
+      var charged = chargedPrice(f);                  // what the client/agent pays (full price in-house)
+      var inh = isAariRealtyFile(f) ? 'in-house &middot; ' : (disc ? 'member &middot; ' : '');
+      if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">$' + charged + '</span><span style="' + sub + '">' + inh + 'keep $' + atCoCut(f) + ' &middot; ' + AT_TC_PCT + '% TC</span></div>';
       return '<div style="' + col + '"><span style="' + big + '">$' + atTcCut(f) + '</span><span style="' + sub + '">' + (disc ? AT_TC_PCT + '% less $' + disc + ' member' : AT_TC_PCT + '% of $' + p) + '</span></div>';
     }
     // Fallback (no price / unknown)
