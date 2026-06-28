@@ -16357,6 +16357,76 @@ Tell me your planned move-out date and I will set the inspection.`
     // Fallback (no price / unknown)
     return '<span style="' + faint + '">&mdash;</span>';
   }
+  // ===== Client profile · opened from any of a client's transactions (overflow menu) =====
+  var SERVICE_LABEL = { tc:'Full TC', tc_one_side:'TC · one side', tc_both_sides:'TC · both sides', listing_coordinator:'Listing Coordinator', listing_docs:'Listing Docs', mls_setup:'MLS Setup', file_organization:'File Organization', standalone_review:'Standalone Review', offer_prep_basic:'Offer Prep', offer_prep_complete:'Offer Prep Complete' };
+  function _profileFileMoney(f){
+    if(isCreditCovered(f)) return '<span style="color:#7a756c">Covered &middot; credit</span>';
+    if(paysFileOrg(f)) return '$80 <span style="color:#a8a39a;font-weight:400">file org</span>';
+    if(isSplitFile(f)){ var c = chargedPrice(f); return c ? ('$' + c + (memberTcDiscount(f) ? ' <span style="color:#a8a39a;font-weight:400">member</span>' : '')) : '<span style="color:#bdb8af">price not set</span>'; }
+    return '';
+  }
+  function openClientProfile(agentId, currentFile){
+    var ex = document.getElementById('client-profile-overlay'); if(ex) ex.remove();
+    if(!agentId && !currentFile) return;
+    var files = (_files || []).filter(function(f){ return f.agent_id === agentId && f.status !== 'archived' && !((f.raw_form_data || {}).test_pool); });
+    var rfd = (currentFile && currentFile.raw_form_data) || (files[0] && files[0].raw_form_data) || {};
+    var name = String(rfd.agent_name || 'Client').trim();
+    var email = String(rfd.agent_email || '').trim();
+    var mem = (_membersById || {})[agentId];
+    var meter = (_creditMeterByAgent || {})[agentId];
+    var billed = files.reduce(function(s, f){ return s + (isSplitFile(f) ? chargedPrice(f) : 0); }, 0);
+    var tcPay = files.reduce(function(s, f){ return s + tcPayFor(f); }, 0);
+    var covered = files.filter(function(f){ return isCreditCovered(f); }).length;
+    // membership badge
+    var memHtml;
+    if(mem){
+      var tierName = mem.tier ? (mem.tier.charAt(0).toUpperCase() + mem.tier.slice(1)) : 'Member';
+      var resetTxt = '';
+      try { if(meter && meter.resetDate) resetTxt = ', resets ' + _asDate(meter.resetDate).toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){}
+      var over = meter && meter.used > meter.total;
+      memHtml = '<div style="background:#0f0f0f;color:#fff;border-radius:11px;padding:12px 15px;margin:0 0 14px">' +
+        '<div style="display:flex;align-items:baseline;gap:10px"><span style="font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase">' + esc(tierName) + ' member</span><span style="margin-left:auto;font-size:15px;font-weight:700">$' + (MEMBERSHIP_FEE[mem.tier] || 0) + '<span style="font-size:11px;color:#a8a39a;font-weight:500">/mo</span></span></div>' +
+        (meter && meter.total ? ('<div style="font-size:11.5px;color:' + (over ? '#f0a99a' : '#cfcabf') + ';margin-top:6px">' + Math.min(meter.used, meter.total) + ' of ' + meter.total + ' credits used this month' + (over ? ' &middot; ' + (meter.used - meter.total) + ' over plan, billable' : '') + resetTxt + '</div>') : '') + '</div>';
+    } else {
+      memHtml = '<div style="font-size:12px;color:#a8a39a;margin:0 0 14px">Not a member &middot; pays full price per service</div>';
+    }
+    var rowsHtml = files.length ? files.map(function(f){
+      var addr = String(f.property_address || 'Untitled').split(',')[0];
+      var ty = (f.file_type === 'sale' ? 'Sale' : f.file_type === 'listing' ? 'Listing' : (f.file_type || ''));
+      var svc = f.service_type ? (SERVICE_LABEL[f.service_type] || f.service_type) : '';
+      var sub = [ty, svc].filter(Boolean).join(' &middot; ');
+      return '<div data-cp-open="' + esc(f.id) + '" style="display:flex;align-items:center;gap:12px;padding:11px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f">' + esc(addr) + '</div><div style="font-size:11.5px;color:#8a857c">' + sub + '</div></div>' +
+        '<span style="font-size:12.5px;color:#0f0f0f;font-weight:600;white-space:nowrap">' + _profileFileMoney(f) + '</span></div>';
+    }).join('') : '<div style="padding:14px 0;color:#a8a39a;font-size:12.5px">No active transactions.</div>';
+    var ov = document.createElement('div');
+    ov.id = 'client-profile-overlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,.42);z-index:9997;display:flex;align-items:flex-start;justify-content:center;padding:34px 18px;overflow-y:auto;font-family:Inter,system-ui,sans-serif';
+    ov.innerHTML =
+      '<div style="background:#fff;border-radius:14px;max-width:520px;width:100%;box-shadow:0 24px 60px rgba(0,0,0,.32);overflow:hidden">' +
+        '<div style="display:flex;align-items:flex-start;gap:12px;padding:16px 18px 14px;border-bottom:0.5px solid #ece8e0">' +
+          '<div style="flex:1;min-width:0"><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:19px;font-weight:600;color:#0f0f0f">' + esc(name) + '</div>' +
+            (email ? '<div style="font-size:12px;color:#8a857c;margin-top:2px">' + esc(email) + '</div>' : '') +
+            '<div style="font-size:11px;color:#a8a39a;margin-top:2px">' + ((currentFile && isAariRealtyFile(currentFile)) ? 'Aari Realty agent' : 'Outside client') + ' &middot; ' + files.length + ' active transaction' + (files.length === 1 ? '' : 's') + '</div></div>' +
+          '<button type="button" data-cp-close="1" style="flex:none;background:none;border:0;font-size:22px;line-height:1;color:#8a857c;cursor:pointer;font-family:inherit">&times;</button>' +
+        '</div>' +
+        '<div style="padding:15px 18px 18px">' + memHtml +
+          '<div style="display:flex;gap:10px;margin:0 0 14px">' +
+            '<div style="flex:1;text-align:center;background:#fbfaf7;border:0.5px solid #ece8e0;border-radius:10px;padding:9px 6px"><div style="font-size:10px;letter-spacing:.4px;text-transform:uppercase;color:#9a958c;font-weight:700">Billed</div><div style="font-size:16px;font-weight:700;color:#0f0f0f;margin-top:3px">$' + billed.toLocaleString() + '</div></div>' +
+            '<div style="flex:1;text-align:center;background:#fbfaf7;border:0.5px solid #ece8e0;border-radius:10px;padding:9px 6px"><div style="font-size:10px;letter-spacing:.4px;text-transform:uppercase;color:#9a958c;font-weight:700">TC pay</div><div style="font-size:16px;font-weight:700;color:#0f0f0f;margin-top:3px">$' + tcPay.toLocaleString() + '</div></div>' +
+            '<div style="flex:1;text-align:center;background:#fbfaf7;border:0.5px solid #ece8e0;border-radius:10px;padding:9px 6px"><div style="font-size:10px;letter-spacing:.4px;text-transform:uppercase;color:#9a958c;font-weight:700">Covered</div><div style="font-size:16px;font-weight:700;color:#0f0f0f;margin-top:3px">' + covered + '</div></div>' +
+          '</div>' +
+          '<p style="font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#9a958c;margin:0 0 2px">Transactions</p>' +
+          rowsHtml +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function(e){
+      if(e.target === ov || e.target.closest('[data-cp-close]')){ ov.remove(); return; }
+      var op = e.target.closest('[data-cp-open]');
+      if(op){ var fid = op.getAttribute('data-cp-open'); var ff = (_files || []).find(function(x){ return x.id === fid; }); ov.remove(); if(ff && typeof openPlaybook === 'function') openPlaybook(ff); }
+    });
+  }
   // Compact membership / credit-limit flag for a member's file. Empty for non-members.
   function memberFlagHtml(file){
     var mem = fileMembership(file); if(!mem) return '';
