@@ -16237,13 +16237,40 @@ Tell me your planned move-out date and I will set the inspection.`
   var MEMBER_TC_DISCOUNT = 50;
   var MEMBERSHIP_FEE = { producer: 129, starter: 79 };
   var TC_SERVICE_TYPES = { tc:1, tc_one_side:1, tc_both_sides:1 };
+  // Services a membership CREDIT can cover (the monthly 4/2 credits). TC files are NOT credit-
+  // eligible (they get the $50 discount instead) per the catalog rule.
+  var CREDIT_SERVICES = { mls_setup:1, listing_docs:1, offer_prep_basic:1, offer_prep_complete:1, file_organization:1, standalone_review:1 };
   function fileMembership(f){ return (f && f.agent_id && _membersById) ? _membersById[f.agent_id] : null; }
   function isTcService(f){ return !!TC_SERVICE_TYPES[(f && f.service_type) || '']; }
+  function isCreditService(f){ return !!CREDIT_SERVICES[(f && f.service_type) || '']; }
+  // Allocate each member's credit-eligible files against their monthly credit count (earliest
+  // first). The first `credits_total` are covered by the membership; the rest overflow to billable.
+  function computeCreditCoverage(){
+    _creditCoverByFile = {}; _creditMeterByAgent = {};
+    var byAgent = {};
+    (_files || []).forEach(function(f){
+      if(!f || f.status === 'archived') return;
+      if((f.raw_form_data || {}).test_pool) return;
+      var m = f.agent_id ? _membersById[f.agent_id] : null;
+      if(!m || !isCreditService(f)) return;
+      (byAgent[f.agent_id] = byAgent[f.agent_id] || []).push(f);
+    });
+    Object.keys(byAgent).forEach(function(aid){
+      var list = byAgent[aid].slice().sort(function(a, b){ return new Date(a.created_at || 0) - new Date(b.created_at || 0); });
+      var total = (_membersById[aid] && _membersById[aid].credits_total) || 0;
+      list.forEach(function(f, i){ _creditCoverByFile[f.id] = (i < total) ? 'covered' : 'overflow'; });
+      _creditMeterByAgent[aid] = { used: list.length, total: total };
+    });
+  }
+  // A file covered by a membership credit: the membership already paid for it, so no per-file
+  // charge and (per Marlenyi) NO TC pay either.
+  function isCreditCovered(f){ return f && _creditCoverByFile[f.id] === 'covered'; }
+  function creditMeter(f){ return (f && f.agent_id) ? _creditMeterByAgent[f.agent_id] : null; }
   // $50 off applies only to TC files, only for an active member.
   function memberTcDiscount(f){ return (fileMembership(f) && isTcService(f)) ? MEMBER_TC_DISCOUNT : 0; }
   function svcPrice(f){ return SERVICE_PRICE[(f && f.service_type) || ''] || 0; }
-  function chargedPrice(f){ var p = svcPrice(f); return p ? (p - memberTcDiscount(f)) : 0; } // what the client actually pays
-  function atTcCut(f){ var p = svcPrice(f); return p ? (Math.round(p * AT_TC_PCT / 100) - memberTcDiscount(f)) : 0; } // TC 40% less the member $50
+  function chargedPrice(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? (p - memberTcDiscount(f)) : 0; } // what the client actually pays
+  function atTcCut(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? (Math.round(p * AT_TC_PCT / 100) - memberTcDiscount(f)) : 0; } // TC 40% less the member $50; $0 if credit-covered
   function atCoCut(f){ var p = chargedPrice(f); return p ? (p - atTcCut(f)) : 0; } // AT keeps the remainder (= full 60%)
   function isFileOrgFile(f){ return ((f.file_type || '') === 'compliance' || (f.service_type || '') === 'file_organization'); }
   function isOutsideFile(f){ return !isAariRealtyFile(f); }
@@ -16256,6 +16283,11 @@ Tell me your planned move-out date and I will set the inspection.`
     var big = 'font-size:13px;font-weight:700;color:#0f0f0f;font-variant-numeric:tabular-nums';
     var sub = 'font-size:10px;color:#a39d92;font-weight:500';
     var faint = 'flex:none;font-size:11px;color:#bdb8af;font-weight:500';
+    // Covered by a membership credit · no per-file charge, and no TC pay.
+    if(isCreditCovered(f)){
+      if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">Covered</span><span style="' + sub + '">membership credit</span></div>';
+      return '<span style="' + faint + '">covered &middot; membership</span>';
+    }
     // File Organization · flat $80 coordinator pay.
     if(isFileOrgFile(f)){
       if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">$80</span><span style="' + sub + '">file org pay</span></div>';
