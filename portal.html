@@ -4190,13 +4190,11 @@
     // A genuine team sale always has a separate selling agent and TC, so it still counts.
     const isTcCoord = function(f){ var r=f.raw_form_data||{}; if(r.submitted_by_tc===true || r.submitted_by_tc==='true') return true; return !!(f.agent_id && f.assigned_tc_id && String(f.agent_id)===String(f.assigned_tc_id)); };
     const files = (_teamFiles || []).filter(function(f){ return !isTcCoord(f); });
-    // Ownerless imported files are coordination (not production) when the agent name on the file
-    // matches the assigned TC — e.g. Milennys self-coordinating her own listings. Exclude those so
-    // the producing board stays selling-agent only.
-    const pendingIsCoord = function(f){ var r=f.raw_form_data||{}; var an=String(r.agent_name||'').trim().toLowerCase(); var t=(_teamAgents||{})[f.assigned_tc_id]; if(an && t){ var tn=((t.first_name||'')+' '+(t.last_name||'')).trim().toLowerCase(); if(tn && an===tn) return true; } return false; };
-    // Exclude self-coordination AND the viewer's OWN files (those belong in "Your production"
-    // at the top, not as a duplicate producer group).
-    const _pendProd = (_pendingFiles || []).filter(function(f){ return !pendingIsCoord(f) && !isMyProductionFile(f); });
+    // Ownerless imported files = the selling agent's OWN production, by name (Milennys is both a
+    // TC and a producing agent, so her self-listed deals are HER production — they are NOT stripped
+    // here; the $80 file-org pay for self-coordination lives in the TC cockpit, a separate concern).
+    // Only the viewer's own files are pulled out, since they show in the ★ "Your production" row.
+    const _pendProd = (_pendingFiles || []).filter(function(f){ return !isMyProductionFile(f); });
     // Production shows even when no files are linked to agent ACCOUNTS yet · ownerless imported
     // files (grouped by agent name below) still count as production for the broker.
     if(!files.length && !_pendProd.length){ host.innerHTML = '<div class="tx-empty">No active team files yet.</div>'; return; }
@@ -4292,10 +4290,11 @@
     const groupsArr = [];
     Object.keys(agentMap).forEach(function(id){ var m=agentMap[id]; groupsArr.push({ id:id, name:teamAgentName(id), ini:agInitials(id), photo:(_teamAgents[id]&&_teamAgents[id].headshot_url)||photoFor(teamAgentName(id)), items:m.items, deals:m.items.length, pipe:m.pipe, gci:m.gci, pending:false, rate:(_teamAgents[id]&&_teamAgents[id].default_commission_pct!=null)?_teamAgents[id].default_commission_pct:null }); });
     // Roster team members with no production files yet → shown once as "New · no deals yet"
-    // (exclude the broker herself, who is the ★ "Your production" row at the top). TCs appear here
-    // once too; their self-coordinated files are already excluded from the pending producer groups,
-    // so no one doubles.
-    Object.keys(_teamAgents||{}).forEach(function(id){ if(agentMap[id]) return; if(_profile && id===_profile.id) return; var a=_teamAgents[id]; groupsArr.push({ id:id, name:teamAgentName(id), ini:agInitials(id), photo:(a&&a.headshot_url)||photoFor(teamAgentName(id)), items:[], deals:0, pipe:0, gci:0, pending:false, rate:(a&&a.default_commission_pct!=null)?a.default_commission_pct:null }); });
+    // (exclude the broker herself, who is the ★ "Your production" row at the top). Skip anyone who
+    // already has a pending producer group under their NAME (e.g. Milennys, who is a TC AND a
+    // producing agent) so they appear once, with their deals, not twice.
+    var _pendNm = {}; pendKeys.forEach(function(k){ _pendNm[String(PENDING_NAMES[k]||k).toLowerCase()] = true; });
+    Object.keys(_teamAgents||{}).forEach(function(id){ if(agentMap[id]) return; if(_profile && id===_profile.id) return; if(_pendNm[teamAgentName(id).toLowerCase()]) return; var a=_teamAgents[id]; groupsArr.push({ id:id, name:teamAgentName(id), ini:agInitials(id), photo:(a&&a.headshot_url)||photoFor(teamAgentName(id)), items:[], deals:0, pipe:0, gci:0, pending:false, rate:(a&&a.default_commission_pct!=null)?a.default_commission_pct:null }); });
     pendKeys.forEach(function(k){ var fl=pend[k]; var nm=PENDING_NAMES[k]||k; groupsArr.push({ id:null, name:nm, ini:(nm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase(), photo:photoFor(nm), items:fl.map(function(f){return {f:f,pct:100,sps:[{agent_id:null,pct:100}]};}), deals:fl.length, pipe:fl.reduce(function(s,f){return s+teamPrice(f);},0), gci:0, pending:true }); });
     // Display-only roster placeholders · show team agents not in the portal data yet (name + photo, New stage). Deduped by name so any real record wins.
     var PLACEHOLDER_ROSTER = ['Odalis Mora','Alejandro Paredes']; // Eileen is a TC, not a selling agent · never in the producing-agent standings
