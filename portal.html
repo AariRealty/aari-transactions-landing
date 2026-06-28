@@ -3917,8 +3917,16 @@
       // Pending (ownerless) imported files — broker can read all; show them under
       // their intended owner until that agent creates an account.
       try {
+        // Ownerless imported production · any active, non-test file with no agent account yet.
+        // Attributed by the agent NAME on the file (a pending_agent_email is no longer required),
+        // so the broker sees production immediately, before those agents create accounts.
         const pf = await _client.from('files').select('*').is('agent_id', null);
-        _pendingFiles = (pf.data || []).filter(f => !isClosed(f) && f.pending_agent_email);
+        _pendingFiles = (pf.data || []).filter(f => {
+          const r = f.raw_form_data || {};
+          if(isClosed(f)) return false;
+          if(r.test_pool === true || r.test_pool === 'true') return false;   // keep the cleaned-up seed data out
+          return !!(r.agent_name || f.pending_agent_email);
+        });
       } catch(_e){ _pendingFiles = []; }
       const tabBtn = document.getElementById('ptab-team'); if(tabBtn) tabBtn.hidden = false;
       // Lead view folds "My business" into the Team tab · hide the standalone business tab.
@@ -4171,7 +4179,9 @@
     // A genuine team sale always has a separate selling agent and TC, so it still counts.
     const isTcCoord = function(f){ var r=f.raw_form_data||{}; if(r.submitted_by_tc===true || r.submitted_by_tc==='true') return true; return !!(f.agent_id && f.assigned_tc_id && String(f.agent_id)===String(f.assigned_tc_id)); };
     const files = (_teamFiles || []).filter(function(f){ return !isTcCoord(f); });
-    if(!files.length){ host.innerHTML = '<div class="tx-empty">No active team files yet.</div>'; return; }
+    // Production shows even when no files are linked to agent ACCOUNTS yet · ownerless imported
+    // files (grouped by agent name below) still count as production for the broker.
+    if(!files.length && !((_pendingFiles || []).length)){ host.innerHTML = '<div class="tx-empty">No active team files yet.</div>'; return; }
     const totalPipe = files.reduce((s,f) => s + teamPrice(f), 0);
     const totalComm = files.reduce((s,f) => s + teamComm(f), 0);
     // Funnel
@@ -4224,7 +4234,8 @@
 
     // Pending · ownerless imported files grouped by intended owner
     const PENDING_NAMES = { 'rooseveltsanchezrealestate@gmail.com':'Roosevelt Sanchez', 'flaviamaguilera@gmail.com':'Flavia Aguilera', 'machuca.alied@gmail.com':'Alied Machuca', 'puentesana99@gmail.com':'Ana Puentes' };
-    const pend = {}; (_pendingFiles||[]).forEach(f => { const k = f.pending_agent_email || 'unassigned'; (pend[k] = pend[k] || []).push(f); });
+    // Group ownerless files by the agent NAME on the file (fall back to the pending email map).
+    const pend = {}; (_pendingFiles||[]).forEach(f => { const r=f.raw_form_data||{}; const k = (r.agent_name && String(r.agent_name).trim()) || PENDING_NAMES[f.pending_agent_email] || f.pending_agent_email || 'Unassigned'; (pend[k] = pend[k] || []).push(f); });
     const pendKeys = Object.keys(pend);
     const pendPipe = (_pendingFiles||[]).reduce((s,f)=>s+teamPrice(f),0);
     // Split-aware attribution · a file credits its split agents (or primary 100%).
