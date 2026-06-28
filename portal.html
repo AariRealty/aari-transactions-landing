@@ -3959,6 +3959,8 @@
         });
       } catch(_e){ _pendingFiles = []; }
       const tabBtn = document.getElementById('ptab-team'); if(tabBtn) tabBtn.hidden = false;
+      // Broker · show the SkySlope import button next to "Submit a new file".
+      if(_profile && String(_profile.role||'').toLowerCase()==='broker'){ var _ib=document.getElementById('btn-import'); if(_ib) _ib.hidden=false; wireImport(); }
       // Lead view folds "My business" into the Team tab · hide the standalone business tab.
       const bizTab = document.querySelector('.ptab[data-ptab="business"]'); if(bizTab) bizTab.hidden = true;
       // A lead/broker manages agents · they are NOT a "new agent." Suppress the
@@ -4187,6 +4189,97 @@
     if(ge && me){ var gf=first(me.name);
       if(myI===0) ge.innerHTML='You&rsquo;re leading the team this month, '+esc(gf);
       else if(imp && imp.agent_id===_profile.id) ge.innerHTML='Biggest climber on the team this month, '+esc(gf); }
+  }
+  // ===== IMPORT · SkySlope MasterDataReport (.xlsx) → file records. Broker only. Adds new
+  // transactions, NEVER duplicates: the key is street address + side, so the same property only
+  // repeats when it is the OTHER side of the deal (buyer vs seller). Preview before anything writes.
+  function _impSide(typeOfSale){ var t=String(typeOfSale||'').toLowerCase(); if(t.indexOf('both')!==-1) return 'both'; if(t.indexOf('listing')!==-1) return 'seller'; return 'buyer'; }
+  function _impNormAddr(a){
+    a = String(a||'').toLowerCase().split(',')[0];
+    a = a.replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+    var DIR={northeast:'ne',northwest:'nw',southeast:'se',southwest:'sw',north:'n',south:'s',east:'e',west:'w'};
+    var TYPE={avenue:'ave',ave:'ave',street:'st',st:'st',road:'rd',rd:'rd',drive:'dr',dr:'dr',lane:'ln',ln:'ln',boulevard:'blvd',blvd:'blvd',trail:'trl',trl:'trl',terrace:'ter',ter:'ter',place:'pl',pl:'pl',court:'ct',ct:'ct',circle:'cir',cir:'cir',way:'way'};
+    var t=a.split(' '), out=[];
+    for(var i=0;i<t.length;i++){ var w=t[i]; if(DIR[w]) w=DIR[w]; if(TYPE[w]){ out.push(TYPE[w]); break; } out.push(w); }
+    return out.join(' ');
+  }
+  function _impFileSide(f){ var ft=String(f.file_type||'').toLowerCase(); if(ft==='listing') return 'seller'; var ct=String((f.client_type||(f.raw_form_data||{}).client_type)||'').toLowerCase(); if(ct==='seller'||ct==='landlord') return 'seller'; if((f.raw_form_data||{}).side) return String(f.raw_form_data.side); return 'buyer'; }
+  function _impStatusMap(s){ s=String(s||'').toLowerCase(); if(s.indexOf('cancel')!==-1||s.indexOf('dead')!==-1) return null; if(s.indexOf('closed')!==-1) return 'closed'; if(s.indexOf('pending')!==-1) return 'under_contract'; return 'intake_received'; }
+  function _impFileType(side){ return side==='seller'?'listing':'sale'; }
+  function _impServiceType(side){ return side==='seller'?'mls_setup':(side==='both'?'tc_both_sides':'tc_one_side'); }
+  function _impParse(rows){
+    var out=[];
+    for(var i=4;i<rows.length;i++){ var r=rows[i]; if(!r||!r[10]) continue;
+      var status=_impStatusMap(r[1]); if(!status) continue; // skip canceled / dead
+      out.push({ addr:String(r[10]).trim(), agent:((r[29]||'')+' '+(r[30]||'')).trim(), status:status, side:_impSide(r[3]), propType:String(r[4]||'').trim(), listPrice:r[19], salePrice:r[20], rawStatus:r[1] });
+    }
+    return out;
+  }
+  function _impClassify(rows){
+    var existing={}; (_files||[]).forEach(function(f){ if((f.raw_form_data||{}).test_pool) return; existing[_impNormAddr(f.property_address)+'|'+_impFileSide(f)]=true; });
+    var seen={};
+    rows.forEach(function(row){
+      var base=_impNormAddr(row.addr), k=base+'|'+row.side;
+      if(seen[k] || existing[k]){ row.cls='dup'; return; }       // already in system or earlier in this file
+      var other = existing[base+'|buyer'] || existing[base+'|seller'] || seen[base+'|buyer'] || seen[base+'|seller'];
+      row.cls = other ? 'side' : 'new';
+      seen[k]=true;
+    });
+    return rows;
+  }
+  async function _impInsert(rows){
+    var add=rows.filter(function(r){ return r.cls==='new'||r.cls==='side'; });
+    if(!add.length) return { count:0 };
+    var payload=add.map(function(r){
+      var rfd={ agent_name:r.agent, source:'master_import', side:r.side };
+      if(r.propType) rfd.property_type=r.propType;
+      if(r.listPrice!=null && r.listPrice!=='') rfd.list_price=r.listPrice;
+      if(r.salePrice!=null && r.salePrice!=='') rfd.sale_price=r.salePrice;
+      return { property_address:r.addr, file_type:_impFileType(r.side), service_type:_impServiceType(r.side), status:r.status, client_type:(r.side==='seller'?'seller':'buyer'), agent_id:null, raw_form_data:rfd };
+    });
+    var res=await _client.from('files').insert(payload).select('id');
+    return res.error ? { error:res.error.message } : { count:(res.data||[]).length };
+  }
+  function openImportPreview(rows){
+    _impClassify(rows);
+    var nNew=rows.filter(function(r){return r.cls==='new';}).length;
+    var nSide=rows.filter(function(r){return r.cls==='side';}).length;
+    var nDup=rows.filter(function(r){return r.cls==='dup';}).length;
+    var tagLbl={ 'new':'New', 'side':'Other side', 'dup':'Already in' };
+    var listHtml=rows.map(function(r){
+      var t=r.cls;
+      return '<div class="imp-row"><div class="ad">'+esc(r.addr.split(',')[0])+' <span class="ag">&middot; '+esc(r.agent||'Agent')+' &middot; '+esc(r.side)+'</span></div><span class="tag '+t+'">'+tagLbl[t]+'</span></div>';
+    }).join('');
+    var willAdd=nNew+nSide;
+    var ov=document.createElement('div'); ov.className='imp-cover'; ov.id='imp-cover';
+    ov.innerHTML='<div class="imp-modal"><div class="imp-head"><span class="t">Import transactions</span><button type="button" class="x" data-imp-x>&times;</button></div>'
+      +'<div class="imp-body"><div class="imp-tiles"><div class="imp-tile"><div class="n">'+nNew+'</div><div class="l">New</div></div><div class="imp-tile"><div class="n">'+nSide+'</div><div class="l">Other side</div></div><div class="imp-tile skip"><div class="n">'+nDup+'</div><div class="l">Already in</div></div></div>'+listHtml+'</div>'
+      +'<div class="imp-foot"><span class="msg" id="imp-msg">'+willAdd+' transaction'+(willAdd===1?'':'s')+' will be added. Duplicates are skipped.</span><button type="button" class="cx" data-imp-x>Cancel</button><button type="button" class="go" id="imp-go"'+(willAdd?'':' disabled')+'>Add '+willAdd+'</button></div></div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function(e){ if(e.target===ov || e.target.closest('[data-imp-x]')){ ov.remove(); } });
+    var go=ov.querySelector('#imp-go');
+    if(go) go.addEventListener('click', async function(){
+      go.disabled=true; go.textContent='Adding…';
+      var res=await _impInsert(rows);
+      if(res.error){ var m=document.getElementById('imp-msg'); if(m){ m.textContent='Could not import: '+res.error; m.style.color='#a3402f'; } go.disabled=false; go.textContent='Add '+willAdd; return; }
+      go.textContent='Added '+res.count; setTimeout(function(){ location.reload(); }, 600);
+    });
+  }
+  var _impWired=false;
+  function wireImport(){
+    if(_impWired) return; _impWired=true;
+    var btn=document.getElementById('btn-import'), inp=document.getElementById('import-file');
+    if(!btn || !inp) return;
+    btn.addEventListener('click', function(){ if(typeof XLSX==='undefined'){ alert('Spreadsheet reader still loading, try again in a moment.'); return; } inp.value=''; inp.click(); });
+    inp.addEventListener('change', function(){
+      var file=inp.files && inp.files[0]; if(!file) return;
+      var reader=new FileReader();
+      reader.onload=function(e){
+        try{ var wb=XLSX.read(new Uint8Array(e.target.result), {type:'array'}); var ws=wb.Sheets[wb.SheetNames[0]]; var rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true}); var parsed=_impParse(rows); if(!parsed.length){ alert('No importable transactions found in that file.'); return; } openImportPreview(parsed); }
+        catch(err){ alert('Could not read that file. Make sure it is the SkySlope .xlsx export.'); }
+      };
+      reader.readAsArrayBuffer(file);
+    });
   }
   // A file counts as the viewer's OWN production only when they are the selling agent: by account
   // id, by name on an imported (account-less) file, or via a commission split. A broker can READ
