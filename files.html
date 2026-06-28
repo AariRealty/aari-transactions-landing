@@ -9996,10 +9996,15 @@ Tell me your planned move-out date and I will set the inspection.`
       const statusHtml = sub ? ('<span style="color:' + sc + (sc !== '#8a857c' ? ';font-weight:600' : '') + '">' + esc(sub) + '</span>') : '';
       const subLine = [agentHtml, clientHtml, statusHtml].filter(Boolean).join(' &middot; ');
       const rightChip = '<span style="flex:none;font-size:11px;font-weight:500;color:#5f5e5a;background:#f1efe8;border:0.5px solid #e6e1d6;border-radius:20px;padding:4px 11px">' + esc(ty) + ' &middot; ' + esc(it.label) + '</span>';
+      // Company earning · the Aari Realty fee sits to the RIGHT of the status pill, broker only.
+      const _brokerRow = (_profile && String(_profile.role || '').toLowerCase() === 'broker');
+      const feeChip = (_brokerRow && isAariRealtyFile(f))
+        ? '<span style="flex:none;font-size:13px;font-weight:700;color:#0f0f0f;font-variant-numeric:tabular-nums;min-width:42px;text-align:right">$' + aariRealtyFee(f) + '</span>'
+        : '';
       const claim = (kind === 'needstc') ? '<span data-claim-file="' + esc(f.id) + '" style="flex:none;font-size:11px;font-weight:500;color:#fff;background:#0f0f0f;border-radius:20px;padding:5px 13px;cursor:pointer;font-family:inherit">Claim</span>' : '';
       return '<div data-file-open="' + esc(f.id) + '" style="display:flex;align-items:center;gap:12px;padding:11px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
         '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:500;color:#0f0f0f">' + esc(addr) + '</div>' + (subLine ? ('<div style="font-size:11.5px;margin-top:2px">' + subLine + '</div>') : '') + '</div>' +
-        rightChip + claim + '</div>';
+        rightChip + feeChip + claim + '</div>';
     };
     let html = '<div style="display:flex;align-items:center;gap:9px;margin-bottom:13px">' +
       '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:19px;font-weight:600;color:#0f0f0f">Active files</span>' +
@@ -10032,6 +10037,18 @@ Tell me your planned move-out date and I will set the inspection.`
       html += _calOpen.claim
         ? '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px"><div data-cal-group="claim" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">Available to claim</span><span style="font-size:11px;color:#a39e95">' + ntc.length + '</span><span style="font-size:13px;color:#a39e95">&#9662;</span></div>' + ntc.map(function(it){ return fileRow(it, 'needstc'); }).join('') + '</div>'
         : '<div data-cal-group="claim" style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px;display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:12.5px;color:#5f5e5a">Available to claim</span><span style="font-size:12px;color:#a39e95">' + ntc.length + '</span><span style="font-size:13px;color:#a39e95">&#8250;</span></div>';
+    }
+    // Company earning · running total of the Aari Realty fee across every active
+    // brokerage file in view, pinned at the bottom. Broker only.
+    if(broker){
+      var _feeFiles = ntc.concat(nyou, ont).filter(function(it){ return isAariRealtyFile(it.f); });
+      if(_feeFiles.length){
+        var _coTotal = _feeFiles.reduce(function(s, it){ return s + aariRealtyFee(it.f); }, 0);
+        html += '<div style="display:flex;align-items:center;gap:12px;background:#0f0f0f;color:#fff;border-radius:12px;padding:14px 18px;margin-top:4px">' +
+          '<span style="flex:1;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#cfcabf">Aari Realty income</span>' +
+          '<span style="font-size:11px;color:#a8a39a">' + _feeFiles.length + ' files</span>' +
+          '<span style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums">$' + _coTotal.toLocaleString() + '</span></div>';
+      }
     }
     host.innerHTML = html; _wireCal(host);
   }
@@ -16160,7 +16177,18 @@ Tell me your planned move-out date and I will set the inspection.`
   // money lines kept on separate entity books: the coordinator's pay ($80, Aari Transactions)
   // and the Aari Realty transaction fee ($499 residential/commercial, $299 vacant land/rental,
   // by property type) shown to the broker only.
-  function isAariRealtyFile(f){ return !!(f && f.assigned_tc_id === '9fa206b8-45e9-46bb-ba98-79c2e8361661'); }
+  // An Aari Realty (company-income) file = a brokerage transaction from one of our own
+  // agents, regardless of which TC coordinates it. Outside-agent TC-client files (e.g.
+  // Samantha Haringa, who is also a role='agent' account) carry NO company fee. The current
+  // book comes in tagged source='master_import'; future portal submissions can set
+  // raw_form_data.aari_realty=true. submitted_by_tc files are always outside client work.
+  function isAariRealtyFile(f){
+    if(!f) return false;
+    var rfd = f.raw_form_data || {};
+    if(rfd.aari_realty === true || rfd.aari_realty === 'true') return true;
+    if(rfd.submitted_by_tc) return false;
+    return String(rfd.source || '') === 'master_import';
+  }
   function aariRealtyFee(f){ var pt = String((f && f.raw_form_data && f.raw_form_data.property_type) || '').toLowerCase(); return ((f.file_type || '') === 'rental' || pt.indexOf('land') !== -1) ? 299 : 499; }
   function fileMoneyHtml(file){
     var isBroker = (typeof _profile === 'object' && _profile && String(_profile.role || '').toLowerCase() === 'broker');
