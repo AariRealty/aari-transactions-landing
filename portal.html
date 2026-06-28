@@ -4692,8 +4692,13 @@
   }
 
   // Inline per-deal commission editor · price + rate override + bonus + company-lead 50/50.
+  // After a save, patch the file in EVERY in-memory list (a pending file is loaded separately into
+  // _pendingFiles, so updating only the editor's reference left the board showing stale numbers).
+  function _patchFileEverywhere(id, payload){
+    [_files, _teamFiles, _pendingFiles].forEach(function(arr){ (arr||[]).forEach(function(x){ if(String(x.id)===String(id)) Object.assign(x, payload); }); });
+  }
   function editDealTerms(fileId, rowEl){
-    var f=null; (_teamFiles||[]).concat(_files||[]).forEach(function(x){ if(String(x.id)===String(fileId)) f=x; });
+    var f=null; (_teamFiles||[]).concat(_files||[]).concat(_pendingFiles||[]).forEach(function(x){ if(String(x.id)===String(fileId)) f=x; });
     if(!f){ alert('Deal not found.'); return; }
     var nxt=rowEl.nextSibling;
     if(nxt && nxt.className==='pv-dterms'){ nxt.parentNode.removeChild(nxt); return; }
@@ -4716,7 +4721,7 @@
       '<label>Sale price<input type="text" id="dt-price" value="'+(price||'')+'" placeholder="optional"></label>'+
       '<label>Commission <span class="dt-units" style="float:right;display:inline-flex;gap:4px;"><b id="dt-u-pct" style="'+upBtn(!flatMode)+'">%</b><b id="dt-u-usd" style="'+upBtn(flatMode)+'">$</b></span><input type="text" id="dt-comm" value="'+commVal+'" placeholder="'+(flatMode?'1000':'2.5')+'"></label>'+
       '<label>Bonus $<input type="text" id="dt-bonus" value="'+bonus+'"></label>'+
-      '<label id="dt-aspl-wrap"'+(isLead?' style="display:none"':'')+'>Agent split %<input type="text" id="dt-aspl" value="'+aspl+'" placeholder="100"></label>'+
+      '<label id="dt-aspl-wrap"'+(isLead?' style="display:none"':'')+'>Agent split %<input type="text" id="dt-aspl" value="'+aspl+'" placeholder="'+agentSplitOf(f)+'"></label>'+
       '<div id="dt-lead-note"'+(isLead?'':' style="display:none"')+' style="font-size:11.5px;color:var(--muted);align-self:end;padding-bottom:6px;line-height:1.45">Company lead: agent keeps <b style="color:var(--ink)">'+COMPANY_LEAD_AGENT_PCT+'%</b>, Aari '+(100-COMPANY_LEAD_AGENT_PCT)+'% + fee.</div>'+
       '<label>Transaction fee $ <span id="dt-fee-lock" style="float:right;font-size:10px;color:var(--muted);cursor:pointer;text-decoration:underline">Unlock</span><input type="text" id="dt-fee" value="'+feeVal+'" readonly style="background:rgba(15,15,15,0.04)"><span style="font-size:10px;color:var(--muted);font-weight:400;display:block;margin-top:2px">Auto by property type ($499 residential/commercial, $299 land/rental). Goes to Aari, does not affect agent pay.</span></label>'+
       '<label class="dt-chk"><input type="checkbox" id="dt-lead"'+(isLead?' checked':'')+'> Company lead (Aari provided)</label>'+
@@ -4753,7 +4758,7 @@
       var msPayload={ status:'closed', transaction_stage:'closed' }; if(!f.closing_date) msPayload.closing_date=_tIso;
       try{ var msr=await _client.from('files').update(msPayload).eq('id', f.id); if(msr && msr.error){ alert('Could not mark sold: '+msr.error.message); this.disabled=false; this.textContent='Mark sold'; return; }
         try{ var _nm=_profile?(((_profile.first_name||'')+' '+(_profile.last_name||'')).trim()||'You'):'You'; await _client.from('file_term_changes').insert([{file_id:f.id, changed_by:(_profile&&_profile.id)||null, changed_by_name:_nm, field:'Status', old_value:'Active', new_value:'Sold'}]); }catch(_e){}
-        Object.assign(f,msPayload); if(box.parentNode) box.parentNode.removeChild(box); renderTeamView();
+        _patchFileEverywhere(f.id, msPayload); if(box.parentNode) box.parentNode.removeChild(box); renderTeamView();
       }catch(_e2){ alert('Could not mark sold.'); this.disabled=false; this.textContent='Mark sold'; }
     });
     box.querySelector('.dt-save').addEventListener('click', async function(){
@@ -4787,13 +4792,13 @@
           var nc=(payload.commission_flat_cents!=null)?dol(payload.commission_flat_cents):(payload.commission_pct!=null?(payload.commission_pct+'%'):null);
           add('Commission', oc, nc);
           add('Bonus', dol(f.commission_bonus_cents)||'$0', dol(payload.commission_bonus_cents)||'$0');
-          add('Agent split', (f.brokerage_split_pct!=null?f.brokerage_split_pct+'%':'100%'), (payload.brokerage_split_pct!=null?payload.brokerage_split_pct+'%':'100%'));
+          add('Agent split', (f.brokerage_split_pct!=null?f.brokerage_split_pct+'%':agentSplitOf(f)+'%'), (payload.brokerage_split_pct!=null?payload.brokerage_split_pct+'%':agentSplitOf(f)+'%'));
           var ofee=dol(f.file_fee_cents)||('$'+Math.round(baseFileFee(f))), nfee=dol(payload.file_fee_cents)||('$'+Math.round(baseFileFee(f)));
           add('Fee', ofee, nfee);
           if(_reAgentName){ ch.push({file_id:f.id, changed_by:(_profile&&_profile.id)||null, changed_by_name:nm, field:'Agent', old_value:_oldAgentName||null, new_value:_reAgentName||null}); }
           if(ch.length){ await _client.from('file_term_changes').insert(ch); }
         } catch(_e){}
-        Object.assign(f,payload); renderTeamView(); }
+        _patchFileEverywhere(f.id, payload); renderTeamView(); }
       catch(e){ alert('Could not save the deal terms.'); this.disabled=false; this.textContent='Save'; }
     });
   }
