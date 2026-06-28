@@ -4215,15 +4215,21 @@
     }
     return out;
   }
+  // Dedup is ADDRESS-first. If the property is already on file, it's a duplicate and skipped —
+  // UNLESS the row has an explicit side (Listing/Purchase) that is genuinely the OTHER side we don't
+  // have yet. Active rows in the export have a blank Type of Sale, so they match by address and skip.
   function _impClassify(rows){
-    var existing={}; (_files||[]).forEach(function(f){ if((f.raw_form_data||{}).test_pool) return; existing[_impNormAddr(f.property_address)+'|'+_impFileSide(f)]=true; });
+    var sidesByAddr={};
+    (_files||[]).forEach(function(f){ if((f.raw_form_data||{}).test_pool) return; var a=_impNormAddr(f.property_address); (sidesByAddr[a]=sidesByAddr[a]||{})[_impFileSide(f)]=true; });
     var seen={};
     rows.forEach(function(row){
-      var base=_impNormAddr(row.addr), k=base+'|'+row.side;
-      if(seen[k] || existing[k]){ row.cls='dup'; return; }       // already in system or earlier in this file
-      var other = existing[base+'|buyer'] || existing[base+'|seller'] || seen[base+'|buyer'] || seen[base+'|seller'];
-      row.cls = other ? 'side' : 'new';
-      seen[k]=true;
+      var a=_impNormAddr(row.addr);
+      var have=Object.assign({}, sidesByAddr[a]||{}, seen[a]||{});
+      var known=Object.keys(have).length>0;
+      if(!known){ row.cls='new'; }
+      else if(row.side && row.side!=='both' && !have[row.side]){ row.cls='side'; } // explicit other side, not on file
+      else { row.cls='dup'; }
+      if(row.cls!=='dup'){ (seen[a]=seen[a]||{})[row.side||'buyer']=true; }
     });
     return rows;
   }
