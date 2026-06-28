@@ -16253,29 +16253,57 @@ Tell me your planned move-out date and I will set the inspection.`
   function fileMembership(f){ return (f && f.agent_id && _membersById) ? _membersById[f.agent_id] : null; }
   function isTcService(f){ return !!TC_SERVICE_TYPES[(f && f.service_type) || '']; }
   function isCreditService(f){ return !!CREDIT_SERVICES[(f && f.service_type) || '']; }
-  // Allocate each member's credit-eligible files against their monthly credit count (earliest
-  // first). The first `credits_total` are covered by the membership; the rest overflow to billable.
+  // Membership credits reset each billing month and do NOT roll over. So credit-eligible files are
+  // bucketed into monthly cycles (anchored on the membership's current_period_start day); each cycle
+  // gets a fresh `credits_total`. Within a cycle, earliest files are covered, the rest overflow to
+  // billable. A new month = a new set of credits, automatically.
+  function _asDate(x){ return (x instanceof Date) ? x : new Date(x); }
+  // Whole monthly cycles between an anchor date and a given date (0 = the anchor's own cycle).
+  function cycleIndex(dateLike, anchorLike){
+    var d = _asDate(dateLike), a = _asDate(anchorLike);
+    var m = (d.getFullYear() - a.getFullYear()) * 12 + (d.getMonth() - a.getMonth());
+    if(d.getDate() < a.getDate()) m -= 1;   // before the anchor day = still the previous cycle
+    return m;
+  }
+  // The reset date (next cycle start) for cycle `ci` measured from the anchor.
+  function cycleResetDate(anchorLike, ci){ var a = _asDate(anchorLike); return new Date(a.getFullYear(), a.getMonth() + ci + 1, a.getDate()); }
   function computeCreditCoverage(){
-    _creditCoverByFile = {}; _creditMeterByAgent = {};
-    var byAgent = {};
+    _creditCoverByFile = {}; _creditMeterByFile = {}; _creditMeterByAgent = {};
+    var byAgentCycle = {}, anchorOf = {};
     (_files || []).forEach(function(f){
       if(!f || f.status === 'archived') return;
       if((f.raw_form_data || {}).test_pool) return;
       var m = f.agent_id ? _membersById[f.agent_id] : null;
       if(!m || !isCreditService(f)) return;
-      (byAgent[f.agent_id] = byAgent[f.agent_id] || []).push(f);
+      var anchor = m.current_period_start || m.created_at || f.created_at;
+      anchorOf[f.agent_id] = anchor;
+      var ci = cycleIndex(f.created_at || anchor, anchor);
+      var key = f.agent_id + '|' + ci;
+      (byAgentCycle[key] = byAgentCycle[key] || []).push(f);
     });
-    Object.keys(byAgent).forEach(function(aid){
-      var list = byAgent[aid].slice().sort(function(a, b){ return new Date(a.created_at || 0) - new Date(b.created_at || 0); });
+    Object.keys(byAgentCycle).forEach(function(key){
+      var aid = key.split('|')[0], ci = +key.split('|')[1];
+      var list = byAgentCycle[key].slice().sort(function(a, b){ return new Date(a.created_at || 0) - new Date(b.created_at || 0); });
       var total = (_membersById[aid] && _membersById[aid].credits_total) || 0;
-      list.forEach(function(f, i){ _creditCoverByFile[f.id] = (i < total) ? 'covered' : 'overflow'; });
-      _creditMeterByAgent[aid] = { used: list.length, total: total };
+      var reset = cycleResetDate(anchorOf[aid], ci);
+      list.forEach(function(f, i){
+        _creditCoverByFile[f.id] = (i < total) ? 'covered' : 'overflow';
+        _creditMeterByFile[f.id] = { used: list.length, total: total, over: list.length > total, resetDate: reset };
+      });
+    });
+    // The member's CURRENT cycle meter (today), used for the at-a-glance flag.
+    Object.keys(anchorOf).forEach(function(aid){
+      var ci = cycleIndex(new Date(), anchorOf[aid]);
+      var list = byAgentCycle[aid + '|' + ci] || [];
+      var total = (_membersById[aid] && _membersById[aid].credits_total) || 0;
+      _creditMeterByAgent[aid] = { used: list.length, total: total, over: list.length > total, resetDate: cycleResetDate(anchorOf[aid], ci) };
     });
   }
   // A file covered by a membership credit: the membership already paid for it, so no per-file
   // charge and (per Marlenyi) NO TC pay either.
   function isCreditCovered(f){ return f && _creditCoverByFile[f.id] === 'covered'; }
-  function creditMeter(f){ return (f && f.agent_id) ? _creditMeterByAgent[f.agent_id] : null; }
+  // Meter for the file's own cycle (so a file from a prior month shows that month's usage).
+  function creditMeter(f){ return (f && (_creditMeterByFile[f.id] || (f.agent_id ? _creditMeterByAgent[f.agent_id] : null))) || null; }
   // $50 off applies only to TC files, only for an active member.
   function memberTcDiscount(f){ return (fileMembership(f) && isTcService(f)) ? MEMBER_TC_DISCOUNT : 0; }
   function svcPrice(f){ return SERVICE_PRICE[(f && f.service_type) || ''] || 0; }
@@ -16333,7 +16361,9 @@ Tell me your planned move-out date and I will set the inspection.`
     var bits = [tierName + ' member <b style="color:#0f0f0f;font-weight:600">$' + (MEMBERSHIP_FEE[mem.tier] || 0) + '</b>/mo'];
     if(meter && meter.total){
       var over = meter.used > meter.total;
-      bits.push('<span style="color:' + (over ? '#a3402f' : '#a8a39a') + ';font-weight:' + (over ? '600' : '500') + '">' + Math.min(meter.used, meter.total) + '/' + meter.total + ' credits' + (over ? ' &middot; limit reached, ' + (meter.used - meter.total) + ' billable' : (meter.used >= meter.total ? ' &middot; full' : '')) + '</span>');
+      var resetTxt = '';
+      try { if(meter.resetDate) resetTxt = ', resets ' + _asDate(meter.resetDate).toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){}
+      bits.push('<span style="color:' + (over ? '#a3402f' : '#a8a39a') + ';font-weight:' + (over ? '600' : '500') + '">' + Math.min(meter.used, meter.total) + '/' + meter.total + ' credits this month' + (over ? ' &middot; ' + (meter.used - meter.total) + ' over plan, billable' : (meter.used >= meter.total ? ' &middot; full' : '')) + resetTxt + '</span>');
     }
     return '<span style="color:#a8a39a">' + bits.join(' <span style="color:#d8d3ca">&middot;</span> ') + '</span>';
   }
