@@ -12908,6 +12908,7 @@ Tell me your planned move-out date and I will set the inspection.`
     closing:    'ctc_closing_confirmed'
   };
   let _emailFlagsByFile = {};
+  let _emailFlagOpen = {};
   async function loadEmailFlags(fileId){
     try {
       const res = await _client.from('file_email_flags')
@@ -12925,6 +12926,8 @@ Tell me your planned move-out date and I will set the inspection.`
       el = document.createElement('div'); el.id = 'rail-email-flags';
       right.insertBefore(el, right.firstChild);
       el.addEventListener('click', async function(e){
+        const t = e.target.closest && e.target.closest('[data-eflag-toggle]');
+        if(t){ const k = t.getAttribute('data-eflag-toggle'); _emailFlagOpen[k] = !_emailFlagOpen[k]; renderEmailFlagsBanner(); return; }
         const b = e.target.closest && e.target.closest('[data-eflag-done]'); if(!b) return;
         b.disabled = true;
         const ids = (b.getAttribute('data-eflag-done') || '').split(',').filter(Boolean);
@@ -12960,18 +12963,25 @@ Tell me your planned move-out date and I will set the inspection.`
           const n = g.items.length;
           const ids = g.items.map(function(x){ return x.id; }).join(',');
           const latest = g.latest;
-          let people = g.senders.slice(0,2).join(', ');
-          if(g.senders.length > 2) people += ' +' + (g.senders.length - 2);
-          const meta = [people, (latest.source_at ? _when(latest.source_at) : ''), (n > 1 ? (n + ' messages') : '')].filter(Boolean).join(' &middot; ');
-          return '<div style="padding:8px 0;border-top:0.5px solid #dde6f2">' +
-            '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
-              '<span style="font-size:12.5px;font-weight:600;color:#0f0f0f">' + esc(g.title) +
-                (n > 1 ? ('<span style="margin-left:7px;font-size:10.5px;font-weight:700;color:#0c447c;background:#dde6f2;border-radius:20px;padding:1px 7px">' + n + '</span>') : '') +
-              '</span>' +
-              '<button type="button" data-eflag-done="' + esc(ids) + '" style="background:#fff;color:#0c447c;border:0.5px solid #cfdcef;font-size:10.5px;font-weight:600;border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;flex:none">Dismiss' + (n > 1 ? ' all' : '') + '</button>' +
+          const open = !!_emailFlagOpen[key];
+          const headRight = esc(_firstName(latest.source_from)) + (latest.source_at ? (' &middot; ' + _when(latest.source_at)) : '');
+          var head = '<div data-eflag-toggle="' + esc(key) + '" style="padding:9px 0;border-top:0.5px solid #dde6f2;display:flex;justify-content:space-between;align-items:center;gap:10px;cursor:pointer">' +
+            '<div style="display:flex;align-items:center;gap:7px;min-width:0">' +
+              '<span style="flex:none;color:#9fb3cc;font-size:11px;display:inline-block;transform:rotate(' + (open ? '90deg' : '0deg') + ');transition:transform .12s">&#9656;</span>' +
+              '<span style="font-size:12.5px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(g.title) + '</span>' +
+              (n > 1 ? ('<span style="flex:none;font-size:10.5px;font-weight:700;color:#0c447c;background:#dde6f2;border-radius:20px;padding:1px 7px">' + n + '</span>') : '') +
             '</div>' +
-            '<div style="font-size:11px;color:#5f6b7c;margin-top:2px">' + meta + '</div>' +
+            '<span style="flex:none;font-size:11px;color:#5f6b7c">' + headRight + '</span>' +
           '</div>';
+          if(!open) return head;
+          var msgs = g.items.slice(0, 6).map(function(it){
+            var who = it.source_from ? esc(it.source_from) : 'Email';
+            return '<div style="font-size:11.5px;color:#5f6b7c;padding:3px 0">' + who + (it.detail ? (' &middot; ' + esc(it.detail)) : '') + (it.source_at ? (' &middot; ' + _when(it.source_at)) : '') + '</div>';
+          }).join('');
+          var more = n > 6 ? ('<div style="font-size:11.5px;color:#9aa6b4;padding:3px 0">+' + (n - 6) + ' more</div>') : '';
+          var detail = '<div style="padding:2px 0 10px 18px">' + msgs + more +
+            '<button type="button" data-eflag-done="' + esc(ids) + '" style="margin-top:7px;background:#fff;color:#0c447c;border:0.5px solid #cfdcef;font-size:10.5px;font-weight:600;border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit">Dismiss' + (n > 1 ? ' thread' : '') + '</button></div>';
+          return head + detail;
         }).join('') + '</div>';
     } catch(_){ el.style.display = 'none'; }
   }
@@ -16388,8 +16398,8 @@ Tell me your planned move-out date and I will set the inspection.`
   function memberTcDiscount(f){ return (isOutsideFile(f) && fileMembership(f) && isTcService(f)) ? MEMBER_TC_DISCOUNT : 0; }
   function svcPrice(f){ return SERVICE_PRICE[(f && f.service_type) || ''] || 0; }
   function chargedPrice(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? (p - memberTcDiscount(f)) : 0; } // what the client actually pays
-  function atTcCut(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? (Math.round(p * AT_TC_PCT / 100) - memberTcDiscount(f)) : 0; } // TC 40% less the member $50; $0 if credit-covered
-  function atCoCut(f){ var p = chargedPrice(f); return p ? (p - atTcCut(f)) : 0; } // AT keeps the remainder (= full 60%)
+  function atTcCut(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? Math.round(p * AT_TC_PCT / 100) : 0; } // TC's FULL 40%; the member $50 comes out of Aari's share, NEVER the TC's pay; $0 if credit-covered
+  function atCoCut(f){ var p = chargedPrice(f); return p ? (p - atTcCut(f)) : 0; } // AT keeps the remainder = its 60% less the member $50 (Aari absorbs the discount, not the TC)
   function isFileOrgFile(f){ return ((f.file_type || '') === 'compliance' || (f.service_type || '') === 'file_organization'); }
   function isOutsideFile(f){ return !isAariRealtyFile(f); }
   // Manual override · mark any file as File Organization. Set raw_form_data.fo_override = true.
@@ -16448,7 +16458,7 @@ Tell me your planned move-out date and I will set the inspection.`
       var charged = chargedPrice(f);                  // what the client/agent pays (full price in-house)
       var inh = isAariRealtyFile(f) ? 'in-house &middot; ' : (disc ? 'member &middot; ' : '');
       if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">$' + charged + '</span><span style="' + sub + '">' + inh + 'keep $' + atCoCut(f) + ' &middot; ' + AT_TC_PCT + '% TC</span></div>';
-      return '<div style="' + col + '"><span style="' + big + '">$' + atTcCut(f) + '</span><span style="' + sub + '">' + (disc ? AT_TC_PCT + '% less $' + disc + ' member' : AT_TC_PCT + '% of $' + p) + '</span></div>';
+      return '<div style="' + col + '"><span style="' + big + '">$' + atTcCut(f) + '</span><span style="' + sub + '">' + AT_TC_PCT + '% of $' + p + '</span></div>';
     }
     // Fallback (no price / unknown)
     return '<span style="' + faint + '">&mdash;</span>';
@@ -16478,12 +16488,12 @@ Tell me your planned move-out date and I will set the inspection.`
       var disc = memberTcDiscount(f), charged = chargedPrice(f);
       if(role === 'broker'){
         var ctx = isAariRealtyFile(f) ? 'in-house full price' : (disc ? 'member price' : 'service price');
-        var discTxt = disc ? (' (40% of $' + p + ' less $' + disc + ' member)') : (' (40% of $' + p + ')');
+        var aariTxt = disc ? (' (' + (100 - AT_TC_PCT) + '% less $' + disc + ' member)') : '';
         return { fig: '<span style="' + fBig + '">$' + charged + '</span>',
-          detail: '<b>$' + charged + '</b> ' + ctx + ' &middot; Aari keeps <b>$' + atCoCut(f) + '</b> &middot; TC earns <b>$' + atTcCut(f) + '</b>' + discTxt };
+          detail: '<b>$' + charged + '</b> ' + ctx + ' &middot; Aari keeps <b>$' + atCoCut(f) + '</b>' + aariTxt + ' &middot; TC earns <b>$' + atTcCut(f) + '</b> (' + AT_TC_PCT + '% of $' + p + ', full)' };
       }
       return { fig: '<span style="' + fBig + '">$' + atTcCut(f) + '</span>',
-        detail: 'You earn <b>$' + atTcCut(f) + '</b> &middot; ' + (disc ? '40% of $' + p + ' less $' + disc + ' member' : '40% of $' + p) };
+        detail: 'You earn <b>$' + atTcCut(f) + '</b> &middot; ' + AT_TC_PCT + '% of $' + p + (disc ? ' &middot; the member $50 off comes from Aari, your pay is full' : '') };
     }
     return { fig: '<span style="' + fMut + '">&mdash;</span>', detail: '' };
   }
@@ -16557,19 +16567,27 @@ Tell me your planned move-out date and I will set the inspection.`
       if(op){ var fid = op.getAttribute('data-cp-open'); var ff = (_files || []).find(function(x){ return x.id === fid; }); ov.remove(); if(ff && typeof openPlaybook === 'function') openPlaybook(ff); }
     });
   }
-  // Compact membership / credit-limit flag for a member's file. Empty for non-members.
+  // Membership / credit block for a member's file. Its own full-width line in the money strip so
+  // the plan, the $50-discount rule, and the monthly service-credit count are all clear. Empty for
+  // non-members.
   function memberFlagHtml(file){
     var mem = fileMembership(file); if(!mem) return '';
     var meter = creditMeter(file);
     var tierName = mem.tier ? (mem.tier.charAt(0).toUpperCase() + mem.tier.slice(1)) : 'Member';
-    var bits = [tierName + ' member <b style="color:#0f0f0f;font-weight:600">$' + (MEMBERSHIP_FEE[mem.tier] || 0) + '</b>/mo'];
-    if(meter && meter.total){
-      var over = meter.used > meter.total;
-      var resetTxt = '';
-      try { if(meter.resetDate) resetTxt = ', resets ' + _asDate(meter.resetDate).toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){}
-      bits.push('<span style="color:' + (over ? '#a3402f' : '#a8a39a') + ';font-weight:' + (over ? '600' : '500') + '">' + Math.min(meter.used, meter.total) + '/' + meter.total + ' credits this month' + (over ? ' &middot; ' + (meter.used - meter.total) + ' over plan, billable' : (meter.used >= meter.total ? ' &middot; full' : '')) + resetTxt + '</span>');
-    }
-    return '<span style="color:#a8a39a">' + bits.join(' <span style="color:#d8d3ca">&middot;</span> ') + '</span>';
+    var fee = MEMBERSHIP_FEE[mem.tier] || 0;
+    var disc = memberTcDiscount(file);
+    var total = (meter && meter.total) || mem.credits_total || 0;
+    var used = meter ? Math.min(meter.used, meter.total) : 0;
+    var over = meter ? (meter.used > meter.total) : false;
+    var resetTxt = '';
+    try { if(meter && meter.resetDate) resetTxt = ' &middot; resets ' + _asDate(meter.resetDate).toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){}
+    var dots = '';
+    for(var i = 0; i < total; i++){ dots += '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px;background:' + (i < used ? '#0f0f0f' : '#d8d3ca') + '"></span>'; }
+    var out = '<div style="flex-basis:100%;border-top:0.5px solid #ece8e0;margin-top:7px;padding-top:8px;font-size:11.5px;line-height:1.5">' +
+      '<div><b style="color:#0f0f0f;font-weight:600">' + esc(tierName) + ' member</b> <span style="color:#8a857c">$' + fee + '/mo</span></div>';
+    if(disc) out += '<div style="color:#8a857c;margin-top:2px">$' + disc + ' member discount comes out of Aari&rsquo;s share &middot; the TC&rsquo;s ' + AT_TC_PCT + '% pay is unchanged</div>';
+    if(total) out += '<div style="margin-top:4px;display:flex;align-items:center;gap:7px"><span style="flex:none;line-height:1">' + dots + '</span><span style="color:' + (over ? '#a3402f' : '#8a857c') + '">' + used + ' of ' + total + ' service credits used this month' + (over ? ' &middot; ' + (meter.used - meter.total) + ' over, billable' : '') + resetTxt + '</span></div>';
+    return out + '</div>';
   }
   // Drawer money strip · Aari Transactions money only, by role.
   function fileMoneyHtml(file){
@@ -16590,7 +16608,7 @@ Tell me your planned move-out date and I will set the inspection.`
       var inh = isAariRealtyFile(file) ? 'in-house full price, ' : (disc ? 'member, ' : '');
       if(!p){ parts.push('<span style="color:#a8a39a">Service price not set</span>'); }
       else if(role === 'broker') parts.push('<span>Service <b style="color:#0f0f0f;font-weight:600">$' + chargedPrice(file) + '</b> <span style="color:#a8a39a">&middot; ' + inh + 'keep $' + atCoCut(file) + ', ' + AT_TC_PCT + '% to TC</span></span>');
-      else parts.push('<span>You earn <b style="color:#0f0f0f;font-weight:600">$' + atTcCut(file) + '</b> <span style="color:#a8a39a">&middot; ' + (disc ? AT_TC_PCT + '% of $' + p + ' less $' + disc + ' member' : AT_TC_PCT + '% of $' + p) + '</span></span>');
+      else parts.push('<span>You earn <b style="color:#0f0f0f;font-weight:600">$' + atTcCut(file) + '</b> <span style="color:#a8a39a">&middot; ' + AT_TC_PCT + '% of $' + p + '</span></span>');
     } else {
       // In-house brokerage deal: Aari Transactions does not bill; coordination pay still pending.
       parts.push('<span style="color:#a8a39a">In-house &middot; coordination covered</span>');
