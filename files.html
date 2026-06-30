@@ -11190,7 +11190,9 @@ Tell me your planned move-out date and I will set the inspection.`
           const fields = ec && ec.data && ec.data.fields;
           if(fields && Object.keys(fields).length){
             const raw2 = Object.assign({}, file.raw_form_data || {});
-            raw2.extracted_contract = { fields: fields, at: new Date().toISOString(), source: 'extract-contract-fields' };
+            // Keep documents + flags too · dropping them here was hiding the doc-separation tabs
+            // until a full reload even though the server had split the package.
+            raw2.extracted_contract = { fields: fields, documents: (ec.data && ec.data.documents) || [], review_flags: (ec.data && ec.data.review_flags) || [], at: new Date().toISOString(), source: 'extract-contract-fields' };
             file.raw_form_data = raw2;
             if(_currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = raw2;
             const ff2 = (_files || []).find(function(x){ return x.id === file.id; }); if(ff2) ff2.raw_form_data = raw2;
@@ -15840,9 +15842,29 @@ Tell me your planned move-out date and I will set the inspection.`
     // SCREEN 1 · What I extracted → Next goes to the Deadlines screen.
     const _nextBtn = '<button type="button" data-setup-step="deadlines" style="width:100%;margin-top:4px;font-size:14px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:10px;padding:13px;cursor:pointer;font-family:inherit">Next, review the deadlines &rarr;</button>';
     return _panelOpen +
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;font-weight:600;color:#0f0f0f">What I extracted</span><span style="font-size:10px;color:#0c447c;background:#e6f1fb;border-radius:9px;padding:2px 8px;font-weight:600">from the contract</span></div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;font-weight:600;color:#0f0f0f">What I extracted</span><span style="display:inline-flex;gap:8px;align-items:center"><button type="button" data-reextract="1" title="Re-run extraction from the contract" style="font-size:10px;color:#5f5e5a;border:0.5px solid #d8d3ca;background:#fff;border-radius:8px;padding:3px 9px;cursor:pointer;font-family:inherit">&#8635; Re-extract</button><span style="font-size:10px;color:#0c447c;background:#e6f1fb;border-radius:9px;padding:2px 8px;font-weight:600">from the contract</span></span></div>' +
       '<div style="font-size:11.5px;color:#a39e95;margin-bottom:11px">Review the list, tap Edit on anything that is off, then continue to the deadlines.</div>' +
       listHtml + _nextBtn + '</div>';
+  }
+  // Force a fresh contract extraction on demand (the "Re-extract" button). Re-runs the edge
+  // function and re-renders with the new fields + document split.
+  async function _reExtractContract(file){
+    if(!file || !file.id){ return; }
+    var btn = document.querySelector('[data-reextract]'); if(btn){ btn.disabled = true; btn.innerHTML = 'Re-extracting…'; }
+    try {
+      const ec = await _client.functions.invoke('extract-contract-fields', { body:{ file_id:file.id } });
+      if(ec && ec.error) throw ec.error;
+      const d = ec && ec.data;
+      if(d && d.fields && Object.keys(d.fields).length){
+        const raw2 = Object.assign({}, file.raw_form_data || {});
+        raw2.extracted_contract = { fields:d.fields, documents:d.documents||[], review_flags:d.review_flags||[], at:new Date().toISOString(), source:'extract-contract-fields' };
+        file.raw_form_data = raw2;
+        if(_currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = raw2;
+        const ff = (_files||[]).find(function(x){ return x.id === file.id; }); if(ff) ff.raw_form_data = raw2;
+        const _rp = document.getElementById('rail-pdf'); if(_rp) _rp.removeAttribute('data-ctshell');
+        renderPlaybook(file);
+      } else { alert('Re-extract ran but found nothing on the contract to read.'); if(btn){ btn.disabled=false; btn.innerHTML='↻ Re-extract'; } }
+    } catch(e){ alert('Could not re-extract: ' + (e && e.message || 'unknown')); if(btn){ btn.disabled=false; btn.innerHTML='↻ Re-extract'; } }
   }
   // Save an edited group from the "What I extracted" list (inline inputs, not a stepper)
   // back to the extracted draft + the mapped file columns, then re-render.
@@ -17625,6 +17647,7 @@ Tell me your planned move-out date and I will set the inspection.`
       // Toggle the overflow menu.
       if(e.target.closest('#rail-more-btn')){ if(mm) mm.style.display = (mm.style.display === 'none' || !mm.style.display) ? 'block' : 'none'; return; }
       if(e.target.closest('[data-client-profile]')){ if(mm) mm.style.display = 'none'; if(_currentFile) openClientProfile(_currentFile.agent_id, _currentFile); return; }
+      if(e.target.closest('[data-reextract]')){ if(_currentFile) _reExtractContract(_currentFile); return; }
       const b = e.target.closest('[data-open-pop]');
       if(b && pv0.contains(b)){ openSectionPop(b.getAttribute('data-open-pop')); if(mm) mm.style.display = 'none'; return; }
       // Click anywhere else closes the menu.
