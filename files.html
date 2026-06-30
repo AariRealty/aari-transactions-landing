@@ -14871,7 +14871,15 @@ Tell me your planned move-out date and I will set the inspection.`
     });
     return o;
   }
-  function extractedFields(file){ const e = ((file.raw_form_data || {}).extracted_contract || {}).fields; return (e && typeof e === 'object') ? normalizeExtractedFields(e) : null; }
+  function extractedFields(file){
+    const rf = file.raw_form_data || {};
+    const e = (rf.extracted_contract || {}).fields;
+    const ov = rf.field_overrides;                 // manual edits, kept OUTSIDE extracted_contract so re-extract never wipes them
+    const hasE = e && typeof e === 'object';
+    const hasOv = ov && typeof ov === 'object';
+    if(!hasE && !hasOv) return null;
+    return normalizeExtractedFields(Object.assign({}, hasE ? e : {}, hasOv ? ov : {})); // overrides win
+  }
   // Tab chips for a bundled upload split into its component documents (Contract,
   // Addendum, Rider, Compensation). Tapping a chip jumps the PDF iframe to that
   // document's first page. Empty when the upload is a single document.
@@ -15650,7 +15658,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const _money = function(v){ if(v==null||v==='') return ''; var s=String(v).replace(/^\$/,'').replace(/\.00$/,''); return '$'+s; };
     const _ctLabels = { frbar_asis:'AS IS Residential (FR/BAR 7x)', frbar_standard:'Residential (FR/BAR Standard)', frbar_crsp:'Vacant Land / CRSP', nabor:'NABOR Residential' };
     const _type = file.contract_type ? (_ctLabels[file.contract_type] || file.contract_type) : (ex.__t || 'AS IS Residential');
-    const _financed = !!(ex.loan_amount && parseFloat(String(ex.loan_amount).replace(/[^0-9.]/g,'')) > 0) || !isCashFile(file);
+    const _financed = !isCashFile(file);   // isCashFile already weighs loan_amount + the explicit Cash/Financed override, so the toggle wins
     const _price = file.purchase_price_cents ? ('$' + Number(file.purchase_price_cents/100).toLocaleString()) : _money(ex.price);
     const dispRow = function(k, v){ return v ? ('<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(k) + '</span><span style="font-weight:600;text-align:right">' + esc(v) + '</span></div>') : ''; };
     const editRow = function(fd){
@@ -15764,7 +15772,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const _money = function(v){ if(v==null||v==='') return ''; var s=String(v).replace(/^\$/,'').replace(/\.00$/,''); return '$'+s; };
     const _ctLabels = { frbar_asis:'AS IS Residential (FR/BAR 7x)', frbar_standard:'Residential (FR/BAR Standard)', frbar_crsp:'Vacant Land / CRSP', nabor:'NABOR Residential' };
     const _type = file.contract_type ? (_ctLabels[file.contract_type] || file.contract_type) : (ex.__t || 'AS IS Residential');
-    const _financed = !!(ex.loan_amount && parseFloat(String(ex.loan_amount).replace(/[^0-9.]/g,'')) > 0) || !isCashFile(file);
+    const _financed = !isCashFile(file);   // isCashFile already weighs loan_amount + the explicit Cash/Financed override, so the toggle wins
     const _price = file.purchase_price_cents ? ('$' + Number(file.purchase_price_cents/100).toLocaleString()) : _money(ex.price);
     const _eff = file.effective_date || ex.effective_date || '';
     const _cls = file.closing_date || ex.closing_date || '';
@@ -15896,8 +15904,10 @@ Tell me your planned move-out date and I will set the inspection.`
       if(ec && ec.error) throw ec.error;
       const d = ec && ec.data;
       if(d && d.fields && Object.keys(d.fields).length){
-        const raw2 = Object.assign({}, file.raw_form_data || {});
+        const raw2 = Object.assign({}, file.raw_form_data || {});  // keeps field_overrides so your manual edits stay on top
         raw2.extracted_contract = { fields:d.fields, documents:d.documents||[], review_flags:d.review_flags||[], at:new Date().toISOString(), source:'extract-contract-fields' };
+        try { const rr = await _client.from('files').update({ raw_form_data: raw2 }).eq('id', file.id); if(rr && rr.error) throw rr.error; }
+        catch(perr){ alert('Re-extract read the contract but could not save: ' + ((perr && perr.message) || 'unknown') + '.'); if(btn){ btn.disabled=false; btn.innerHTML='↻ Re-extract'; } return; }
         file.raw_form_data = raw2;
         if(_currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = raw2;
         const ff = (_files||[]).find(function(x){ return x.id === file.id; }); if(ff) ff.raw_form_data = raw2;
@@ -15914,23 +15924,27 @@ Tell me your planned move-out date and I will set the inspection.`
     const raw = Object.assign({}, f.raw_form_data || {});
     const exc = Object.assign({}, (raw.extracted_contract || {}));
     const fld = Object.assign({}, (exc.fields || {}));
+    const ov = Object.assign({}, (raw.field_overrides || {}));   // durable manual layer
     const cols = {}; const _b = []; const _s = [];
     inputs.forEach(function(inp){
       const key = inp.getAttribute('data-nf-field'); const val = (inp.value || '').trim();
       if(!key || key.indexOf('__') === 0) return;
       if(/^buyer_\d+$/.test(key)){ if(val) _b.push(val); return; }
       if(/^seller_\d+$/.test(key)){ if(val) _s.push(val); return; }
-      fld[key] = val;
+      fld[key] = val; ov[key] = val;                              // mirror every edit into the override layer
       if(key === 'address') cols.property_address = normalizeAddress(val);
       if(key === 'effective_date'){ const d = new Date(val); if(!isNaN(d)) cols.effective_date = d.toISOString().slice(0,10); }
       if(key === 'closing_date'){ const d2 = new Date(val); if(!isNaN(d2)) cols.closing_date = d2.toISOString().slice(0,10); }
       if(key === 'price'){ const n = parseFloat(val.replace(/[^0-9.]/g,'')); if(!isNaN(n)) cols.purchase_price_cents = Math.round(n*100); }
     });
-    if(_b.length) fld.buyer = _b.join(' and ');
-    if(_s.length) fld.seller = _s.join(' and ');
-    exc.fields = fld; raw.extracted_contract = exc;
+    if(_b.length){ fld.buyer = _b.join(' and '); ov.buyer = fld.buyer; }
+    if(_s.length){ fld.seller = _s.join(' and '); ov.seller = fld.seller; }
+    exc.fields = fld; raw.extracted_contract = exc; raw.field_overrides = ov;
     const patch = Object.assign({ raw_form_data: raw }, cols);
-    try { await _client.from('files').update(patch).eq('id', f.id); } catch(_){}
+    try {
+      const r = await _client.from('files').update(patch).eq('id', f.id);
+      if(r && r.error) throw r.error;
+    } catch(err){ alert('Could not save: ' + ((err && err.message) || 'unknown error') + '. Your change was not saved, please try again.'); return; }
     f.raw_form_data = raw; Object.keys(cols).forEach(function(k){ f[k] = cols[k]; });
     _setupEditSec = ''; _setupCellEdit = null;
     try { renderContractTerms(f); } catch(_){ try { openPlaybook(f); } catch(__){} }
