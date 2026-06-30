@@ -12927,7 +12927,8 @@ Tell me your planned move-out date and I will set the inspection.`
       el.addEventListener('click', async function(e){
         const b = e.target.closest && e.target.closest('[data-eflag-done]'); if(!b) return;
         b.disabled = true;
-        try { await _client.from('file_email_flags').update({ status:'dismissed' }).eq('id', b.getAttribute('data-eflag-done')); } catch(_){}
+        const ids = (b.getAttribute('data-eflag-done') || '').split(',').filter(Boolean);
+        try { if(ids.length) await _client.from('file_email_flags').update({ status:'dismissed' }).in('id', ids); } catch(_){}
         const fid = _currentFile && _currentFile.id; if(fid){ await loadEmailFlags(fid); }
         renderEmailFlagsBanner();
         try { renderStageChecklist(_currentFile); } catch(_){} // refresh the per-task chips
@@ -12938,17 +12939,38 @@ Tell me your planned move-out date and I will set the inspection.`
       const rows = _emailFlagsByFile[_currentFile.id] || (await loadEmailFlags(_currentFile.id));
       if(!rows.length){ el.style.display = 'none'; return; }
       const _when = function(s){ try { return new Date(s).toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(_){ return ''; } };
+      // Group flags by conversation: strip Re:/Fwd: from the subject so one thread is one row.
+      const _threadKey = function(s){ return String(s||'').replace(/^\s*((re|fwd?|fw)\s*:\s*)+/i,'').replace(/\s+/g,' ').trim().toLowerCase(); };
+      const _threadTitle = function(s){ return String(s||'').replace(/^\s*((re|fwd?|fw)\s*:\s*)+/i,'').replace(/\s+/g,' ').trim(); };
+      const _firstName = function(s){ s = String(s||'').trim(); var nm = s.replace(/\s*<[^>]*>/,'').trim(); return nm.split(/\s+/)[0] || nm || s; };
+      const groups = {}; const order = [];
+      rows.forEach(function(r){
+        const subj = r.detail || r.label || r.id;
+        const key = _threadKey(subj);
+        if(!groups[key]){ groups[key] = { title: _threadTitle(subj) || (r.label || 'Email update'), items: [], senders: [], latest: r }; order.push(key); }
+        const g = groups[key];
+        g.items.push(r);                                   // rows are desc by date, so [0] is latest
+        const fn = _firstName(r.source_from); if(fn && g.senders.indexOf(fn) === -1) g.senders.push(fn);
+      });
       el.style.display = 'block';
       el.innerHTML = '<div style="background:#eef1f6;border:1px solid #cfdcef;border-radius:10px;padding:12px 14px;margin:0 0 14px">' +
-        '<p style="font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#0c447c;font-weight:700;margin:0 0 8px">&#9993; Email flags &middot; ' + rows.length + '</p>' +
-        rows.map(function(r){
-          return '<div style="padding:7px 0;border-top:0.5px solid #dde6f2">' +
+        '<p style="font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#0c447c;font-weight:700;margin:0 0 8px">&#9993; Email flags &middot; ' + order.length + '</p>' +
+        order.map(function(key){
+          const g = groups[key];
+          const n = g.items.length;
+          const ids = g.items.map(function(x){ return x.id; }).join(',');
+          const latest = g.latest;
+          let people = g.senders.slice(0,2).join(', ');
+          if(g.senders.length > 2) people += ' +' + (g.senders.length - 2);
+          const meta = [people, (latest.source_at ? _when(latest.source_at) : ''), (n > 1 ? (n + ' messages') : '')].filter(Boolean).join(' &middot; ');
+          return '<div style="padding:8px 0;border-top:0.5px solid #dde6f2">' +
             '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">' +
-              '<span style="font-size:12.5px;font-weight:600;color:#0f0f0f">' + esc(r.label || 'Email update') + '</span>' +
-              '<button type="button" data-eflag-done="' + esc(r.id) + '" style="border:0;background:#fff;color:#0c447c;border:0.5px solid #cfdcef;font-size:10.5px;font-weight:600;border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;flex:none">Dismiss</button>' +
+              '<span style="font-size:12.5px;font-weight:600;color:#0f0f0f">' + esc(g.title) +
+                (n > 1 ? ('<span style="margin-left:7px;font-size:10.5px;font-weight:700;color:#0c447c;background:#dde6f2;border-radius:20px;padding:1px 7px">' + n + '</span>') : '') +
+              '</span>' +
+              '<button type="button" data-eflag-done="' + esc(ids) + '" style="background:#fff;color:#0c447c;border:0.5px solid #cfdcef;font-size:10.5px;font-weight:600;border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;flex:none">Dismiss' + (n > 1 ? ' all' : '') + '</button>' +
             '</div>' +
-            '<div style="font-size:11px;color:#5f6b7c;margin-top:2px">' + esc(r.source_from || '') + (r.source_at ? (' &middot; ' + _when(r.source_at)) : '') + '</div>' +
-            (r.detail ? ('<div style="font-size:11.5px;color:#444;margin-top:3px">' + esc(r.detail) + '</div>') : '') +
+            '<div style="font-size:11px;color:#5f6b7c;margin-top:2px">' + meta + '</div>' +
           '</div>';
         }).join('') + '</div>';
     } catch(_){ el.style.display = 'none'; }
