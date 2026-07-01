@@ -125,6 +125,7 @@
 <script>
   var SB_URL="https://fnlrgmuvtgwzjsihqxcn.supabase.co";
   var SB_KEY="sb_publishable_OsZVC29HKhFAZRNVo3yKqQ_wM7r2ANd";
+  var OFFER_STRIPE={ basic:"https://buy.stripe.com/00w00b1NBcGL4yfgfgcAo0i", complete:"https://buy.stripe.com/6oUfZ99g3gX18Ov4wycAo05" };
   var SECTIONS=["step-door","step-drop","step-reading","step-review","step-offer","step-done"];
   function show(id){ SECTIONS.forEach(function(s){ document.getElementById(s).classList.toggle("hide", s!==id); }); window.scrollTo(0,0); }
   function err(id,m){ var e=document.getElementById(id); if(!e)return; e.textContent=m; e.style.display=m?"block":"none"; }
@@ -185,10 +186,10 @@
     if(i===1) body='<input id="o-buyer" value="'+esc(oState.buyer)+'" placeholder="Buyer name">';
     if(i===2) body='<div style="display:grid;gap:8px"><input id="o-price" value="'+esc(oState.price)+'" placeholder="Offer price"><div class="grid2"><input id="o-emd" value="'+esc(oState.emd)+'" placeholder="Escrow deposit"><input id="o-close" value="'+esc(oState.close_date)+'" placeholder="Close date"></div><div class="seg" id="o-fin"><button data-f="Financed" class="'+(oState.financing==="Financed"?"on":"")+'">Financed</button><button data-f="Cash" class="'+(oState.financing==="Cash"?"on":"")+'">Cash</button></div></div>';
     if(i===3) body='<div class="drop" id="o-drop"><i class="ti ti-upload" aria-hidden="true"></i><div class="drop-title" id="o-drop-t">'+(oState.pre_name?("✓ "+esc(oState.pre_name)):"Drop the pre-approval")+'</div><div class="drop-sub">or skip and add it later</div><input type="file" id="o-file" accept="application/pdf,.pdf" class="hide"></div>';
-    if(i===4) body='<div style="display:grid;gap:8px"><div class="plan '+(oState.plan==="basic"?"on":"cream")+'" data-p="basic"><span>Basic <span style="font-weight:400;opacity:.7">&middot; one draft</span></span><span class="p">$69</span></div><div class="plan '+(oState.plan==="complete"?"on":"cream")+'" data-p="complete"><span>Complete <span style="font-weight:400;opacity:.7">&middot; revisions + counters</span></span><span class="p">$149</span></div><div class="lbl">Your email</div><input type="email" id="o-email" value="'+esc(oState.email)+'" placeholder="you@brokerage.com"></div>';
+    if(i===4) body='<div style="display:grid;gap:8px"><div class="plan '+(oState.plan==="basic"?"on":"cream")+'" data-p="basic"><span>Basic <span style="font-weight:400;opacity:.7">&middot; one draft</span></span><span class="p">$79</span></div><div class="plan '+(oState.plan==="complete"?"on":"cream")+'" data-p="complete"><span>Complete <span style="font-weight:400;opacity:.7">&middot; revisions + counters</span></span><span class="p">$149</span></div><div class="lbl">Your email</div><input type="email" id="o-email" value="'+esc(oState.email)+'" placeholder="you@brokerage.com"></div>';
     W.innerHTML='<div class="rowbar"><span class="back" id="o-back">&lsaquo; Back</span><span class="stepmeta">Step '+n+' of '+OSTEPS.length+'</span></div>'+
       '<h1 style="font-size:26px">'+OSTEPS[i].q+'</h1>'+
-      '<div style="max-width:420px;margin:14px auto 0">'+body+'<button class="btn" id="o-next">'+(last?"Send to draft":"Next")+'</button><div class="msg err" id="o-err"></div></div>';
+      '<div style="max-width:420px;margin:14px auto 0">'+body+'<button class="btn" id="o-next">'+(last?"Continue to payment":"Next")+'</button><div class="msg err" id="o-err"></div></div>';
     document.getElementById("o-back").addEventListener("click",function(){ saveStep(i); n===1?show("step-door"):offerStep(n-1); });
     document.getElementById("o-next").addEventListener("click",function(){ if(!saveStep(i,true))return; last?offerSubmit(this):offerStep(n+1); });
     if(i===2){ W.querySelectorAll("#o-fin button").forEach(function(b){ b.addEventListener("click",function(){ W.querySelectorAll("#o-fin button").forEach(function(x){x.classList.remove("on");}); b.classList.add("on"); oState.financing=b.getAttribute("data-f"); }); }); }
@@ -206,8 +207,13 @@
   function offerSubmit(btn){ btn.disabled=true; btn.textContent="Sending…"; err("o-err","");
     fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"offer", property:oState.property, buyer:oState.buyer, price:oState.price, emd:oState.emd, financing:oState.financing, close_date:oState.close_date, plan:oState.plan, pre_approval_base64:oState.pre_b64, pre_approval_name:oState.pre_name, agent_email:oState.email }) })
     .then(function(r){return r.json();}).then(function(d){
-      if(d&&d.ok){ doneScreen("On it.", "We&rsquo;re drafting your offer on <b>"+esc(oState.property)+"</b>.", "You&rsquo;ll have it back for signature today. We&rsquo;ll send the "+(oState.plan==="complete"?"$149":"$69")+" invoice with your draft."); }
-      else { err("o-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Send to draft"; }
+      if(d&&d.ok){
+        var amt=oState.plan==="complete"?"$149":"$79";
+        var url=OFFER_STRIPE[oState.plan]+"?client_reference_id="+encodeURIComponent(d.file_id)+"&prefilled_email="+encodeURIComponent(oState.email);
+        doneScreen("Almost done.", "Your offer on <b>"+esc(oState.property)+"</b> is in.", "Taking you to secure checkout for the "+amt+" offer prep&hellip; <a href=\""+url+"\" style=\"color:#0c447c;text-decoration:underline\">Open checkout</a> if it doesn&rsquo;t load on its own.");
+        setTimeout(function(){ window.location.href=url; }, 1400);
+      }
+      else { err("o-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Continue to payment"; }
     }).catch(function(){ err("o-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Send to draft"; });
   }
 </script>
