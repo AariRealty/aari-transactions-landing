@@ -148,6 +148,10 @@
       <div class="sidenote" id="sidenote"></div>
       <div class="lbl">Your email</div>
       <input type="email" id="email" placeholder="you@brokerage.com" autocomplete="email">
+      <div id="name-fallback" style="display:none">
+        <div class="lbl">Your name</div>
+        <div class="grid2"><input type="text" id="agent-first" placeholder="First name" autocomplete="given-name"><input type="text" id="agent-last" placeholder="Last name" autocomplete="family-name"></div>
+      </div>
       <label class="terms-row"><input type="checkbox" id="terms-c"><span>I have read and agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a>.</span></label>
       <button class="btn" id="submit">Submit file</button>
       <div class="msg" id="sub-err"></div>
@@ -368,13 +372,25 @@
   }
   document.querySelectorAll("#side button").forEach(function(b){ b.addEventListener("click",function(){ setSide(b.getAttribute("data-s"),false); }); });
   document.getElementById("back").addEventListener("click",function(){ err("sub-err",""); show("step-drop"); });
+  // Step 3 · when the email loses focus, check if it is a known agent. If not, reveal the name fields.
+  var _emailChecked="";
+  document.getElementById("email").addEventListener("blur",function(){
+    var em=this.value.trim();
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em) || em===_emailChecked) return;
+    _emailChecked=em;
+    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"check_email", agent_email:em }) })
+    .then(function(r){return r.json();}).then(function(d){ document.getElementById("name-fallback").style.display=(d&&d.recognized)?"none":"block"; }).catch(function(){});
+  });
   document.getElementById("submit").addEventListener("click",function(){ var btn=this; err("sub-err","");
     var email=document.getElementById("email").value.trim();
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err("sub-err","Add a valid email so we can reach you."); return; }
+    var nf=document.getElementById("name-fallback"), first="", last="";
+    if(nf && nf.style.display!=="none"){ first=document.getElementById("agent-first").value.trim(); last=document.getElementById("agent-last").value.trim(); if(!first||!last){ err("sub-err","Add your first and last name to finish."); return; } }
     if(!termsOK("terms-c","sub-err")) return;
     btn.disabled=true; btn.textContent="Submitting…";
-    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"contract", pdf_base64:cState.b64, filename:cState.name, side:cState.side, agent_email:email, fields:cState.fields, terms_version:TERMS_VERSION, terms_accepted:true }) })
+    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"contract", pdf_base64:cState.b64, filename:cState.name, side:cState.side, agent_email:email, first_name:first, last_name:last, fields:cState.fields, terms_version:TERMS_VERSION, terms_accepted:true }) })
     .then(function(r){return r.json();}).then(function(d){
+      if(d&&d.need_name){ nf.style.display="block"; err("sub-err","Add your first and last name to finish."); btn.disabled=false; btn.textContent="Submit file"; return; }
       if(d&&d.ok){ doneScreen("You&rsquo;re in.", (d.address&&d.address.indexOf("pending")===-1)?("<b>"+esc(d.address)+"</b> is submitted."):"Your file is submitted.", "Your coordinator reviews it and reaches out today. Nothing else needed."); }
       else { err("sub-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Submit file"; }
     }).catch(function(){ err("sub-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Submit file"; });
