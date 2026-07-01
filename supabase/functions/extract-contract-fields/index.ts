@@ -74,7 +74,7 @@ async function pdfToPages(bytes: Uint8Array): Promise<string[]> {
 // at the top of each page. Returns [{ title, page (1-based start), pages }].
 function detectDocuments(pages: string[]): { title: string; page: number; pages: number }[] {
   const rules = [
-    { re: /AS IS.{0,6}Residential Contract For Sale/i, title: "Contract" },
+    { re: /AS IS.{0,6}Residential Contract For Sale|Vacant Land Contract|Commercial Contract|Contract For Sale And Purchase/i, title: "Contract" },
     { re: /Addendum to Contract|Addendum No|Addendum #/i, title: "Addendum" },
     { re: /Comprehensive Rider/i, title: "Rider" },
     { re: /Compensation Agreement/i, title: "Compensation" },
@@ -113,13 +113,33 @@ function parseContract(T: string): Record<string, string> {
   else if (/Residential Contract For Sale And Purchase|Contract For Sale And Purchase/i.test(head)) ct = "Standard Residential";
   if (ct) out.contract_type = ct;
 
-  const bl = findLine(/\(\s*["“]?Buyer/);
-  if (bl) out.buyer = stripNum(bl.replace(/\(\s*["“]?Buyer.*/, "")).replace(/^and\s+/i, "").replace(/_+/g, "").trim();
-  const sl = findLine(/\(\s*["“]?Seller/);
-  if (sl) out.seller = stripNum(sl.replace(/\(\s*["“]?Seller.*/, "")).replace(/^PARTIES:\s*/i, "").replace(/_+/g, "").trim();
+  // Generic party grab · works for both party orders (residential lists Buyer first,
+  // Vacant Land lists Seller first). Takes the name immediately before each role tag.
+  const reBuyer = /([A-Za-z0-9][^:"“”]{1,90}?)\s*\(\s*["“]?Buyer["”]?\s*\)/i;
+  const reSeller = /([A-Za-z0-9][^:"“”]{1,90}?)\s*\(\s*["“]?Seller["”]?\s*\)/i;
+  const partyName = (role: string): string => {
+    const re = role === "Buyer" ? reBuyer : reSeller;
+    for (const l of lines.slice(0, 12)) {
+      const m = l.match(re);
+      if (m) {
+        const n = clean(m[1]).replace(/^.*?\)\s*and\s+/i, "").replace(/^PARTIES:\s*/i, "").replace(/^and\s+/i, "").replace(/_+/g, "").trim();
+        if (n && n.length >= 2 && !/^(and|the|parties)$/i.test(n)) return n;
+      }
+    }
+    return "";
+  };
+  if (/AS IS Residential|Standard Residential/i.test(ct) || !ct) {
+    const bl = findLine(/\(\s*["“]?Buyer/);
+    if (bl) out.buyer = stripNum(bl.replace(/\(\s*["“]?Buyer.*/, "")).replace(/^and\s+/i, "").replace(/_+/g, "").trim();
+    const sl = findLine(/\(\s*["“]?Seller/);
+    if (sl) out.seller = stripNum(sl.replace(/\(\s*["“]?Seller.*/, "")).replace(/^PARTIES:\s*/i, "").replace(/_+/g, "").trim();
+  }
+  if (!out.buyer) out.buyer = partyName("Buyer");
+  if (!out.seller) out.seller = partyName("Seller");
 
   const al = findLine(/Street address, city, zip:/);
   if (al) out.address = clean(al.split(/zip:\s*/i)[1]);
+  if (!out.address) { for (const l of lines.slice(0, 14)) { if (/Escrow/i.test(l)) continue; const am2 = l.match(/Address:\s*(.+?[A-Z]{2}\s+\d{5})/); if (am2) { out.address = clean(am2[1]).replace(/_+/g, "").trim(); break; } } }
   if (out.address) {
     const m = out.address.match(/^(.*?)[, ]+([A-Z]{2})\s+(\d{5})\b/);
     if (m) {
@@ -140,12 +160,16 @@ function parseContract(T: string): Record<string, string> {
     if (!out.county) { const after = (lb.split(/Tax ID #:\s*/i)[1] || ""); const am = after.match(/^\s*([A-Za-z][A-Za-z .'-]{1,18}?)\b/); if (am) out.county = clean(am[1]); }
     if (!out.county && bi > 0) { const ab = stripNum(lines[bi - 1]); if (/^[A-Za-z .'-]{2,20}$/.test(ab)) out.county = ab; }
   }
+  if (!out.county) { const cm = T.match(/\bof\s+([A-Za-z][A-Za-z .'-]{1,18}?)\s+County,\s*Florida/i); if (cm) out.county = clean(cm[1]); }
   const ll = findLine(/legal description is/i);
   if (ll) out.legal = clean(ll.split(/legal description is\s*/i)[1]).replace(/\s+together with.*/i, "");
+  if (!out.legal) { const lgl = findLine(/Legal Description:/i); if (lgl) out.legal = clean((lgl.split(/Legal Description:\s*/i)[1] || "")).replace(/_+/g, "").trim(); }
 
   const dollar = (l: string) => { const m = clean(l).match(/([\d,]+\.\d{2})/g); return m ? m[m.length - 1] : ""; };
   out.price = dollar(findLine(/2\.\s*PURCHASE PRICE/));
+  if (!out.price) out.price = dollar(findLine(/Purchase Price/i));
   out.emd = dollar(findLine(/Initial deposit to be held/));
+  if (!out.emd) out.emd = dollar(findLine(/Initial deposit/i));
   out.loan_amount = dollar(findLine(/\(c\)\s*Financing:/));
   out.balance_to_close = dollar(findLine(/transfer or other Collected funds/i));
   out.additional_deposit = dollar(findLine(/Additional deposit/i));
@@ -160,6 +184,7 @@ function parseContract(T: string): Record<string, string> {
 
   const ci = findIdx(/Closing shall occur on/);
   if (ci >= 0) for (let k = ci - 2; k <= ci + 1; k++) { if (k < 0 || k >= lines.length) continue; const m = clean(lines[k]).match(/[A-Z][a-z]+ \d{1,2}, \d{4}/); if (m) { out.closing_date = m[0]; break; } }
+  if (!out.closing_date) { const cl = findLine(/will close on/i); if (cl) { const cmd = clean(cl).match(/[A-Z][a-z]+ \d{1,2}, \d{4}/); if (cmd) out.closing_date = cmd[0]; } }
 
   const sig: string[] = [];
   for (const l of lines) { const s = stripNum(l); if (/^(Buyer|Seller):/.test(s)) { const m = s.match(/Date:\s*([A-Z][a-z]+ \d{1,2}, \d{4})/); if (m) sig.push(m[1]); } }
@@ -173,6 +198,7 @@ function parseContract(T: string): Record<string, string> {
     if (!nm) for (let k = ei - 1; k >= ei - 2 && k >= 0; k--) { const c = stripNum(lines[k]).replace(/_/g, "").trim(); if (c && !/CHECK ONE|accompanies|deposit/i.test(c)) { nm = c; break; } }
   }
   out.title_name = nm;
+  if (!out.title_name) { const en = findLine(/Escrow Agent'?s? Name:/i); if (en) out.title_name = clean((en.split(/Name:\s*/i)[1] || "")).replace(/_+/g, "").trim(); }
   const em = T.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/); if (em) out.title_email = em[0];
   const ph = T.match(/\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/); if (ph) out.title_phone = ph[0];
   const adL = findLine(/Address:.*Phone:/i);
@@ -254,7 +280,7 @@ Deno.serve(async (req) => {
       } catch (_e) { /* split is best-effort */ }
     }
     const raw = Object.assign({}, file.raw_form_data || {});
-    raw.extracted_contract = { fields, documents, at: new Date().toISOString(), source: "extract-contract-fields/v6" };
+    raw.extracted_contract = { fields, documents, at: new Date().toISOString(), source: "extract-contract-fields/v15" };
     const { error } = await admin.from("files").update({ raw_form_data: raw }).eq("id", body.file_id);
     if (error) return j(500, { ok: false, fields, documents, error: "Draft save failed: " + error.message });
   }
