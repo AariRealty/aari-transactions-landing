@@ -77,6 +77,14 @@
   .done-i{width:52px;height:52px;border-radius:50%;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;margin:10px auto 16px}
   .muted{color:var(--muted);font-size:13px}
   .hide{display:none}
+  .au-alt{ text-align:center; font-size:12px; color:#6b6357; margin-top:12px; }
+  .au-alt a{ color:#0f0f0f; text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
+  .au-renew{ background:#fbf1e6; border:1px solid #ecd9bd; border-radius:9px; padding:12px 14px; margin:0 0 14px; }
+  .au-renew b{ color:#9a6a1e; } .au-renew span{ display:block; font-size:12.5px; color:#8a7654; margin-top:4px; line-height:1.5; }
+  .au-sa{ background:#fff; border:1px solid var(--line); border-radius:10px; padding:12px 14px; height:230px; overflow-y:auto; font-size:12px; line-height:1.65; color:#5f5b53; }
+  .au-sa .sa-doc-text{ white-space:normal; } .au-sa h2,.au-sa h3{ font-size:13px; color:#0f0f0f; margin:10px 0 4px; }
+  .au-ack{ display:flex; gap:8px; align-items:flex-start; font-size:12px; color:#6b6357; margin:14px 0 4px; cursor:pointer; }
+  .au-ack input{ margin-top:2px; flex:0 0 auto; width:15px; height:15px; accent-color:#0f0f0f; }
   .scan-wrap{ display:grid; grid-template-columns:1fr 1fr; gap:24px; max-width:720px; margin:22px auto 0; align-items:start; }
   @media (max-width:640px){ .scan-wrap{ grid-template-columns:1fr; } }
   .scan-doc{ position:relative; overflow:hidden; background:#fff; border:1px solid var(--line); border-radius:10px; min-height:340px; box-shadow:0 14px 38px rgba(15,15,15,.14); }
@@ -114,6 +122,9 @@
 
   <!-- LISTING PICKER -->
   <section id="step-listing" class="hide"></section>
+
+  <!-- AUTH + SA GATE (end of flow) -->
+  <section id="step-auth" class="hide"></section>
 
   <!-- CONTRACT · STEP 1 -->
   <section id="step-drop" class="hide">
@@ -177,6 +188,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/js/supabase-config.js"></script>
 <script src="/js/auth.js"></script>
+<script src="/js/aari-sa-text.js"></script>
 <script>
   if(window.pdfjsLib){ pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"; }
   var SB_URL="https://fnlrgmuvtgwzjsihqxcn.supabase.co";
@@ -409,10 +421,103 @@
       else { err("sub-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Submit file"; }
     }).catch(function(){ err("sub-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Submit file"; });
   }
-  // Step 2 replaces this with the account/sign-in + TC Service Agreement UI. Until then it falls through to the existing submit so the live flow never regresses.
-  function openAuthSaStep(btn){ proceedToSubmit(btn); }
+  var SA_VERSION = "v4.7";
+  var _authEmail = "";
+  function openAuthSaStep(g){
+    if(g && g.authed){ authRenderRenew(); } else { authRenderSignIn(); show("step-auth"); }
+  }
+  function authRenderSignIn(){
+    var W=document.getElementById("step-auth");
+    W.innerHTML='<span class="back" id="au-back">&lsaquo; Back</span>'+
+      '<h1 style="font-size:26px;margin-top:8px">One last step to send it</h1>'+
+      '<p class="sub">Sign in, or create your account. Your file is held, not lost.</p>'+
+      '<div class="card">'+
+        '<div class="lbl">Email</div><input type="email" id="au-email" placeholder="you@brokerage.com" autocomplete="email">'+
+        '<div class="lbl">Password</div><input type="password" id="au-pass" placeholder="Your password" autocomplete="current-password">'+
+        '<button class="btn" id="au-signin">Sign in</button>'+
+        '<div class="au-alt">New to Aari? <a id="au-create">Create your account &rarr;</a></div>'+
+        '<div class="msg" id="au-err"></div>'+
+      '</div>';
+    document.getElementById("au-back").addEventListener("click",function(){ show("step-review"); });
+    document.getElementById("au-signin").addEventListener("click",authDoSignIn);
+    document.getElementById("au-create").addEventListener("click",authGoOnboarding);
+  }
+  function authDoSignIn(){
+    var b=this; err("au-err","");
+    var email=document.getElementById("au-email").value.trim();
+    var pass=document.getElementById("au-pass").value;
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err("au-err","Enter a valid email."); return; }
+    if(!pass){ err("au-err","Enter your password."); return; }
+    b.disabled=true; b.textContent="Signing in…";
+    window.AariAuth.signIn(email,pass).then(function(){ _authEmail=email; return window.AariAuth.getAgreementStatus(); })
+    .then(function(sa){
+      var signed = !!(sa && sa.agreement_signed_at && sa.agreement_version===SA_VERSION);
+      if(signed){ submitAuthed(); } else { authRenderSA(); }
+    }).catch(function(e){ err("au-err",(e&&e.message)||"Sign in failed. Check your details."); b.disabled=false; b.textContent="Sign in"; });
+  }
+  function authRenderRenew(){
+    window.AariAuth.getAgreementStatus().then(function(sa){
+      _authEmail=(sa&&sa.email)||"";
+      var first = sa && sa.first_name ? esc(sa.first_name) : "";
+      var W=document.getElementById("step-auth");
+      W.innerHTML='<span class="back" id="au-back">&lsaquo; Back</span>'+
+        '<h1 style="font-size:26px;margin-top:8px">'+(first?("Quick renewal, "+first+"."):"Your agreement needs to be renewed")+'</h1>'+
+        '<div class="card">'+
+          '<div class="au-renew"><b>Service Agreement updated to v4.7</b><span>You signed an earlier version. Review and sign the current one to submit this file.</span></div>'+
+          '<button class="btn" id="au-review">Review &amp; sign</button>'+
+          '<div class="au-alt"><a id="au-cancel">Not now</a></div>'+
+        '</div>';
+      document.getElementById("au-back").addEventListener("click",function(){ show("step-review"); });
+      document.getElementById("au-review").addEventListener("click",authRenderSA);
+      document.getElementById("au-cancel").addEventListener("click",function(){ show("step-review"); });
+      show("step-auth");
+    }).catch(function(){ authRenderSA(); });
+  }
+  function authRenderSA(){
+    var W=document.getElementById("step-auth");
+    W.innerHTML='<span class="back" id="au-back">&lsaquo; Back</span>'+
+      '<h1 style="font-size:26px;margin-top:8px">TC Service Agreement</h1>'+
+      '<p class="sub">Version 4.7 &middot; required once before we run your files.</p>'+
+      '<div class="card">'+
+        '<div class="au-sa" id="au-sa-text"></div>'+
+        '<label class="au-ack"><input type="checkbox" id="au-agree"><span>I have read and agree to the Aari Transactions Service Agreement, version 4.7.</span></label>'+
+        '<div class="lbl">Type your full name to sign</div><input type="text" id="au-typed" placeholder="Your full legal name">'+
+        '<button class="btn" id="au-sign">Sign &amp; submit file</button>'+
+        '<div class="msg" id="au-err"></div>'+
+      '</div>';
+    document.getElementById("au-sa-text").innerHTML = window.AARI_SA_V47_HTML || "The full agreement text could not load. Please refresh and try again.";
+    document.getElementById("au-back").addEventListener("click",function(){ show("step-review"); });
+    document.getElementById("au-sign").addEventListener("click",authDoSignSA);
+    show("step-auth");
+  }
+  function authDoSignSA(){
+    var b=this; err("au-err","");
+    if(!document.getElementById("au-agree").checked){ err("au-err","Please check the box to agree."); return; }
+    var typed=document.getElementById("au-typed").value.trim();
+    if(typed.length<3){ err("au-err","Type your full name to sign."); return; }
+    b.disabled=true; b.textContent="Signing…";
+    var nowIso=new Date().toISOString();
+    try{ fetch("https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/aari-sa-pdf-email",{ method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ agent_name:typed, agent_email:_authEmail, signed_at_iso:nowIso, signed_at_display:new Date().toLocaleString(), signature_data_url:"", agreement_version:"4.7", user_agent:(navigator&&navigator.userAgent)||"", locale:(navigator&&navigator.language)||"" }) }).catch(function(){}); }catch(_){}
+    window.AariAuth.updateAgreement(typed, SA_VERSION).then(function(){ submitAuthed(); })
+    .catch(function(e){ err("au-err",(e&&e.message)||"Could not record your signature."); b.disabled=false; b.textContent="Sign & submit file"; });
+  }
+  function authGoOnboarding(){
+    try { if(window.parent && window.parent.openOnboarding){ window.parent.__aariResumeSubmit=true; window.parent.openOnboarding(); return; } }catch(_){}
+    (window.top||window).location.href="/register.html";
+  }
+  function submitAuthed(){
+    var go=function(email){
+      var em=document.getElementById("email"); if(em && email) em.value=email;
+      var tc=document.getElementById("terms-c"); if(tc) tc.checked=true;
+      show("step-review"); proceedToSubmit(document.getElementById("submit"));
+    };
+    if(_authEmail){ go(_authEmail); return; }
+    if(window.AariAuth && window.AariAuth.getAgreementStatus){ window.AariAuth.getAgreementStatus().then(function(sa){ go((sa&&sa.email)||""); }).catch(function(){ go(""); }); }
+    else { go(""); }
+  }
+  window.addEventListener("message", function(e){ if(e && e.data==="aari-onboarding-complete"){ submitAuthed(); } });
   document.getElementById("submit").addEventListener("click",function(){ var btn=this; err("sub-err","");
-    contractGate().then(function(g){ if(g.authed && g.saSigned){ proceedToSubmit(btn); } else { openAuthSaStep(btn); } });
+    contractGate().then(function(g){ if(g.authed && g.saSigned){ proceedToSubmit(btn); } else { openAuthSaStep(g); } });
   });
 
   /* ================= OFFER WIZARD ================= */
