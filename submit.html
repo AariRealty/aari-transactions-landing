@@ -102,6 +102,14 @@
   .scan-grp .scan-field:last-child{ border-bottom:none; }
   .scan-field.in{ opacity:1; transform:none; }
   .scan-field .k{ color:#8a857c; } .scan-field .v{ color:#0f0f0f; font-weight:600; text-align:right; }
+  /* Reading screen · Option B (calm document) */
+  .scan-sub{ text-align:center; font-size:12.5px; color:#8a857c; margin:2px 0 16px; }
+  #step-reading .scan-doc{ max-width:360px; margin:0 auto; }
+  .scan-status{ display:flex; align-items:center; justify-content:center; gap:9px; margin-top:16px; font-size:12.5px; color:#6b6357; }
+  .scan-dot{ width:7px; height:7px; border-radius:50%; background:var(--green); animation:scandot 1.4s infinite; }
+  @keyframes scandot{ 0%{ box-shadow:0 0 0 0 rgba(90,158,114,.45); } 70%{ box-shadow:0 0 0 8px rgba(90,158,114,0); } 100%{ box-shadow:0 0 0 0 rgba(90,158,114,0); } }
+  .scan-prog{ height:4px; background:#e7e1d5; border-radius:3px; margin:16px auto 0; max-width:360px; overflow:hidden; }
+  .scan-prog i{ display:block; height:100%; width:8%; background:#0f0f0f; border-radius:3px; }
 </style>
 </head>
 <body>
@@ -137,15 +145,16 @@
   </section>
 
   <section id="step-reading" class="hide">
-    <h1 style="font-size:26px">Reading your contract&hellip;</h1>
-    <div class="scan-wrap">
-      <div class="scan-doc" id="scan-doc">
-        <div id="scan-placeholder"><div class="scan-docline" style="width:45%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:80%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:65%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:75%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:60%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:85%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:55%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:70%"></div><div class="scan-docline"></div></div>
-        <canvas id="scan-canvas" style="display:none"></canvas>
-        <div class="scan-line"></div>
-      </div>
-      <div class="scan-fields" id="scan-fields"></div>
+    <h1 style="font-size:26px">Reading your contract</h1>
+    <p class="scan-sub">This takes a few seconds</p>
+    <div class="scan-doc" id="scan-doc">
+      <div id="scan-placeholder"><div class="scan-docline" style="width:45%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:80%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:65%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:75%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:60%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:85%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:55%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:70%"></div><div class="scan-docline"></div></div>
+      <canvas id="scan-canvas" style="display:none"></canvas>
+      <div class="scan-line"></div>
     </div>
+    <div class="scan-status"><span class="scan-dot"></span><span id="scan-status-text">Finding the parties</span></div>
+    <div class="scan-prog"><i id="scan-prog-bar"></i></div>
+    <div class="scan-fields hide" id="scan-fields"></div>
   </section>
 
   <!-- CONTRACT · STEP 2 -->
@@ -347,31 +356,19 @@
   var _scanStart=0;
   function startScan(){ _scanStart=Date.now(); var el=document.getElementById("scan-fields"); if(el) el.innerHTML=""; }
   function fillScan(f){
+    // Option B · calm document. The status line moves through the reading phases while
+    // the real page scans, then advances to review. Found values are shown on the review
+    // screen (cReview reads cState.fields), not here, so an empty parse never looks broken.
     var SCAN_TOTAL=4500;
     var go=function(){ cReview(); show("step-review"); };
-    var el=document.getElementById("scan-fields");
     var elapsed=Date.now()-_scanStart, remaining=Math.max(1800, SCAN_TOTAL-elapsed);
-    if(!el){ setTimeout(go, remaining); return; }
-    var docs=(cState.docs&&cState.docs.length)?cState.docs.map(function(d){return d.title;}).join(", "):"";
-    var groups=[
-      ["Contract", [["Type", f.contract_type],["Property", f.address],["County", f.county],["Parcel ID", f.tax_id],["Legal", f.legal]]],
-      ["Parties", [["Buyer", f.buyer],["Seller", f.seller],["Listing agent", f.seller_agent],["Listing brokerage", f.seller_brokerage],["Buyer agent", f.buyer_agent],["Buyer brokerage", f.buyer_brokerage]]],
-      ["Money", [["Purchase price", f.price?("$"+f.price):""],["Initial deposit", f.emd?("$"+f.emd):""],["Additional deposit", f.additional_deposit?("$"+f.additional_deposit):""],["Balance to close", f.balance_to_close?("$"+f.balance_to_close):""],["Financing", f.price?(f.loan_amount?("Financed, $"+f.loan_amount):"Cash"):""]]],
-      ["Dates & title", [["Effective", f.effective_date],["Closing", f.closing_date],["Title company", f.title_name],["Title email", f.title_email],["Title phone", f.title_phone],["Title address", f.title_address],["Documents", docs]]]
-    ];
-    var html="", any=false;
-    groups.forEach(function(g){
-      var gr=g[1].filter(function(x){ return x[1]; });
-      if(!gr.length) return;
-      any=true;
-      html+='<div class="scan-grp"><div class="scan-grp-h">'+esc(g[0])+'</div>'+gr.map(function(c){ return '<div class="scan-field"><span class="k">'+esc(c[0])+'</span><span class="v">'+esc(String(c[1]))+'</span></div>'; }).join('')+'</div>';
-    });
-    if(!any){ setTimeout(go, remaining); return; }
-    el.innerHTML=html;
-    var rows=el.querySelectorAll(".scan-field");
-    var first=300, last=remaining-600, span=Math.max(0,last-first);
-    rows.forEach(function(row,i){ var t=rows.length>1 ? first+span*i/(rows.length-1) : first; setTimeout(function(){ row.classList.add("in"); }, t); });
-    setTimeout(go, remaining);
+    var phases=["Finding the parties","Reading the price and deposits","Checking the closing date","Confirming title and escrow"];
+    var st=document.getElementById("scan-status-text"), bar=document.getElementById("scan-prog-bar");
+    if(st) st.textContent=phases[0];
+    if(bar){ bar.style.transition="none"; bar.style.width="8%"; void bar.offsetWidth; bar.style.transition="width "+remaining+"ms linear"; bar.style.width="100%"; }
+    var i=0, stepMs=remaining/phases.length;
+    var iv=setInterval(function(){ i++; if(i<phases.length){ if(st) st.textContent=phases[i]; } else { clearInterval(iv); } }, stepMs);
+    setTimeout(function(){ clearInterval(iv); go(); }, remaining);
   }
   function cReview(){ var f=cState.fields, rows=[];
     if(f.address) rows.push("<b>"+esc(f.address)+"</b>");
