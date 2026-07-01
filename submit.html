@@ -113,6 +113,9 @@
   <!-- OFFER WIZARD -->
   <section id="step-offer" class="hide"></section>
 
+  <!-- STANDALONE SERVICE ORDER -->
+  <section id="step-service" class="hide"></section>
+
   <!-- DONE -->
   <section id="step-done" class="hide center">
     <div class="done-i"><i class="ti ti-check" aria-hidden="true"></i></div>
@@ -126,7 +129,7 @@
   var SB_URL="https://fnlrgmuvtgwzjsihqxcn.supabase.co";
   var SB_KEY="sb_publishable_OsZVC29HKhFAZRNVo3yKqQ_wM7r2ANd";
   var OFFER_STRIPE={ basic:"https://buy.stripe.com/00w00b1NBcGL4yfgfgcAo0i", complete:"https://buy.stripe.com/6oUfZ99g3gX18Ov4wycAo05" };
-  var SECTIONS=["step-door","step-drop","step-reading","step-review","step-offer","step-done"];
+  var SECTIONS=["step-door","step-drop","step-reading","step-review","step-offer","step-service","step-done"];
   function show(id){ SECTIONS.forEach(function(s){ document.getElementById(s).classList.toggle("hide", s!==id); }); window.scrollTo(0,0); }
   function err(id,m){ var e=document.getElementById(id); if(!e)return; e.textContent=m; e.style.display=m?"block":"none"; }
   function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
@@ -137,7 +140,50 @@
   document.getElementById("go-offer").addEventListener("click",function(){ offerStep(1); });
   document.getElementById("c-door").addEventListener("click",function(){ show("step-door"); });
   // Deep link: ?flow=contract or ?flow=offer skips the front door (used by the TC / offer service buttons)
-  (function(){ var _f=new URLSearchParams(location.search).get("flow"); if(_f==="contract") show("step-drop"); else if(_f==="offer") offerStep(1); })();
+  (function(){ var _sp=new URLSearchParams(location.search); var _f=_sp.get("flow"); if(_f==="contract") show("step-drop"); else if(_f==="offer") offerStep(1); else if(_f==="service") serviceStart(_sp.get("svc")); })();
+
+  /* ================= STANDALONE SERVICE ORDER ================= */
+  var SERVICES={
+    offer_prep_basic:{name:"Offer Prep · Basic",price:"$79",stripe:"https://buy.stripe.com/00w00b1NBcGL4yfgfgcAo0i"},
+    offer_prep_complete:{name:"Offer Prep · Complete",price:"$149",stripe:"https://buy.stripe.com/6oUfZ99g3gX18Ov4wycAo05"},
+    listing_docs:{name:"Listing Docs Only",price:"$99",stripe:"https://buy.stripe.com/6oU7sD8bZbCH3ubfbccAo08"},
+    mls_setup:{name:"MLS Setup Only",price:"$149",stripe:"https://buy.stripe.com/fZu5kvgIvbCH7Kr7IKcAo09"},
+    file_organization:{name:"File Organization",price:"$99",stripe:"https://buy.stripe.com/6oU00b2RF6infcT8MOcAo0f"},
+    listing_coordinator:{name:"Listing Coordinator",price:"$249",stripe:"https://buy.stripe.com/dRm6oz4ZNdKP0hZgfgcAo0j"},
+    standalone_review:{name:"Standalone Review",price:"$149",stripe:""}
+  };
+  function serviceStart(svc){
+    var sv=SERVICES[svc]; if(!sv){ show("step-door"); return; }
+    var W2=document.getElementById("step-service");
+    W2.innerHTML='<span class="back" id="sv-door">&lsaquo; Back</span>'+
+      '<h1 style="font-size:28px;margin-top:8px">'+sv.name+'</h1>'+
+      '<div class="card">'+
+        '<div class="found"><b>'+sv.name+'</b> &middot; '+sv.price+(sv.stripe?" &middot; paid upfront":" &middot; invoice sent")+'</div>'+
+        '<div class="lbl">Property address</div><input type="text" id="sv-prop" placeholder="Address or MLS number">'+
+        '<div class="lbl">Your email</div><input type="email" id="sv-email" placeholder="you@brokerage.com" autocomplete="email">'+
+        '<button class="btn" id="sv-submit">'+(sv.stripe?"Continue to payment":"Submit request")+'</button>'+
+        '<div class="msg err" id="sv-err"></div>'+
+      '</div>';
+    document.getElementById("sv-door").addEventListener("click",function(){ show("step-door"); });
+    document.getElementById("sv-submit").addEventListener("click",function(){
+      var btn=this; err("sv-err","");
+      var prop=document.getElementById("sv-prop").value.trim();
+      if(!prop){ err("sv-err","Add the property this is for."); return; }
+      var email=document.getElementById("sv-email").value.trim();
+      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err("sv-err","Add a valid email so we can reach you."); return; }
+      btn.disabled=true; btn.textContent="Sending…";
+      fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"service", svc:svc, property:prop, agent_email:email }) })
+      .then(function(r){return r.json();}).then(function(d){
+        if(d&&d.ok){
+          if(sv.stripe){ var url=sv.stripe+"?client_reference_id="+encodeURIComponent(d.file_id)+"&prefilled_email="+encodeURIComponent(email);
+            doneScreen("Almost done.", "<b>"+sv.name+"</b> for "+esc(prop)+".", "Taking you to secure checkout for "+sv.price+"… <a href=\""+url+"\" style=\"color:#0c447c;text-decoration:underline\">Open checkout</a> if it does not load.");
+            setTimeout(function(){ window.location.href=url; },1400); }
+          else { doneScreen("On it.", "<b>"+sv.name+"</b> for "+esc(prop)+" is in.", "Your broker reviews it and sends your "+sv.price+" invoice. Nothing else needed."); }
+        } else { err("sv-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent=sv.stripe?"Continue to payment":"Submit request"; }
+      }).catch(function(){ err("sv-err","Network error. Please try again."); btn.disabled=false; btn.textContent=sv.stripe?"Continue to payment":"Submit request"; });
+    });
+    show("step-service");
+  }
 
   /* ================= CONTRACT FLOW ================= */
   var cState={ b64:null, name:null, fields:{}, side:"buyer" };
