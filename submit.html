@@ -334,17 +334,23 @@
     }catch(e){ if(canvas) canvas.style.display="none"; if(ph) ph.style.display=""; }
   }
   function cExtract(){ show("step-reading"); startScan(); renderContractPreview(cState.b64);
-    fetch(SB_URL+"/functions/v1/extract-contract-fields",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ pdf_base64:cState.b64, write:false }) })
-    .then(function(r){return r.json();}).then(function(d){ cState.fields=(d&&d.fields)?d.fields:{}; cState.docs=(d&&d.documents)?d.documents:[]; fillScan(cState.fields); })
-    .catch(function(){ cState.fields={}; cState.docs=[]; fillScan({}); });
+    var done=false;
+    var finish=function(fields,docs){ if(done)return; done=true; cState.fields=fields||{}; cState.docs=docs||[]; fillScan(cState.fields); };
+    var ctrl=("AbortController" in window)?new AbortController():null;
+    // Failsafe · never let the reading screen hang. If extraction is slow or stalls,
+    // proceed to the review form with empty fields (the agent confirms manually).
+    var to=setTimeout(function(){ if(ctrl){ try{ ctrl.abort(); }catch(_){} } finish({},[]); }, 9000);
+    fetch(SB_URL+"/functions/v1/extract-contract-fields",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ pdf_base64:cState.b64, write:false }), signal:ctrl?ctrl.signal:undefined })
+    .then(function(r){return r.json();}).then(function(d){ clearTimeout(to); finish((d&&d.fields)||{}, (d&&d.documents)||[]); })
+    .catch(function(){ clearTimeout(to); finish({},[]); });
   }
   var _scanStart=0;
   function startScan(){ _scanStart=Date.now(); var el=document.getElementById("scan-fields"); if(el) el.innerHTML=""; }
   function fillScan(f){
-    var SCAN_TOTAL=10000;
+    var SCAN_TOTAL=4500;
     var go=function(){ cReview(); show("step-review"); };
     var el=document.getElementById("scan-fields");
-    var elapsed=Date.now()-_scanStart, remaining=Math.max(3000, SCAN_TOTAL-elapsed);
+    var elapsed=Date.now()-_scanStart, remaining=Math.max(1800, SCAN_TOTAL-elapsed);
     if(!el){ setTimeout(go, remaining); return; }
     var docs=(cState.docs&&cState.docs.length)?cState.docs.map(function(d){return d.title;}).join(", "):"";
     var groups=[
