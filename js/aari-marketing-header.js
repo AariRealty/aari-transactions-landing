@@ -63,7 +63,7 @@
     '      <span class="aari-nav-name">Aari Transactions<small>Florida TC</small></span>',
     '    </a>',
     '    <div class="aari-nav-links">',
-    '      <a href="/index.html#pricing">Pricing</a>',
+    '      <a href="/services.html">Services</a>',
     '      <a href="/index.html#how">How it works</a>',
     '      <a href="/index.html#faq">FAQ</a>',
     '      <a href="/portal" class="aari-nav-cta">Sign In<span class="aari-cta-extra"> / Sign Up</span></a>',
