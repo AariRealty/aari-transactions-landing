@@ -174,6 +174,35 @@
     listing_coordinator:{name:"Listing Coordinator",price:"$249",stripe:"https://buy.stripe.com/dRm6oz4ZNdKP0hZgfgcAo0j"},
     standalone_review:{name:"Standalone Review",price:"$149",stripe:""}
   };
+  /* Address autocomplete · same free Mapbox token + SWFL bias the homepage uses.
+     Reusable: wraps any input, drops a suggestion menu, fills on click. */
+  var AARI_MAPBOX_TOKEN="pk.eyJ1IjoibWFybGVueWliIiwiYSI6ImNtcHlya3FyZTBhNDkycXB5eHFxYWNuOHAifQ.6iJYZ3ApLhqJi9D2r9shlw";
+  function wireAddr(inp){
+    if(!inp||inp.__addrWired) return; inp.__addrWired=true;
+    if(!document.getElementById("addr-ac-css")){ var st=document.createElement("style"); st.id="addr-ac-css";
+      st.textContent=".addr-wrap{position:relative}.addr-menu{position:absolute;left:0;right:0;top:calc(100% + 4px);background:#fff;border:1px solid #e3ddd1;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.14);z-index:60;overflow-y:auto;max-height:240px}.addr-menu[hidden]{display:none}.addr-item{padding:10px 12px;font-size:14px;color:#2b2b2b;cursor:pointer}.addr-item:hover{background:#f5f0e8}";
+      document.head.appendChild(st); }
+    var wrap=document.createElement("div"); wrap.className="addr-wrap"; inp.parentNode.insertBefore(wrap,inp); wrap.appendChild(inp);
+    var menu=document.createElement("div"); menu.className="addr-menu"; menu.hidden=true; wrap.appendChild(menu);
+    var timer=null, seq=0; inp.setAttribute("autocomplete","off");
+    function hide(){ menu.hidden=true; menu.innerHTML=""; }
+    inp.addEventListener("input",function(){
+      var q=inp.value.trim(); if(timer)clearTimeout(timer);
+      if(q.length<4){ hide(); return; }
+      timer=setTimeout(function(){ var my=++seq;
+        fetch("https://api.mapbox.com/search/geocode/v6/forward?q="+encodeURIComponent(q)+"&autocomplete=true&country=us&types=address&limit=6&proximity=-81.87,26.64&access_token="+encodeURIComponent(AARI_MAPBOX_TOKEN))
+        .then(function(r){return r.json();}).then(function(d){ if(my!==seq)return;
+          var seen={}, rows=((d&&d.features)||[]).map(function(f){ var p=f.properties||{}; return (p.full_address||p.place_formatted||p.name||"").replace(/, United States$/,""); }).filter(function(s){ if(!s||seen[s])return false; seen[s]=true; return true; });
+          if(!rows.length){ hide(); return; }
+          menu.innerHTML=rows.map(function(s){ return '<div class="addr-item" data-a="'+esc(s)+'">'+esc(s)+'</div>'; }).join("");
+          menu.hidden=false;
+          menu.querySelectorAll("[data-a]").forEach(function(b){ b.addEventListener("click",function(){ inp.value=b.getAttribute("data-a"); hide(); }); });
+        }).catch(function(){ if(my===seq) hide(); });
+      },300);
+    });
+    document.addEventListener("click",function(e){ if(e.target!==inp&&!menu.contains(e.target)) hide(); });
+    inp.addEventListener("keydown",function(e){ if(e.key==="Escape") hide(); });
+  }
   function serviceStart(svc){
     var sv=SERVICES[svc]; if(!sv){ show("step-door"); return; }
     var W2=document.getElementById("step-service");
@@ -204,6 +233,7 @@
         } else { err("sv-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent=sv.stripe?"Continue to payment":"Submit request"; }
       }).catch(function(){ err("sv-err","Network error. Please try again."); btn.disabled=false; btn.textContent=sv.stripe?"Continue to payment":"Submit request"; });
     });
+    wireAddr(document.getElementById("sv-prop"));
     show("step-service");
   }
 
@@ -270,6 +300,7 @@
       '<div style="max-width:420px;margin:14px auto 0">'+body+'<button class="btn" id="o-next">'+(last?"Continue to payment":"Next")+'</button><div class="msg err" id="o-err"></div></div>';
     document.getElementById("o-back").addEventListener("click",function(){ saveStep(i); n===1?show("step-door"):offerStep(n-1); });
     document.getElementById("o-next").addEventListener("click",function(){ if(!saveStep(i,true))return; last?offerSubmit(this):offerStep(n+1); });
+    if(i===0){ wireAddr(document.getElementById("o-prop")); }
     if(i===2){ W.querySelectorAll("#o-fin button").forEach(function(b){ b.addEventListener("click",function(){ W.querySelectorAll("#o-fin button").forEach(function(x){x.classList.remove("on");}); b.classList.add("on"); oState.financing=b.getAttribute("data-f"); }); }); }
     if(i===3){ var od=document.getElementById("o-drop"), of=document.getElementById("o-file"); od.addEventListener("click",function(){of.click();}); of.addEventListener("change",function(){ if(of.files&&of.files[0]){ var file=of.files[0]; oState.pre_name=file.name; toB64(file,function(b){ oState.pre_b64=b; }); document.getElementById("o-drop-t").textContent="✓ "+file.name; } }); }
     if(i===4){ W.querySelectorAll(".plan").forEach(function(p){ p.addEventListener("click",function(){ W.querySelectorAll(".plan").forEach(function(x){ x.classList.remove("on"); x.classList.add("cream"); }); p.classList.add("on"); p.classList.remove("cream"); oState.plan=p.getAttribute("data-p"); }); }); }
