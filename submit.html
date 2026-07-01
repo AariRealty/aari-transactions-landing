@@ -65,6 +65,17 @@
   .done-i{width:52px;height:52px;border-radius:50%;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;margin:10px auto 16px}
   .muted{color:var(--muted);font-size:13px}
   .hide{display:none}
+  .scan-wrap{ display:grid; grid-template-columns:150px 1fr; gap:16px; max-width:520px; margin:18px auto 0; align-items:start; }
+  @media (max-width:560px){ .scan-wrap{ grid-template-columns:110px 1fr; } }
+  .scan-doc{ position:relative; overflow:hidden; background:#faf8f3; border:1px solid var(--line); border-radius:10px; height:180px; }
+  .scan-docline{ height:7px; border-radius:3px; background:#e7e1d5; margin:9px 14px; }
+  .scan-line{ position:absolute; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,#0f0f0f,transparent); box-shadow:0 0 9px rgba(15,15,15,.4); animation:scanline 1.7s ease-in-out infinite; }
+  @keyframes scanline{ 0%{top:6%} 50%{top:90%} 100%{top:6%} }
+  .scan-fields{ background:#f5f0e8; border-radius:10px; padding:6px 14px; }
+  .scan-field{ display:flex; justify-content:space-between; gap:10px; padding:10px 0; font-size:12.5px; border-bottom:1px solid rgba(15,15,15,.07); opacity:0; transform:translateY(5px); transition:opacity .45s ease, transform .45s ease; }
+  .scan-field:last-child{ border-bottom:none; }
+  .scan-field.in{ opacity:1; transform:none; }
+  .scan-field .k{ color:#8a857c; } .scan-field .v{ color:#0f0f0f; font-weight:600; text-align:right; }
 </style>
 </head>
 <body>
@@ -91,7 +102,16 @@
     <div class="msg err" id="drop-err"></div>
   </section>
 
-  <section id="step-reading" class="hide center"><div class="spin"></div><p class="muted">Reading your contract&hellip;</p></section>
+  <section id="step-reading" class="hide">
+    <h1 style="font-size:26px">Reading your contract&hellip;</h1>
+    <div class="scan-wrap">
+      <div class="scan-doc">
+        <div style="padding-top:10px"><div class="scan-docline" style="width:55%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:80%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:65%"></div><div class="scan-docline"></div><div class="scan-docline" style="width:75%"></div><div class="scan-docline"></div></div>
+        <div class="scan-line"></div>
+      </div>
+      <div class="scan-fields" id="scan-fields"></div>
+    </div>
+  </section>
 
   <!-- CONTRACT · STEP 2 -->
   <section id="step-review" class="hide">
@@ -198,10 +218,18 @@
     if(file.size>25*1024*1024){ err("drop-err","That file is over 25 MB."); return; }
     toB64(file,function(b){ cState.b64=b; cState.name=file.name; cExtract(); });
   }
-  function cExtract(){ show("step-reading");
+  function cExtract(){ show("step-reading"); startScan();
     fetch(SB_URL+"/functions/v1/extract-contract-fields",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ pdf_base64:cState.b64, write:false }) })
-    .then(function(r){return r.json();}).then(function(d){ cState.fields=(d&&d.fields)?d.fields:{}; cReview(); show("step-review"); })
-    .catch(function(){ cState.fields={}; cReview(); show("step-review"); });
+    .then(function(r){return r.json();}).then(function(d){ cState.fields=(d&&d.fields)?d.fields:{}; fillScan(cState.fields); })
+    .catch(function(){ cState.fields={}; fillScan({}); });
+  }
+  function startScan(){ var el=document.getElementById("scan-fields"); if(el) el.innerHTML=["Property","Buyer","Price","Closing"].map(function(k){ return '<div class="scan-field" data-k="'+k+'"><span class="k">'+k+'</span><span class="v">…</span></div>'; }).join(''); }
+  function fillScan(f){
+    var vals={ Property:(f.address||"—"), Buyer:([f.buyer,f.seller].filter(Boolean)[0]||"—"), Price:(f.price?("$"+f.price):"—"), Closing:(f.closing_date||"—") };
+    var rows=document.querySelectorAll("#scan-fields .scan-field");
+    if(!rows.length){ cReview(); show("step-review"); return; }
+    rows.forEach(function(row,i){ setTimeout(function(){ var v=row.querySelector(".v"); v.textContent=vals[row.getAttribute("data-k")]; row.classList.add("in"); }, 350+i*450); });
+    setTimeout(function(){ cReview(); show("step-review"); }, 350+rows.length*450+750);
   }
   function cReview(){ var f=cState.fields, rows=[];
     if(f.address) rows.push("<b>"+esc(f.address)+"</b>");
