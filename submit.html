@@ -174,6 +174,9 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/js/supabase-config.js"></script>
+<script src="/js/auth.js"></script>
 <script>
   if(window.pdfjsLib){ pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"; }
   var SB_URL="https://fnlrgmuvtgwzjsihqxcn.supabase.co";
@@ -381,7 +384,18 @@
     fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"check_email", agent_email:em }) })
     .then(function(r){return r.json();}).then(function(d){ document.getElementById("name-fallback").style.display=(d&&d.recognized)?"none":"block"; }).catch(function(){});
   });
-  document.getElementById("submit").addEventListener("click",function(){ var btn=this; err("sub-err","");
+  // End-of-flow gate · Step 1 · live session AND signed current SA (v4.7)?
+  function contractGate(){
+    if(!window.AariAuth || typeof window.AariAuth.getCurrentSession!=="function"){ return Promise.resolve({ authed:false, saSigned:false }); }
+    return window.AariAuth.getCurrentSession().then(function(session){
+      if(!session) return { authed:false, saSigned:false };
+      return window.AariAuth.getAgreementStatus().then(function(sa){
+        var signed = !!(sa && sa.agreement_signed_at && sa.agreement_version === "v4.7");
+        return { authed:true, saSigned:signed };
+      }).catch(function(){ return { authed:true, saSigned:false }; });
+    }).catch(function(){ return { authed:false, saSigned:false }; });
+  }
+  function proceedToSubmit(btn){ err("sub-err","");
     var email=document.getElementById("email").value.trim();
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err("sub-err","Add a valid email so we can reach you."); return; }
     var nf=document.getElementById("name-fallback"), first="", last="";
@@ -394,6 +408,11 @@
       if(d&&d.ok){ doneScreen("You&rsquo;re in.", (d.address&&d.address.indexOf("pending")===-1)?("<b>"+esc(d.address)+"</b> is submitted."):"Your file is submitted.", "Your coordinator reviews it and reaches out today. Nothing else needed."); }
       else { err("sub-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Submit file"; }
     }).catch(function(){ err("sub-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Submit file"; });
+  }
+  // Step 2 replaces this with the account/sign-in + TC Service Agreement UI. Until then it falls through to the existing submit so the live flow never regresses.
+  function openAuthSaStep(btn){ proceedToSubmit(btn); }
+  document.getElementById("submit").addEventListener("click",function(){ var btn=this; err("sub-err","");
+    contractGate().then(function(g){ if(g.authed && g.saSigned){ proceedToSubmit(btn); } else { openAuthSaStep(btn); } });
   });
 
   /* ================= OFFER WIZARD ================= */
