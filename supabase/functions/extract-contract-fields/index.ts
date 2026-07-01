@@ -148,6 +148,7 @@ function parseContract(T: string): Record<string, string> {
   out.emd = dollar(findLine(/Initial deposit to be held/));
   out.loan_amount = dollar(findLine(/\(c\)\s*Financing:/));
   out.balance_to_close = dollar(findLine(/transfer or other Collected funds/i));
+  out.additional_deposit = dollar(findLine(/Additional deposit/i));
 
   // Operational flags (free · presence detection of ELECTIVE rider/addendum items
   // that drop a task later). Home warranty and turnkey are never in the base AS-IS
