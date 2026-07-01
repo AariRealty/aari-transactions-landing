@@ -57,6 +57,9 @@
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .btn{width:100%;background:var(--ink);color:#fff;border:none;border-radius:50px;padding:14px;font-family:inherit;font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;margin-top:18px}
   .btn:disabled{opacity:.5;cursor:default}
+  .terms-row{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#6b6357;margin-top:16px;line-height:1.5;cursor:pointer}
+  .terms-row input{margin-top:2px;flex:0 0 auto;width:15px;height:15px;accent-color:#0f0f0f;cursor:pointer}
+  .terms-row a{color:#0f0f0f;text-decoration:underline;text-underline-offset:2px}
   .back{display:inline-block;font-size:12px;color:#8a857c;cursor:pointer}
   .stepmeta{font-size:11px;color:#b9b2a4;margin-left:auto}
   .rowbar{display:flex;align-items:center;margin-bottom:14px}
@@ -136,6 +139,7 @@
       <div class="sidenote" id="sidenote"></div>
       <div class="lbl">Your email</div>
       <input type="email" id="email" placeholder="you@brokerage.com" autocomplete="email">
+      <label class="terms-row"><input type="checkbox" id="terms-c"><span>I have read and agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a>.</span></label>
       <button class="btn" id="submit">Submit file</button>
       <div class="msg err" id="sub-err"></div>
     </div>
@@ -229,6 +233,11 @@
     document.addEventListener("click",function(e){ if(e.target!==inp&&!menu.contains(e.target)) hide(); });
     inp.addEventListener("keydown",function(e){ if(e.key==="Escape") hide(); });
   }
+  // Terms of Service acceptance (clickwrap floor). Version maps to the current
+  // posted Terms / Service Agreement. Logged with each submission server side.
+  var TERMS_VERSION="2026-05-26";
+  function termsRow(id){ return '<label class="terms-row"><input type="checkbox" id="'+id+'"><span>I have read and agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a>.</span></label>'; }
+  function termsOK(cid,errId){ var c=document.getElementById(cid); if(c&&c.checked) return true; err(errId,"Please accept the Terms of Service to continue."); return false; }
   function serviceStart(svc){
     var sv=SERVICES[svc]; if(!sv){ show("step-door"); return; }
     var W2=document.getElementById("step-service");
@@ -238,7 +247,7 @@
         '<div class="found"><b>'+sv.name+'</b> &middot; '+sv.price+(sv.stripe?" &middot; paid upfront":" &middot; invoice sent")+'</div>'+
         '<div class="lbl">Property address</div><input type="text" id="sv-prop" placeholder="Address or MLS number">'+
         '<div class="lbl">Your email</div><input type="email" id="sv-email" placeholder="you@brokerage.com" autocomplete="email">'+
-        '<button class="btn" id="sv-submit">'+(sv.stripe?"Continue to payment":"Submit request")+'</button>'+
+        termsRow("terms-s")+'<button class="btn" id="sv-submit">'+(sv.stripe?"Continue to payment":"Submit request")+'</button>'+
         '<div class="msg err" id="sv-err"></div>'+
       '</div>';
     document.getElementById("sv-door").addEventListener("click",function(){ show("step-door"); });
@@ -248,8 +257,9 @@
       if(!prop){ err("sv-err","Add the property this is for."); return; }
       var email=document.getElementById("sv-email").value.trim();
       if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err("sv-err","Add a valid email so we can reach you."); return; }
+      if(!termsOK("terms-s","sv-err")) return;
       btn.disabled=true; btn.textContent="Sending…";
-      fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"service", svc:svc, property:prop, agent_email:email }) })
+      fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"service", svc:svc, property:prop, agent_email:email, terms_version:TERMS_VERSION, terms_accepted:true }) })
       .then(function(r){return r.json();}).then(function(d){
         if(d&&d.ok){
           if(sv.stripe){ var url=sv.stripe+"?client_reference_id="+encodeURIComponent(d.file_id)+"&prefilled_email="+encodeURIComponent(email);
@@ -337,8 +347,9 @@
   document.getElementById("submit").addEventListener("click",function(){ var btn=this; err("sub-err","");
     var email=document.getElementById("email").value.trim();
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err("sub-err","Add a valid email so we can reach you."); return; }
+    if(!termsOK("terms-c","sub-err")) return;
     btn.disabled=true; btn.textContent="Submitting…";
-    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"contract", pdf_base64:cState.b64, filename:cState.name, side:cState.side, agent_email:email, fields:cState.fields }) })
+    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"contract", pdf_base64:cState.b64, filename:cState.name, side:cState.side, agent_email:email, fields:cState.fields, terms_version:TERMS_VERSION, terms_accepted:true }) })
     .then(function(r){return r.json();}).then(function(d){
       if(d&&d.ok){ doneScreen("You&rsquo;re in.", (d.address&&d.address.indexOf("pending")===-1)?("<b>"+esc(d.address)+"</b> is submitted."):"Your file is submitted.", "Your coordinator reviews it and reaches out today. Nothing else needed."); }
       else { err("sub-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Submit file"; }
@@ -358,9 +369,9 @@
     if(i===4) body='<div style="display:grid;gap:8px"><div class="plan '+(oState.plan==="basic"?"on":"cream")+'" data-p="basic"><span>Basic <span style="font-weight:400;opacity:.7">&middot; one draft</span></span><span class="p">$79</span></div><div class="plan '+(oState.plan==="complete"?"on":"cream")+'" data-p="complete"><span>Complete <span style="font-weight:400;opacity:.7">&middot; revisions + counters</span></span><span class="p">$149</span></div><div class="lbl">Your email</div><input type="email" id="o-email" value="'+esc(oState.email)+'" placeholder="you@brokerage.com"></div>';
     W.innerHTML='<div class="rowbar"><span class="back" id="o-back">&lsaquo; Back</span><span class="stepmeta">Step '+n+' of '+OSTEPS.length+'</span></div>'+
       '<h1 style="font-size:26px">'+OSTEPS[i].q+'</h1>'+
-      '<div style="max-width:420px;margin:14px auto 0">'+body+'<button class="btn" id="o-next">'+(last?"Continue to payment":"Next")+'</button><div class="msg err" id="o-err"></div></div>';
+      '<div style="max-width:420px;margin:14px auto 0">'+body+(last?termsRow("terms-o"):"")+'<button class="btn" id="o-next">'+(last?"Continue to payment":"Next")+'</button><div class="msg err" id="o-err"></div></div>';
     document.getElementById("o-back").addEventListener("click",function(){ saveStep(i); n===1?show("step-door"):offerStep(n-1); });
-    document.getElementById("o-next").addEventListener("click",function(){ if(!saveStep(i,true))return; last?offerSubmit(this):offerStep(n+1); });
+    document.getElementById("o-next").addEventListener("click",function(){ if(!saveStep(i,true))return; if(last&&!termsOK("terms-o","o-err"))return; last?offerSubmit(this):offerStep(n+1); });
     if(i===0){ wireAddr(document.getElementById("o-prop")); }
     if(i===2){ W.querySelectorAll("#o-fin button").forEach(function(b){ b.addEventListener("click",function(){ W.querySelectorAll("#o-fin button").forEach(function(x){x.classList.remove("on");}); b.classList.add("on"); oState.financing=b.getAttribute("data-f"); }); }); }
     if(i===3){ var od=document.getElementById("o-drop"), of=document.getElementById("o-file"); od.addEventListener("click",function(){of.click();}); of.addEventListener("change",function(){ if(of.files&&of.files[0]){ var file=of.files[0]; oState.pre_name=file.name; toB64(file,function(b){ oState.pre_b64=b; }); document.getElementById("o-drop-t").textContent="✓ "+file.name; } }); }
@@ -375,7 +386,7 @@
     return true;
   }
   function offerSubmit(btn){ btn.disabled=true; btn.textContent="Sending…"; err("o-err","");
-    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"offer", property:oState.property, buyer:oState.buyer, price:oState.price, emd:oState.emd, financing:oState.financing, close_date:oState.close_date, plan:oState.plan, pre_approval_base64:oState.pre_b64, pre_approval_name:oState.pre_name, agent_email:oState.email }) })
+    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"offer", property:oState.property, buyer:oState.buyer, price:oState.price, emd:oState.emd, financing:oState.financing, close_date:oState.close_date, plan:oState.plan, pre_approval_base64:oState.pre_b64, pre_approval_name:oState.pre_name, agent_email:oState.email, terms_version:TERMS_VERSION, terms_accepted:true }) })
     .then(function(r){return r.json();}).then(function(d){
       if(d&&d.ok){
         var amt=oState.plan==="complete"?"$149":"$79";
