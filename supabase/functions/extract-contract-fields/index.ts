@@ -102,6 +102,17 @@ function parseContract(T: string): Record<string, string> {
   const findLine = (re: RegExp) => { for (const l of lines) if (re.test(l)) return l; return ""; };
   const findIdx = (re: RegExp) => { for (let i = 0; i < lines.length; i++) if (re.test(lines[i])) return i; return -1; };
 
+  // Contract type, read from the form title/header so the cockpit section is
+  // data driven instead of assuming AS IS Residential.
+  const head = lines.slice(0, 24).join(" ");
+  let ct = "";
+  if (/AS[\s-]?IS[\s"”']{0,3}Residential Contract For Sale/i.test(head) || /"AS IS"/i.test(head)) ct = "AS IS Residential";
+  else if (/Vacant Land Contract/i.test(head)) ct = "Vacant Land";
+  else if (/Commercial Contract/i.test(head)) ct = "Commercial";
+  else if (/Residential Lease|Lease Agreement|Lease For|Residential Contract For Lease/i.test(head)) ct = "Lease";
+  else if (/Residential Contract For Sale And Purchase|Contract For Sale And Purchase/i.test(head)) ct = "Standard Residential";
+  if (ct) out.contract_type = ct;
+
   const bl = findLine(/\(\s*["“]?Buyer/);
   if (bl) out.buyer = stripNum(bl.replace(/\(\s*["“]?Buyer.*/, "")).replace(/^and\s+/i, "").replace(/_+/g, "").trim();
   const sl = findLine(/\(\s*["“]?Seller/);
