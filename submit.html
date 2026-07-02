@@ -689,7 +689,7 @@
      Sections follow the AS IS Residential / Vacant Land contract order.
      COMPLIANCE: disclosure screens marked [PENDING FORM VERIFICATION] carry placeholder
      text and MUST be swapped for verbatim statutory / form language before launch. */
-  var oState={ ptype:"residential", prop_mode:"address", property:"", mls:"", buyer:"", buyer_email:"", buyer_phone:"",
+  var oState={ ptype:"residential", prop_mode:"address", property:"", mls:"", buyer_type:"person", buyer:"", buyer_entity:"", buyer_signer:"", buyer_signer_title:"", buyer_email:"", buyer_phone:"",
     price:"", emd:"", emd_timing:"With the offer", addl_deposit:"",
     financing:"Conventional", loan_days:"30", preapproval:"", pre_b64:null, pre_name:null,
     inspection_days:"15", appraisal:"yes", survey:"", title_days:"15",
@@ -717,9 +717,28 @@
       auto:"We pull the address and county from the listing before drafting." },
     { sec:1, key:"ptype", q:"Residential or vacant land?", type:"seg", opts:[["residential","Residential"],["vacant","Vacant land"]],
       rec:function(v){ return v==="vacant" ? "Vacant Land Contract logic. Structure disclosures are skipped and a survey is strongly recommended." : "AS IS Residential Contract logic."; } },
-    { sec:2, key:"buyer", q:"Who is the buyer?", type:"text", ph:"Full legal name", req:"Add the buyer's full legal name." },
-    { sec:2, key:"buyer_email", q:"Buyer email?", type:"email", ph:"buyer@email.com", optional:true },
-    { sec:2, key:"buyer_phone", q:"Buyer phone?", type:"tel", ph:"(239) 555 0100", optional:true },
+    { sec:2, key:"buyer_type", q:"Is the buyer a person, a company, or a trust?", type:"seg",
+      opts:[["person","Person"],["entity","Company or LLC"],["trust","Trust"]],
+      rec:function(v){ if(v==="entity") return "The contract names the company as the buyer, exactly as registered with Sunbiz, and an authorized person signs for it."; if(v==="trust") return "The contract names the trust as the buyer, exactly as titled in the trust document, and the trustee signs for it."; return ""; } },
+    { sec:2, key:"buyer", q:"Who is the buyer?", type:"text", ph:"Full legal name", req:"Add the buyer's full legal name.",
+      skip:function(){ return oState.buyer_type!=="person"; } },
+    { sec:2, key:"buyer_entity", type:"text", req:"Add the exact legal name.",
+      q:function(){ return oState.buyer_type==="trust" ? "What is the exact name of the trust?" : "What is the exact legal name of the company?"; },
+      ph:function(){ return oState.buyer_type==="trust" ? "The Smith Family Revocable Trust dated January 5 2020" : "Smith Holding LLC"; },
+      skip:function(){ return oState.buyer_type==="person"; },
+      note:"Exactly as registered. The contract must match it letter for letter." },
+    { sec:2, key:"buyer_signer", type:"text", req:"Add the name of the person who signs.",
+      q:function(){ return oState.buyer_type==="trust" ? "Who signs as trustee?" : "Who signs on behalf of the company?"; },
+      ph:"Full legal name", skip:function(){ return oState.buyer_type==="person"; } },
+    { sec:2, key:"buyer_signer_title", type:"seg", req:"Pick the signer's title.",
+      q:"What is their title?",
+      opts:function(){ return oState.buyer_type==="trust" ? [["Trustee","Trustee"],["Co Trustee","Co Trustee"],["Successor Trustee","Successor Trustee"]] : [["Member","Member"],["Manager","Manager"],["Member/Manager","Member/Manager"],["President","President"],["Other","Other"]]; },
+      skip:function(){ return oState.buyer_type==="person"; },
+      rec:function(v){ if(!v||!oState.buyer_signer||!oState.buyer_entity) return v?"The signature line composes once the signer and entity name are in.":""; return "Signature line on the contract: <b>"+esc(oState.buyer_signer)+", "+esc(v)+" of "+esc(oState.buyer_entity)+"</b>"; } },
+    { sec:2, key:"buyer_email", type:"email", ph:"buyer@email.com", optional:true,
+      q:function(){ return oState.buyer_type==="person" ? "Buyer email?" : "Signer email?"; } },
+    { sec:2, key:"buyer_phone", type:"tel", ph:"(239) 555 0100", optional:true,
+      q:function(){ return oState.buyer_type==="person" ? "Buyer phone?" : "Signer phone?"; } },
     { sec:2, key:"price", q:"Offer price?", type:"currency", ph:"$", req:"Add the offer price." },
     { sec:2, key:"emd", q:"Earnest money deposit?", type:"currency", ph:"$", req:"Add the deposit amount.",
       note:"No default on purpose. You size the deposit to the deal." },
@@ -788,15 +807,19 @@
     var s=steps[_oi];
     if(s.def && (oState[s.key]===""||oState[s.key]==null)) oState[s.key]=s.def();
     var v=oState[s.key];
+    // q, ph and opts may be functions so entity and trust wording adapts to earlier answers.
+    var qText=(typeof s.q==="function")?s.q():s.q;
+    var phText=(typeof s.ph==="function")?s.ph():(s.ph||"");
+    var sOpts=(typeof s.opts==="function")?s.opts():s.opts;
     var body="";
-    if(s.type==="text"||s.type==="email"||s.type==="tel") body='<input id="oq" type="'+(s.type==="text"?"text":s.type)+'" value="'+esc(v||"")+'" placeholder="'+esc(s.ph||"")+'">';
-    if(s.type==="currency") body='<input id="oq" inputmode="decimal" value="'+esc(v||"")+'" placeholder="'+esc(s.ph||"$")+'">';
+    if(s.type==="text"||s.type==="email"||s.type==="tel") body='<input id="oq" type="'+(s.type==="text"?"text":s.type)+'" value="'+esc(v||"")+'" placeholder="'+esc(phText)+'">';
+    if(s.type==="currency") body='<input id="oq" inputmode="decimal" value="'+esc(v||"")+'" placeholder="'+esc(phText||"$")+'">';
     if(s.type==="days") body='<div class="grid2"><input id="oq" inputmode="numeric" value="'+esc(v||"")+'"><div style="align-self:center;font-size:13px;color:#8a857c">days</div></div>';
     if(s.type==="date") body='<input id="oq" type="date" value="'+esc(v||"")+'">';
-    if(s.type==="textarea") body='<textarea id="oq" rows="4" style="width:100%;font-family:inherit;font-size:14px;padding:11px 13px;border:1px solid #d8d2c4;border-radius:8px;outline:none" placeholder="'+esc(s.ph||"")+'">'+esc(v||"")+'</textarea>';
-    if(s.type==="seg") body='<div class="seg" id="oq-seg">'+s.opts.map(function(o){ return '<button data-v="'+esc(o[0])+'" class="'+(v===o[0]?"on":"")+'">'+o[1]+'</button>'; }).join("")+'</div>';
+    if(s.type==="textarea") body='<textarea id="oq" rows="4" style="width:100%;font-family:inherit;font-size:14px;padding:11px 13px;border:1px solid #d8d2c4;border-radius:8px;outline:none" placeholder="'+esc(phText)+'">'+esc(v||"")+'</textarea>';
+    if(s.type==="seg") body='<div class="seg" id="oq-seg">'+sOpts.map(function(o){ return '<button data-v="'+esc(o[0])+'" class="'+(v===o[0]?"on":"")+'">'+o[1]+'</button>'; }).join("")+'</div>';
     if(s.type==="ack") body='<div class="found" style="font-size:12.5px;line-height:1.7">'+s.text+'</div><label class="terms-row" style="margin-top:12px"><input type="checkbox" id="oq-ack"'+(v?" checked":"")+'><span>Acknowledged</span></label>';
-    if(s.type==="chips") body='<div class="seg" id="oq-chips" style="flex-wrap:wrap">'+s.opts.map(function(o){ return '<button data-v="'+esc(o)+'" class="'+((v||[]).indexOf(o)>-1?"on":"")+'" style="flex:0 0 auto;min-width:0;padding:8px 14px">'+esc(o)+'</button>'; }).join("")+'</div>';
+    if(s.type==="chips") body='<div class="seg" id="oq-chips" style="flex-wrap:wrap">'+sOpts.map(function(o){ return '<button data-v="'+esc(o)+'" class="'+((v||[]).indexOf(o)>-1?"on":"")+'" style="flex:0 0 auto;min-width:0;padding:8px 14px">'+esc(o)+'</button>'; }).join("")+'</div>';
     if(s.type==="upload") body='<div class="drop" id="o-drop"><i class="ti ti-upload" aria-hidden="true"></i><div class="drop-title" id="o-drop-t">'+(oState.pre_name?("✓ "+esc(oState.pre_name)):"Drop the preapproval")+'</div><div class="drop-sub">or skip and add it later</div><input type="file" id="o-file" accept="application/pdf,.pdf" class="hide"></div>';
     if(s.type==="tier") body='<div style="display:grid;gap:8px">'+
       '<div class="plan '+(oState.plan==="basic"?"on":"cream")+'" data-p="basic"><span>Basic <span style="font-weight:400;opacity:.7">&middot; BBA, offer, compensation docs, one draft</span></span><span class="p">$79</span></div>'+
@@ -808,7 +831,7 @@
     var total=steps.length, pct=Math.round(((_oi)/Math.max(total-1,1))*100);
     W.innerHTML='<div class="rowbar"><span class="back" id="o-back">&lsaquo; Back</span><span class="stepmeta">'+OSEC[s.sec-1]+' &middot; Section '+s.sec+' of 8</span></div>'+
       '<div style="height:4px;background:#eee8da;border-radius:3px;margin:0 0 18px;overflow:hidden"><i style="display:block;height:100%;width:'+pct+'%;background:var(--ink);border-radius:3px"></i></div>'+
-      '<h1 style="font-size:26px">'+s.q+'</h1>'+
+      '<h1 style="font-size:26px">'+qText+'</h1>'+
       '<div style="max-width:420px;margin:14px auto 0">'+body+recHtml+noteHtml+autoHtml+
       '<button class="btn" id="o-next">'+(s.type==="tier"?"Add and continue to payment":(s.optional?"Next, or skip":"Next"))+'</button>'+
       '<div class="msg" id="o-err"></div></div>';
@@ -860,8 +883,15 @@
   }
   function offerSubmit(btn){ btn.disabled=true; btn.textContent="Sending…"; err("o-err","");
     var q={}; Object.keys(oState).forEach(function(k){ if(k!=="pre_b64") q[k]=oState[k]; });
+    // Entity and trust buyers: the contract buyer is the entity, with a composed signature block.
+    var buyerDisplay = oState.buyer_type==="person" ? oState.buyer : oState.buyer_entity;
+    if(oState.buyer_type!=="person" && oState.buyer_signer && oState.buyer_signer_title){
+      q.buyer_signature_block = oState.buyer_signer+", "+oState.buyer_signer_title+" of "+oState.buyer_entity;
+    }
+    // Cash purchase by an entity or trust: FinCEN residential transfer reporting may apply. TC flags for title.
+    q.fincen_review = (oState.buyer_type!=="person" && oState.financing==="Cash");
     var propLabel = oState.prop_mode==="mls" ? ("MLS "+oState.mls) : oState.property;
-    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"offer", property:propLabel, buyer:oState.buyer, price:oState.price, emd:oState.emd, financing:oState.financing, close_date:oState.close_date, plan:oState.plan, pre_approval_base64:oState.pre_b64, pre_approval_name:oState.pre_name, agent_email:oState.email, questionnaire:q, terms_version:TERMS_VERSION, terms_accepted:true }) })
+    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"offer", property:propLabel, buyer:buyerDisplay, price:oState.price, emd:oState.emd, financing:oState.financing, close_date:oState.close_date, plan:oState.plan, pre_approval_base64:oState.pre_b64, pre_approval_name:oState.pre_name, agent_email:oState.email, questionnaire:q, terms_version:TERMS_VERSION, terms_accepted:true }) })
     .then(function(r){return r.json();}).then(function(d){
       if(d&&d.ok){
         var amt=oState.plan==="complete"?"$149":"$79";
