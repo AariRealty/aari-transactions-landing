@@ -76,6 +76,9 @@
   .center{text-align:center}
   .done-i{width:52px;height:52px;border-radius:50%;background:var(--green);color:#fff;display:flex;align-items:center;justify-content:center;font-size:26px;margin:10px auto 16px}
   .muted{color:var(--muted);font-size:13px}
+  .btn.out{ background:#fff; border:1px solid #d8d2c4; color:var(--ink); }
+  .done-actions{ display:flex; flex-direction:column; gap:10px; margin:22px auto 0; max-width:340px; }
+  .au-spin{ width:30px; height:30px; border:3px solid #e2dccd; border-top-color:var(--ink); border-radius:50%; margin:8px auto 14px; animation:sp .8s linear infinite; }
   .hide{display:none}
   .au-alt{ text-align:center; font-size:12px; color:#6b6357; margin-top:12px; }
   .au-alt a{ color:#0f0f0f; text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
@@ -190,6 +193,7 @@
     <h1 style="font-size:28px" id="done-h">You&rsquo;re in.</h1>
     <p class="muted" id="done-msg"></p>
     <p class="muted" style="margin-top:16px" id="done-sub"></p>
+    <div class="done-actions" id="done-actions"></div>
   </section>
 </div>
 
@@ -208,7 +212,21 @@
   function err(id,m){ var e=document.getElementById(id); if(!e)return; e.textContent=m||""; e.className=m?"msg err":"msg"; e.style.display=m?"block":"none"; }
   function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
   function toB64(file,cb){ var r=new FileReader(); r.onload=function(){ cb(String(r.result).split(",")[1]); }; r.readAsDataURL(file); }
-  function doneScreen(h,msg,sub){ document.getElementById("done-h").innerHTML=h; document.getElementById("done-msg").innerHTML=msg; document.getElementById("done-sub").innerHTML=sub||""; show("step-done"); }
+  function doneScreen(h,msg,sub,actions){ document.getElementById("done-h").innerHTML=h; document.getElementById("done-msg").innerHTML=msg; document.getElementById("done-sub").innerHTML=sub||"";
+    var box=document.getElementById("done-actions");
+    if(box){ box.innerHTML=""; if(actions&&actions.length){ actions.forEach(function(a){ var b=document.createElement("button"); b.className="btn"+(a.out?" out":""); b.innerHTML=a.label; b.addEventListener("click",a.on); box.appendChild(b); }); } }
+    show("step-done"); }
+  function resetContract(){ cState={ b64:null, name:null, fields:{}, side:"buyer", docs:[] };
+    var em=document.getElementById("email"); if(em) em.value="";
+    var tc=document.getElementById("terms-c"); if(tc) tc.checked=false;
+    var nf=document.getElementById("name-fallback"); if(nf) nf.style.display="none";
+    var f=document.getElementById("file"); if(f){ try{ f.value=""; }catch(_){} }
+    err("sub-err",""); try{ sessionStorage.removeItem("aari_pending_file"); }catch(_){} }
+  var CONTRACT_DONE_ACTIONS=[
+    { label:"Go to my portal", on:function(){ (window.top||window).location.href="/portal"; } },
+    { label:"Submit another file", out:true, on:function(){ resetContract(); show("step-door"); } },
+    { label:"Exit", out:true, on:function(){ try{ window.parent.postMessage("aari-submit-close","*"); }catch(_){} } }
+  ];
 
   document.getElementById("go-contract").addEventListener("click",function(){ show("step-drop"); });
   document.getElementById("go-offer").addEventListener("click",function(){ offerStep(1); });
@@ -431,7 +449,7 @@
     fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"contract", pdf_base64:cState.b64, filename:cState.name, side:cState.side, agent_email:email, first_name:first, last_name:last, fields:cState.fields, terms_version:TERMS_VERSION, terms_accepted:true }) })
     .then(function(r){return r.json();}).then(function(d){
       if(d&&d.need_name){ nf.style.display="block"; err("sub-err","Add your first and last name to finish."); btn.disabled=false; btn.textContent="Submit file"; return; }
-      if(d&&d.ok){ doneScreen("You&rsquo;re in.", (d.address&&d.address.indexOf("pending")===-1)?("<b>"+esc(d.address)+"</b> is submitted."):"Your file is submitted.", "Your coordinator reviews it and reaches out today. Nothing else needed."); }
+      if(d&&d.ok){ try{ sessionStorage.removeItem("aari_pending_file"); }catch(_){} doneScreen("You&rsquo;re in.", "Your file was received. We will be in touch within 1 business day.", (d.address&&d.address.indexOf("pending")===-1)?("<b>"+esc(d.address)+"</b>"):"", CONTRACT_DONE_ACTIONS); }
       else { err("sub-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Submit file"; }
     }).catch(function(){ err("sub-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Submit file"; });
   }
@@ -517,18 +535,46 @@
     .catch(function(e){ err("au-err",(e&&e.message)||"Could not record your signature."); b.disabled=false; b.textContent="Sign & submit file"; });
   }
   function authGoOnboarding(){
+    // Swap the modal content to register.html (in-iframe, no page jump). Persist the
+    // in-progress file so we can finish it after onboarding returns. On completion,
+    // register.html sends the iframe back to submit.html?resume=1 (see its return handler).
+    var email=_authEmail||((document.getElementById("email")||{}).value||"").trim();
+    try{
+      sessionStorage.setItem("aari_pending_file", JSON.stringify({ b64:cState.b64, name:cState.name, side:cState.side||"buyer", email:email, fields:cState.fields||{}, docs:cState.docs||[], v:1 }));
+      window.location.href="/register.html?return=submit"+(email?("&email="+encodeURIComponent(email)):"");
+      return;
+    }catch(_){}
+    // Fallback (e.g., storage quota on a very large PDF): keep submit.html alive and use the parent overlay.
     try { if(window.parent && window.parent.openOnboarding){ window.parent.__aariResumeSubmit=true; window.parent.openOnboarding(); return; } }catch(_){}
-    (window.top||window).location.href="/register.html";
+    (window.top||window).location.href="/register.html?return=submit"+(email?("&email="+encodeURIComponent(email)):"");
   }
   function submitAuthed(){
+    // Show an inline "sending" state (no review-screen flash), then submit.
     var go=function(email){
       var em=document.getElementById("email"); if(em && email) em.value=email;
       var tc=document.getElementById("terms-c"); if(tc) tc.checked=true;
-      show("step-review"); proceedToSubmit(document.getElementById("submit"));
+      var W=document.getElementById("step-auth");
+      if(W){ W.innerHTML='<div class="center" style="padding:34px 0"><div class="au-spin"></div><h1 style="font-size:24px">Sending your file</h1><p class="sub">One moment</p></div>'; show("step-auth"); }
+      proceedToSubmit(document.getElementById("submit"));
     };
     if(_authEmail){ go(_authEmail); return; }
     if(window.AariAuth && window.AariAuth.getAgreementStatus){ window.AariAuth.getAgreementStatus().then(function(sa){ go((sa&&sa.email)||""); }).catch(function(){ go(""); }); }
     else { go(""); }
+  }
+  // Resume after onboarding · the iframe returns to submit.html?resume=1. Restore the
+  // stashed file and finish the submission (the agent is now signed in with a current SA).
+  function resumePendingSubmit(){
+    var raw=null; try{ raw=sessionStorage.getItem("aari_pending_file"); }catch(_){}
+    if(!raw){ show("step-door"); return; }
+    var p; try{ p=JSON.parse(raw); }catch(_){ show("step-door"); return; }
+    if(!p || !p.b64){ show("step-door"); return; }
+    cState.b64=p.b64; cState.name=p.name; cState.side=p.side||"buyer"; cState.fields=p.fields||{}; cState.docs=p.docs||[];
+    var em=document.getElementById("email"); if(em) em.value=p.email||"";
+    var tc=document.getElementById("terms-c"); if(tc) tc.checked=true;
+    try{ cReview(); }catch(_){}
+    var host=document.getElementById("step-auth");
+    if(host){ host.innerHTML='<div class="center" style="padding:34px 0"><div class="au-spin"></div><h1 style="font-size:24px">Finishing your submission</h1><p class="sub">One moment</p></div>'; show("step-auth"); }
+    proceedToSubmit(document.getElementById("submit"));
   }
   window.addEventListener("message", function(e){ if(e && e.data==="aari-onboarding-complete"){ submitAuthed(); } });
   document.getElementById("submit").addEventListener("click",function(){ var btn=this; err("sub-err","");
@@ -577,6 +623,8 @@
       else { err("o-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Continue to payment"; }
     }).catch(function(){ err("o-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Send to draft"; });
   }
+  // On load · if we returned from onboarding (register.html), finish the stashed submission.
+  (function(){ try{ if(new URLSearchParams(location.search).get("resume")==="1"){ resumePendingSubmit(); } }catch(_){} })();
 </script>
 </body>
 </html>
