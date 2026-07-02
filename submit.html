@@ -175,6 +175,12 @@
       <div id="anon-fields">
         <div class="lbl">Your email</div>
         <input type="email" id="email" placeholder="you@brokerage.com" autocomplete="email">
+        <!-- Adaptive gate · revealed on Submit when the email matches an Aari account. Same screen, no redirect. -->
+        <div id="pw-block" style="display:none">
+          <div class="lbl">Password</div>
+          <input type="password" id="pw" placeholder="Your password" autocomplete="current-password">
+          <div class="sidenote">You have an Aari account. Sign in and this file lands in your portal.</div>
+        </div>
         <div id="name-fallback" style="display:none">
           <div class="lbl">Your name</div>
           <div class="grid2"><input type="text" id="agent-first" placeholder="First name" autocomplete="given-name"><input type="text" id="agent-last" placeholder="Last name" autocomplete="family-name"></div>
@@ -182,6 +188,12 @@
       </div>
       <label class="terms-row"><input type="checkbox" id="terms-c"><span>I have read and agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a>.</span></label>
       <button class="btn" id="submit">Submit file</button>
+      <!-- Adaptive gate · shown on Submit when the email is new. Account is optional, never forced. -->
+      <div id="benefits-block" style="display:none">
+        <div class="found" style="margin-top:14px"><b>Want eyes on this file?</b><br>A free account tracks your closing dates and deadlines, shows your production progress, and keeps every doc in one place.</div>
+        <button class="btn out" id="go-create" style="margin-top:12px">Create my account</button>
+        <button class="btn" id="go-anon" style="margin-top:10px">Submit without an account</button>
+      </div>
       <div class="msg" id="sub-err"></div>
     </div>
   </section>
@@ -226,6 +238,7 @@
     var tc=document.getElementById("terms-c"); if(tc) tc.checked=false;
     var nf=document.getElementById("name-fallback"); if(nf) nf.style.display="none";
     var f=document.getElementById("file"); if(f){ try{ f.value=""; }catch(_){} }
+    resetGate();
     err("sub-err",""); try{ sessionStorage.removeItem("aari_pending_file"); }catch(_){} }
   var CONTRACT_DONE_ACTIONS=[
     { label:"Go to my portal", on:function(){ (window.top||window).location.href="/portal"; } },
@@ -426,27 +439,8 @@
   }
   document.querySelectorAll("#side button").forEach(function(b){ b.addEventListener("click",function(){ setSide(b.getAttribute("data-s"),false); }); });
   document.getElementById("back").addEventListener("click",function(){ err("sub-err",""); show("step-drop"); });
-  // Step 3 · when the email loses focus, check if it is a known agent. If not, reveal the name fields.
-  var _emailChecked="";
-  document.getElementById("email").addEventListener("blur",function(){
-    if(authState.token) return; // signed in · identity is the session, no lookup needed
-    var em=this.value.trim();
-    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em) || em===_emailChecked) return;
-    _emailChecked=em;
-    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"check_email", agent_email:em }) })
-    .then(function(r){return r.json();}).then(function(d){ document.getElementById("name-fallback").style.display=(d&&d.recognized)?"none":"block"; }).catch(function(){});
-  });
-  // End-of-flow gate · Step 1 · live session AND signed current SA (v4.7)?
-  function contractGate(){
-    if(!window.AariAuth || typeof window.AariAuth.getCurrentSession!=="function"){ return Promise.resolve({ authed:false, saSigned:false }); }
-    return window.AariAuth.getCurrentSession().then(function(session){
-      if(!session) return { authed:false, saSigned:false };
-      return window.AariAuth.getAgreementStatus().then(function(sa){
-        var signed = !!(sa && sa.agreement_signed_at && sa.agreement_version === "v4.7");
-        return { authed:true, saSigned:signed };
-      }).catch(function(){ return { authed:true, saSigned:false }; });
-    }).catch(function(){ return { authed:false, saSigned:false }; });
-  }
+  // Email edits invalidate the adaptive gate · the next Submit re-checks who this is.
+  document.getElementById("email").addEventListener("input",function(){ resetGate(); err("sub-err",""); });
   /* Session identity · resolved once per screen, sent as the Authorization bearer.
      The server verifies the token and derives the agent itself; a client-sent
      agent_id is never trusted, so nothing here can be spoofed by editing the form. */
@@ -468,10 +462,21 @@
     if(authState.token){
       if(box){ box.style.display="block"; box.innerHTML="Submitting as <b>"+esc(authState.name||authState.email)+"</b>"; }
       if(anon) anon.style.display="none";
+      resetGate();
     } else {
       if(box) box.style.display="none";
       if(anon) anon.style.display="block";
     }
+  }
+  /* Adaptive gate state · one check per email, reset whenever the email changes. */
+  var _gateEmail="";
+  function resetGate(){
+    _gateEmail="";
+    var pb=document.getElementById("pw-block"); if(pb) pb.style.display="none";
+    var pw=document.getElementById("pw"); if(pw) pw.value="";
+    var bb=document.getElementById("benefits-block"); if(bb) bb.style.display="none";
+    var sb=document.getElementById("submit"); if(sb) sb.style.display="";
+    var nf=document.getElementById("name-fallback"); if(nf) nf.style.display="none";
   }
   function proceedToSubmit(btn){ err("sub-err","");
     refreshAuthIdentity().then(function(){
@@ -486,49 +491,17 @@
       btn.disabled=true; btn.textContent="Submitting…";
       var payload={ intent:"contract", pdf_base64:cState.b64, filename:cState.name, side:cState.side, agent_email:(authState.token?authState.email:email), fields:cState.fields, terms_version:TERMS_VERSION, terms_accepted:true };
       if(!authState.token){ payload.first_name=first; payload.last_name=last; }
+      if(cState.sa && cState.sa.accepted){ payload.sa=cState.sa; }
       fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+(authState.token||SB_KEY) }, body:JSON.stringify(payload) })
       .then(function(r){return r.json();}).then(function(d){
-        if(d&&d.need_name){ var nf2=document.getElementById("name-fallback"); if(nf2) nf2.style.display="block"; err("sub-err","Add your first and last name to finish."); btn.disabled=false; btn.textContent="Submit file"; return; }
+        if(d&&d.need_name){ show("step-review"); var nf2=document.getElementById("name-fallback"); if(nf2) nf2.style.display="block"; err("sub-err","Add your first and last name to finish."); btn.disabled=false; btn.textContent="Submit file"; return; }
         if(d&&d.ok){ try{ sessionStorage.removeItem("aari_pending_file"); }catch(_){} doneScreen("You&rsquo;re in.", "Your file was received. We will be in touch within 1 business day.", (d.address&&d.address.indexOf("pending")===-1)?("<b>"+esc(d.address)+"</b>"):"", CONTRACT_DONE_ACTIONS); }
-        else { err("sub-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Submit file"; }
-      }).catch(function(){ err("sub-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Submit file"; });
+        else { show("step-review"); err("sub-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Submit file"; }
+      }).catch(function(){ show("step-review"); err("sub-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Submit file"; });
     });
   }
   var SA_VERSION = "v4.7";
   var _authEmail = "";
-  function openAuthSaStep(g, prefillEmail){
-    if(g && g.authed){ authRenderRenew(); } else { authRenderSignIn(prefillEmail); show("step-auth"); }
-  }
-  function authRenderSignIn(prefillEmail){
-    var W=document.getElementById("step-auth");
-    W.innerHTML='<span class="back" id="au-back">&lsaquo; Back</span>'+
-      '<h1 style="font-size:26px;margin-top:8px">One last step to send it</h1>'+
-      '<p class="sub">Sign in, or create your account. Your file is held, not lost.</p>'+
-      '<div class="card">'+
-        '<div class="lbl">Email</div><input type="email" id="au-email" placeholder="you@brokerage.com" autocomplete="email">'+
-        '<div class="lbl">Password</div><input type="password" id="au-pass" placeholder="Your password" autocomplete="current-password">'+
-        '<button class="btn" id="au-signin">Sign in</button>'+
-        '<div class="au-alt">New to Aari? <a id="au-create">Create your account &rarr;</a></div>'+
-        '<div class="msg" id="au-err"></div>'+
-      '</div>';
-    if(prefillEmail){ var _ae=document.getElementById("au-email"); if(_ae){ _ae.value=prefillEmail; } _authEmail=prefillEmail; }
-    document.getElementById("au-back").addEventListener("click",function(){ show("step-review"); });
-    document.getElementById("au-signin").addEventListener("click",authDoSignIn);
-    document.getElementById("au-create").addEventListener("click",authGoOnboarding);
-  }
-  function authDoSignIn(){
-    var b=this; err("au-err","");
-    var email=document.getElementById("au-email").value.trim();
-    var pass=document.getElementById("au-pass").value;
-    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err("au-err","Enter a valid email."); return; }
-    if(!pass){ err("au-err","Enter your password."); return; }
-    b.disabled=true; b.textContent="Signing in…";
-    window.AariAuth.signIn(email,pass).then(function(){ _authEmail=email; return window.AariAuth.getAgreementStatus(); })
-    .then(function(sa){
-      var signed = !!(sa && sa.agreement_signed_at && sa.agreement_version===SA_VERSION);
-      if(signed){ submitAuthed(); } else { authRenderSA(); }
-    }).catch(function(e){ err("au-err",(e&&e.message)||"Sign in failed. Check your details."); b.disabled=false; b.textContent="Sign in"; });
-  }
   function authRenderRenew(){
     window.AariAuth.getAgreementStatus().then(function(sa){
       _authEmail=(sa&&sa.email)||"";
@@ -564,16 +537,49 @@
     document.getElementById("au-sign").addEventListener("click",authDoSignSA);
     show("step-auth");
   }
+  function captureSA(typed){
+    // Stored with the submission; the server writes raw_form_data.sa (with IP) and
+    // generates + emails the signed SA PDF via service role. No direct browser call —
+    // the old client-side aari-sa-pdf-email fetch was silently failing verify_jwt.
+    cState.sa={ typed_name:typed, version:SA_VERSION, accepted:true, signed_at_iso:new Date().toISOString(), user_agent:(navigator&&navigator.userAgent)||"", locale:(navigator&&navigator.language)||"" };
+  }
   function authDoSignSA(){
     var b=this; err("au-err","");
     if(!document.getElementById("au-agree").checked){ err("au-err","Please check the box to agree."); return; }
     var typed=document.getElementById("au-typed").value.trim();
     if(typed.length<3){ err("au-err","Type your full name to sign."); return; }
     b.disabled=true; b.textContent="Signing…";
-    var nowIso=new Date().toISOString();
-    try{ fetch("https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/aari-sa-pdf-email",{ method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ agent_name:typed, agent_email:_authEmail, signed_at_iso:nowIso, signed_at_display:new Date().toLocaleString(), signature_data_url:"", agreement_version:"4.7", user_agent:(navigator&&navigator.userAgent)||"", locale:(navigator&&navigator.language)||"" }) }).catch(function(){}); }catch(_){}
+    captureSA(typed);
     window.AariAuth.updateAgreement(typed, SA_VERSION).then(function(){ submitAuthed(); })
     .catch(function(e){ err("au-err",(e&&e.message)||"Could not record your signature."); b.disabled=false; b.textContent="Sign & submit file"; });
+  }
+  // Anonymous SA · same agreement, typed-name signature, no account required.
+  // Acceptance rides with the submission (raw_form_data.sa) and the signed PDF is emailed server-side.
+  function anonRenderSA(){
+    var W=document.getElementById("step-auth");
+    W.innerHTML='<span class="back" id="au-back">&lsaquo; Back</span>'+
+      '<h1 style="font-size:26px;margin-top:8px">TC Service Agreement</h1>'+
+      '<p class="sub">Version 4.7 &middot; one signature covers this file. No account needed.</p>'+
+      '<div class="card">'+
+        '<div class="au-sa" id="au-sa-text"></div>'+
+        '<label class="au-ack"><input type="checkbox" id="au-agree"><span>I have read and agree to the Aari Transactions Service Agreement, version 4.7.</span></label>'+
+        '<div class="lbl">Type your full name to sign</div><input type="text" id="au-typed" placeholder="Your full legal name">'+
+        '<button class="btn" id="au-sign">Sign &amp; submit file</button>'+
+        '<div class="msg" id="au-err"></div>'+
+      '</div>';
+    document.getElementById("au-sa-text").innerHTML = window.AARI_SA_V47_HTML || "The full agreement text could not load. Please refresh and try again.";
+    document.getElementById("au-back").addEventListener("click",function(){ show("step-review"); });
+    document.getElementById("au-sign").addEventListener("click",function(){
+      var b=this; err("au-err","");
+      if(!document.getElementById("au-agree").checked){ err("au-err","Please check the box to agree."); return; }
+      var typed=document.getElementById("au-typed").value.trim();
+      if(typed.length<3){ err("au-err","Type your full name to sign."); return; }
+      b.disabled=true; b.textContent="Signing…";
+      captureSA(typed);
+      W.innerHTML='<div class="center" style="padding:34px 0"><div class="au-spin"></div><h1 style="font-size:24px">Sending your file</h1><p class="sub">One moment</p></div>';
+      proceedToSubmit(document.getElementById("submit"));
+    });
+    show("step-auth");
   }
   function authGoOnboarding(){
     // Swap the modal content to register.html (in-iframe, no page jump). Persist the
@@ -618,10 +624,58 @@
     proceedToSubmit(document.getElementById("submit"));
   }
   window.addEventListener("message", function(e){ if(e && e.data==="aari-onboarding-complete"){ submitAuthed(); } });
+  /* Adaptive gate · one screen that knows who they are.
+     Signed in → straight through (SA renewal only if stale).
+     Known email → password appears on this same screen, sign in inline.
+     New email → benefits card: create an account (optional) or submit anonymous (default). */
   document.getElementById("submit").addEventListener("click",function(){ var btn=this; err("sub-err","");
-    var _pf=(document.getElementById("email")||{}).value||""; _pf=_pf.trim();
-    contractGate().then(function(g){ if(g.authed && g.saSigned){ proceedToSubmit(btn); } else { openAuthSaStep(g, _pf); } });
+    refreshAuthIdentity().then(function(){
+      if(authState.token){
+        window.AariAuth.getAgreementStatus().then(function(sa){
+          var signed=!!(sa && sa.agreement_signed_at && sa.agreement_version===SA_VERSION);
+          if(signed){ proceedToSubmit(btn); } else { authRenderRenew(); }
+        }).catch(function(){ authRenderRenew(); });
+        return;
+      }
+      var email=document.getElementById("email").value.trim();
+      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err("sub-err","Add a valid email so we can reach you."); return; }
+      if(!termsOK("terms-c","sub-err")) return;
+      var pb=document.getElementById("pw-block");
+      if(pb && pb.style.display!=="none"){
+        // Known agent · sign in right here, then send. No page change.
+        var pw=(document.getElementById("pw")||{}).value||"";
+        if(!pw){ err("sub-err","Enter your password to sign in and submit."); return; }
+        btn.disabled=true; btn.textContent="Signing in…";
+        window.AariAuth.signIn(email,pw).then(function(){ _authEmail=email; return window.AariAuth.getAgreementStatus(); })
+        .then(function(sa){
+          var signed=!!(sa && sa.agreement_signed_at && sa.agreement_version===SA_VERSION);
+          btn.disabled=false; btn.textContent="Submit file";
+          if(signed){ submitAuthed(); } else { authRenderSA(); }
+        }).catch(function(e){ err("sub-err",(e&&e.message)||"Sign in failed. Check your password."); btn.disabled=false; btn.textContent="Submit file"; });
+        return;
+      }
+      // First pass for this email · check who they are once. No second email prompt, ever.
+      btn.disabled=true; btn.textContent="Checking…";
+      fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"check_email", agent_email:email }) })
+      .then(function(r){return r.json();}).then(function(d){
+        _gateEmail=email; btn.disabled=false; btn.textContent="Submit file";
+        if(d && d.recognized){
+          if(pb){ pb.style.display="block"; }
+          var pwi=document.getElementById("pw"); if(pwi){ pwi.value=""; try{ pwi.focus(); }catch(_){} }
+        } else {
+          var bb=document.getElementById("benefits-block"); if(bb) bb.style.display="block";
+          btn.style.display="none";
+        }
+      }).catch(function(){
+        // Check failed (network) · fail open to the anonymous choice, never block the file.
+        _gateEmail=email; btn.disabled=false; btn.textContent="Submit file";
+        var bb=document.getElementById("benefits-block"); if(bb) bb.style.display="block";
+        btn.style.display="none";
+      });
+    });
   });
+  document.getElementById("go-create").addEventListener("click",function(){ authGoOnboarding(); });
+  document.getElementById("go-anon").addEventListener("click",function(){ anonRenderSA(); });
 
   /* ================= OFFER WIZARD ================= */
   var oState={ property:"", buyer:"", price:"", emd:"", financing:"Financed", close_date:"", pre_b64:null, pre_name:null, plan:"basic", email:"" };
