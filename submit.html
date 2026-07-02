@@ -677,46 +677,194 @@
   document.getElementById("go-create").addEventListener("click",function(){ authGoOnboarding(); });
   document.getElementById("go-anon").addEventListener("click",function(){ anonRenderSA(); });
 
-  /* ================= OFFER WIZARD ================= */
-  var oState={ property:"", buyer:"", price:"", emd:"", financing:"Financed", close_date:"", pre_b64:null, pre_name:null, plan:"basic", email:"" };
+  /* ================= OFFER INTAKE · contract-order micro steps (Muck A) =================
+     One question per screen, section chip on top, three field behaviors:
+     auto (green dot note), recommend with rationale (cream card), agent decides (plain field).
+     Sections follow the AS IS Residential / Vacant Land contract order.
+     COMPLIANCE: disclosure screens marked [PENDING FORM VERIFICATION] carry placeholder
+     text and MUST be swapped for verbatim statutory / form language before launch. */
+  var oState={ ptype:"residential", prop_mode:"address", property:"", mls:"", buyer:"", buyer_email:"", buyer_phone:"",
+    price:"", emd:"", emd_timing:"With the offer", addl_deposit:"",
+    financing:"Conventional", loan_days:"30", preapproval:"", pre_b64:null, pre_name:null,
+    inspection_days:"15", appraisal:"yes", survey:"", title_days:"15",
+    close_date:"", title_payer:"", assessments_ack:false,
+    d_radon:false, d_firpta:"", d_lead:"", d_flood:false, d_hoa:"", d_energy:false,
+    contingencies:[], addenda:[], additional_terms:"", email:"", plan:"basic" };
   var W=document.getElementById("step-offer");
-  var OSTEPS=[ {q:"What&rsquo;s the property?"}, {q:"Who&rsquo;s the buyer?"}, {q:"Your offer terms"}, {q:"The buyer&rsquo;s pre-approval"}, {q:"Pick your package"} ];
-  function offerStep(n){
-    var i=n-1, last=n===OSTEPS.length, body="";
-    if(i===0) body='<input id="o-prop" value="'+esc(oState.property)+'" placeholder="Address or MLS number">';
-    if(i===1) body='<input id="o-buyer" value="'+esc(oState.buyer)+'" placeholder="Buyer name">';
-    if(i===2) body='<div style="display:grid;gap:8px"><input id="o-price" value="'+esc(oState.price)+'" placeholder="Offer price"><div class="grid2"><input id="o-emd" value="'+esc(oState.emd)+'" placeholder="Escrow deposit"><input id="o-close" value="'+esc(oState.close_date)+'" placeholder="Close date"></div><div class="seg" id="o-fin"><button data-f="Financed" class="'+(oState.financing==="Financed"?"on":"")+'">Financed</button><button data-f="Cash" class="'+(oState.financing==="Cash"?"on":"")+'">Cash</button></div></div>';
-    if(i===3) body='<div class="drop" id="o-drop"><i class="ti ti-upload" aria-hidden="true"></i><div class="drop-title" id="o-drop-t">'+(oState.pre_name?("✓ "+esc(oState.pre_name)):"Drop the pre-approval")+'</div><div class="drop-sub">or skip and add it later</div><input type="file" id="o-file" accept="application/pdf,.pdf" class="hide"></div>';
-    if(i===4) body='<div style="display:grid;gap:8px"><div class="plan '+(oState.plan==="basic"?"on":"cream")+'" data-p="basic"><span>Basic <span style="font-weight:400;opacity:.7">&middot; one draft</span></span><span class="p">$79</span></div><div class="plan '+(oState.plan==="complete"?"on":"cream")+'" data-p="complete"><span>Complete <span style="font-weight:400;opacity:.7">&middot; revisions + counters</span></span><span class="p">$149</span></div><div class="lbl">Your email</div><input type="email" id="o-email" value="'+esc(oState.email)+'" placeholder="you@brokerage.com"></div>';
-    W.innerHTML='<div class="rowbar"><span class="back" id="o-back">&lsaquo; Back</span><span class="stepmeta">Step '+n+' of '+OSTEPS.length+'</span></div>'+
-      '<h1 style="font-size:26px">'+OSTEPS[i].q+'</h1>'+
-      '<div style="max-width:420px;margin:14px auto 0">'+body+(last?termsRow("terms-o"):"")+'<button class="btn" id="o-next">'+(last?"Continue to payment":"Next")+'</button><div class="msg" id="o-err"></div></div>';
-    document.getElementById("o-back").addEventListener("click",function(){ saveStep(i); n===1?show("step-door"):offerStep(n-1); });
-    document.getElementById("o-next").addEventListener("click",function(){ if(!saveStep(i,true))return; if(last&&!termsOK("terms-o","o-err"))return; last?offerSubmit(this):offerStep(n+1); });
-    if(i===0){ wireAddr(document.getElementById("o-prop")); }
-    if(i===2){ W.querySelectorAll("#o-fin button").forEach(function(b){ b.addEventListener("click",function(){ W.querySelectorAll("#o-fin button").forEach(function(x){x.classList.remove("on");}); b.classList.add("on"); oState.financing=b.getAttribute("data-f"); }); }); }
-    if(i===3){ var od=document.getElementById("o-drop"), of=document.getElementById("o-file"); od.addEventListener("click",function(){of.click();}); of.addEventListener("change",function(){ if(of.files&&of.files[0]){ var file=of.files[0]; oState.pre_name=file.name; toB64(file,function(b){ oState.pre_b64=b; }); document.getElementById("o-drop-t").textContent="✓ "+file.name; } }); }
-    if(i===4){ W.querySelectorAll(".plan").forEach(function(p){ p.addEventListener("click",function(){ W.querySelectorAll(".plan").forEach(function(x){ x.classList.remove("on"); x.classList.add("cream"); }); p.classList.add("on"); p.classList.remove("cream"); oState.plan=p.getAttribute("data-p"); }); }); }
+  var OSEC=["Property","Parties and offer","Financing","Inspections and due diligence","Closing","Florida disclosures","Contingencies and addenda","Your offer package"];
+  function plusDays(n){ var d=new Date(Date.now()+n*86400000); return d.toISOString().slice(0,10); }
+  var isVacant=function(){ return oState.ptype==="vacant"; };
+  var isCash=function(){ return oState.financing==="Cash"; };
+  var FIN_REC={ Cash:"<b>No loan contingency needed.</b> Cash skips financing terms. We tighten the timeline instead.",
+    Conventional:"<b>Loan approval set to 30 days.</b> Conventional approval typically runs 30 days. Adjust on the next step.",
+    FHA:"<b>Loan approval set to 45 days.</b> FHA typically runs 45 days. The FHA amendatory clause is added automatically.",
+    VA:"<b>Loan approval set to 45 days.</b> VA runs close to FHA timelines. The VA amendatory clause is added automatically." };
+  var OQ=[
+    { sec:1, key:"prop_mode", q:"How should we identify the property?", type:"seg",
+      opts:[["address","Street address"],["mls","MLS number"]],
+      rec:function(v){ return v==="mls" ? "We pull the address and property details from the MLS listing." : ""; } },
+    { sec:1, key:"property", q:"What is the property address?", type:"text", ph:"Start typing, it autocompletes", addr:true,
+      req:"Add the property address.", skip:function(){ return oState.prop_mode==="mls"; },
+      auto:"Live address autocomplete. County and state fill from the address you pick and the disclosure screens adjust to the property type." },
+    { sec:1, key:"mls", q:"What is the MLS number?", type:"text", ph:"MLS number",
+      req:"Add the MLS number.", skip:function(){ return oState.prop_mode!=="mls"; },
+      auto:"We pull the address and county from the listing before drafting." },
+    { sec:1, key:"ptype", q:"Residential or vacant land?", type:"seg", opts:[["residential","Residential"],["vacant","Vacant land"]],
+      rec:function(v){ return v==="vacant" ? "Vacant Land Contract logic. Structure disclosures are skipped and a survey is strongly recommended." : "AS IS Residential Contract logic."; } },
+    { sec:2, key:"buyer", q:"Who is the buyer?", type:"text", ph:"Full legal name", req:"Add the buyer's full legal name." },
+    { sec:2, key:"buyer_email", q:"Buyer email?", type:"email", ph:"buyer@email.com", optional:true },
+    { sec:2, key:"buyer_phone", q:"Buyer phone?", type:"tel", ph:"(239) 555 0100", optional:true },
+    { sec:2, key:"price", q:"Offer price?", type:"currency", ph:"$", req:"Add the offer price." },
+    { sec:2, key:"emd", q:"Earnest money deposit?", type:"currency", ph:"$", req:"Add the deposit amount.",
+      note:"No default on purpose. You size the deposit to the deal." },
+    { sec:2, key:"emd_timing", q:"When does the deposit land in escrow?", type:"seg",
+      opts:[["With the offer","With the offer"],["Within 3 days","Within 3 days"],["Within 5 days","Within 5 days"]] },
+    { sec:2, key:"addl_deposit", q:"Additional deposit?", type:"currency", ph:"$0 if none", optional:true },
+    { sec:3, key:"financing", q:"How is the buyer paying?", type:"seg",
+      opts:[["Cash","Cash"],["Conventional","Conventional"],["FHA","FHA"],["VA","VA"]],
+      rec:function(v){ return FIN_REC[v]||""; } },
+    { sec:3, key:"loan_days", q:"Loan approval period?", type:"days", skip:isCash,
+      def:function(){ return oState.financing==="Conventional"?"30":"45"; },
+      rec:function(){ return oState.financing==="Conventional" ? "Conventional typically requires 30 days. Adjust if the lender commits faster." : "FHA and VA typically require 45 days. Adjust if the lender commits faster."; } },
+    { sec:3, key:"preapproval", q:"Preapproval status?", type:"seg", skip:isCash,
+      opts:[["yes","Letter in hand"],["pending","Pending"],["no","Not yet"]] },
+    { sec:3, key:"pre", q:"Drop the preapproval letter", type:"upload", skip:isCash, optional:true },
+    { sec:4, key:"inspection_days", q:"Inspection period?", type:"days", def:function(){ return "15"; },
+      auto:"Contract standard is 15 days when left blank. Edit if the deal needs different." },
+    { sec:4, key:"appraisal", q:"Appraisal contingency?", type:"seg",
+      opts:[["yes","Yes"],["no","No"]],
+      rec:function(v){ return v==="no" ? "Waiving appraisal strengthens the offer and shifts value risk to the buyer. Confirm the buyer understands." : "Added by rider. The AS IS base contract has no built in appraisal contingency, so the rider language governs. [PENDING FORM VERIFICATION]"; } },
+    { sec:4, key:"survey", q:"Survey?", type:"seg",
+      opts:[["yes","Yes"],["no","No"],["optional","Optional"]],
+      rec:function(){ return isVacant() ? "Strongly recommended for vacant land. Typical cost runs $400 to $800." : "Typical cost runs $400 to $800. Recommended for land or boundary questions, optional for improved residential."; } },
+    { sec:4, key:"title_days", q:"Title evidence period?", type:"days", def:function(){ return "15"; },
+      auto:"Contract standard is 15 days. Edit if the title agent needs different." },
+    { sec:5, key:"close_date", q:"Desired closing date?", type:"date", def:function(){ return plusDays(30); },
+      auto:"Defaults to 30 days out, the contract standard when left blank." },
+    { sec:5, key:"title_payer", q:"Who pays for the owner's title policy?", type:"seg",
+      opts:[["seller","Seller pays"],["buyer","Buyer pays"]],
+      rec:function(){ return "In most of Southwest Florida the seller pays and picks the title agent. Miami Dade and Broward custom runs the opposite. Cost estimate shows by county on the drafted offer."; } },
+    { sec:5, key:"assessments_ack", q:"Special assessments", type:"ack",
+      text:"Assessment allocation follows the contract default unless you flag different terms in Additional terms. [PENDING FORM VERIFICATION · exact contract language inserts here from the verified Feb 2026 form]" },
+    { sec:6, key:"d_radon", q:"Radon gas notice", type:"ack", skip:isVacant,
+      text:"[PENDING FORM VERIFICATION · statutory radon notice, Section 404.056(5) Florida Statutes, inserted verbatim before launch]" },
+    { sec:6, key:"d_firpta", q:"Is the seller a US person?", type:"seg",
+      opts:[["us","Yes, US person"],["foreign","No, foreign seller"],["unknown","Not sure"]],
+      rec:function(v){ return v==="foreign" ? "FIRPTA withholding applies. Your coordinator flags this for the title agent at drafting." : (v==="unknown" ? "We flag it and the listing side confirms. Withholding only applies to foreign sellers." : ""); } },
+    { sec:6, key:"d_lead", q:"Was the home built before 1978?", type:"seg", skip:isVacant,
+      opts:[["post","1978 or later"],["pre","Before 1978"],["unknown","Not sure"]],
+      rec:function(v){ return (v==="pre"||v==="unknown") ? "The federal lead based paint disclosure attaches automatically. [PENDING FORM VERIFICATION · federal form language inserts verbatim]" : ""; } },
+    { sec:6, key:"d_flood", q:"Flood zone and elevation", type:"ack",
+      text:"Buyer has verified flood zone, insurance availability and cost with the lender or an insurer." },
+    { sec:6, key:"d_hoa", q:"Is the property in an HOA or condo association?", type:"seg",
+      opts:[["hoa","HOA"],["condo","Condo"],["none","None"]],
+      rec:function(v){ return v==="hoa" ? "The Homeowners Association rider attaches automatically and the seller provides the disclosure. [PENDING FORM VERIFICATION]" : (v==="condo" ? "The Condominium rider attaches automatically. [PENDING FORM VERIFICATION]" : ""); } },
+    { sec:6, key:"d_energy", q:"Energy efficiency brochure", type:"ack", skip:isVacant,
+      text:"Buyer acknowledges receipt of the Florida energy efficiency rating information brochure." },
+    { sec:7, key:"contingencies", q:"Any additional contingencies?", type:"chips", optional:true,
+      opts:["Sale of buyer's home","HOA or condo approval","Insurance at acceptable cost","Well and septic","Other"] },
+    { sec:7, key:"addenda", q:"Any addenda?", type:"chips", optional:true,
+      opts:["Homeowners Assn Rider","Condo Rider","Seller Financing","Back up Contract","Kick out Clause","Other"] },
+    { sec:7, key:"additional_terms", q:"Additional terms?", type:"textarea", optional:true,
+      ph:"Anything non standard, in plain words. Your coordinator drafts from your words, we do not invent clause language.",
+      note:"Plain words only. Custom clause language comes from you or your broker, not from Aari." },
+    { sec:8, key:"email", q:"Your email?", type:"email", ph:"you@brokerage.com", req:"Add a valid email so we can send your draft.",
+      note:"Your drafted offer and checkout receipt go here." },
+    { sec:8, key:"plan", q:"Pick your package", type:"tier" }
+  ];
+  var _oi=0;
+  function oSteps(){ return OQ.filter(function(s){ return !(s.skip && s.skip()); }); }
+  function offerStep(){ _oi=0; oRender(); }
+  function oRender(){
+    var steps=oSteps();
+    if(_oi<0) _oi=0;
+    if(_oi>=steps.length) _oi=steps.length-1;
+    var s=steps[_oi];
+    if(s.def && (oState[s.key]===""||oState[s.key]==null)) oState[s.key]=s.def();
+    var v=oState[s.key];
+    var body="";
+    if(s.type==="text"||s.type==="email"||s.type==="tel") body='<input id="oq" type="'+(s.type==="text"?"text":s.type)+'" value="'+esc(v||"")+'" placeholder="'+esc(s.ph||"")+'">';
+    if(s.type==="currency") body='<input id="oq" inputmode="decimal" value="'+esc(v||"")+'" placeholder="'+esc(s.ph||"$")+'">';
+    if(s.type==="days") body='<div class="grid2"><input id="oq" inputmode="numeric" value="'+esc(v||"")+'"><div style="align-self:center;font-size:13px;color:#8a857c">days</div></div>';
+    if(s.type==="date") body='<input id="oq" type="date" value="'+esc(v||"")+'">';
+    if(s.type==="textarea") body='<textarea id="oq" rows="4" style="width:100%;font-family:inherit;font-size:14px;padding:11px 13px;border:1px solid #d8d2c4;border-radius:8px;outline:none" placeholder="'+esc(s.ph||"")+'">'+esc(v||"")+'</textarea>';
+    if(s.type==="seg") body='<div class="seg" id="oq-seg">'+s.opts.map(function(o){ return '<button data-v="'+esc(o[0])+'" class="'+(v===o[0]?"on":"")+'">'+o[1]+'</button>'; }).join("")+'</div>';
+    if(s.type==="ack") body='<div class="found" style="font-size:12.5px;line-height:1.7">'+s.text+'</div><label class="terms-row" style="margin-top:12px"><input type="checkbox" id="oq-ack"'+(v?" checked":"")+'><span>Acknowledged</span></label>';
+    if(s.type==="chips") body='<div class="seg" id="oq-chips" style="flex-wrap:wrap">'+s.opts.map(function(o){ return '<button data-v="'+esc(o)+'" class="'+((v||[]).indexOf(o)>-1?"on":"")+'" style="flex:0 0 auto;min-width:0;padding:8px 14px">'+esc(o)+'</button>'; }).join("")+'</div>';
+    if(s.type==="upload") body='<div class="drop" id="o-drop"><i class="ti ti-upload" aria-hidden="true"></i><div class="drop-title" id="o-drop-t">'+(oState.pre_name?("✓ "+esc(oState.pre_name)):"Drop the preapproval")+'</div><div class="drop-sub">or skip and add it later</div><input type="file" id="o-file" accept="application/pdf,.pdf" class="hide"></div>';
+    if(s.type==="tier") body='<div style="display:grid;gap:8px">'+
+      '<div class="plan '+(oState.plan==="basic"?"on":"cream")+'" data-p="basic"><span>Basic <span style="font-weight:400;opacity:.7">&middot; BBA, offer, compensation docs, one draft</span></span><span class="p">$79</span></div>'+
+      '<div class="plan '+(oState.plan==="complete"?"on":"cream")+'" data-p="complete"><span>Complete <span style="font-weight:400;opacity:.7">&middot; Basic plus counters, revisions, HOA coordination</span></span><span class="p">$149</span></div></div>'+termsRow("terms-o");
+    var recHtml="";
+    if(s.rec){ var rv=(typeof s.rec==="function")?s.rec(v):s.rec; if(rv) recHtml='<div class="rec-card found" id="oq-rec" style="margin-top:14px;font-size:12.5px;line-height:1.65">'+rv+'</div>'; }
+    var autoHtml=s.auto?'<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#8a857c;margin-top:12px;line-height:1.5"><span style="width:7px;height:7px;border-radius:50%;background:var(--green);flex:0 0 auto;margin-top:4px"></span><span>'+s.auto+'</span></div>':"";
+    var noteHtml=s.note?'<div class="sidenote" style="margin-top:10px">'+s.note+'</div>':"";
+    var total=steps.length, pct=Math.round(((_oi)/Math.max(total-1,1))*100);
+    W.innerHTML='<div class="rowbar"><span class="back" id="o-back">&lsaquo; Back</span><span class="stepmeta">'+OSEC[s.sec-1]+' &middot; Section '+s.sec+' of 8</span></div>'+
+      '<div style="height:4px;background:#eee8da;border-radius:3px;margin:0 0 18px;overflow:hidden"><i style="display:block;height:100%;width:'+pct+'%;background:var(--ink);border-radius:3px"></i></div>'+
+      '<h1 style="font-size:26px">'+s.q+'</h1>'+
+      '<div style="max-width:420px;margin:14px auto 0">'+body+recHtml+noteHtml+autoHtml+
+      '<button class="btn" id="o-next">'+(s.type==="tier"?"Add and continue to payment":(s.optional?"Next, or skip":"Next"))+'</button>'+
+      '<div class="msg" id="o-err"></div></div>';
+    document.getElementById("o-back").addEventListener("click",function(){ oSave(s); if(_oi===0){ show("step-door"); } else { _oi--; oRender(); } });
+    document.getElementById("o-next").addEventListener("click",function(){
+      if(!oSave(s,true)) return;
+      if(s.type==="tier"){ if(!termsOK("terms-o","o-err")) return; offerSubmit(this); return; }
+      _oi++; oRender();
+    });
+    if(s.addr) wireAddr(document.getElementById("oq"));
+    if(s.type==="seg"){ W.querySelectorAll("#oq-seg button").forEach(function(b){ b.addEventListener("click",function(){
+      W.querySelectorAll("#oq-seg button").forEach(function(x){x.classList.remove("on");}); b.classList.add("on");
+      oState[s.key]=b.getAttribute("data-v");
+      if(s.key==="financing") oState.loan_days=(oState.financing==="Conventional")?"30":(oState.financing==="Cash"?"":"45");
+      var rc=document.getElementById("oq-rec");
+      var rv=s.rec?((typeof s.rec==="function")?s.rec(oState[s.key]):s.rec):"";
+      if(rc){ rc.innerHTML=rv||""; rc.style.display=rv?"block":"none"; }
+      else if(rv){ oRender(); }
+    }); }); }
+    if(s.type==="chips"){ W.querySelectorAll("#oq-chips button").forEach(function(b){ b.addEventListener("click",function(){
+      var val=b.getAttribute("data-v"); var arr=oState[s.key]||[]; var ix=arr.indexOf(val);
+      if(ix>-1){ arr.splice(ix,1); b.classList.remove("on"); } else { arr.push(val); b.classList.add("on"); }
+      oState[s.key]=arr;
+    }); }); }
+    if(s.type==="upload"){ var od=document.getElementById("o-drop"), of=document.getElementById("o-file");
+      od.addEventListener("click",function(){of.click();});
+      of.addEventListener("change",function(){ if(of.files&&of.files[0]){ var file=of.files[0]; oState.pre_name=file.name; toB64(file,function(b){ oState.pre_b64=b; }); document.getElementById("o-drop-t").textContent="✓ "+file.name; } }); }
+    if(s.type==="tier"){ W.querySelectorAll(".plan").forEach(function(p){ p.addEventListener("click",function(){
+      W.querySelectorAll(".plan").forEach(function(x){ x.classList.remove("on"); x.classList.add("cream"); });
+      p.classList.add("on"); p.classList.remove("cream"); oState.plan=p.getAttribute("data-p");
+    }); }); }
     show("step-offer");
   }
-  function saveStep(i,validate){
-    if(i===0){ oState.property=(document.getElementById("o-prop")||{}).value?document.getElementById("o-prop").value.trim():oState.property; if(validate&&!oState.property){ err("o-err","Add the property so we know what we're offering on."); return false; } }
-    if(i===1){ var b=document.getElementById("o-buyer"); if(b) oState.buyer=b.value.trim(); }
-    if(i===2){ var p=document.getElementById("o-price"),e=document.getElementById("o-emd"),c=document.getElementById("o-close"); if(p)oState.price=p.value.trim(); if(e)oState.emd=e.value.trim(); if(c)oState.close_date=c.value.trim(); if(validate&&!oState.price){ err("o-err","Add the offer price."); return false; } }
-    if(i===4){ var em=document.getElementById("o-email"); if(em) oState.email=em.value.trim(); if(validate&&!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(oState.email)){ err("o-err","Add a valid email so we can send your draft."); return false; } }
+  function oSave(s,validate){
+    var el=document.getElementById("oq");
+    if(el && (s.type==="text"||s.type==="email"||s.type==="tel"||s.type==="currency"||s.type==="days"||s.type==="date"||s.type==="textarea")) oState[s.key]=el.value.trim();
+    if(s.type==="ack"){ var a=document.getElementById("oq-ack"); oState[s.key]=!!(a&&a.checked); }
+    if(!validate) return true;
+    err("o-err","");
+    if(s.req && !oState[s.key]){ err("o-err",s.req); return false; }
+    if(s.type==="email" && !s.optional && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(oState[s.key])){ err("o-err",s.req||"Add a valid email."); return false; }
+    if(s.type==="ack" && !oState[s.key]){ err("o-err","Please acknowledge to continue."); return false; }
+    // HOA and condo answers auto attach the matching rider so drafting never misses it.
+    if(s.key==="d_hoa"){ var add=oState.addenda||[];
+      if(oState.d_hoa==="hoa" && add.indexOf("Homeowners Assn Rider")===-1) add.push("Homeowners Assn Rider");
+      if(oState.d_hoa==="condo" && add.indexOf("Condo Rider")===-1) add.push("Condo Rider");
+      oState.addenda=add; }
     return true;
   }
   function offerSubmit(btn){ btn.disabled=true; btn.textContent="Sending…"; err("o-err","");
-    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"offer", property:oState.property, buyer:oState.buyer, price:oState.price, emd:oState.emd, financing:oState.financing, close_date:oState.close_date, plan:oState.plan, pre_approval_base64:oState.pre_b64, pre_approval_name:oState.pre_name, agent_email:oState.email, terms_version:TERMS_VERSION, terms_accepted:true }) })
+    var q={}; Object.keys(oState).forEach(function(k){ if(k!=="pre_b64") q[k]=oState[k]; });
+    var propLabel = oState.prop_mode==="mls" ? ("MLS "+oState.mls) : oState.property;
+    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"offer", property:propLabel, buyer:oState.buyer, price:oState.price, emd:oState.emd, financing:oState.financing, close_date:oState.close_date, plan:oState.plan, pre_approval_base64:oState.pre_b64, pre_approval_name:oState.pre_name, agent_email:oState.email, questionnaire:q, terms_version:TERMS_VERSION, terms_accepted:true }) })
     .then(function(r){return r.json();}).then(function(d){
       if(d&&d.ok){
         var amt=oState.plan==="complete"?"$149":"$79";
         var url=OFFER_STRIPE[oState.plan]+"?client_reference_id="+encodeURIComponent(d.file_id)+"&prefilled_email="+encodeURIComponent(oState.email);
-        doneScreen("Almost done.", "Your offer on <b>"+esc(oState.property)+"</b> is in.", "Taking you to secure checkout for the "+amt+" offer prep&hellip; <a href=\""+url+"\" style=\"color:#0c447c;text-decoration:underline\">Open checkout</a> if it doesn&rsquo;t load on its own.");
+        doneScreen("Almost done.", "Your offer on <b>"+esc(propLabel)+"</b> is in.", "Taking you to secure checkout for the "+amt+" offer prep&hellip; <a href=\""+url+"\" style=\"color:#0c447c;text-decoration:underline\">Open checkout</a> if it doesn&rsquo;t load on its own.");
         setTimeout(function(){ (window.top||window).location.href=url; }, 1400);
       }
-      else { err("o-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Continue to payment"; }
-    }).catch(function(){ err("o-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Send to draft"; });
+      else { err("o-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Add and continue to payment"; }
+    }).catch(function(){ err("o-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Add and continue to payment"; });
   }
   // On load · if we returned from onboarding (register.html), finish the stashed submission.
   (function(){ try{ if(new URLSearchParams(location.search).get("resume")==="1"){ resumePendingSubmit(); } }catch(_){} })();
