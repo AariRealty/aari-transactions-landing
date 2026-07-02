@@ -113,6 +113,8 @@
   @keyframes scandot{ 0%{ box-shadow:0 0 0 0 rgba(90,158,114,.45); } 70%{ box-shadow:0 0 0 8px rgba(90,158,114,0); } 100%{ box-shadow:0 0 0 0 rgba(90,158,114,0); } }
   .scan-prog{ height:4px; background:#e7e1d5; border-radius:3px; margin:16px auto 0; max-width:360px; overflow:hidden; }
   .scan-prog i{ display:block; height:100%; width:8%; background:#0f0f0f; border-radius:3px; }
+  /* Portal embed · files.html (+ New file) opens this page in an iframe. Same page, no site chrome. */
+  .portal-embed .nav{ display:none; }
 </style>
 </head>
 <body>
@@ -224,6 +226,11 @@
   var SB_URL="https://fnlrgmuvtgwzjsihqxcn.supabase.co";
   var SB_KEY="sb_publishable_OsZVC29HKhFAZRNVo3yKqQ_wM7r2ANd";
   var OFFER_STRIPE={ basic:"https://buy.stripe.com/00w00b1NBcGL4yfgfgcAo0i", complete:"https://buy.stripe.com/6oUfZ99g3gX18Ov4wycAo05" };
+  /* Portal mode · the TC portal (+ New file) opens THIS page in an iframe with ?flow=offer&via=portal.
+     One questionnaire, two doors: the TC answers two portal-only setup steps (billing model + which
+     agent the file is for), then the SAME steps home-page agents get. Same engine, same submit path. */
+  var PORTAL=false; try{ PORTAL=new URLSearchParams(location.search).get("via")==="portal"; }catch(_){}
+  var PORTAL_AGENTS=[]; if(PORTAL){ try{ PORTAL_AGENTS=JSON.parse(sessionStorage.getItem("aari_portal_agents")||"[]")||[]; }catch(_){ PORTAL_AGENTS=[]; } }
   var SECTIONS=["step-door","step-drop","step-reading","step-review","step-auth","step-offer","step-service","step-listing","step-done"];
   function show(id){ SECTIONS.forEach(function(s){ document.getElementById(s).classList.toggle("hide", s!==id); }); window.scrollTo(0,0); }
   function err(id,m){ var e=document.getElementById(id); if(!e)return; e.textContent=m||""; e.className=m?"msg err":"msg"; e.style.display=m?"block":"none"; }
@@ -695,7 +702,8 @@
     inspection_days:"15", appraisal:"yes", survey:"", title_days:"15",
     close_date:"", title_payer:"", assessments_ack:false,
     d_radon:false, d_firpta:"", d_lead:"", d_flood:false, d_hoa:"", d_energy:false,
-    contingencies:[], addenda:[], additional_terms:"", email:"", plan:"basic", parcel:null };
+    contingencies:[], addenda:[], additional_terms:"", email:"", plan:"basic", parcel:null,
+    billing_model:"", for_agent_name:"", for_agent_email:"" };
   var W=document.getElementById("step-offer");
   var OSEC=["Property","Parties and offer","Financing","Inspections and due diligence","Closing","Florida disclosures","Contingencies and addenda","Your offer package"];
   function plusDays(n){ var d=new Date(Date.now()+n*86400000); return d.toISOString().slice(0,10); }
@@ -798,6 +806,15 @@
       note:"Your drafted offer and checkout receipt go here." },
     { sec:8, key:"plan", q:"Pick your package", type:"tier" }
   ];
+  /* Portal-only setup steps · prepended so the TC answers billing + agent first, then the
+     SAME steps home-page agents get. Section 0 renders as File setup, numbering untouched. */
+  if(PORTAL){ OQ.unshift(
+    { sec:0, key:"billing_model", q:"In-house coordination or an outside client?", type:"seg",
+      req:"Pick how this file bills.",
+      opts:[["in_house","In-house &middot; Aari agent"],["outside_client","Outside client"]],
+      rec:function(v){ return v==="in_house" ? "Aari agent file. Marked internal and covered in-house, no checkout link." : (v==="outside_client" ? "Outside client file. The checkout link for the offer package generates at the end so you can send it to your client agent." : ""); } },
+    { sec:0, key:"for_agent", q:"Who is this file for?", type:"agentpick", req:"Add the agent's name and a valid email." }
+  ); }
   /* County public records autofill · address pick → point query against the county
      parcel layer → owner on record, year built, legal description, parcel id.
      Public data, fail silent, enhancement only. Lee covers Cape Coral, Fort Myers
@@ -865,18 +882,22 @@
     if(s.type==="tier") body='<div style="display:grid;gap:8px">'+
       '<div class="plan '+(oState.plan==="basic"?"on":"cream")+'" data-p="basic"><span>Basic <span style="font-weight:400;opacity:.7">&middot; BBA, offer, compensation docs, one draft</span></span><span class="p">$79</span></div>'+
       '<div class="plan '+(oState.plan==="complete"?"on":"cream")+'" data-p="complete"><span>Complete <span style="font-weight:400;opacity:.7">&middot; Basic plus counters, revisions, HOA coordination</span></span><span class="p">$149</span></div></div>'+termsRow("terms-o");
+    if(s.type==="agentpick") body='<input id="oq" type="text" value="'+esc(oState.for_agent_name||"")+'" placeholder="Type the agent&rsquo;s name" autocomplete="off">'+
+      '<div id="ap-list" style="text-align:left"></div>'+
+      '<div class="lbl" style="margin-top:12px">Agent email</div><input id="ap-email" type="email" value="'+esc(oState.for_agent_email||"")+'" placeholder="agent@brokerage.com">'+
+      '<div class="sidenote" style="margin-top:10px">Pick from your agents or type a new one. The drafted offer and receipts go to this agent.</div>';
     var recHtml="";
     if(s.rec){ var rv=(typeof s.rec==="function")?s.rec(v):s.rec; if(rv) recHtml='<div class="rec-card found" id="oq-rec" style="margin-top:14px;font-size:12.5px;line-height:1.65">'+rv+'</div>'; }
     var autoHtml=s.auto?'<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#8a857c;margin-top:12px;line-height:1.5"><span style="width:7px;height:7px;border-radius:50%;background:var(--green);flex:0 0 auto;margin-top:4px"></span><span>'+s.auto+'</span></div>':"";
     var noteHtml=s.note?'<div class="sidenote" style="margin-top:10px">'+s.note+'</div>':"";
     var total=steps.length, pct=Math.round(((_oi)/Math.max(total-1,1))*100);
-    W.innerHTML='<div class="rowbar"><span class="back" id="o-back">&lsaquo; Back</span><span class="stepmeta">'+OSEC[s.sec-1]+' &middot; Section '+s.sec+' of 8</span></div>'+
+    W.innerHTML='<div class="rowbar"><span class="back" id="o-back">&lsaquo; Back</span><span class="stepmeta">'+(s.sec===0?'File setup &middot; Portal':OSEC[s.sec-1]+' &middot; Section '+s.sec+' of 8')+'</span></div>'+
       '<div style="height:4px;background:#eee8da;border-radius:3px;margin:0 0 18px;overflow:hidden"><i style="display:block;height:100%;width:'+pct+'%;background:var(--ink);border-radius:3px"></i></div>'+
       '<h1 style="font-size:26px">'+qText+'</h1>'+
       '<div style="max-width:420px;margin:14px auto 0">'+body+recHtml+noteHtml+autoHtml+
       '<button class="btn" id="o-next">'+(s.type==="tier"?"Add and continue to payment":(s.optional?"Next, or skip":"Next"))+'</button>'+
       '<div class="msg" id="o-err"></div></div>';
-    document.getElementById("o-back").addEventListener("click",function(){ oSave(s); if(_oi===0){ show("step-door"); } else { _oi--; oRender(); } });
+    document.getElementById("o-back").addEventListener("click",function(){ oSave(s); if(_oi===0){ if(PORTAL){ try{ (window.parent||window).postMessage({type:"aari-portal-close"},"*"); }catch(_){} } else { show("step-door"); } } else { _oi--; oRender(); } });
     document.getElementById("o-next").addEventListener("click",function(){
       if(!oSave(s,true)) return;
       if(s.type==="tier"){ if(!termsOK("terms-o","o-err")) return; offerSubmit(this); return; }
@@ -904,10 +925,28 @@
       W.querySelectorAll(".plan").forEach(function(x){ x.classList.remove("on"); x.classList.add("cream"); });
       p.classList.add("on"); p.classList.remove("cream"); oState.plan=p.getAttribute("data-p");
     }); }); }
+    if(s.type==="agentpick"){ (function(){
+      var apIn=document.getElementById("oq"), apList=document.getElementById("ap-list");
+      var apDraw=function(){ var t=(apIn.value||"").toLowerCase().trim();
+        var hits=t ? PORTAL_AGENTS.filter(function(a){ return String(a.name||"").toLowerCase().indexOf(t)>-1 || String(a.email||"").toLowerCase().indexOf(t)>-1; }).slice(0,6) : [];
+        apList.innerHTML=hits.map(function(a){ return '<div class="ap-row" data-n="'+esc(a.name||"")+'" data-e="'+esc(a.email||"")+'" style="border:1px solid #d8d2c4;border-radius:8px;padding:9px 12px;margin-top:8px;cursor:pointer;font-size:13px;background:#fff"><b>'+esc(a.name||a.email)+'</b>'+(a.email?'<span style="color:#8a857c"> &middot; '+esc(a.email)+'</span>':'')+'</div>'; }).join("");
+        apList.querySelectorAll(".ap-row").forEach(function(r){ r.addEventListener("click",function(){ apIn.value=r.getAttribute("data-n"); var ae=document.getElementById("ap-email"); if(ae) ae.value=r.getAttribute("data-e"); apList.innerHTML=""; }); });
+      };
+      apIn.addEventListener("input",apDraw);
+    })(); }
     show("step-offer");
   }
   function oSave(s,validate){
     var el=document.getElementById("oq");
+    if(s.type==="agentpick"){ var ae=document.getElementById("ap-email");
+      oState.for_agent_name=((el&&el.value)||"").trim(); oState.for_agent_email=((ae&&ae.value)||"").trim();
+      // The client agent's email is where the drafted offer + receipt go. Prefill the later email step once.
+      if(!oState.email) oState.email=oState.for_agent_email;
+      if(!validate) return true;
+      err("o-err","");
+      if(oState.for_agent_name.length<2){ err("o-err","Add the agent's name."); return false; }
+      if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(oState.for_agent_email)){ err("o-err","Add a valid agent email."); return false; }
+      return true; }
     if(el && (s.type==="text"||s.type==="email"||s.type==="tel"||s.type==="currency"||s.type==="days"||s.type==="date"||s.type==="textarea")) oState[s.key]=el.value.trim();
     if(s.type==="ack"){ var a=document.getElementById("oq-ack"); oState[s.key]=!!(a&&a.checked); }
     if(!validate) return true;
@@ -932,20 +971,42 @@
     // Cash purchase by an entity or trust: FinCEN residential transfer reporting may apply. TC flags for title.
     q.fincen_review = (oState.buyer_type!=="person" && oState.financing==="Cash");
     var propLabel = oState.prop_mode==="mls" ? ("MLS "+oState.mls) : oState.property;
-    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"offer", property:propLabel, buyer:buyerDisplay, price:oState.price, emd:oState.emd, financing:oState.financing, close_date:oState.close_date, plan:oState.plan, pre_approval_base64:oState.pre_b64, pre_approval_name:oState.pre_name, agent_email:oState.email, questionnaire:q, terms_version:TERMS_VERSION, terms_accepted:true }) })
+    var payload={ intent:"offer", property:propLabel, buyer:buyerDisplay, price:oState.price, emd:oState.emd, financing:oState.financing, close_date:oState.close_date, plan:oState.plan, pre_approval_base64:oState.pre_b64, pre_approval_name:oState.pre_name, agent_email:oState.email, questionnaire:q, terms_version:TERMS_VERSION, terms_accepted:true };
+    // Portal · the authenticated TC submits on behalf of a client agent. The server verifies the
+    // session and only then honors on_behalf (stamps portal_tc_id + billing_model, assigns the TC).
+    if(PORTAL) payload.on_behalf={ agent_email:oState.for_agent_email||oState.email, agent_name:oState.for_agent_name, billing_model:oState.billing_model };
+    var send=function(){
+    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+((PORTAL&&authState.token)?authState.token:SB_KEY) }, body:JSON.stringify(payload) })
     .then(function(r){return r.json();}).then(function(d){
       if(d&&d.ok){
         var amt=oState.plan==="complete"?"$149":"$79";
-        var url=OFFER_STRIPE[oState.plan]+"?client_reference_id="+encodeURIComponent(d.file_id)+"&prefilled_email="+encodeURIComponent(oState.email);
+        var payEmail=PORTAL?(oState.for_agent_email||oState.email):oState.email;
+        var url=OFFER_STRIPE[oState.plan]+"?client_reference_id="+encodeURIComponent(d.file_id)+"&prefilled_email="+encodeURIComponent(payEmail);
+        if(PORTAL){
+          try{ (window.parent||window).postMessage({type:"aari-portal-offer-done", file_id:d.file_id},"*"); }catch(_){}
+          var closePortal=function(){ try{ (window.parent||window).postMessage({type:"aari-portal-close"},"*"); }catch(_){} };
+          if(oState.billing_model==="in_house"){
+            doneScreen("File created.", "The offer on <b>"+esc(propLabel)+"</b> is in your queue for <b>"+esc(oState.for_agent_name)+"</b>.", "In-house file. Nothing to collect, coordination is covered.", [
+              { label:"Back to your files", on:closePortal } ]);
+          } else {
+            doneScreen("File created.", "The offer on <b>"+esc(propLabel)+"</b> is in your queue for <b>"+esc(oState.for_agent_name)+"</b>.", "Send your client agent this secure checkout link for the "+amt+" offer package. Drafting starts once it clears.", [
+              { label:"Copy checkout link", on:function(){ var b=this; try{ navigator.clipboard.writeText(url).then(function(){ b.innerHTML="Link copied"; },function(){ b.innerHTML=esc(url); }); }catch(_){ b.innerHTML=esc(url); } } },
+              { label:"Back to your files", out:true, on:closePortal } ]);
+          }
+          return;
+        }
         doneScreen("Almost done.", "Your offer on <b>"+esc(propLabel)+"</b> is in.", "Taking you to secure checkout for the "+amt+" offer prep&hellip; <a href=\""+url+"\" style=\"color:#0c447c;text-decoration:underline\">Open checkout</a> if it doesn&rsquo;t load on its own.");
         setTimeout(function(){ (window.top||window).location.href=url; }, 1400);
       }
       else { err("o-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Add and continue to payment"; }
     }).catch(function(){ err("o-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Add and continue to payment"; });
+    };
+    if(PORTAL){ refreshAuthIdentity().then(send,send); } else { send(); }
   }
   // On load · deep links and onboarding resume. Runs last so every function and var above exists.
   (function(){ try{
     var _sp=new URLSearchParams(location.search);
+    if(PORTAL){ document.body.classList.add("portal-embed"); try{ refreshAuthIdentity(); }catch(_){} }
     if(_sp.get("resume")==="1"){ resumePendingSubmit(); return; }
     var _f=_sp.get("flow");
     if(_f==="contract") show("step-drop");
