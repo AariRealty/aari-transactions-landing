@@ -169,11 +169,16 @@
       <div class="lbl">Which side are you on?</div>
       <div class="seg" id="side"><button data-s="buyer" class="on">Buyer</button><button data-s="seller">Seller</button><button data-s="both">Both</button></div>
       <div class="sidenote" id="sidenote"></div>
-      <div class="lbl">Your email</div>
-      <input type="email" id="email" placeholder="you@brokerage.com" autocomplete="email">
-      <div id="name-fallback" style="display:none">
-        <div class="lbl">Your name</div>
-        <div class="grid2"><input type="text" id="agent-first" placeholder="First name" autocomplete="given-name"><input type="text" id="agent-last" placeholder="Last name" autocomplete="family-name"></div>
+      <!-- Signed in · identity comes from the verified session, not a form field. -->
+      <div class="found" id="submit-as" style="display:none;margin-top:14px"></div>
+      <!-- Anonymous · email (and name fallback) only when there is no session. -->
+      <div id="anon-fields">
+        <div class="lbl">Your email</div>
+        <input type="email" id="email" placeholder="you@brokerage.com" autocomplete="email">
+        <div id="name-fallback" style="display:none">
+          <div class="lbl">Your name</div>
+          <div class="grid2"><input type="text" id="agent-first" placeholder="First name" autocomplete="given-name"><input type="text" id="agent-last" placeholder="Last name" autocomplete="family-name"></div>
+        </div>
       </div>
       <label class="terms-row"><input type="checkbox" id="terms-c"><span>I have read and agree to the <a href="/terms" target="_blank" rel="noopener">Terms of Service</a>.</span></label>
       <button class="btn" id="submit">Submit file</button>
@@ -409,6 +414,8 @@
     var norm=function(x){ return (x||"").toLowerCase().replace(/[^a-z0-9]/g,""); };
     var bb=norm(f.buyer_brokerage), sb=norm(f.seller_brokerage);
     if(bb && sb && bb===sb){ setSide("both",true); } else { setSide(cState.side||"buyer",false); }
+    // Signed in? Show "Submitting as [name]" and drop the email/name fields entirely.
+    refreshAuthIdentity().then(renderIdentity);
   }
   function setSide(s,auto){
     cState.side=s;
@@ -422,6 +429,7 @@
   // Step 3 · when the email loses focus, check if it is a known agent. If not, reveal the name fields.
   var _emailChecked="";
   document.getElementById("email").addEventListener("blur",function(){
+    if(authState.token) return; // signed in · identity is the session, no lookup needed
     var em=this.value.trim();
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em) || em===_emailChecked) return;
     _emailChecked=em;
@@ -439,19 +447,52 @@
       }).catch(function(){ return { authed:true, saSigned:false }; });
     }).catch(function(){ return { authed:false, saSigned:false }; });
   }
+  /* Session identity · resolved once per screen, sent as the Authorization bearer.
+     The server verifies the token and derives the agent itself; a client-sent
+     agent_id is never trusted, so nothing here can be spoofed by editing the form. */
+  var authState={ token:"", name:"", email:"" };
+  function refreshAuthIdentity(){
+    if(!window.AariAuth || typeof window.AariAuth.getCurrentSession!=="function"){ authState={token:"",name:"",email:""}; return Promise.resolve(authState); }
+    return window.AariAuth.getCurrentSession().then(function(s){
+      if(!s || !s.access_token){ authState={token:"",name:"",email:""}; return authState; }
+      authState.token=s.access_token;
+      authState.email=(s.user&&s.user.email)||"";
+      return window.AariAuth.getAgreementStatus().then(function(sa){
+        if(sa){ authState.name=[sa.first_name,sa.last_name].filter(Boolean).join(" ").trim(); if(sa.email) authState.email=sa.email; }
+        return authState;
+      }).catch(function(){ return authState; });
+    }).catch(function(){ authState={token:"",name:"",email:""}; return authState; });
+  }
+  function renderIdentity(){
+    var box=document.getElementById("submit-as"), anon=document.getElementById("anon-fields");
+    if(authState.token){
+      if(box){ box.style.display="block"; box.innerHTML="Submitting as <b>"+esc(authState.name||authState.email)+"</b>"; }
+      if(anon) anon.style.display="none";
+    } else {
+      if(box) box.style.display="none";
+      if(anon) anon.style.display="block";
+    }
+  }
   function proceedToSubmit(btn){ err("sub-err","");
-    var email=document.getElementById("email").value.trim();
-    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err("sub-err","Add a valid email so we can reach you."); return; }
-    var nf=document.getElementById("name-fallback"), first="", last="";
-    if(nf && nf.style.display!=="none"){ first=document.getElementById("agent-first").value.trim(); last=document.getElementById("agent-last").value.trim(); if(!first||!last){ err("sub-err","Add your first and last name to finish."); return; } }
-    if(!termsOK("terms-c","sub-err")) return;
-    btn.disabled=true; btn.textContent="Submitting…";
-    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"contract", pdf_base64:cState.b64, filename:cState.name, side:cState.side, agent_email:email, first_name:first, last_name:last, fields:cState.fields, terms_version:TERMS_VERSION, terms_accepted:true }) })
-    .then(function(r){return r.json();}).then(function(d){
-      if(d&&d.need_name){ nf.style.display="block"; err("sub-err","Add your first and last name to finish."); btn.disabled=false; btn.textContent="Submit file"; return; }
-      if(d&&d.ok){ try{ sessionStorage.removeItem("aari_pending_file"); }catch(_){} doneScreen("You&rsquo;re in.", "Your file was received. We will be in touch within 1 business day.", (d.address&&d.address.indexOf("pending")===-1)?("<b>"+esc(d.address)+"</b>"):"", CONTRACT_DONE_ACTIONS); }
-      else { err("sub-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Submit file"; }
-    }).catch(function(){ err("sub-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Submit file"; });
+    refreshAuthIdentity().then(function(){
+      var email="", first="", last="";
+      if(!authState.token){
+        email=document.getElementById("email").value.trim();
+        if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err("sub-err","Add a valid email so we can reach you."); return; }
+        var nf=document.getElementById("name-fallback");
+        if(nf && nf.style.display!=="none"){ first=document.getElementById("agent-first").value.trim(); last=document.getElementById("agent-last").value.trim(); if(!first||!last){ err("sub-err","Add your first and last name to finish."); return; } }
+      }
+      if(!termsOK("terms-c","sub-err")) return;
+      btn.disabled=true; btn.textContent="Submitting…";
+      var payload={ intent:"contract", pdf_base64:cState.b64, filename:cState.name, side:cState.side, agent_email:(authState.token?authState.email:email), fields:cState.fields, terms_version:TERMS_VERSION, terms_accepted:true };
+      if(!authState.token){ payload.first_name=first; payload.last_name=last; }
+      fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+(authState.token||SB_KEY) }, body:JSON.stringify(payload) })
+      .then(function(r){return r.json();}).then(function(d){
+        if(d&&d.need_name){ var nf2=document.getElementById("name-fallback"); if(nf2) nf2.style.display="block"; err("sub-err","Add your first and last name to finish."); btn.disabled=false; btn.textContent="Submit file"; return; }
+        if(d&&d.ok){ try{ sessionStorage.removeItem("aari_pending_file"); }catch(_){} doneScreen("You&rsquo;re in.", "Your file was received. We will be in touch within 1 business day.", (d.address&&d.address.indexOf("pending")===-1)?("<b>"+esc(d.address)+"</b>"):"", CONTRACT_DONE_ACTIONS); }
+        else { err("sub-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent="Submit file"; }
+      }).catch(function(){ err("sub-err","Network error. Please try again."); btn.disabled=false; btn.textContent="Submit file"; });
+    });
   }
   var SA_VERSION = "v4.7";
   var _authEmail = "";
