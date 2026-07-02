@@ -283,10 +283,11 @@
   /* Address autocomplete · same free Mapbox token + SWFL bias the homepage uses.
      Reusable: wraps any input, drops a suggestion menu, fills on click. */
   var AARI_MAPBOX_TOKEN="pk.eyJ1IjoibWFybGVueWliIiwiYSI6ImNtcHlya3FyZTBhNDkycXB5eHFxYWNuOHAifQ.6iJYZ3ApLhqJi9D2r9shlw";
-  function wireAddr(inp){
+  function wireAddr(inp,opts){
+    opts=opts||{};
     if(!inp||inp.__addrWired) return; inp.__addrWired=true;
     if(!document.getElementById("addr-ac-css")){ var st=document.createElement("style"); st.id="addr-ac-css";
-      st.textContent=".addr-wrap{position:relative}.addr-menu{position:absolute;left:0;right:0;top:calc(100% + 4px);background:#fff;border:1px solid #e3ddd1;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.14);z-index:60;overflow-y:auto;max-height:240px}.addr-menu[hidden]{display:none}.addr-item{padding:10px 12px;font-size:14px;color:#2b2b2b;cursor:pointer}.addr-item:hover{background:#f5f0e8}";
+      st.textContent=".addr-wrap{position:relative}.addr-menu{position:absolute;left:0;right:0;top:calc(100% + 4px);background:#fff;border:1px solid #e3ddd1;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.14);z-index:60;overflow-y:auto;max-height:240px}.addr-menu[hidden]{display:none}.addr-item{padding:10px 12px;font-size:14px;color:#2b2b2b;cursor:pointer}.addr-item:hover{background:#f5f0e8}.addr-hint{color:#8a857c;cursor:default;font-size:13px}.addr-hint:hover{background:#fff}";
       document.head.appendChild(st); }
     var wrap=document.createElement("div"); wrap.className="addr-wrap"; inp.parentNode.insertBefore(wrap,inp); wrap.appendChild(inp);
     var menu=document.createElement("div"); menu.className="addr-menu"; menu.hidden=true; wrap.appendChild(menu);
@@ -299,7 +300,11 @@
         fetch("https://api.mapbox.com/search/geocode/v6/forward?q="+encodeURIComponent(q)+"&autocomplete=true&country=us&types=address&limit=6&proximity=-81.87,26.64&access_token="+encodeURIComponent(AARI_MAPBOX_TOKEN))
         .then(function(r){return r.json();}).then(function(d){ if(my!==seq)return;
           var seen={}, rows=((d&&d.features)||[]).map(function(f){ var p=f.properties||{}; return (p.full_address||p.place_formatted||p.name||"").replace(/, United States$/,""); }).filter(function(s){ if(!s||seen[s])return false; seen[s]=true; return true; });
-          if(!rows.length){ hide(); return; }
+          if(!rows.length){
+            // A bare house number matches nothing. Say so instead of silence, it reads as broken otherwise.
+            if(opts.hint){ menu.innerHTML='<div class="addr-item addr-hint">Keep typing the street name and suggestions appear</div>'; menu.hidden=false; }
+            else hide();
+            return; }
           menu.innerHTML=rows.map(function(s){ return '<div class="addr-item" data-a="'+esc(s)+'">'+esc(s)+'</div>'; }).join("");
           menu.hidden=false;
           menu.querySelectorAll("[data-a]").forEach(function(b){ b.addEventListener("click",function(){ inp.value=b.getAttribute("data-a"); hide(); }); });
@@ -704,7 +709,7 @@
     { sec:1, key:"prop_mode", q:"How should we identify the property?", type:"seg",
       opts:[["address","Street address"],["mls","MLS number"]],
       rec:function(v){ return v==="mls" ? "We pull the address and property details from the MLS listing." : ""; } },
-    { sec:1, key:"property", q:"What is the property address?", type:"text", ph:"Start typing, it autocompletes", addr:true,
+    { sec:1, key:"property", q:"What is the property address?", type:"text", ph:"Number and street, it autocompletes", addr:true,
       req:"Add the property address.", skip:function(){ return oState.prop_mode==="mls"; },
       auto:"Live address autocomplete. County and state fill from the address you pick and the disclosure screens adjust to the property type." },
     { sec:1, key:"mls", q:"What is the MLS number?", type:"text", ph:"MLS number",
@@ -813,7 +818,7 @@
       if(s.type==="tier"){ if(!termsOK("terms-o","o-err")) return; offerSubmit(this); return; }
       _oi++; oRender();
     });
-    if(s.addr) wireAddr(document.getElementById("oq"));
+    if(s.addr) wireAddr(document.getElementById("oq"),{hint:true});
     if(s.type==="seg"){ W.querySelectorAll("#oq-seg button").forEach(function(b){ b.addEventListener("click",function(){
       W.querySelectorAll("#oq-seg button").forEach(function(x){x.classList.remove("on");}); b.classList.add("on");
       oState[s.key]=b.getAttribute("data-v");
