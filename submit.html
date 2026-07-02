@@ -353,23 +353,34 @@
     .then(function(r){return r.json();}).then(function(d){ clearTimeout(to); finish((d&&d.fields)||{}, (d&&d.documents)||[]); })
     .catch(function(){ clearTimeout(to); finish({},[]); });
   }
-  var _scanStart=0;
-  function startScan(){ _scanStart=Date.now(); var el=document.getElementById("scan-fields"); if(el) el.innerHTML=""; }
-  function fillScan(f){
-    // Option B · calm document. The status line moves through the reading phases while
-    // the real page scans, then advances to review. Found values are shown on the review
-    // screen (cReview reads cState.fields), not here, so an empty parse never looks broken.
-    var SCAN_TOTAL=4500;
-    var go=function(){ cReview(); show("step-review"); };
-    var elapsed=Date.now()-_scanStart, remaining=Math.max(1800, SCAN_TOTAL-elapsed);
-    var phases=["Finding the parties","Reading the price and deposits","Checking the closing date","Confirming title and escrow"];
+  // Option B · calm document. The phase animation is driven by startScan on a fixed,
+  // even timeline (each phase gets an equal slice), completely independent of how long
+  // the extraction fetch takes. That way "Finding the parties" never lingers while the
+  // rest flash by. We advance to review only when BOTH the animation and the data are
+  // ready, so a fast parse waits for the animation and a slow parse waits for the data.
+  var SCAN_PHASES=["Finding the parties","Reading the price and deposits","Checking the closing date","Confirming title and escrow"];
+  var SCAN_TOTAL=4000;
+  var _scanWent=false, _scanAnimDone=false, _scanDataReady=false, _scanIv=null;
+  function startScan(){
+    _scanWent=false; _scanAnimDone=false; _scanDataReady=false;
+    if(_scanIv){ clearInterval(_scanIv); _scanIv=null; }
     var st=document.getElementById("scan-status-text"), bar=document.getElementById("scan-prog-bar");
-    if(st) st.textContent=phases[0];
-    if(bar){ bar.style.transition="none"; bar.style.width="8%"; void bar.offsetWidth; bar.style.transition="width "+remaining+"ms linear"; bar.style.width="100%"; }
-    var i=0, stepMs=remaining/phases.length;
-    var iv=setInterval(function(){ i++; if(i<phases.length){ if(st) st.textContent=phases[i]; } else { clearInterval(iv); } }, stepMs);
-    setTimeout(function(){ clearInterval(iv); go(); }, remaining);
+    if(st) st.textContent=SCAN_PHASES[0];
+    if(bar){ bar.style.transition="none"; bar.style.width="8%"; void bar.offsetWidth; bar.style.transition="width "+SCAN_TOTAL+"ms ease-in-out"; bar.style.width="92%"; }
+    var i=0, stepMs=SCAN_TOTAL/SCAN_PHASES.length;
+    _scanIv=setInterval(function(){
+      i++;
+      if(i<SCAN_PHASES.length){ if(st) st.textContent=SCAN_PHASES[i]; }
+      else { clearInterval(_scanIv); _scanIv=null; _scanAnimDone=true; tryScanGo(); }
+    }, stepMs);
   }
+  function tryScanGo(){
+    if(_scanWent || !_scanAnimDone || !_scanDataReady) return;
+    _scanWent=true;
+    var bar=document.getElementById("scan-prog-bar"); if(bar){ bar.style.transition="width 240ms ease-out"; bar.style.width="100%"; }
+    setTimeout(function(){ cReview(); show("step-review"); }, 200);
+  }
+  function fillScan(f){ _scanDataReady=true; tryScanGo(); }
   function cReview(){ var f=cState.fields, rows=[];
     if(f.address) rows.push("<b>"+esc(f.address)+"</b>");
     var parties=[f.buyer,f.seller].filter(Boolean).map(esc).join(" &middot; "); if(parties) rows.push(parties);
