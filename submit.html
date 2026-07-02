@@ -299,15 +299,15 @@
       timer=setTimeout(function(){ var my=++seq;
         fetch("https://api.mapbox.com/search/geocode/v6/forward?q="+encodeURIComponent(q)+"&autocomplete=true&country=us&types=address&limit=6&proximity=-81.87,26.64&access_token="+encodeURIComponent(AARI_MAPBOX_TOKEN))
         .then(function(r){return r.json();}).then(function(d){ if(my!==seq)return;
-          var seen={}, rows=((d&&d.features)||[]).map(function(f){ var p=f.properties||{}; return (p.full_address||p.place_formatted||p.name||"").replace(/, United States$/,""); }).filter(function(s){ if(!s||seen[s])return false; seen[s]=true; return true; });
+          var seen={}, rows=((d&&d.features)||[]).map(function(f){ var p=f.properties||{}; var label=(p.full_address||p.place_formatted||p.name||"").replace(/, United States$/,""); var g=(f.geometry&&f.geometry.coordinates)||null; return { s:label, lng:g?g[0]:null, lat:g?g[1]:null }; }).filter(function(o){ if(!o.s||seen[o.s])return false; seen[o.s]=true; return true; });
           if(!rows.length){
             // A bare house number matches nothing. Say so instead of silence, it reads as broken otherwise.
             if(opts.hint){ menu.innerHTML='<div class="addr-item addr-hint">Keep typing the street name and suggestions appear</div>'; menu.hidden=false; }
             else hide();
             return; }
-          menu.innerHTML=rows.map(function(s){ return '<div class="addr-item" data-a="'+esc(s)+'">'+esc(s)+'</div>'; }).join("");
+          menu.innerHTML=rows.map(function(o,i){ return '<div class="addr-item" data-a="'+esc(o.s)+'" data-i="'+i+'">'+esc(o.s)+'</div>'; }).join("");
           menu.hidden=false;
-          menu.querySelectorAll("[data-a]").forEach(function(b){ b.addEventListener("click",function(){ inp.value=b.getAttribute("data-a"); hide(); }); });
+          menu.querySelectorAll("[data-a]").forEach(function(b){ b.addEventListener("click",function(){ var o=rows[parseInt(b.getAttribute("data-i"),10)]||{}; inp.value=o.s||b.getAttribute("data-a"); hide(); if(opts.onPick) opts.onPick(o.s||"", (o.lng!=null&&o.lat!=null)?{lng:o.lng,lat:o.lat}:null); }); });
         }).catch(function(){ if(my===seq) hide(); });
       },300);
     });
@@ -695,7 +695,7 @@
     inspection_days:"15", appraisal:"yes", survey:"", title_days:"15",
     close_date:"", title_payer:"", assessments_ack:false,
     d_radon:false, d_firpta:"", d_lead:"", d_flood:false, d_hoa:"", d_energy:false,
-    contingencies:[], addenda:[], additional_terms:"", email:"", plan:"basic" };
+    contingencies:[], addenda:[], additional_terms:"", email:"", plan:"basic", parcel:null };
   var W=document.getElementById("step-offer");
   var OSEC=["Property","Parties and offer","Financing","Inspections and due diligence","Closing","Florida disclosures","Contingencies and addenda","Your offer package"];
   function plusDays(n){ var d=new Date(Date.now()+n*86400000); return d.toISOString().slice(0,10); }
@@ -776,7 +776,8 @@
     { sec:6, key:"d_firpta", q:"Is the seller a US person?", type:"seg",
       opts:[["us","Yes, US person"],["foreign","No, foreign seller"],["unknown","Not sure"]],
       rec:function(v){ return v==="foreign" ? "FIRPTA withholding applies. Your coordinator flags this for the title agent at drafting." : (v==="unknown" ? "We flag it and the listing side confirms. Withholding only applies to foreign sellers." : ""); } },
-    { sec:6, key:"d_lead", q:"Was the home built before 1978?", type:"seg", skip:isVacant,
+    { sec:6, key:"d_lead", q:"Was the home built before 1978?", type:"seg",
+      skip:function(){ return isVacant() || (oState.parcel && oState.parcel.year_built && oState.parcel.year_built>=1978); },
       opts:[["post","1978 or later"],["pre","Before 1978"],["unknown","Not sure"]],
       rec:function(v){ return (v==="pre"||v==="unknown") ? "The federal lead based paint disclosure attaches automatically. [PENDING FORM VERIFICATION · federal form language inserts verbatim]" : ""; } },
     { sec:6, key:"d_flood", q:"Flood zone and elevation", type:"ack",
@@ -797,6 +798,46 @@
       note:"Your drafted offer and checkout receipt go here." },
     { sec:8, key:"plan", q:"Pick your package", type:"tier" }
   ];
+  /* County public records autofill · address pick → point query against the county
+     parcel layer → owner on record, year built, legal description, parcel id.
+     Public data, fail silent, enhancement only. Lee covers Cape Coral, Fort Myers
+     and Lehigh. Charlotte and Collier adapters follow the same shape. */
+  var PARCEL_SRC=[
+    { county:"Lee", url:"https://services2.arcgis.com/LvWGAAhHwbCJ2GMP/arcgis/rest/services/Lee_County_Parcels/FeatureServer/0/query",
+      fields:"O_NAME,MAXBUILTY,LEGAL,STRAP,FOLIOID,SITEADDR,SITECITY,SITEZIP,LANDUSEDES",
+      map:function(a){ return { owner:a.O_NAME||"", year_built:a.MAXBUILTY||null, legal:a.LEGAL||"", parcel_id:a.STRAP||"", folio:a.FOLIOID||null, land_use:a.LANDUSEDES||"", county:"Lee" }; } }
+  ];
+  function oParcelLookup(coords){
+    if(!coords) return;
+    oState.parcel=null;
+    var tried=0;
+    PARCEL_SRC.forEach(function(src){
+      var u=src.url+"?geometry="+coords.lng+","+coords.lat+"&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields="+encodeURIComponent(src.fields)+"&returnGeometry=false&f=json";
+      fetch(u).then(function(r){ return r.json(); }).then(function(d){
+        if(oState.parcel) return; // first hit wins
+        var a=d&&d.features&&d.features[0]&&d.features[0].attributes; if(!a) return;
+        var p=src.map(a); p.source=src.county+" County public records"; p.at=new Date().toISOString();
+        oState.parcel=p;
+        // Year built answers the lead based paint question before it is ever asked.
+        if(p.year_built){ oState.d_lead = (p.year_built>=1978) ? "post" : "pre"; }
+        // Vacant parcels preselect the vacant land contract path. The agent still confirms it.
+        if(/VACANT/i.test(p.land_use||"")) oState.ptype="vacant";
+        var card=document.getElementById("parcel-card");
+        var html='<b>Found in '+esc(p.source)+'.</b><br>Owner on record: '+esc(p.owner)+
+          (p.year_built?('<br>Year built: '+p.year_built):'')+
+          (p.parcel_id?('<br>Parcel: '+esc(p.parcel_id)):'')+
+          '<br><span style="color:#8a857c">Pre fills the drafted contract. Your coordinator verifies at drafting.</span>';
+        if(!card){
+          card=document.createElement("div"); card.id="parcel-card"; card.className="found";
+          card.style.cssText="margin-top:12px;font-size:12.5px;line-height:1.7";
+          var wrap=document.querySelector("#step-offer .addr-wrap");
+          if(wrap&&wrap.parentNode){ wrap.parentNode.insertBefore(card, wrap.nextSibling); } else { return; }
+        }
+        card.innerHTML=html;
+      }).catch(function(){ /* enhancement only, never blocks the flow */ });
+      tried++;
+    });
+  }
   var _oi=0;
   function oSteps(){ return OQ.filter(function(s){ return !(s.skip && s.skip()); }); }
   function offerStep(){ _oi=0; oRender(); }
@@ -841,7 +882,7 @@
       if(s.type==="tier"){ if(!termsOK("terms-o","o-err")) return; offerSubmit(this); return; }
       _oi++; oRender();
     });
-    if(s.addr) wireAddr(document.getElementById("oq"),{hint:true});
+    if(s.addr) wireAddr(document.getElementById("oq"),{hint:true, onPick:function(label,coords){ oState.property=label; oParcelLookup(coords); }});
     if(s.type==="seg"){ W.querySelectorAll("#oq-seg button").forEach(function(b){ b.addEventListener("click",function(){
       W.querySelectorAll("#oq-seg button").forEach(function(x){x.classList.remove("on");}); b.classList.add("on");
       oState[s.key]=b.getAttribute("data-v");
