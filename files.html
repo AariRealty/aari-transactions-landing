@@ -16160,9 +16160,16 @@ Tell me your planned move-out date and I will set the inspection.`
     return _panelOpen +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;font-weight:600;color:#0f0f0f">What I extracted</span><span style="display:inline-flex;gap:8px;align-items:center"><button type="button" data-reextract="1" title="Re-run extraction from the contract" style="font-size:10px;color:#5f5e5a;border:0.5px solid #d8d3ca;background:#fff;border-radius:8px;padding:3px 9px;cursor:pointer;font-family:inherit">&#8635; Re-extract</button><span style="font-size:10px;color:#0c447c;background:#e6f1fb;border-radius:9px;padding:2px 8px;font-weight:600">from the contract</span></span></div>' +
       '<div style="font-size:11.5px;color:#a39e95;margin-bottom:11px">Review the list, tap Edit on anything that is off, then continue to the deadlines.</div>' +
-      (((((file.raw_form_data||{}).extracted_contract)||{}).no_text_layer)
-        ? '<div style="background:#fdf4e3;border:0.5px solid #ecd9a8;border-radius:10px;padding:10px 12px;margin-bottom:11px;font-size:11.5px;color:#8a6a1f;line-height:1.5"><strong style="font-weight:700">No readable text in this PDF.</strong> It looks like a scan or a DocuSign-signed image, so nothing could be pulled from it automatically. Enter the fields below by hand, or re-upload a text version of the contract. In Form Simplicity, use Download or Print to PDF instead of the DocuSign-signed copy, which flattens the pages to images.</div>'
-        : '') +
+      (function(){
+        var _ex = (((file.raw_form_data||{}).extracted_contract)||{});
+        if(_ex.ocr){
+          return '<div style="background:#fef6e7;border:0.5px solid #ecd9a8;border-radius:10px;padding:10px 12px;margin-bottom:11px;font-size:11.5px;color:#8a6a1f;line-height:1.5"><strong style="font-weight:700">Read by OCR, double-check everything.</strong> ' + ((_ex.ocr_note)||'This was read from a scan, so verify every field, especially the day-count deadlines and the loan-type box.') + '</div>';
+        }
+        if(_ex.no_text_layer){
+          return '<div style="background:#fdf4e3;border:0.5px solid #ecd9a8;border-radius:10px;padding:10px 12px;margin-bottom:11px;font-size:11.5px;color:#8a6a1f;line-height:1.5"><strong style="font-weight:700">No readable text in this PDF.</strong> It looks like a scan or a DocuSign-signed image, so nothing could be pulled from it automatically. Read it with OCR (free, and it stays on your device), or enter the fields by hand.<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><button type="button" id="aari-ocr-btn" onclick="try{aariOcrExtract(_currentFile)}catch(e){}" style="font-size:12px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:8px;padding:7px 12px;cursor:pointer;font-family:inherit">Read the scan (OCR)</button><span id="aari-ocr-status" style="font-size:11px;color:#8a6a1f"></span></div></div>';
+        }
+        return '';
+      })() +
       listHtml + _nextBtn + '</div>';
   }
   // Force a fresh contract extraction on demand (the "Re-extract" button). Re-runs the edge
@@ -16187,6 +16194,74 @@ Tell me your planned move-out date and I will set the inspection.`
       } else { alert('Re-extract ran but found nothing on the contract to read.'); if(btn){ btn.disabled=false; btn.innerHTML='↻ Re-extract'; } }
     } catch(e){ alert('Could not re-extract: ' + (e && e.message || 'unknown')); if(btn){ btn.disabled=false; btn.innerHTML='↻ Re-extract'; } }
   }
+  // ---- OCR fallback for image-only (scanned / DocuSign-flattened) contracts --------------
+  // The extractor reads a PDF text layer; DocuSign flattens the pages to images with no text.
+  // This renders the pages in the browser and OCRs them (free, local, nothing leaves the
+  // device), then posts the recognized text to the SAME parser. OCR output is a DRAFT:
+  // handwritten digits and checkboxes are unreliable, so the TC must verify (day-count
+  // deadlines and the loan-type box especially).
+  var _aariOcrLibs = null;
+  function _aariLoadScript(src){ return new Promise(function(res,rej){ var s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=function(){ rej(new Error('Could not load '+src)); }; document.head.appendChild(s); }); }
+  async function _aariEnsureOcrLibs(){
+    if(_aariOcrLibs) return _aariOcrLibs;
+    if(!window.pdfjsLib){ await _aariLoadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'); }
+    if(window.pdfjsLib){ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }catch(_){} }
+    if(!window.Tesseract){ await _aariLoadScript('https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js'); }
+    _aariOcrLibs = { pdfjs: window.pdfjsLib, T: window.Tesseract };
+    return _aariOcrLibs;
+  }
+  function _aariOcrStatus(msg){ var el=document.getElementById('aari-ocr-status'); if(el) el.textContent = msg||''; }
+  async function aariOcrExtract(file){
+    if(!file || !file.id) return;
+    var btn = document.getElementById('aari-ocr-btn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Reading the scan…'; }
+    try {
+      try { await resolveContractUrl(file); } catch(_){}
+      var url = (file && file._resolvedContract) || (typeof contractUrlOf==='function' ? contractUrlOf(file) : '');
+      if(!url){ throw new Error('No contract file to read.'); }
+      _aariOcrStatus('Loading the reader…');
+      var libs = await _aariEnsureOcrLibs();
+      if(!libs.pdfjs || !libs.T){ throw new Error('Could not load the OCR reader.'); }
+      var buf = await (await fetch(url)).arrayBuffer();
+      var pdf = await libs.pdfjs.getDocument({ data: buf }).promise;
+      var nPages = Math.min(pdf.numPages || 1, 6);   // every parser field lives in the first pages
+      var texts = [];
+      for(var p=1; p<=nPages; p++){
+        _aariOcrStatus('Reading page ' + p + ' of ' + nPages + '…');
+        var page = await pdf.getPage(p);
+        var vp = page.getViewport({ scale: 2 });
+        var canvas = document.createElement('canvas'); canvas.width = vp.width; canvas.height = vp.height;
+        var ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        var res = await libs.T.recognize(canvas, 'eng');
+        texts.push((res && res.data && res.data.text) || '');
+        canvas.width = 0; canvas.height = 0;
+      }
+      var joined = texts.join('\n');
+      if(joined.replace(/\s/g,'').length < 40){ throw new Error('The scan was too faint to read. Try a clearer copy.'); }
+      _aariOcrStatus('Filling in the fields…');
+      var ec = await _client.functions.invoke('extract-contract-fields', { body:{ file_id:file.id, text:joined, ocr:true, write:false } });
+      if(ec && ec.error) throw ec.error;
+      var d = ec && ec.data; var fields = Object.assign({}, (d && d.fields) || {});
+      var ocrNote = fields.ocr_verify || 'Read by OCR. Verify every field, especially the day-count deadlines and the loan-type box.';
+      var rf = fields.review_flags;
+      delete fields.ocr_verify; delete fields.source_ocr; delete fields.review_flags;
+      if(!Object.keys(fields).length){ throw new Error('Read the scan but could not pull any fields. Enter them by hand.'); }
+      var raw2 = Object.assign({}, file.raw_form_data || {});   // keeps field_overrides so manual edits stay on top
+      raw2.extracted_contract = { fields: fields, documents: [], review_flags: (rf ? [rf] : []), ocr: true, ocr_note: ocrNote, at: new Date().toISOString(), source: 'extract-contract-fields/ocr' };
+      var rr = await _client.from('files').update({ raw_form_data: raw2 }).eq('id', file.id);
+      if(rr && rr.error) throw new Error('Read the scan but could not save: ' + (rr.error.message || 'unknown'));
+      file.raw_form_data = raw2;
+      if(_currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = raw2;
+      var ff = (_files||[]).find(function(x){ return x.id === file.id; }); if(ff) ff.raw_form_data = raw2;
+      renderPlaybook(file);
+    } catch(e){
+      _aariOcrStatus('');
+      alert('Could not read the scan: ' + ((e && e.message) || 'unknown') + '. You can still enter the fields by hand.');
+      if(btn){ btn.disabled = false; btn.textContent = 'Read the scan (OCR)'; }
+    }
+  }
+  try { window.aariOcrExtract = aariOcrExtract; } catch(_){}
   // Save an edited group from the "What I extracted" list (inline inputs, not a stepper)
   // back to the extracted draft + the mapped file columns, then re-render.
   async function nfSaveGroup(){
