@@ -742,7 +742,7 @@
   @media (max-width:560px){ .tpb-popmodal{width:96vw;max-height:92vh} }
   .tpb-popmodal.verify{width:min(960px,97vw)}
   /* ===== WORK RAIL · two-pane workspace (June 2026) ===== */
-  .tpb-popmodal.rail{width:min(1760px,97vw);max-height:95vh}
+  .tpb-popmodal.rail{width:min(2160px,96vw);max-height:95vh}
   .tpb-popmodal.rail.nf-mode{width:min(620px,96vw)}
   .tpb-popmodal.rail .rail-grid{display:grid;grid-template-columns:1fr 1.05fr;gap:26px;align-items:start}
   .tpb-popmodal.rail .rail-pdf{position:sticky;top:46px;padding:14px 0 16px 20px;min-width:0}
@@ -11581,7 +11581,7 @@ Tell me your planned move-out date and I will set the inspection.`
     };
     // Pre-fill the display from the agent's submission when the file has no value yet.
     const agentForm = file.contract_form_type || raw.contract_form_type || '';
-    const shownCt  = ct  || mapContractForm(agentForm);
+    const shownCt  = ct  || mapContractForm(agentForm) || mapContractForm((((raw.extracted_contract||{}).fields)||{}).contract_type);
     const shownEff = eff || agentEff;
     const shownCls = cls || agentCls;
     const shownFin = fin || '';
@@ -14456,6 +14456,291 @@ Tell me your planned move-out date and I will set the inspection.`
     },
   };
 
+
+  // ===== SELLER CHECKLIST (DRAFT · seller-checklist-draft branch) ==============
+  // Seller-side SALE files (client_type === 'seller') render the seller task set
+  // + emails below. Buyer files are untouched. Standalone review copy lives at
+  // /seller-checklist-draft.js. To revert: delete this block, the email-merge
+  // IIFE, and the seller branch in ckTasksFor.
+  function _isSellerFile(f){ return String((f || {}).client_type || '') === 'seller'; }
+
+
+  // Contract-type gates. file.contract_type uses the engine keys.
+  var _SIS = {
+    asis:     function(f){ return f.contract_type === 'frbar_asis'; },
+    standard: function(f){ return f.contract_type === 'frbar_standard'; },
+    crsp:     function(f){ return f.contract_type === 'frbar_crsp'; },
+    nabor:    function(f){ return f.contract_type === 'nabor' || f.contract_type === 'nab089'; },
+    vac:      function(f){ return f.contract_type === 'vac_15'; },
+    farbar:   function(f){ return ['frbar_asis','frbar_standard','frbar_crsp'].indexOf(f.contract_type) !== -1; },
+    repairs:  function(f){ return ['frbar_standard','nabor','nab089'].indexOf(f.contract_type) !== -1; } // has a seller repair-response window
+  };
+  // Reuse the file's existing helpers when present (assocType, financingType, etc).
+  var _sHasHoa    = function(f){ return typeof assocType === 'function' ? !!assocType(f) : false; };
+  var _sTenantOcc = function(f){ return !!(f.logistics || {}).tenant_occupied; };
+
+  // ==========================================================================
+  // SELLER TASKS BY STAGE
+  //   Each task: { id, label, owner, sub, dl?, showIf?, softComplete? }
+  //   owner ∈ 'TC' | 'Seller' | 'Agent' (our listing/seller agent) | 'Title' | 'Buyer side'
+  //   dl links to an engine key so the due date resolves per contract_type.
+  //   showIf gives you ONE task name with different applicability + due dates.
+  // ==========================================================================
+  var SELLER_STAGE_CHECKLISTS = {
+
+    // ---- NEW · pre-acceptance gate (same as buyer) --------------------------
+    'new': [
+      { id:'s_new_contract_attached', owner:'TC',
+        label:'Confirm executed contract + addenda attached',
+        sub:'Fully executed contract, all riders, and the compensation agreement uploaded and signed by all parties before anything else.' },
+      { id:'s_new_signatures_verified', owner:'TC',
+        label:'Verify all seller signatures + initials',
+        sub:'Every page, every signature line, every initial box on the seller side. Do not proceed until the seller execution is complete.' },
+      { id:'s_new_payment_check', owner:'TC', systemCheck:'payment' }
+    ],
+
+    // ---- SETUP · Contract Type / Parties / Financing / Terms & Dates --------
+    // (engine stage key 'waiting_for_tc'; these are confirmations, not dated)
+    'waiting_for_tc': [
+      { id:'s_setup_accept', owner:'TC', systemCheck:'accept',
+        label:'Accept file',
+        sub:'Once you accept, this file is yours and the 30 minute window closes.' },
+      { id:'s_setup_review_contract', owner:'TC',
+        label:'Review full contract + confirm contract type',
+        sub:'Know the form before you make contact. Confirm the contract type so every deadline below counts on the right basis. FR/BAR and VAC count calendar days and roll the final date to the next business day. NABOR counts calendar days and expires 11:59 PM on the day.' },
+      { id:'s_setup_sellers_disclosure', owner:'Seller',
+        label:'Confirm Seller’s Property Disclosure signed by the seller',
+        sub:'The seller completes it, not the agent and not the TC. Confirm it is signed and dated by the seller. Johnson v. Davis: the seller must disclose known latent defects, and non-disclosure creates liability for seller, agent, and broker. If missing, request it from the agent now.',
+        softComplete:{ label:'Mark received', chip:'Received', flag:'sellers_disclosure' } },
+      { id:'s_setup_parties', owner:'TC',
+        label:'Confirm seller parties + entity signers',
+        sub:'Match names to title exactly. If the seller is an entity or trust, confirm the authorized signer and that signing authority is documented.' },
+      { id:'s_setup_closing_agent', owner:'TC',
+        label:'Confirm closing agent + who pays owner title policy',
+        sub:'FR/BAR: the party selecting the closing agent pays the owner title policy. NABOR: Buyer selects the closing agent regardless of who pays; in Lee and Charlotte the Seller pays, in Collier the Buyer pays and selects. CRSP: closing agent designation is Para 5(c). Confirm against this contract.',
+        showIf:function(f){ return !_SIS.vac(f); } },
+      { id:'s_setup_compensation', owner:'TC',
+        label:'Confirm compensation agreement executed',
+        dl:'compensation_agreement',
+        sub:'Comprehensive Rider GG. Seller and Buyer’s Broker execute the compensation agreement. Default 3 days after Effective Date if left blank. Confirm it is signed and on the file.',
+        showIf:_SIS.farbar },
+      { id:'s_setup_agent_confirm', owner:'TC',
+        label:'Confirm dates + contacts with the seller agent',
+        sub:'Send the agent the extracted dates, financials, and contacts to verify. Fix anything off before it goes to all parties. On confirm, the file opens to Under Contract.' },
+      { id:'s_setup_opening_email', owner:'TC',
+        label:'Send executed contract email',
+        sub:'Executed contract intro to all parties: both agents, lender, and title, with file@aaritransactions.com copied for the audit trail. Attach the executed contract and compensation agreement.',
+        emailGate:{ requires:'s_setup_agent_confirm', note:'Confirm dates + contacts first so the intro goes out clean.' } }
+    ],
+
+    // ---- UNDER CONTRACT · seller obligations run here -----------------------
+    'under_contract': [
+      // Existing survey — all FR/BAR + VAC, E+5 (survey_seller). NABOR uses survey_existing.
+      { id:'s_uc_survey_seller', owner:'Seller',
+        label:'Deliver existing survey (if in seller possession)',
+        dl:'survey_seller',
+        sub:'FR/BAR + Vacant Land: Standard A / Para 10(c). Seller furnishes any survey in possession within 5 days of Effective Date. The survey is the second most important document after the deed.',
+        showIf:function(f){ return _SIS.farbar(f) || _SIS.vac(f); },
+        softComplete:{ label:'Mark delivered', chip:'Delivered', flag:'survey_delivered' } },
+      { id:'s_uc_survey_existing_nabor', owner:'Seller',
+        label:'Deliver existing survey (if in seller possession)',
+        dl:'survey_existing',
+        sub:'NABOR Standard C. Seller furnishes a complete copy of any survey in possession. Default 10 days after Effective Date. The survey is the second most important document after the deed.',
+        showIf:_SIS.nabor,
+        softComplete:{ label:'Mark delivered', chip:'Delivered', flag:'survey_delivered' } },
+      // Title policy — NABOR only (Seller provides existing owner policy, Standard B).
+      { id:'s_uc_title_policy_nabor', owner:'Seller',
+        label:'Deliver existing owner title policy',
+        dl:'title_policy',
+        sub:'NABOR Standard B. Seller furnishes any owner title insurance policy in possession, default 10 days after Effective Date. Used as the reissue base to save the buyer premium.',
+        showIf:_SIS.nabor,
+        softComplete:{ label:'Mark delivered', chip:'Delivered', flag:'title_policy_delivered' } },
+      // HOA / condo docs — CRSP (and any FR/BAR with association). Seller delivers, buyer review runs off receipt.
+      { id:'s_uc_hoa_docs', owner:'Seller',
+        label:'Deliver HOA / condo documents + order estoppel',
+        dl:'hoa_review',
+        sub:'Seller delivers association documents. The buyer’s statutory review window to void runs from the moment of receipt, not from send, so log the receipt date. Order the estoppel now so it does not gate closing. Rights cannot be waived.',
+        showIf:function(f){ return _sHasHoa(f); } },
+      // Tenant leases + estoppels — NABOR seller delivers leases; FR/BAR if tenant-occupied.
+      { id:'s_uc_leases', owner:'Seller',
+        label:'Deliver written leases + tenant estoppels',
+        dl:'leases_provided',
+        sub:'NABOR Lines 100-105. Seller delivers written leases, default 5 days after Effective Date. If the buyer finds a lease unacceptable, they may terminate within 5 days of receipt; if the seller fails to deliver, the buyer may terminate within 10 days of Effective Date.',
+        showIf:function(f){ return _SIS.nabor(f) && _sTenantOcc(f); } },
+      { id:'s_uc_leases_farbar', owner:'Seller',
+        label:'Deliver written leases + tenant estoppels',
+        sub:'Tenant-occupied FR/BAR. Deliver executed leases and tenant estoppel letters so the buyer can review occupancy and security deposits before closing. Confirm the transfer of deposits at closing.',
+        showIf:function(f){ return _SIS.farbar(f) && _sTenantOcc(f); },
+        softComplete:{ label:'Mark delivered', chip:'Delivered', flag:'leases_delivered' } },
+      // Inspection response — Standard + NABOR only (As-Is and VAC have no seller repair duty).
+      { id:'s_uc_seller_response', owner:'Seller',
+        label:'Seller response to buyer defect notice',
+        dl:'seller_response',
+        sub:'The buyer sent written notice of defects. FR/BAR Standard: Seller repairs items not in working condition up to the repair limit, or provides a licensed estimate. NABOR: Seller responds within 10 days of buyer notice. Get the seller’s written response before the deadline.',
+        showIf:_SIS.repairs },
+      // Seller repair election — FR/BAR Standard, when estimate exceeds the limit (Para 12(b)(iv)).
+      { id:'s_uc_repair_election', owner:'Seller',
+        label:'Confirm seller repair election (if cost over limit)',
+        sub:'FR/BAR Standard Para 12(b)(iv). If the estimated repair cost exceeds the General Repair Limit, the seller must elect: repair all and pay the excess, pay only up to the limit, or refuse (buyer election then pending). Capture the written election so we can advise the buyer’s next step.',
+        showIf:_SIS.standard,
+        emailGate:{ requires:'s_uc_seller_response', note:'Complete the seller response first, then confirm the election.' } },
+      // FIRPTA — any type, if seller is a foreign person.
+      { id:'s_uc_firpta', owner:'Seller',
+        label:'Confirm FIRPTA status + affidavit',
+        sub:'Obtain the seller’s non-foreign affidavit before closing, or if the seller is a foreign person, coordinate the 15 percent withholding workflow with title early. This holds up disbursement if left to the end.',
+        softComplete:{ label:'Affidavit received', chip:'Received', flag:'firpta' } },
+      // CCCL — coastal CRSP.
+      { id:'s_uc_cccl', owner:'Seller',
+        label:'Confirm CCCL affidavit (coastal property)',
+        sub:'CRSP Para 7(h). If any part of the property lies seaward of the Coastal Construction Control Line, the seller must provide an affidavit or survey delineating the line, unless the buyer waives.',
+        showIf:function(f){ return _SIS.crsp(f); },
+        softComplete:{ label:'N/A · not coastal', chip:'N/A', flag:'cccl_na' } },
+      // Feasibility cooperation — VAC only.
+      { id:'s_uc_vac_feasibility', owner:'Seller',
+        label:'Provide access + land records for buyer feasibility',
+        dl:'feasibility_end',
+        sub:'Vacant Land Para 9. The buyer’s feasibility study period is running and the buyer may terminate for any reason before it ends. Provide site access and any soil, survey, permit, wetlands, or plat records in the seller’s possession. Vacant Land has no seller repair obligation. Johnson v. Davis still applies to known latent land defects such as flooding or wetlands.',
+        showIf:_SIS.vac },
+      // Title evidence — FR/BAR + VAC (title commitment delivered to buyer).
+      { id:'s_uc_title_evidence', owner:'Title',
+        label:'Title evidence delivered to buyer',
+        dl:'title_evidence',
+        sub:'FR/BAR Para 9(c) / Vacant Land Para 10. Title insurance commitment delivered to the buyer by the deadline (default 15 days prior to closing). Confirm the title agent is on track.',
+        showIf:function(f){ return _SIS.farbar(f) || _SIS.vac(f); } },
+      { id:'s_uc_weekly_update', owner:'TC',
+        label:'Weekly progress update to the seller agent',
+        sub:'One clean update a week: what cleared, what is next, what needs the seller. Keeps the agent ahead of every deadline.' }
+    ],
+
+    // ---- CLEAR TO CLOSE -----------------------------------------------------
+    'ctc': [
+      { id:'s_ctc_payoff', owner:'TC',
+        label:'Order seller payoff + confirm liens',
+        sub:'Request the mortgage payoff and confirm any additional liens, judgments, or unpaid assessments so the closing agent has clean figures. Order early, they take days.' },
+      { id:'s_ctc_estoppel_final', owner:'TC',
+        label:'Confirm final HOA / condo estoppel received',
+        sub:'The estoppel governs what the seller owes the association at closing. Confirm the closing agent has the final figures.',
+        showIf:function(f){ return _sHasHoa(f); } },
+      { id:'s_ctc_deed_docs', owner:'Title',
+        label:'Confirm warranty deed + seller closing docs prepared',
+        sub:'Confirm the closing agent has prepared the deed, closing statement, and seller affidavits, and that entity or trust signing authority is in order.' },
+      { id:'s_ctc_cd_review', owner:'TC',
+        label:'Review seller settlement statement',
+        sub:'Review the seller side of the closing disclosure or settlement statement for errors before the seller sees it. Confirm commission, payoff, prorations, and credits are correct.' },
+      { id:'s_ctc_commission', owner:'TC',
+        label:'Confirm commission disbursement authorization sent',
+        sub:'Confirm the broker commission disbursement authorization is with the closing agent. CDA preparation is the broker and agent obligation; confirm it is handled, do not claim it as Aari work.' },
+      { id:'s_ctc_repairs_done', owner:'Seller',
+        label:'Confirm agreed repairs complete + receipts',
+        sub:'Confirm any agreed repairs are done and paid, with receipts on the file, before the buyer walk-through.',
+        showIf:_SIS.repairs,
+        softComplete:{ label:'N/A · no repairs', chip:'N/A', flag:'no_repairs' } },
+      { id:'s_ctc_walk_ready', owner:'Seller',
+        label:'Seller ready for buyer walk-through',
+        dl:'walk_through',
+        sub:'Property broom-clean, free of debris and the seller’s personal property, all keys, garage remotes, access devices, and codes gathered for handoff at closing.' }
+    ],
+
+    // ---- CLOSED -------------------------------------------------------------
+    'closed': [
+      { id:'s_cl_funds_recorded', owner:'Title',
+        label:'Confirm funds disbursed + deed recorded',
+        sub:'Confirm the closing agent disbursed seller proceeds and the deed is recorded. This confirmation unlocks close-out.' },
+      { id:'s_cl_keys', owner:'Seller',
+        label:'Confirm keys + access handed off',
+        sub:'Confirm keys, remotes, and access codes were delivered to the buyer per the possession terms.' },
+      { id:'s_cl_archive', owner:'TC',
+        label:'Archive the file',
+        sub:'Everything funded, recorded, and paid. Locks the file read-only and moves it off the active board.' }
+    ]
+  };
+
+  // ==========================================================================
+  // SELLER EMAIL PLAYBOOK  (merge into EMAIL_PLAYBOOK.sale, keyed by task id)
+  //   subject: 1 to 4 words, curiosity-driven. Body: identity + scene + task +
+  //   deadline. No signature. {{tokens}} match the existing buyer templates.
+  // ==========================================================================
+  var SELLER_EMAIL_PLAYBOOK = {
+    's_setup_opening_email': {
+      id:'s_seller_opening', task:'s_setup_opening_email', thread:4,
+      subject:'{{property_street}}',
+      label:'Executed contract to all parties',
+      body:
+'{{time_of_day_greeting}} everyone,\n\n' +
+'We are coordinating this file on the seller side. The executed contract is attached.\n\n' +
+'Effective Date is {{effective_date}} and closing is set for {{closing_date}}. Every deadline runs off those two dates.\n\n' +
+'Reply all here so the whole file stays on one thread.'
+    },
+    's_uc_survey_seller': {
+      id:'s_seller_survey', task:'s_uc_survey_seller', thread:1,
+      subject:'Survey',
+      label:'Request existing survey',
+      body:
+'{{time_of_day_greeting}} {{agent_first_name}},\n\n' +
+'One quick item to keep {{property_street}} moving.\n\n' +
+'If the seller has an existing survey, send it over. It can save the buyer the cost of a new one and it is the second most important document after the deed.\n\n' +
+'We need it by {{dl_survey_seller}}.'
+    },
+    's_uc_hoa_docs': {
+      id:'s_seller_hoa', task:'s_uc_hoa_docs', thread:1,
+      subject:'Association docs',
+      label:'Request HOA docs + estoppel',
+      body:
+'{{time_of_day_greeting}} {{agent_first_name}},\n\n' +
+'{{property_street}} has an association, so two things start the clock.\n\n' +
+'Send the association documents to the buyer and tell me the date they receive them. The buyer’s review window runs from receipt, not from send. I am ordering the estoppel now so it does not hold up closing.\n\n' +
+'The sooner the docs are delivered, the sooner that window closes.'
+    },
+    's_uc_seller_response': {
+      id:'s_seller_response', task:'s_uc_seller_response', thread:1,
+      subject:'Repair response',
+      label:'Request seller repair response',
+      body:
+'{{time_of_day_greeting}} {{agent_first_name}},\n\n' +
+'The buyer sent written notice of defects on {{property_street}}.\n\n' +
+'I need the seller’s written response: repairs up to the limit, or a licensed estimate. Get it back to me in writing so we do not miss the window.\n\n' +
+'The response is due {{dl_seller_response}}.'
+    },
+    's_uc_firpta': {
+      id:'s_seller_firpta', task:'s_uc_firpta', thread:1,
+      subject:'FIRPTA',
+      label:'Request FIRPTA affidavit',
+      body:
+'{{time_of_day_greeting}} {{agent_first_name}},\n\n' +
+'One item that quietly holds up disbursement if it waits until closing week.\n\n' +
+'Send the seller’s non-foreign affidavit. If the seller is a foreign person, tell me now so title can set up the 15 percent withholding.\n\n' +
+'Sooner is better than closing week.'
+    },
+    's_ctc_payoff': {
+      id:'s_seller_payoff', task:'s_ctc_payoff', thread:3,
+      subject:'Payoff',
+      label:'Order payoff to title',
+      body:
+'{{time_of_day_greeting}},\n\n' +
+'We are clear to close on {{property_street}}.\n\n' +
+'Please order the seller payoff and confirm any additional liens or unpaid assessments so the seller statement is clean.\n\n' +
+'Closing is {{closing_date}}.'
+    }
+  };
+
+  // Merge seller emails into EMAIL_PLAYBOOK.sale, keyed to their stage, guarded so
+  // they only surface on seller-side files (buyer files never see them).
+  (function _wireSellerEmails(){
+    try {
+      var _tStage = {}, _tById = {};
+      Object.keys(SELLER_STAGE_CHECKLISTS).forEach(function(st){ (SELLER_STAGE_CHECKLISTS[st] || []).forEach(function(t){ _tStage[t.id] = st; _tById[t.id] = t; }); });
+      EMAIL_PLAYBOOK.sale = EMAIL_PLAYBOOK.sale || {};
+      Object.keys(SELLER_EMAIL_PLAYBOOK).forEach(function(tid){
+        var e = SELLER_EMAIL_PLAYBOOK[tid]; if(!e) return;
+        var st = _tStage[e.task || tid]; if(!st) return;
+        var _prev = e.showIf, _taskShow = (_tById[e.task || tid] || {}).showIf;
+        // Email only surfaces when its seller task actually applies to this file (HOA present, repairs contract, etc.).
+        e.showIf = function(f){ return (_isSellerFile(f) || _isBothFile(f)) && (typeof _prev === 'function' ? _prev(f) : true) && (typeof _taskShow === 'function' ? _taskShow(f) : true); };
+        (EMAIL_PLAYBOOK.sale[st] = EMAIL_PLAYBOOK.sale[st] || []).push(e);
+      });
+    } catch(_){}
+  })();
+
   // Remedy flags · the two conditionals have no intake source — TC flags them.
   async function saveRemedyFlag(key, val){
     if(!_currentFile) return;
@@ -14546,15 +14831,27 @@ Tell me your planned move-out date and I will set the inspection.`
   // We redistribute at read time so the definition arrays stay intact.
   const OPENING_TASK_IDS = ['wtc_agent_confirm','wtc_opening_email','wtc_escrow_instructions','wtc_buyer_deposit_title','wtc_other_agent_intro','wtc_processor_intro','wtc_hoa_request','wtc_survey_title_request','wtc_title_insurance_request','wtc_condo_docs'];
   function isOpeningTaskId(id){ return OPENING_TASK_IDS.indexOf(id) !== -1; }
+  function _isBothFile(f){ return String((f || {}).client_type || '') === 'both'; }
+  // DRAFT · seller task ids that duplicate a buyer/TC workflow task, dropped on both-side files.
+  var _SELLER_DUP_ON_BOTH = { s_new_contract_attached:1, s_new_signatures_verified:1, s_new_payment_check:1, s_setup_accept:1, s_setup_review_contract:1, s_setup_parties:1, s_setup_agent_confirm:1, s_setup_opening_email:1, s_uc_title_evidence:1, s_uc_weekly_update:1, s_ctc_cd_review:1, s_ctc_commission:1, s_ctc_deed_docs:1, s_cl_funds_recorded:1, s_cl_archive:1 };
   function ckTasksFor(file, stage){
     const ft = file.file_type || 'sale';
+    // DRAFT · seller-side SALE files use the seller checklist.
+    if(ft === 'sale' && _isSellerFile(file)){ return SELLER_STAGE_CHECKLISTS[stage] || null; }
     const byType = STAGE_CHECKLISTS[ft] || {};
+    var base = null;
     if(ft === 'sale'){
       const wtc = byType.waiting_for_tc || [];
-      if(stage === 'waiting_for_tc') return wtc.filter(function(t){ return !isOpeningTaskId(t.id); });
-      if(stage === 'under_contract') return wtc.filter(function(t){ return isOpeningTaskId(t.id); }).concat(byType.under_contract || []);
+      if(stage === 'waiting_for_tc') base = wtc.filter(function(t){ return !isOpeningTaskId(t.id); });
+      else if(stage === 'under_contract') base = wtc.filter(function(t){ return isOpeningTaskId(t.id); }).concat(byType.under_contract || []);
     }
-    return byType[stage] || null;
+    if(base === null) base = byType[stage] || null;
+    // DRAFT · both-side SALE files add seller-specific obligations on top of the buyer set.
+    if(ft === 'sale' && _isBothFile(file) && base){
+      var _sellerOnly = (SELLER_STAGE_CHECKLISTS[stage] || []).filter(function(t){ return !_SELLER_DUP_ON_BOTH[t.id]; });
+      return base.concat(_sellerOnly);
+    }
+    return base;
   }
   // Logistics fields live INSIDE the task that needs them (ADHD: no separate
   // form — ask in context). taskId -> fields; values save into file.logistics
@@ -15863,6 +16160,16 @@ Tell me your planned move-out date and I will set the inspection.`
     return _panelOpen +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;font-weight:600;color:#0f0f0f">What I extracted</span><span style="display:inline-flex;gap:8px;align-items:center"><button type="button" data-reextract="1" title="Re-run extraction from the contract" style="font-size:10px;color:#5f5e5a;border:0.5px solid #d8d3ca;background:#fff;border-radius:8px;padding:3px 9px;cursor:pointer;font-family:inherit">&#8635; Re-extract</button><span style="font-size:10px;color:#0c447c;background:#e6f1fb;border-radius:9px;padding:2px 8px;font-weight:600">from the contract</span></span></div>' +
       '<div style="font-size:11.5px;color:#a39e95;margin-bottom:11px">Review the list, tap Edit on anything that is off, then continue to the deadlines.</div>' +
+      (function(){
+        var _ex = (((file.raw_form_data||{}).extracted_contract)||{});
+        if(_ex.ocr){
+          return '<div style="background:#fef6e7;border:0.5px solid #ecd9a8;border-radius:10px;padding:10px 12px;margin-bottom:11px;font-size:11.5px;color:#8a6a1f;line-height:1.5"><strong style="font-weight:700">Read by OCR, double-check everything.</strong> ' + ((_ex.ocr_note)||'This was read from a scan, so verify every field, especially the day-count deadlines and the loan-type box.') + '</div>';
+        }
+        if(_ex.no_text_layer){
+          return '<div style="background:#fdf4e3;border:0.5px solid #ecd9a8;border-radius:10px;padding:10px 12px;margin-bottom:11px;font-size:11.5px;color:#8a6a1f;line-height:1.5"><strong style="font-weight:700">No readable text in this PDF.</strong> It looks like a scan or a DocuSign-signed image, so nothing could be pulled from it automatically. Read it with OCR (free, and it stays on your device), or enter the fields by hand.<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><button type="button" id="aari-ocr-btn" onclick="try{aariOcrExtract(_currentFile)}catch(e){}" style="font-size:12px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:8px;padding:7px 12px;cursor:pointer;font-family:inherit">Read the scan (OCR)</button><span id="aari-ocr-status" style="font-size:11px;color:#8a6a1f"></span></div></div>';
+        }
+        return '';
+      })() +
       listHtml + _nextBtn + '</div>';
   }
   // Force a fresh contract extraction on demand (the "Re-extract" button). Re-runs the edge
@@ -15887,6 +16194,74 @@ Tell me your planned move-out date and I will set the inspection.`
       } else { alert('Re-extract ran but found nothing on the contract to read.'); if(btn){ btn.disabled=false; btn.innerHTML='↻ Re-extract'; } }
     } catch(e){ alert('Could not re-extract: ' + (e && e.message || 'unknown')); if(btn){ btn.disabled=false; btn.innerHTML='↻ Re-extract'; } }
   }
+  // ---- OCR fallback for image-only (scanned / DocuSign-flattened) contracts --------------
+  // The extractor reads a PDF text layer; DocuSign flattens the pages to images with no text.
+  // This renders the pages in the browser and OCRs them (free, local, nothing leaves the
+  // device), then posts the recognized text to the SAME parser. OCR output is a DRAFT:
+  // handwritten digits and checkboxes are unreliable, so the TC must verify (day-count
+  // deadlines and the loan-type box especially).
+  var _aariOcrLibs = null;
+  function _aariLoadScript(src){ return new Promise(function(res,rej){ var s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=function(){ rej(new Error('Could not load '+src)); }; document.head.appendChild(s); }); }
+  async function _aariEnsureOcrLibs(){
+    if(_aariOcrLibs) return _aariOcrLibs;
+    if(!window.pdfjsLib){ await _aariLoadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'); }
+    if(window.pdfjsLib){ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; }catch(_){} }
+    if(!window.Tesseract){ await _aariLoadScript('https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js'); }
+    _aariOcrLibs = { pdfjs: window.pdfjsLib, T: window.Tesseract };
+    return _aariOcrLibs;
+  }
+  function _aariOcrStatus(msg){ var el=document.getElementById('aari-ocr-status'); if(el) el.textContent = msg||''; }
+  async function aariOcrExtract(file){
+    if(!file || !file.id) return;
+    var btn = document.getElementById('aari-ocr-btn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Reading the scan…'; }
+    try {
+      try { await resolveContractUrl(file); } catch(_){}
+      var url = (file && file._resolvedContract) || (typeof contractUrlOf==='function' ? contractUrlOf(file) : '');
+      if(!url){ throw new Error('No contract file to read.'); }
+      _aariOcrStatus('Loading the reader…');
+      var libs = await _aariEnsureOcrLibs();
+      if(!libs.pdfjs || !libs.T){ throw new Error('Could not load the OCR reader.'); }
+      var buf = await (await fetch(url)).arrayBuffer();
+      var pdf = await libs.pdfjs.getDocument({ data: buf }).promise;
+      var nPages = Math.min(pdf.numPages || 1, 6);   // every parser field lives in the first pages
+      var texts = [];
+      for(var p=1; p<=nPages; p++){
+        _aariOcrStatus('Reading page ' + p + ' of ' + nPages + '…');
+        var page = await pdf.getPage(p);
+        var vp = page.getViewport({ scale: 2 });
+        var canvas = document.createElement('canvas'); canvas.width = vp.width; canvas.height = vp.height;
+        var ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        var res = await libs.T.recognize(canvas, 'eng');
+        texts.push((res && res.data && res.data.text) || '');
+        canvas.width = 0; canvas.height = 0;
+      }
+      var joined = texts.join('\n');
+      if(joined.replace(/\s/g,'').length < 40){ throw new Error('The scan was too faint to read. Try a clearer copy.'); }
+      _aariOcrStatus('Filling in the fields…');
+      var ec = await _client.functions.invoke('extract-contract-fields', { body:{ file_id:file.id, text:joined, ocr:true, write:false } });
+      if(ec && ec.error) throw ec.error;
+      var d = ec && ec.data; var fields = Object.assign({}, (d && d.fields) || {});
+      var ocrNote = fields.ocr_verify || 'Read by OCR. Verify every field, especially the day-count deadlines and the loan-type box.';
+      var rf = fields.review_flags;
+      delete fields.ocr_verify; delete fields.source_ocr; delete fields.review_flags;
+      if(!Object.keys(fields).length){ throw new Error('Read the scan but could not pull any fields. Enter them by hand.'); }
+      var raw2 = Object.assign({}, file.raw_form_data || {});   // keeps field_overrides so manual edits stay on top
+      raw2.extracted_contract = { fields: fields, documents: [], review_flags: (rf ? [rf] : []), ocr: true, ocr_note: ocrNote, at: new Date().toISOString(), source: 'extract-contract-fields/ocr' };
+      var rr = await _client.from('files').update({ raw_form_data: raw2 }).eq('id', file.id);
+      if(rr && rr.error) throw new Error('Read the scan but could not save: ' + (rr.error.message || 'unknown'));
+      file.raw_form_data = raw2;
+      if(_currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = raw2;
+      var ff = (_files||[]).find(function(x){ return x.id === file.id; }); if(ff) ff.raw_form_data = raw2;
+      renderPlaybook(file);
+    } catch(e){
+      _aariOcrStatus('');
+      alert('Could not read the scan: ' + ((e && e.message) || 'unknown') + '. You can still enter the fields by hand.');
+      if(btn){ btn.disabled = false; btn.textContent = 'Read the scan (OCR)'; }
+    }
+  }
+  try { window.aariOcrExtract = aariOcrExtract; } catch(_){}
   // Save an edited group from the "What I extracted" list (inline inputs, not a stepper)
   // back to the extracted draft + the mapped file columns, then re-render.
   async function nfSaveGroup(){
@@ -17122,6 +17497,13 @@ Tell me your planned move-out date and I will set the inspection.`
     const raw = file.raw_form_data || {};
     const val = (f) => f.col ? (file[f.col] || '') : (raw[f.key] || '');
     let html = '', lastGroup = '';
+    // DRAFT · Representing side selector (writes files.client_type, flips the checklist on save).
+    html += '<p style="font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#b0aca4;margin:10px 0 4px">Representing</p>';
+    (function(){ var _cur = String(file.client_type || ''); var _opts = [['buyer','Buyer side'],['seller','Seller side'],['both','Both sides']];
+      html += '<div style="display:flex;align-items:center;gap:10px;padding:3px 0"><label style="font-size:10.5px;color:#888;flex:0 0 110px">Side</label>'
+        + '<select data-fd-repr style="flex:1;font-family:inherit;font-size:12px;padding:6px 9px;border:1px solid #e0ddd6;border-radius:7px;min-width:0">'
+        + _opts.map(function(o){ return '<option value="' + o[0] + '"' + (o[0] === _cur ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('')
+        + '</select></div>'; })();
     FD_FIELDS.forEach(f => {
       if(f.group !== lastGroup){
         html += '<p style="font-size:9.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#b0aca4;margin:10px 0 4px">' + esc(f.group) + '</p>';
@@ -17165,6 +17547,10 @@ Tell me your planned move-out date and I will set the inspection.`
         if(String(before) !== v){ raw[key] = v; changes[key] = { from: before || null, to: v || null }; }
       }
     });
+    // DRAFT · Representing side change → files.client_type.
+    var _repEl = document.querySelector('[data-fd-repr]');
+    if(_repEl){ var _newRep = String(_repEl.value || ''), _oldRep = String(_currentFile.client_type || '');
+      if(_newRep !== _oldRep){ colPatch.client_type = _newRep || null; changes.client_type = { from: _oldRep || null, to: _newRep || null }; } }
     if(!Object.keys(changes).length){ renderFileDetails(_currentFile); return; }
     // Keep the kanban card columns in sync when the client identity changed.
     if(changes['pa_buyer_name'] && _currentFile.client_type === 'buyer'){ colPatch.client_name = raw.pa_buyer_name; colPatch.client_email = raw.pa_buyer_email || _currentFile.client_email; colPatch.client_phone = raw.pa_buyer_phone || _currentFile.client_phone; }
@@ -17617,6 +18003,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const wasOpen = !pv.hidden && pv.classList.contains('rail');
     _openPopKey = 'rail';
     pv.classList.add('rail'); pv.classList.remove('verify');
+    pv.classList.remove('nf-mode'); // intake cover is 620px; the file workspace (review + confirmed) must use full rail width
     document.body.classList.add('rail-open');
     ensureRailHeadings();
     const _isSaleFile = !_currentFile || (_currentFile.file_type || 'sale') === 'sale';
@@ -18409,7 +18796,7 @@ Tell me your planned move-out date and I will set the inspection.`
           var _financed=!!(_exf.loan_amount && parseFloat(String(_exf.loan_amount).replace(/[^0-9.]/g,''))>0);
           var _lg=Object.assign({}, (row.logistics||{}), { terms_confirmed_at:_now, contacts_confirmed_at:_now, financing_confirmed_at:_now, financing_confirmed:(_financed?'financed':'cash') });
           var _patch={ logistics:_lg };
-          if(docs && docs.some(function(d){return d && d.title==='Contract';})) _patch.contract_type='frbar_asis';
+          if(docs && docs.some(function(d){return d && d.title==='Contract';})) _patch.contract_type = mapContractForm((_exf||{}).contract_type) || 'frbar_asis';
           var _eff=_iso(_exf.effective_date); if(_eff) _patch.effective_date=_eff;
           var _cls=_iso(_exf.closing_date); if(_cls) _patch.closing_date=_cls;
           var _pc=_cents(_exf.price); if(_pc) _patch.purchase_price_cents=_pc;
