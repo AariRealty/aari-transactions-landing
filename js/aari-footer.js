@@ -137,6 +137,7 @@
     '      <a href="/index.html#apply">Submit a file</a>',
     '      <a href="/pre-close-checklist.html">Pre-close checklist</a>',
     '      <a href="/tc-platforms.html">Compatible TC platforms</a>',
+    '      <a href="https://aaritransactions.com/aari-referrals.html">Aari Referrals</a>',
     '      <a href="/index.html#faq">FAQ</a>',
     '    </div>',
     '    <div class="aari-foot-col">',
