@@ -12651,6 +12651,8 @@ Tell me your planned move-out date and I will set the inspection.`
       try { var _rr = document.getElementById('rail-right'); if(_rr) _rr.scrollTop = 0; } catch(_){} return; }
     const setupCardTog = e.target.closest('[data-setup-card-toggle]');
     if(setupCardTog){ _setupCardOpen = !_setupCardOpen; try { renderContractTerms(_currentFile); } catch(_){} return; }
+    const editAllTog = e.target.closest('[data-setup-editall]');
+    if(editAllTog){ _setupEditAll = !_setupEditAll; _setupCellEdit = null; try { renderContractTerms(_currentFile); } catch(_){} return; }
     const cellEd = e.target.closest('[data-cell-edit]');
     if(cellEd){ _setupCellEdit = cellEd.getAttribute('data-cell-edit'); try { renderContractTerms(_currentFile); } catch(_){}
       setTimeout(function(){ var el = document.getElementById('nf-cell-active'); if(el){ el.focus(); try { el.select(); } catch(_){} } }, 0); return; }
@@ -15912,9 +15914,15 @@ Tell me your planned move-out date and I will set the inspection.`
   // The grouped setup cards (Contract / Parties / Financing / Price) with inline edit.
   // Single source of truth · used by setupReviewBar (during Setup) AND by the numbered
   // spine's Edit view past Setup, so editing a confirmed file looks exactly like Setup.
+  var _setupEditAll = false;   // "Enter / edit fields by hand" mode: every field becomes an input
   function setupGroupsHtml(file, onlySection, bare){
     const ex = (typeof extractedFields === 'function' ? (extractedFields(file) || {}) : {});
     const editSec = _setupEditSec;
+    const _editAll = !!_setupEditAll;
+    // Contract type is a real dropdown so it can always be set/corrected by hand (incl. NABOR).
+    const _typeOpts = [['frbar_asis','AS IS Residential (FR/BAR)'],['frbar_standard','Residential (FR/BAR Standard)'],['frbar_crsp','Vacant Land / CRSP'],['nab089','NABOR As-Is'],['nab088','NABOR Vacant Land']];
+    const _curType = file.contract_type || '';
+    const _typeSelect = '<select data-nf-type style="font:inherit;font-size:13px;font-weight:600;padding:7px 10px;border:1px solid #d9d4ca;border-radius:8px;background:#fff;color:#0f0f0f;max-width:62%"><option value="">Choose type…</option>' + _typeOpts.map(function(o){ return '<option value="' + o[0] + '"' + (o[0] === _curType ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>';
     const _money = function(v){ if(v==null||v==='') return ''; var s=String(v).replace(/^\$/,'').replace(/\.00$/,''); return '$'+s; };
     const _ctLabels = { frbar_asis:'AS IS Residential (FR/BAR 7x)', frbar_standard:'Residential (FR/BAR Standard)', frbar_crsp:'Vacant Land / CRSP', nabor:'NABOR Residential' };
     const _type = file.contract_type ? (_ctLabels[file.contract_type] || file.contract_type) : (ex.__t || 'AS IS Residential');
@@ -15930,11 +15938,13 @@ Tell me your planned move-out date and I will set the inspection.`
       // hidden inputs so the existing group save keeps every sibling intact.
       const groupHasEdit = fields.some(function(fd){ return fd.f === _setupCellEdit; });
       const cell = function(fd){
+        if(fd.sel) return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5"><div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div>' + fd.sel + '</div>';
         if(fd.fin) return '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(fd.label) + '</span><span style="display:inline-flex;gap:6px">' +
           '<button type="button" data-fin-set="financed" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'financed' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Financed</button>' +
           '<button type="button" data-fin-set="cash" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'cash' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Cash</button>' +
           '</span></div>';
         if(fd.ro) return dispRow(fd.label, fd.val);
+        if(_setupEditAll) return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5"><div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div><input data-nf-field="' + fd.f + '" value="' + esc(fd.val).replace(/"/g, '&quot;') + '" placeholder="Type it in" style="width:100%;font:inherit;font-size:13px;font-weight:600;padding:8px 10px;border:1px solid #d9d4ca;border-radius:8px;background:#fff;color:#0f0f0f"></div>';
         if(_setupCellEdit === fd.f){
           return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5">' +
             '<div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div>' +
@@ -15968,7 +15978,7 @@ Tell me your planned move-out date and I will set the inspection.`
     _pf.push({f:'title_phone', label:'Title phone', val:(ex.title_phone||'')});
     _pf.push({f:'title_address', label:'Title address', val:(ex.title_address||'')});
     const _defs = {
-      contract:   ['Contract', 'contract', [{f:'__type',label:'Type',val:_type,ro:true},{f:'address',label:'Property',val:(ex.address||file.property_address||'')},{f:'county',label:'County',val:(ex.county||'')}]],
+      contract:   ['Contract', 'contract', [{f:'__type',label:'Type',sel:_typeSelect},{f:'address',label:'Property',val:(ex.address||file.property_address||'')},{f:'county',label:'County',val:(ex.county||'')},{f:'legal',label:'Legal description',val:(ex.legal||'')}]],
       parties:    ['Parties', 'parties', _pf],
       financing:  ['Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),fin:(_financed?'financed':'cash')}].concat(_financed ? [{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}] : [])],
       pricedates: ['Price', 'pricedates', [{f:'price',label:'Purchase price',val:_price},{f:'emd',label:'Initial deposit',val:_money(ex.emd)},{f:'balance_to_close',label:'Balance to close',val:_money(ex.balance_to_close)}]],
@@ -16052,11 +16062,13 @@ Tell me your planned move-out date and I will set the inspection.`
       // hidden inputs so the existing group save keeps every sibling intact.
       const groupHasEdit = fields.some(function(fd){ return fd.f === _setupCellEdit; });
       const cell = function(fd){
+        if(fd.sel) return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5"><div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div>' + fd.sel + '</div>';
         if(fd.fin) return '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(fd.label) + '</span><span style="display:inline-flex;gap:6px">' +
           '<button type="button" data-fin-set="financed" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'financed' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Financed</button>' +
           '<button type="button" data-fin-set="cash" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'cash' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Cash</button>' +
           '</span></div>';
         if(fd.ro) return dispRow(fd.label, fd.val);
+        if(_setupEditAll) return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5"><div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div><input data-nf-field="' + fd.f + '" value="' + esc(fd.val).replace(/"/g, '&quot;') + '" placeholder="Type it in" style="width:100%;font:inherit;font-size:13px;font-weight:600;padding:8px 10px;border:1px solid #d9d4ca;border-radius:8px;background:#fff;color:#0f0f0f"></div>';
         if(_setupCellEdit === fd.f){
           return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5">' +
             '<div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div>' +
@@ -16159,7 +16171,8 @@ Tell me your planned move-out date and I will set the inspection.`
     const _nextBtn = '<button type="button" data-setup-step="deadlines" style="width:100%;margin-top:4px;font-size:14px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:10px;padding:13px;cursor:pointer;font-family:inherit">Next, review the deadlines &rarr;</button>';
     return _panelOpen +
       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:13px;font-weight:600;color:#0f0f0f">What I extracted</span><span style="display:inline-flex;gap:8px;align-items:center"><button type="button" data-reextract="1" title="Re-run extraction from the contract" style="font-size:10px;color:#5f5e5a;border:0.5px solid #d8d3ca;background:#fff;border-radius:8px;padding:3px 9px;cursor:pointer;font-family:inherit">&#8635; Re-extract</button><span style="font-size:10px;color:#0c447c;background:#e6f1fb;border-radius:9px;padding:2px 8px;font-weight:600">from the contract</span></span></div>' +
-      '<div style="font-size:11.5px;color:#a39e95;margin-bottom:11px">Review the list, tap Edit on anything that is off, then continue to the deadlines.</div>' +
+      '<div style="font-size:11.5px;color:#a39e95;margin-bottom:9px">Review the list. Tap any value to edit it, or use the button below to fill everything in by hand.</div>' +
+      '<div style="margin-bottom:11px"><button type="button" data-setup-editall style="font-size:12px;font-weight:600;color:' + (_setupEditAll ? '#fff' : '#0f0f0f') + ';background:' + (_setupEditAll ? '#0f0f0f' : '#fff') + ';border:1px solid #0f0f0f;border-radius:8px;padding:7px 13px;cursor:pointer;font-family:inherit">' + (_setupEditAll ? '&#10003; Done, back to the list' : '&#9998; Enter / edit fields by hand') + '</button></div>' +
       (function(){
         var _ex = (((file.raw_form_data||{}).extracted_contract)||{});
         if(_ex.ocr){
@@ -16170,7 +16183,7 @@ Tell me your planned move-out date and I will set the inspection.`
         }
         return '';
       })() +
-      listHtml + _nextBtn + '</div>';
+      listHtml + (_setupEditAll ? '<button type="button" data-nf-save style="width:100%;margin:4px 0 10px;font-size:13px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:10px;padding:12px;cursor:pointer;font-family:inherit">Save these fields</button>' : '') + _nextBtn + '</div>';
   }
   // Force a fresh contract extraction on demand (the "Re-extract" button). Re-runs the edge
   // function and re-renders with the new fields + document split.
@@ -16283,6 +16296,8 @@ Tell me your planned move-out date and I will set the inspection.`
       if(key === 'closing_date'){ const d2 = new Date(val); if(!isNaN(d2)) cols.closing_date = d2.toISOString().slice(0,10); }
       if(key === 'price'){ const n = parseFloat(val.replace(/[^0-9.]/g,'')); if(!isNaN(n)) cols.purchase_price_cents = Math.round(n*100); }
     });
+    var _tsel = document.querySelector('[data-nf-type]');
+    if(_tsel){ var _tv = (_tsel.value || '').trim(); if(_tv && _tv !== (f.contract_type || '')){ cols.contract_type = _tv; } }
     if(_b.length){ fld.buyer = _b.join(' and '); ov.buyer = fld.buyer; }
     if(_s.length){ fld.seller = _s.join(' and '); ov.seller = fld.seller; }
     exc.fields = fld; raw.extracted_contract = exc; raw.field_overrides = ov;
@@ -16292,7 +16307,7 @@ Tell me your planned move-out date and I will set the inspection.`
       if(r && r.error) throw r.error;
     } catch(err){ alert('Could not save: ' + ((err && err.message) || 'unknown error') + '. Your change was not saved, please try again.'); return; }
     f.raw_form_data = raw; Object.keys(cols).forEach(function(k){ f[k] = cols[k]; });
-    _setupEditSec = ''; _setupCellEdit = null;
+    _setupEditSec = ''; _setupCellEdit = null; _setupEditAll = false;
     try { renderContractTerms(f); } catch(_){ try { openPlaybook(f); } catch(__){} }
   }
   // Enter in an inline cell editor saves it.
@@ -16305,6 +16320,13 @@ Tell me your planned move-out date and I will set the inspection.`
   });
   // Edit the effective / closing date in the Deadlines section → save + recalculate.
   document.addEventListener('change', async function(e){
+    if(e.target && e.target.matches && e.target.matches('[data-nf-type]') && _currentFile){
+      const f0 = _currentFile; const v = e.target.value || null;
+      try { await _client.from('files').update({ contract_type: v }).eq('id', f0.id); } catch(_){}
+      f0.contract_type = v;
+      try { renderContractTerms(f0); } catch(_){ try { openPlaybook(f0); } catch(__){} }
+      return;
+    }
     const an = e.target && e.target.getAttribute && e.target.getAttribute('data-nf-anchor');
     if(!an || !_currentFile) return;
     const val = e.target.value || null;
