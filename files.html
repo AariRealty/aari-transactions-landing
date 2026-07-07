@@ -16214,6 +16214,7 @@ Tell me your planned move-out date and I will set the inspection.`
   // handwritten digits and checkboxes are unreliable, so the TC must verify (day-count
   // deadlines and the loan-type box especially).
   var _aariOcrLibs = null;
+  var _aariOcrBusy = false;
   function _aariLoadScript(src){ return new Promise(function(res,rej){ var s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=function(){ rej(new Error('Could not load '+src)); }; document.head.appendChild(s); }); }
   async function _aariEnsureOcrLibs(){
     if(_aariOcrLibs) return _aariOcrLibs;
@@ -16226,8 +16227,11 @@ Tell me your planned move-out date and I will set the inspection.`
   function _aariOcrStatus(msg){ var el=document.getElementById('aari-ocr-status'); if(el) el.textContent = msg||''; }
   async function aariOcrExtract(file){
     if(!file || !file.id) return;
+    if(_aariOcrBusy) return;
+    _aariOcrBusy = true;
     var btn = document.getElementById('aari-ocr-btn');
     if(btn){ btn.disabled = true; btn.textContent = 'Reading the scan…'; }
+    _aariOcrStatus('Preparing to read the scan…');
     try {
       try { await resolveContractUrl(file); } catch(_){}
       var url = (file && file._resolvedContract) || (typeof contractUrlOf==='function' ? contractUrlOf(file) : '');
@@ -16262,13 +16266,18 @@ Tell me your planned move-out date and I will set the inspection.`
       if(!Object.keys(fields).length){ throw new Error('Read the scan but could not pull any fields. Enter them by hand.'); }
       var raw2 = Object.assign({}, file.raw_form_data || {});   // keeps field_overrides so manual edits stay on top
       raw2.extracted_contract = { fields: fields, documents: [], review_flags: (rf ? [rf] : []), ocr: true, ocr_note: ocrNote, at: new Date().toISOString(), source: 'extract-contract-fields/ocr' };
-      var rr = await _client.from('files').update({ raw_form_data: raw2 }).eq('id', file.id);
+      var _cols = {};
+      if(fields.contract_type){ var _ct=(typeof mapContractForm==='function')?mapContractForm(fields.contract_type):''; if(_ct) _cols.contract_type=_ct; }
+      if(fields.address){ var _ad=(typeof normalizeAddress==='function')?normalizeAddress(fields.address):fields.address; if(_ad) _cols.property_address=_ad; }
+      var rr = await _client.from('files').update(Object.assign({ raw_form_data: raw2 }, _cols)).eq('id', file.id);
       if(rr && rr.error) throw new Error('Read the scan but could not save: ' + (rr.error.message || 'unknown'));
-      file.raw_form_data = raw2;
-      if(_currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = raw2;
-      var ff = (_files||[]).find(function(x){ return x.id === file.id; }); if(ff) ff.raw_form_data = raw2;
+      file.raw_form_data = raw2; Object.keys(_cols).forEach(function(k){ file[k]=_cols[k]; });
+      if(_currentFile && _currentFile.id === file.id){ _currentFile.raw_form_data = raw2; Object.keys(_cols).forEach(function(k){ _currentFile[k]=_cols[k]; }); }
+      var ff = (_files||[]).find(function(x){ return x.id === file.id; }); if(ff){ ff.raw_form_data = raw2; Object.keys(_cols).forEach(function(k){ ff[k]=_cols[k]; }); }
+      _aariOcrBusy = false;
       renderPlaybook(file);
     } catch(e){
+      _aariOcrBusy = false;
       _aariOcrStatus('');
       alert('Could not read the scan: ' + ((e && e.message) || 'unknown') + '. You can still enter the fields by hand.');
       if(btn){ btn.disabled = false; btn.textContent = 'Read the scan (OCR)'; }
@@ -18777,7 +18786,7 @@ Tell me your planned move-out date and I will set the inspection.`
       if(_nfSkip && !(_nfSide === 'listing' && _nfLstSvc)) return;
       _nfBusy = true;
       // No loading screen — the button itself shows it's working, then the list appears.
-      var _sb=document.getElementById('nf-go'); if(_sb){ _sb.disabled=true; _sb.innerHTML='<span class="nf-spin" style="vertical-align:-2px;margin-right:8px"></span>Setting up&hellip;'; }
+      var _sb=document.getElementById('nf-go'); if(_sb){ _sb.disabled=true; _sb.innerHTML='<span class="nf-spin" style="vertical-align:-2px;margin-right:8px"></span>Uploading &amp; reading the contract&hellip;'; }
       try{
         // Listing side carries the specific service the TC picked ($225/$99/$149);
         // the sale sides keep their fixed TC service. service_type drives spine + checklist + pricing.
@@ -18802,9 +18811,9 @@ Tell me your planned move-out date and I will set the inspection.`
           raw_form_data:{ submitted_by_tc:true, tc_submitter_id:uid, represents:_nfSide, contract_url:signed, contract_filename:safe, contract_path:path, submission_id:id } };
         var ins = await _client.from('files').insert(row).select('id').single();
         if(ins && ins.error) throw new Error(ins.error.message);
-        var fields=null, docs=null;
+        var fields=null, docs=null, _noText=false;
         if(_nfFile){
-          try{ var ec = await _client.functions.invoke('extract-contract-fields', { body:{ file_id:id } }); fields=(ec&&ec.data&&ec.data.fields)||null; docs=(ec&&ec.data&&ec.data.documents)||null; }catch(exErr){ console.warn('extract skipped', exErr); }
+          try{ var ec = await _client.functions.invoke('extract-contract-fields', { body:{ file_id:id } }); fields=(ec&&ec.data&&ec.data.fields)||null; docs=(ec&&ec.data&&ec.data.documents)||null; _noText=!!(ec&&ec.data&&ec.data.no_text_layer); }catch(exErr){ console.warn('extract skipped', exErr); }
           if(fields && (fields.address || fields.street)){ var _addr = normalizeAddress(fields.address || [fields.street,fields.city,fields.state,fields.zip].filter(Boolean).join(', ')); if(_addr){ try{ await _client.from('files').update({ property_address:_addr }).eq('id', id); }catch(_){ } } }
         }
         // Auto-confirm what the scan reliably reads (contract type, parties, financing) +
@@ -18831,6 +18840,10 @@ Tell me your planned move-out date and I will set the inspection.`
         _nfBusy = false;
         // Straight to the real extracted list — no separate reveal step.
         openPlaybook(f); try{ loadAndRender(); }catch(_){}
+        // Image / DocuSign contract · no text layer to read, so start the OCR scan
+        // automatically with visible page-by-page progress instead of leaving her to
+        // hunt for a button and wonder why nothing filled in.
+        if(_noText && _nfFile && typeof aariOcrExtract==='function'){ setTimeout(function(){ try{ aariOcrExtract(f); }catch(_){} }, 500); }
       }catch(err){
         _nfBusy = false;
         var msg = (err && err.message) ? err.message : 'try again.';
