@@ -16180,7 +16180,7 @@ Tell me your planned move-out date and I will set the inspection.`
           return '<div style="background:#fef6e7;border:0.5px solid #ecd9a8;border-radius:10px;padding:10px 12px;margin-bottom:11px;font-size:11.5px;color:#8a6a1f;line-height:1.5"><strong style="font-weight:700">Read by OCR, double-check everything.</strong> ' + ((_ex.ocr_note)||'This was read from a scan, so verify every field, especially the day-count deadlines and the loan-type box.') + '</div>';
         }
         if(_ex.no_text_layer){
-          return '<div style="background:#fdf4e3;border:0.5px solid #ecd9a8;border-radius:10px;padding:10px 12px;margin-bottom:11px;font-size:11.5px;color:#8a6a1f;line-height:1.5"><strong style="font-weight:700">No readable text in this PDF.</strong> It looks like a scan or a DocuSign-signed image, so nothing could be pulled from it automatically. Read it with OCR (free, and it stays on your device), or enter the fields by hand.<div style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><button type="button" id="aari-ocr-btn" onclick="try{aariOcrExtract(_currentFile)}catch(e){}" style="font-size:12px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:8px;padding:7px 12px;cursor:pointer;font-family:inherit">Read the scan (OCR)</button><span id="aari-ocr-status" style="font-size:11px;color:#8a6a1f"></span></div></div>';
+          return '<div style="background:#fdf4e3;border:0.5px solid #ecd9a8;border-radius:10px;padding:11px 13px;margin-bottom:11px;color:#8a6a1f;line-height:1.5"><div style="font-size:12.5px;font-weight:700">Reading your contract&hellip;</div><div style="font-size:11px;margin-top:2px">This one is a scan, so I am reading it with OCR right on your device. The fields fill in as I go.</div><div style="margin-top:9px;height:7px;background:#efe2c4;border-radius:5px;overflow:hidden"><div id="aari-ocr-bar" style="height:100%;width:6%;background:#0f0f0f;border-radius:5px;transition:width .35s ease"></div></div><div id="aari-ocr-status" style="font-size:11px;margin-top:5px">Starting the scan&hellip;</div></div>';
         }
         return '';
       })() +
@@ -16227,6 +16227,7 @@ Tell me your planned move-out date and I will set the inspection.`
     return _aariOcrLibs;
   }
   function _aariOcrStatus(msg){ var el=document.getElementById('aari-ocr-status'); if(el) el.textContent = msg||''; }
+  function _aariOcrBar(pct){ var el=document.getElementById('aari-ocr-bar'); if(el) el.style.width = Math.max(6, Math.min(100, Math.round(pct))) + '%'; }
   async function aariOcrExtract(file){
     if(!file || !file.id) return;
     if(_aariOcrBusy) return;
@@ -16238,7 +16239,7 @@ Tell me your planned move-out date and I will set the inspection.`
       try { await resolveContractUrl(file); } catch(_){}
       var url = (file && file._resolvedContract) || (typeof contractUrlOf==='function' ? contractUrlOf(file) : '');
       if(!url){ throw new Error('No contract file to read.'); }
-      _aariOcrStatus('Loading the reader…');
+      _aariOcrStatus('Loading the reader…'); _aariOcrBar(12);
       var libs = await _aariEnsureOcrLibs();
       if(!libs.pdfjs || !libs.T){ throw new Error('Could not load the OCR reader.'); }
       var buf = await (await fetch(url)).arrayBuffer();
@@ -16254,11 +16255,12 @@ Tell me your planned move-out date and I will set the inspection.`
         await page.render({ canvasContext: ctx, viewport: vp }).promise;
         var res = await libs.T.recognize(canvas, 'eng');
         texts.push((res && res.data && res.data.text) || '');
+        _aariOcrBar(15 + (p / nPages) * 72);
         canvas.width = 0; canvas.height = 0;
       }
       var joined = texts.join('\n');
       if(joined.replace(/\s/g,'').length < 40){ throw new Error('The scan was too faint to read. Try a clearer copy.'); }
-      _aariOcrStatus('Filling in the fields…');
+      _aariOcrStatus('Filling in the fields…'); _aariOcrBar(93);
       var ec = await _client.functions.invoke('extract-contract-fields', { body:{ file_id:file.id, text:joined, ocr:true, write:false } });
       if(ec && ec.error) throw ec.error;
       var d = ec && ec.data; var fields = Object.assign({}, (d && d.fields) || {});
@@ -16271,6 +16273,8 @@ Tell me your planned move-out date and I will set the inspection.`
       var _cols = {};
       if(fields.contract_type){ var _ct=(typeof mapContractForm==='function')?mapContractForm(fields.contract_type):''; if(_ct) _cols.contract_type=_ct; }
       if(fields.address){ var _ad=(typeof normalizeAddress==='function')?normalizeAddress(fields.address):fields.address; if(_ad) _cols.property_address=_ad; }
+      var _isFin = !!(fields.loan_amount && parseFloat(String(fields.loan_amount).replace(/[^0-9.]/g,''))>0) || fields.financing==='financed';
+      _cols.logistics = Object.assign({}, (file.logistics||{}), { financing_confirmed: (_isFin ? 'financed' : 'cash') });
       var rr = await _client.from('files').update(Object.assign({ raw_form_data: raw2 }, _cols)).eq('id', file.id);
       if(rr && rr.error) throw new Error('Read the scan but could not save: ' + (rr.error.message || 'unknown'));
       file.raw_form_data = raw2; Object.keys(_cols).forEach(function(k){ file[k]=_cols[k]; });
@@ -16280,8 +16284,7 @@ Tell me your planned move-out date and I will set the inspection.`
       renderPlaybook(file);
     } catch(e){
       _aariOcrBusy = false;
-      _aariOcrStatus('');
-      alert('Could not read the scan: ' + ((e && e.message) || 'unknown') + '. You can still enter the fields by hand.');
+      _aariOcrStatus('Could not read it automatically (' + ((e && e.message) || 'unknown') + '). Use "Enter / edit fields by hand" above to fill it in.');
       if(btn){ btn.disabled = false; btn.textContent = 'Read the scan (OCR)'; }
     }
   }
