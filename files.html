@@ -13005,6 +13005,7 @@ Tell me your planned move-out date and I will set the inspection.`
     document.body.classList.add('tpb-open');
     renderPlaybook(file);
     renderDeleteZone(file);
+    try{ maybeAutoScan(file); }catch(_){}
     // Work rail · open the workspace immediately; sections fill in as the async
     // loads (deadlines, verifications) land — no blank wait on the hub.
     if(typeof _railMode !== 'undefined' && _railMode){ try { wireHubNav(); openWorkRail(); } catch(_){} }
@@ -16215,6 +16216,7 @@ Tell me your planned move-out date and I will set the inspection.`
   // deadlines and the loan-type box especially).
   var _aariOcrLibs = null;
   var _aariOcrBusy = false;
+  var _aariOcrAutoTried = {};
   function _aariLoadScript(src){ return new Promise(function(res,rej){ var s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=function(){ rej(new Error('Could not load '+src)); }; document.head.appendChild(s); }); }
   async function _aariEnsureOcrLibs(){
     if(_aariOcrLibs) return _aariOcrLibs;
@@ -16284,6 +16286,17 @@ Tell me your planned move-out date and I will set the inspection.`
     }
   }
   try { window.aariOcrExtract = aariOcrExtract; } catch(_){}
+  // Auto-start the scan whenever an image-only contract is open and hasn't been read yet,
+  // so it never sits behind a button. Runs once per file per session; the button remains as a retry.
+  function maybeAutoScan(file){
+    if(!file || !file.id) return;
+    var ex = ((file.raw_form_data||{}).extracted_contract) || {};
+    var hasContract = !!((typeof contractUrlOf==='function' && contractUrlOf(file)) || ((file.raw_form_data||{}).contract_path));
+    if(ex.no_text_layer && !ex.ocr && hasContract && !_aariOcrBusy && !_aariOcrAutoTried[file.id]){
+      _aariOcrAutoTried[file.id] = 1;
+      setTimeout(function(){ try{ aariOcrExtract(file); }catch(_){} }, 500);
+    }
+  }
   // Save an edited group from the "What I extracted" list (inline inputs, not a stepper)
   // back to the extracted draft + the mapped file columns, then re-render.
   async function nfSaveGroup(){
