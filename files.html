@@ -10014,23 +10014,35 @@ Tell me your planned move-out date and I will set the inspection.`
       }
     } catch(_){}
   }
-  function renderNeedsAttention(){
+  // Option B display · one collapsed row per file (address + "N late, worst X days"
+  // + chevron); tap toggles its deadline list. Expand state persists in _naExpanded
+  // and is folded into the render signature so the cockpit's frequent re-renders
+  // don't collapse an open row or flicker.
+  var _naExpanded = {};
+  var _naRenderSig = null;
+  function renderNeedsAttention(force){
     const host = document.getElementById('needsAttention'); if(!host) return;
     // Wait for the deadline completion cache to load, so a confirmed deadline is
     // never briefly shown as a slip on first paint.
-    if(!_calLoaded){ host.style.display = 'none'; host.innerHTML = ''; return; }
+    if(!_calLoaded){ host.style.display = 'none'; host.innerHTML = ''; _naRenderSig = null; return; }
     const data = _attentionData();
     try { _syncAttentionSnapshot(data); } catch(_){}
     const keys = Object.keys(data.byTc);
-    if(!keys.length){ host.style.display = 'none'; host.innerHTML = ''; return; }
+    if(!keys.length){ host.style.display = 'none'; host.innerHTML = ''; _naRenderSig = null; return; }
     keys.sort(function(a, b){
       if(a === '__none') return 1; if(b === '__none') return -1; // No TC group sinks to the bottom
       const ma = Math.max.apply(null, data.byTc[a].files.map(function(x){ return x.items[0].daysLate; }));
       const mb = Math.max.apply(null, data.byTc[b].files.map(function(x){ return x.items[0].daysLate; }));
       return mb - ma;
     });
+    // Skip the DOM rewrite when nothing changed (data + expand state), so an open
+    // row stays open across triage re-renders.
+    const sig = JSON.stringify(keys.map(function(k){ return [k, data.byTc[k].files.map(function(x){ return [x.file.id, x.items.length, x.items[0].daysLate]; })]; })) + '|' + JSON.stringify(_naExpanded);
+    if(!force && sig === _naRenderSig && host.innerHTML){ return; }
+    _naRenderSig = sig;
     let total = 0; keys.forEach(function(k){ total += data.byTc[k].files.length; }); // count FILES, not deadlines
     const lateTxt = function(n){ return n + (n === 1 ? ' day late' : ' days late'); };
+    const worstTxt = function(n){ return 'worst ' + n + (n === 1 ? ' day' : ' days'); };
     const isBroker = data.role === 'broker';
     let secs = '';
     keys.forEach(function(k){
@@ -10042,20 +10054,28 @@ Tell me your planned move-out date and I will set the inspection.`
       g.files.forEach(function(x, fi){
         const addr = String(x.file.property_address || 'Untitled file').split(',')[0];
         const notLast = fi < g.files.length - 1;
+        const exp = !!_naExpanded[x.file.id];
+        const worst = x.items[0].daysLate;
         secs += '<div style="' + (notLast ? 'border-bottom:0.5px solid #e6e1d6;' : '') + '">';
-        // Address header · one per file, opens the file
-        secs += '<div data-na-open="' + esc(x.file.id) + '" style="display:flex;gap:10px;align-items:baseline;justify-content:space-between;padding:10px 14px 4px;cursor:pointer">' +
+        // Collapsed summary row · taps to expand
+        secs += '<div data-na-toggle="' + esc(x.file.id) + '" style="display:flex;gap:10px;align-items:center;justify-content:space-between;padding:12px 14px;cursor:pointer">' +
           '<span style="font-size:13px;font-weight:600;color:#2c2c2a">' + esc(addr) + '</span>' +
-          '<span style="flex:none;font-size:11px;color:#8a857c">' + x.items.length + (x.items.length === 1 ? ' deadline late' : ' deadlines late') + '</span>' +
+          '<span style="flex:none;font-size:12px;font-weight:500;color:#a32d2d;display:flex;align-items:center;gap:6px">' +
+            x.items.length + ' late, ' + worstTxt(worst) +
+            '<span style="color:#c9c4ba;font-size:15px;display:inline-block;line-height:1;transition:transform .12s;transform:rotate(' + (exp ? '90' : '0') + 'deg)">&#8250;</span>' +
+          '</span>' +
         '</div>';
-        // Its overdue deadlines, indented under the address
-        x.items.forEach(function(it, ii){
-          const lastItem = ii === x.items.length - 1;
-          secs += '<div data-na-open="' + esc(x.file.id) + '" style="display:flex;gap:12px;align-items:baseline;justify-content:space-between;padding:4px 14px 4px 22px;' + (lastItem ? 'padding-bottom:10px;' : '') + 'cursor:pointer">' +
-            '<span style="font-size:13px;color:#5f5e5a">' + esc(it.name) + '</span>' +
-            '<span style="flex:none;font-size:12px;font-weight:500;color:#a32d2d">' + lateTxt(it.daysLate) + '</span>' +
-          '</div>';
-        });
+        // Expanded deadline list · tapping a deadline opens the file
+        if(exp){
+          secs += '<div style="padding-bottom:8px">';
+          x.items.forEach(function(it){
+            secs += '<div data-na-open="' + esc(x.file.id) + '" style="display:flex;gap:12px;align-items:baseline;justify-content:space-between;padding:4px 14px 4px 22px;cursor:pointer">' +
+              '<span style="font-size:13px;color:#5f5e5a">' + esc(it.name) + '</span>' +
+              '<span style="flex:none;font-size:12px;font-weight:500;color:#a32d2d">' + lateTxt(it.daysLate) + '</span>' +
+            '</div>';
+          });
+          secs += '</div>';
+        }
         secs += '</div>';
       });
       secs += '</div>';
@@ -10069,8 +10089,16 @@ Tell me your planned move-out date and I will set the inspection.`
           '<span style="font-size:12px;font-weight:500;color:#a32d2d;background:#f8e4e4;border-radius:20px;padding:2px 9px">' + total + (total === 1 ? ' file' : ' files') + '</span>' +
         '</div>' + secs +
       '</div>';
-    host.querySelectorAll('[data-na-open]').forEach(function(row){
+    host.querySelectorAll('[data-na-toggle]').forEach(function(row){
       row.addEventListener('click', function(){
+        const id = row.getAttribute('data-na-toggle');
+        _naExpanded[id] = !_naExpanded[id];
+        try { renderNeedsAttention(true); } catch(_){}
+      });
+    });
+    host.querySelectorAll('[data-na-open]').forEach(function(row){
+      row.addEventListener('click', function(e){
+        e.stopPropagation();
         const id = row.getAttribute('data-na-open');
         const f = (_files || []).find(function(x){ return x.id === id; });
         if(f) openPlaybook(f);
