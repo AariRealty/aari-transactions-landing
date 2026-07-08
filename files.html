@@ -9979,12 +9979,48 @@ Tell me your planned move-out date and I will set the inspection.`
     });
     return { role: role, byTc: byTc };
   }
+  // Broker session is the source of truth: it can see every file, so when it
+  // recomputes attention it mirrors the result into attention_snapshot. The TC
+  // landing pages (eileen.html / milennys.html) read their own rows from there
+  // instead of re-running the engine. Signature-guarded so it writes only on
+  // change, and broker-gated so a coordinator's partial view never clobbers it.
+  let _attnSig = null;
+  async function _syncAttentionSnapshot(data){
+    try {
+      if(!_client) return;
+      if(String((_profile && _profile.role) || '').toLowerCase() !== 'broker') return;
+      const rows = [];
+      Object.keys(data.byTc).forEach(function(k){
+        data.byTc[k].files.forEach(function(x){
+          rows.push({
+            file_id: x.file.id,
+            tc_id: x.file.assigned_tc_id || null,
+            address: String(x.file.property_address || '').split(',')[0],
+            items: x.items,
+            overdue_count: x.items.length,
+            computed_at: new Date().toISOString(),
+          });
+        });
+      });
+      const sig = JSON.stringify(rows.map(function(r){ return [r.file_id, r.overdue_count, (r.items[0] || {}).daysLate || 0]; }).sort());
+      if(sig === _attnSig) return;
+      _attnSig = sig;
+      const ids = rows.map(function(r){ return r.file_id; });
+      if(rows.length){
+        await _client.from('attention_snapshot').upsert(rows, { onConflict: 'file_id' });
+        await _client.from('attention_snapshot').delete().not('file_id', 'in', '(' + ids.join(',') + ')');
+      } else {
+        await _client.from('attention_snapshot').delete().neq('file_id', '00000000-0000-0000-0000-000000000000');
+      }
+    } catch(_){}
+  }
   function renderNeedsAttention(){
     const host = document.getElementById('needsAttention'); if(!host) return;
     // Wait for the deadline completion cache to load, so a confirmed deadline is
     // never briefly shown as a slip on first paint.
     if(!_calLoaded){ host.style.display = 'none'; host.innerHTML = ''; return; }
     const data = _attentionData();
+    try { _syncAttentionSnapshot(data); } catch(_){}
     const keys = Object.keys(data.byTc);
     if(!keys.length){ host.style.display = 'none'; host.innerHTML = ''; return; }
     keys.sort(function(a, b){

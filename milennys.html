@@ -375,6 +375,10 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
     <!-- ============== TODAY PANEL ============== -->
     <div class="panel active" id="panel-today">
 
+      <!-- Needs attention · overdue, unconfirmed deadlines on your files. Read from
+           attention_snapshot (written by the broker cockpit). Hidden when clear. -->
+      <div id="tcAttention" style="display:none;margin-bottom:20px"></div>
+
       <!-- DEMO DATA · replace with Supabase wiring once files table is queried.
            Anchor + 3 today + 5 this-week rows match the locked design spec. -->
 
@@ -1322,6 +1326,42 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
     } catch (e) { console.warn('[today-load]', e); }
   }
 
+  // ===== Needs attention · reads the snapshot the broker cockpit writes =====
+  async function loadAttentionFromDb(){
+    const host=document.getElementById('tcAttention');if(!host)return;
+    const tcId=await pipeGetTcId();if(!tcId)return;
+    try{const c=await window.AariAuth.ensureClient();if(!c)return;
+      const r=await c.from('attention_snapshot').select('address, items, overdue_count, computed_at').eq('tc_id',tcId).order('computed_at',{ascending:false});
+      if(r.error){console.warn('[attention-load]',r.error);return;}
+      renderTcAttention(host,r.data||[]);
+    }catch(e){console.warn('[attention-load]',e);}
+  }
+  function _attnAgo(iso){try{const t=new Date(iso).getTime();const m=Math.round((Date.now()-t)/60000);if(m<1)return'just now';if(m<60)return m+'m ago';const h=Math.round(m/60);if(h<24)return h+'h ago';return Math.round(h/24)+'d ago';}catch(_){return'';}}
+  function renderTcAttention(host,rows){
+    rows=(rows||[]).filter(r=>r&&Array.isArray(r.items)&&r.items.length);
+    if(!rows.length){host.style.display='none';host.innerHTML='';return;}
+    let total=0;rows.forEach(r=>{total+=r.items.length;});
+    let newest=null;rows.forEach(r=>{if(r.computed_at&&(!newest||r.computed_at>newest))newest=r.computed_at;});
+    const lateTxt=n=>n+(n===1?' day late':' days late');
+    let body='<div style="border:1px solid var(--line);border-radius:12px;overflow:hidden">';
+    rows.forEach((r,ri)=>{
+      const addr=String(r.address||'Untitled file').split(',')[0];
+      (r.items||[]).forEach((it,ii)=>{
+        const last=(ri===rows.length-1)&&(ii===r.items.length-1);
+        body+='<div style="display:flex;gap:12px;align-items:baseline;justify-content:space-between;padding:11px 14px;'+(last?'':'border-bottom:1px solid #efece6')+'">'+
+          '<span style="font-size:13px;color:var(--ink)"><span style="font-weight:600">'+escHtml(addr)+'</span> <span style="color:var(--muted)">&middot; '+escHtml(it.name)+'</span></span>'+
+          '<span style="flex:none;font-size:12px;font-weight:600;color:#a33">'+escHtml(lateTxt(it.daysLate))+'</span></div>';
+      });
+    });
+    body+='</div>';
+    host.innerHTML='<div style="background:#fff;border:1px solid var(--line);border-left:4px solid #d98a8a;border-radius:14px;padding:20px 24px">'+
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">'+
+        '<span style="font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#a33">Needs attention</span>'+
+        '<span style="font-size:11px;font-weight:700;color:#a33;background:#f6e4e4;border-radius:100px;padding:3px 10px">'+total+(total===1?' item':' items')+'</span>'+
+        (newest?'<span style="font-size:11px;color:var(--muted);margin-left:auto">Updated '+_attnAgo(newest)+'</span>':'')+
+      '</div>'+body+'</div>';
+    host.style.display='';
+  }
   function renderTodayFromDb(files){
     const today = new Date(); today.setHours(0,0,0,0);
     const todayMs = today.getTime();
@@ -1428,12 +1468,13 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-weight:4
 
   // Wire after DOM ready
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { wirePipeCardClicks(); wireDragDrop(); setTimeout(loadPipelineFromDb, 1500); setTimeout(loadTodayFromDb, 1500); });
+    document.addEventListener('DOMContentLoaded', () => { wirePipeCardClicks(); wireDragDrop(); setTimeout(loadPipelineFromDb, 1500); setTimeout(loadTodayFromDb, 1500); setTimeout(loadAttentionFromDb, 1500); });
   } else {
     wirePipeCardClicks();
     wireDragDrop();
     setTimeout(loadPipelineFromDb, 1500);
     setTimeout(loadTodayFromDb, 1500);
+    setTimeout(loadAttentionFromDb, 1500);
   }
 
   // ===== Submit Pay panel · checkbox totals + submit + history =====
