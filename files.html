@@ -1171,6 +1171,7 @@
     <p class="tpb-eb" id="tpb-stage">&nbsp;</p>
     <p class="tpb-addr" id="tpb-addr">&nbsp;</p>
     <p class="tpb-meta" id="tpb-meta">&nbsp;</p>
+    <div id="tpb-owned-reject" style="display:none"></div>
   </div>
   <!-- ================= HUB VIEW · retired by the work rail (June 2026) ================= -->
   <div id="tpb-hubview">
@@ -17980,6 +17981,24 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   function closePlaybook(){ _currentFile = null; document.body.classList.remove('tpb-open'); try { closeSectionPop(); } catch(_){} }
 
+  // Owned-client reject · the owner TC sends the file to the broker (never to
+  // another TC). Setting awaiting_broker_review fires the broker escalation email.
+  document.addEventListener('click', async function(e){
+    const rb = e.target.closest && e.target.closest('[data-reject-owned]');
+    if(!rb) return;
+    e.stopPropagation();
+    const fid = rb.getAttribute('data-reject-owned');
+    if(!confirm('Send this file to Marlenyi? It will not go to another coordinator.')) return;
+    rb.disabled = true; rb.textContent = 'Sending…';
+    try {
+      const r = await _client.from('files').update({ status: 'awaiting_broker_review' }).eq('id', fid).select('id');
+      if(r.error || !r.data || !r.data.length){ alert('Could not send it: ' + ((r.error && r.error.message) || 'no permission')); rb.disabled = false; rb.innerHTML = 'Can&rsquo;t take this'; return; }
+      const f = (_files || []).find(x => x.id === fid); if(f) f.status = 'awaiting_broker_review';
+      alert('Sent to Marlenyi. It will not go to another coordinator.');
+      try { if(f) renderPlaybook(f); } catch(_){}
+      try { renderKanban(); } catch(_){}
+    } catch(err){ alert('Could not send it.'); rb.disabled = false; rb.innerHTML = 'Can&rsquo;t take this'; }
+  });
   async function renderPlaybook(file){
     const stage = deriveStage(file);
     document.getElementById('tpb-stage').textContent = STAGE_LABELS[stage] || stage;
@@ -17990,6 +18009,26 @@ Tell me your planned move-out date and I will set the inspection.`
     else if(file.client_type === 'seller') parts.push('Sell-side');
     if(file.purchase_price_cents) parts.push('$' + Math.round(file.purchase_price_cents/100000) + 'K');
     document.getElementById('tpb-meta').textContent = parts.join(' · ');
+
+    // Owned-client reject prompt · only the owner TC sees it, only before they
+    // accept. Rejecting sends the file straight to the broker, never to another TC.
+    try {
+      const _or = document.getElementById('tpb-owned-reject');
+      if(_or){
+        const ownedBy = (file.raw_form_data || {}).owned_by_tc;
+        const role = (_profile && String(_profile.role || '').toLowerCase());
+        const canReject = ownedBy && _profile && ownedBy === _profile.id && !file.tc_accepted_at
+          && ['intake_received','awaiting_tc_acceptance','waiting_for_tc','new'].indexOf(file.status || '') !== -1
+          && role === 'tc';
+        if(canReject){
+          _or.style.display = '';
+          _or.innerHTML = '<div style="background:#faf0ea;border:0.5px solid #e6ddc9;border-radius:10px;padding:11px 14px;margin:10px 0;font-size:13px;color:#5f5e5a">' +
+            'This is your client. If you cannot take it, it goes to Marlenyi, not another coordinator. ' +
+            '<button type="button" data-reject-owned="' + esc(file.id) + '" style="margin-left:6px;font-size:12px;font-weight:600;color:#a32d2d;background:#fff;border:0.5px solid #e6c9c9;border-radius:7px;padding:6px 12px;cursor:pointer">Can&rsquo;t take this</button>' +
+          '</div>';
+        } else { _or.style.display = 'none'; _or.innerHTML = ''; }
+      }
+    } catch(_){}
 
     // File Details · everything the agent answered at intake, in one block.
     renderFileDetails(file);
