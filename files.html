@@ -1097,6 +1097,7 @@
        (it replaced the kanban). The board markup is kept hidden so its renderers
        and the file-type filter don't error. -->
   <div class="ft-filter" id="ft-filter" style="display:none"></div>
+  <div id="needsAttention" style="margin:0 0 14px;display:none"></div>
   <div id="fileCalendar"></div>
   <div id="calHeatmap" style="margin-top:16px"></div>
   <div style="display:none">
@@ -9936,7 +9937,104 @@ Tell me your planned move-out date and I will set the inspection.`
     g.ontrack.sort(function(a, b){ const ad = a.next ? a.next.date.getTime() : 8.64e15, bd = b.next ? b.next.date.getTime() : 8.64e15; return ad - bd; });
     return g;
   }
+  // ===== NEEDS ATTENTION (broker + TC) · files with a contract deadline that is
+  // past its date and still not confirmed. Broker sees every file grouped by the
+  // assigned coordinator (plus a No TC assigned group); a coordinator sees only
+  // their own files, no grouping headers. Reads the same contract engine
+  // (fileContractDeadlines) + completion cache (_deadlinesByFile) the rest of the
+  // cockpit uses, so it can never disagree with a file's own deadline view. Hidden
+  // entirely when nothing is late. · #needsAttention
+  function _attentionData(){
+    const today = new Date(); today.setHours(0, 0, 0, 0); const t0 = today.getTime();
+    const role = (_profile && String(_profile.role || '').toLowerCase()) || '';
+    const mine = _profile && _profile.id;
+    const byTc = {}; // tcId (or '__none') -> { name, files:[ { file, items:[{name,daysLate}] } ] }
+    (_files || []).forEach(function(f){
+      if(deriveStage(f) === 'closed' || f.status === 'archived') return;
+      if((f.raw_form_data || {}).test_pool) return;
+      if((f.file_type || 'sale') !== 'sale') return;
+      // Coordinator view: only files actually assigned to them (skip the claim pool).
+      if(role === 'tc' && f.assigned_tc_id !== mine) return;
+      const status = _deadlinesByFile[f.id] || {};
+      const items = [];
+      try {
+        fileContractDeadlines(f).forEach(function(d){
+          if(!(d && d.date instanceof Date) || isNaN(d.date.getTime())) return;
+          const rec = status[d.key]; if(rec && rec.completed_at) return; // confirmed · not a slip
+          const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0);
+          const late = Math.round((t0 - x.getTime()) / 86400000);
+          if(late > 0) items.push({ name: d.name || 'Deadline', daysLate: late });
+        });
+      } catch(_){}
+      if(!items.length) return;
+      items.sort(function(a, b){ return b.daysLate - a.daysLate; });
+      const key = f.assigned_tc_id || '__none';
+      let nm = 'No TC assigned';
+      if(f.assigned_tc_id){
+        const tc = (typeof _tcsById !== 'undefined' && _tcsById) ? _tcsById[f.assigned_tc_id] : null;
+        nm = tc ? ((tc.first_name || '') + ' ' + (tc.last_name || '')).trim() : '';
+        if(!nm) nm = 'Coordinator';
+      }
+      (byTc[key] = byTc[key] || { name: nm, files: [] }).files.push({ file: f, items: items });
+    });
+    return { role: role, byTc: byTc };
+  }
+  function renderNeedsAttention(){
+    const host = document.getElementById('needsAttention'); if(!host) return;
+    // Wait for the deadline completion cache to load, so a confirmed deadline is
+    // never briefly shown as a slip on first paint.
+    if(!_calLoaded){ host.style.display = 'none'; host.innerHTML = ''; return; }
+    const data = _attentionData();
+    const keys = Object.keys(data.byTc);
+    if(!keys.length){ host.style.display = 'none'; host.innerHTML = ''; return; }
+    keys.sort(function(a, b){
+      if(a === '__none') return 1; if(b === '__none') return -1; // No TC group sinks to the bottom
+      const ma = Math.max.apply(null, data.byTc[a].files.map(function(x){ return x.items[0].daysLate; }));
+      const mb = Math.max.apply(null, data.byTc[b].files.map(function(x){ return x.items[0].daysLate; }));
+      return mb - ma;
+    });
+    let total = 0; keys.forEach(function(k){ data.byTc[k].files.forEach(function(x){ total += x.items.length; }); });
+    const lateTxt = function(n){ return n + (n === 1 ? ' day late' : ' days late'); };
+    const isBroker = data.role === 'broker';
+    let secs = '';
+    keys.forEach(function(k){
+      const g = data.byTc[k]; const none = (k === '__none');
+      const cnt = g.files.reduce(function(s, x){ return s + x.items.length; }, 0);
+      if(isBroker){
+        secs += '<div style="font-size:12px;font-weight:500;margin:12px 0 6px 2px;color:' + (none ? '#a32d2d' : '#5f5e5a') + '">' + esc(g.name) + ' &middot; ' + cnt + '</div>';
+      }
+      secs += '<div style="background:#fff;border:0.5px solid #e6e1d6;border-radius:12px;overflow:hidden">';
+      g.files.forEach(function(x, fi){
+        const addr = String(x.file.property_address || 'Untitled file').split(',')[0];
+        x.items.forEach(function(it, ii){
+          const last = (fi === g.files.length - 1) && (ii === x.items.length - 1);
+          secs += '<div data-na-open="' + esc(x.file.id) + '" style="display:flex;gap:12px;align-items:baseline;justify-content:space-between;padding:10px 14px;cursor:pointer;' + (last ? '' : 'border-bottom:0.5px solid #eee') + '">' +
+            '<span style="font-size:13px;color:#2c2c2a"><span style="font-weight:500">' + esc(addr) + '</span> <span style="color:#5f5e5a">&middot; ' + esc(it.name) + '</span></span>' +
+            '<span style="flex:none;font-size:12px;font-weight:500;color:#a32d2d">' + lateTxt(it.daysLate) + '</span>' +
+          '</div>';
+        });
+      });
+      secs += '</div>';
+    });
+    host.style.display = '';
+    host.innerHTML =
+      '<div style="background:#f1efe8;border-radius:12px;padding:14px">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">' +
+          '<span style="color:#a32d2d;font-size:17px;line-height:1" aria-hidden="true">&#9888;</span>' +
+          '<span style="font-size:15px;font-weight:500;color:#2c2c2a">Needs attention</span>' +
+          '<span style="font-size:12px;font-weight:500;color:#a32d2d;background:#f8e4e4;border-radius:20px;padding:2px 9px">' + total + (total === 1 ? ' item' : ' items') + '</span>' +
+        '</div>' + secs +
+      '</div>';
+    host.querySelectorAll('[data-na-open]').forEach(function(row){
+      row.addEventListener('click', function(){
+        const id = row.getAttribute('data-na-open');
+        const f = (_files || []).find(function(x){ return x.id === id; });
+        if(f) openPlaybook(f);
+      });
+    });
+  }
   function renderTcCalendar(){
+    try { renderNeedsAttention(); } catch(_){}
     const host = document.getElementById('fileCalendar'); if(!host) return;
     const g = _fileTriage();
     const q = (_calSearch || '').toLowerCase();
