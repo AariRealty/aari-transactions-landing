@@ -990,6 +990,8 @@
   .move-stage-btn{background:#0f0f0f;border:0;border-radius:8px;padding:9px 18px;font-size:12px;font-weight:600;color:#fff;cursor:pointer;font-family:inherit;animation:movePulse 2.2s ease-in-out infinite}
   .move-stage-btn:hover{animation:none;opacity:1}
   @keyframes movePulse{0%,100%{opacity:1;transform:scale(1);box-shadow:0 0 0 0 rgba(15,15,15,0.35)}50%{opacity:0.55;transform:scale(1.03);box-shadow:0 0 0 7px rgba(15,15,15,0)}}
+  .ct-seg.fin-blink{border-radius:9px;animation:finBlink 1.1s ease-in-out infinite}
+  @keyframes finBlink{0%,100%{outline:2px solid rgba(186,117,23,0);outline-offset:2px}50%{outline:2px solid rgba(186,117,23,0.85);outline-offset:2px}}
   .ck-send:hover{background:#2a2a2a;color:#fff}
   .ck-send.sent{background:#fff;color:#5f5e5a;border:0.5px solid #d9d4ca}
   .ck-soft-btn{display:inline-block;margin-left:8px;font-size:10px;font-weight:600;border:0.5px solid #e0dbd0;background:#fff;color:#8a857c;border-radius:8px;padding:3px 9px;cursor:pointer;font-family:inherit;white-space:nowrap}
@@ -9849,11 +9851,13 @@ Tell me your planned move-out date and I will set the inspection.`
           const rec = status[d.key];
           if(rec && rec.completed_at) return; // done · no longer a live deadline
           out.push({ date:d.date, key:d.key, label:d.name || 'Deadline', address:f.property_address || '', fileId:f.id });
-          // Chase-able deadlines also get a "Follow up" entry 3 business days early.
-          if(CHASE_KEYS[d.key]){
+          // EVERY deadline gets an early-warning entry 3 business days before the due
+          // date (weekend and holiday safe), so nothing is flagged only on the due date.
+          // Skipped only when that early date is already in the past.
+          {
             const cd = chaseDateFor(d.date);
             if(cd && cd.getTime() >= _t0c){
-              out.push({ date:cd, key:d.key + '__chase', label:'Follow up · ' + (d.name || 'Deadline'), address:f.property_address || '', fileId:f.id, isChase:true, dueDate:d.date });
+              out.push({ date:cd, key:d.key + '__chase', label:'Reminder · ' + (d.name || 'Deadline'), address:f.property_address || '', fileId:f.id, isChase:true, dueDate:d.date });
             }
           }
         });
@@ -10423,6 +10427,9 @@ Tell me your planned move-out date and I will set the inspection.`
   // Shared wiring · attaches only what exists inside the given host (scoped, so
   // calling it for both the agenda host and the heatmap host never double-binds).
   function _wireCal(host){
+    // Self-heal · once per session, when the calendar opens, quietly re-push every
+    // deadline so nothing on the coordinator's calendar can drift stale.
+    try { if(!window.__aariGcalSelfHealed){ window.__aariGcalSelfHealed = true; setTimeout(function(){ try { gcalSyncDeadlines(); } catch(_){} }, 1500); } } catch(_){}
     const ss = host.querySelector('#cal-search');
     if(ss) ss.addEventListener('input', function(){ _calSearch = this.value; const pos = this.selectionStart; renderTcCalendar(); const e = document.querySelector('#fileCalendar #cal-search'); if(e){ e.focus(); try { e.setSelectionRange(pos, pos); } catch(_){} } });
     const sync = host.querySelector('#cal-sync');
@@ -10957,6 +10964,10 @@ Tell me your planned move-out date and I will set the inspection.`
       if(!data || data.length === 0){ alert('Not saved — the database rejected the change. You may not have edit permission on this file (RLS).'); return; }
       writeAuditLog('contract_term_confirmed', file.id, Object.assign({}, colPatch || {}, lgPatch || {}));
       renderPlaybook(file);
+      // If a date that drives the deadline engine changed, re-push the calendar so a
+      // synced coordinator never sees a stale deadline (effective date, closing date,
+      // or contract type all shift every downstream date).
+      try { var _cp = colPatch || {}; if(('effective_date' in _cp) || ('closing_date' in _cp) || ('contract_type' in _cp)){ gcalSyncDeadlines(file.id); } } catch(_){}
     } catch(err){ console.warn('[files] contract terms save failed', err); alert('Save failed: ' + (err && err.message || 'unknown')); }
   }
   // Save one day-count override (e.g. inspection = 10 days) into
@@ -11956,10 +11967,19 @@ Tell me your planned move-out date and I will set the inspection.`
       let _cdots = '';
       for(var _cd = 0; _cd < _confTerms.length; _cd++){ var _cbg = _cd < _ci ? '#0f0f0f' : (_cd === _ci ? '#185FA5' : '#d9d4ca'); var _cw = _cd === _ci ? '16px' : '6px'; _cdots += '<span style="height:6px;width:' + _cw + ';border-radius:20px;background:' + _cbg + ';display:inline-block"></span>'; }
       const _cLast = _ci >= _confTerms.length - 1;
+      // When the confirm button is greyed out it is because one of the three fields the
+      // gate needs (contract type, effective date, closing date) is still blank on the
+      // file. Name exactly what is missing so the TC can fill it in instead of getting
+      // stuck staring at a dead button.
+      var _needTerms = [];
+      if(!file.contract_type) _needTerms.push('contract type');
+      if(!file.effective_date) _needTerms.push('effective date');
+      if(!file.closing_date) _needTerms.push('closing date');
+      var _needMsg = _needTerms.length ? ('Add the ' + _needTerms.join(', ') + ' to unlock') : 'Complete the terms above to unlock';
       const _confNav = _cLast
         ? (ready
             ? '<button type="button" id="ct-confirm" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;font-weight:600;padding:9px 18px;border-radius:8px;cursor:pointer">&check; Confirm &amp; unlock my work</button>'
-            : '<div style="background:#efece6;color:#a39e95;border:0;font-family:inherit;font-size:13px;font-weight:600;padding:9px 18px;border-radius:8px">Confirm &amp; unlock my work</div>')
+            : '<div style="background:#faeeda;color:#a3572b;border:0;font-family:inherit;font-size:12px;font-weight:600;padding:9px 14px;border-radius:8px;max-width:260px;line-height:1.35">' + _needMsg + '</div>')
         : '<button type="button" data-ct-conf-next="1" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:13px;padding:9px 18px;border-radius:8px;cursor:pointer">Looks right</button>';
       termsBody =
         '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:10px;margin-bottom:8px">' +
@@ -12079,7 +12099,6 @@ Tell me your planned move-out date and I will set the inspection.`
             _accRow(2, 'Parties', 'parties') +
             _accRow(3, 'Financing', 'financing') +
             _accRow(4, 'Terms &amp; dates', 'pricedates') +
-            _accRow(5, 'Lender contact', 'contacts') +
             _ops +
           '</div>';
       } else {
@@ -12158,6 +12177,13 @@ Tell me your planned move-out date and I will set the inspection.`
     if(loanI) loanI.addEventListener('change', () => ctSave(file, null, { loan_amount: String(loanI.value).trim() }));
     const balI = document.getElementById('ct-balance');
     if(balI) balI.addEventListener('change', () => ctSave(file, null, { balance_to_close: String(balI.value).trim() }));
+    // Lender contact · financed files only, saved with the rest of financing.
+    const lnI = document.getElementById('ct-lender-name');
+    if(lnI) lnI.addEventListener('change', () => ctSave(file, null, { lender_name: String(lnI.value).trim() }));
+    const leI = document.getElementById('ct-lender-email');
+    if(leI) leI.addEventListener('change', () => ctSave(file, null, { lender_email: String(leI.value).trim() }));
+    const lpI = document.getElementById('ct-lender-phone');
+    if(lpI) lpI.addEventListener('change', () => ctSave(file, null, { lender_phone: String(lpI.value).trim() }));
     // Financing now captures the loan TYPE; derive cash-vs-financed for deadlines.
     host.querySelectorAll('[data-ct-fin]').forEach(b => b.addEventListener('click', () => { const t = b.getAttribute('data-ct-fin'); ctSave(file, null, { financing_type: t, financing_confirmed: (t === 'cash' ? 'cash' : 'financed') }); }));
     host.querySelectorAll('[data-ct-hoa]').forEach(b => b.addEventListener('click', () => ctSave(file, null, { hoa_applies: b.getAttribute('data-ct-hoa') })));
@@ -14704,7 +14730,14 @@ Tell me your planned move-out date and I will set the inspection.`
       { id:'s_setup_opening_email', owner:'TC',
         label:'Send executed contract email',
         sub:'Executed contract intro to all parties: both agents, lender, and title, with file@aaritransactions.com copied for the audit trail. Attach the executed contract and compensation agreement.',
-        emailGate:{ requires:'s_setup_agent_confirm', note:'Confirm dates + contacts first so the intro goes out clean.' } }
+        emailGate:{ requiresFn:function(f, done){
+          var base = !!(done['s_setup_agent_confirm'] || ((f.logistics || {}).contacts_confirmed_at));
+          if(!base) return false;
+          var lg = f.logistics || {}, raw = f.raw_form_data || {};
+          var cash = (typeof isCashFile === 'function') ? isCashFile(f) : (lg.financing_type === 'cash' || lg.financing_confirmed === 'cash');
+          if(cash) return true;
+          return !!(lg.lender_email || lg.lender_name || raw.lender_email || raw.pa_lender_contact_email || raw.lender_name || raw.pa_lender_contact_name);
+        }, note:'Confirm dates and contacts, and add the lender on financed files, so the intro reaches everyone.' } }
     ],
 
     // ---- UNDER CONTRACT · seller obligations run here -----------------------
@@ -15613,7 +15646,7 @@ Tell me your planned move-out date and I will set the inspection.`
   function financingConfirmed(file){ return !!((file.logistics || {}).financing_confirmed_at); }
   async function confirmFinancing(file){
     const fin = financingFieldsOf(file);
-    if(!(fin.type && fin.priceCents)){ alert('Set the financing type and purchase price before confirming.'); return; }
+    if(!fin.type){ alert('Pick the financing type before confirming. Set it from the contract if it did not extract.'); return; }
     const lg = Object.assign({}, file.logistics || {});
     lg.financing_confirmed_at = new Date().toISOString();
     if(!lg.financing_confirmed) lg.financing_confirmed = (fin.type === 'cash' ? 'cash' : 'financed');
@@ -15633,7 +15666,10 @@ Tell me your planned move-out date and I will set the inspection.`
     const emd = ((file.emd && file.emd.amount) || raw.earnest_money || raw.pa_earnest_money || (ex.emd ? ('$' + ex.emd) : '') || '');
     const loan = (lg.loan_amount || (ex.loan_amount ? ('$' + ex.loan_amount) : '') || '');
     const balance = (lg.balance_to_close || (ex.balance_to_close ? ('$' + ex.balance_to_close) : '') || '');
-    return { type:type, FIN:FIN, priceCents:priceCents, emd:emd, loan:loan, balance:balance };
+    const lenderName  = lg.lender_name  || raw.lender_name  || raw.pa_lender_contact_name  || (file.lender_contact || '').toString() || '';
+    const lenderEmail = lg.lender_email || raw.lender_email || raw.pa_lender_contact_email || '';
+    const lenderPhone = lg.lender_phone || raw.lender_phone || raw.pa_lender_contact_phone || '';
+    return { type:type, FIN:FIN, priceCents:priceCents, emd:emd, loan:loan, balance:balance, lenderName:lenderName, lenderEmail:lenderEmail, lenderPhone:lenderPhone };
   }
   function financingHtml(file){
     const lg = file.logistics || {};
@@ -15648,24 +15684,33 @@ Tell me your planned move-out date and I will set the inspection.`
       '</div>';
     }
     const inS = 'width:100%;border:0.5px solid #d9d4ca;border-radius:8px;padding:8px 10px;font-size:14px;font-family:inherit;background:#fff;box-sizing:border-box';
-    const seg = '<span class="ct-seg">' + [['cash','Cash'],['conventional','Conv'],['fha','FHA'],['va','VA'],['usda','USDA']].map(function(o){ return '<button type="button" data-ct-fin="' + o[0] + '"' + (f.type === o[0] ? ' class="on"' : '') + '>' + o[1] + '</button>'; }).join('') + '</span>';
+    const _needType = !f.type;
+    const seg = '<span class="ct-seg' + (_needType ? ' fin-blink' : '') + '">' + [['cash','Cash'],['conventional','Conv'],['fha','FHA'],['va','VA'],['usda','USDA']].map(function(o){ return '<button type="button" data-ct-fin="' + o[0] + '"' + (f.type === o[0] ? ' class="on"' : '') + '>' + o[1] + '</button>'; }).join('') + '</span>';
     // Money shown as 1,060,000.00 (commas + cents, no $). Inputs are type="text" so
     // the commas display; the save handlers strip them back to a number.
     const money = function(v){ if(v === '' || v == null) return ''; const n = parseFloat(String(v).replace(/[^0-9.]/g, '')); return isNaN(n) ? '' : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
     const fields = [
-      ['Financing type', seg, ''],
+      ['Financing type', seg, _needType ? 'Not found on the contract. Set it from the contract to continue.' : ''],
       ['Purchase price', '<input type="text" inputmode="decimal" id="ct-price" value="' + esc2(money(f.priceCents ? (f.priceCents / 100) : '')) + '" placeholder="0.00" style="' + inS + '">', ''],
       ['Initial deposit (EMD)', '<input type="text" inputmode="decimal" id="ct-emd" value="' + esc2(money(f.emd)) + '" placeholder="0.00" style="' + inS + '">', ''],
-      ['Loan amount', '<input type="text" inputmode="decimal" id="ct-loan" value="' + esc2(money(f.loan)) + '" placeholder="0.00" style="' + inS + '">', (f.type === 'cash' ? 'Cash deal — leave blank.' : '')],
+      ['Loan amount', '<input type="text" inputmode="decimal" id="ct-loan" value="' + esc2(money(f.loan)) + '" placeholder="0.00" style="' + inS + '">', (f.type === 'cash' ? 'Cash deal, leave blank.' : '')],
       ['Balance to close', '<input type="text" inputmode="decimal" id="ct-balance" value="' + esc2(money(f.balance)) + '" placeholder="0.00" style="' + inS + '">', '']
     ];
+    // Lender lives INSIDE Financing, financed files only, so it is captured with the
+    // rest of the money picture before Terms & dates generates the deadlines. Cash
+    // files never see it and are never gated on it.
+    if(f.type && f.type !== 'cash'){
+      fields.push(['Lender name', '<input type="text" id="ct-lender-name" value="' + esc2(f.lenderName) + '" placeholder="Loan officer or lender" style="' + inS + '">', 'The buyer’s lender. Captured here so the executed contract intro reaches everyone.']);
+      fields.push(['Lender email', '<input type="text" inputmode="email" id="ct-lender-email" value="' + esc2(f.lenderEmail) + '" placeholder="lo@lender.com" style="' + inS + '">', '']);
+      fields.push(['Lender phone', '<input type="text" inputmode="tel" id="ct-lender-phone" value="' + esc2(f.lenderPhone) + '" placeholder="(239) 555 0000" style="' + inS + '">', '']);
+    }
     const idx = Math.max(0, Math.min(_finStep || 0, fields.length - 1));
     _finStep = idx;
     const fld = fields[idx];
     let dots = '';
     for(var d = 0; d < fields.length; d++){ var bg = d < idx ? '#0f0f0f' : (d === idx ? '#185FA5' : '#d9d4ca'); var w = d === idx ? '16px' : '6px'; dots += '<span style="height:6px;width:' + w + ';border-radius:20px;background:' + bg + ';display:inline-block"></span>'; }
     const last = idx >= fields.length - 1;
-    const ready = !!(f.type && f.priceCents);
+    const ready = !!f.type;
     const primary = last
       ? (ready
           ? '<button type="button" data-fin-confirm="1" class="aari-btn">&check; Confirm financing</button>'
@@ -15681,7 +15726,7 @@ Tell me your planned move-out date and I will set the inspection.`
         '<div style="margin-top:16px;display:flex;align-items:center;justify-content:space-between">' + primary +
           (idx > 0 ? '<button type="button" data-fin-back="1" style="background:none;border:0;color:#a39e95;font-family:inherit;font-size:12px;cursor:pointer">&larr; back</button>' : '<span></span>') +
         '</div>' +
-        (last && !ready ? '<p style="text-align:center;font-size:10px;color:#a39e95;margin:12px 0 0">Set the financing type and purchase price to confirm</p>' : '') +
+        (last && !ready ? '<p style="text-align:center;font-size:10px;color:#a39e95;margin:12px 0 0">Pick the financing type to confirm</p>' : '') +
       '</div>' +
     '</div>';
   }
