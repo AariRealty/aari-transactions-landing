@@ -9909,6 +9909,23 @@ Tell me your planned move-out date and I will set the inspection.`
       return calId;
     } catch(_){ return null; }
   }
+  // Mirror the computed deadlines into file_deadlines so the external subscribe feeds
+  // (an agent's whole book, and the per-transaction client link) can serve them. Best
+  // effort; never blocks the live calendar sync.
+  async function _persistFileDeadlines(items){
+    try {
+      if(!_client) return;
+      const rows = (items || []).map(function(d){
+        if(!d || !d.fileId || !d.key || !(d.date instanceof Date)) return null;
+        var ds = ''; try { ds = window.AariDeadlineEngine.ymd(d.date); } catch(_){}
+        if(!ds) return null;
+        var ref = null; try { if(d.isChase && d.dueDate) ref = window.AariDeadlineEngine.ymd(d.dueDate); } catch(_){}
+        return { file_id: d.fileId, key: d.key, name: (d.label || 'Deadline'), due_date: ds, is_chase: !!d.isChase, due_ref: ref, updated_at: new Date().toISOString() };
+      }).filter(Boolean);
+      if(!rows.length) return;
+      await _client.from('file_deadlines').upsert(rows, { onConflict: 'file_id,key' });
+    } catch(_){}
+  }
   // Live push · each coordinator's open deadlines go to THEIR OWN calendar (routed by
   // the file's assigned_tc_id), never a shared one. Stable id (file+key) so re-sync
   // updates, never duplicates. Auth = logged-in Supabase session.
@@ -9917,6 +9934,7 @@ Tell me your planned move-out date and I will set the inspection.`
       if(!_client || !_client.functions) return { ok:false, error:'no client' };
       let items = _tcCalDeadlines() || [];
       if(fileIdOpt) items = items.filter(function(d){ return d.fileId === fileIdOpt; });
+      try { _persistFileDeadlines(items); } catch(_){}
       const _fileById = {}; (_files || []).forEach(function(f){ _fileById[f.id] = f; });
       const _byTc = {};
       items.forEach(function(d){
@@ -9943,7 +9961,9 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   async function gcalDeleteDeadline(fileId, key){
     try {
-      if(!(_client && _client.functions)) return;
+      if(!_client) return;
+      try { await _client.from('file_deadlines').delete().eq('file_id', fileId).in('key', [key, key + '__chase']); } catch(_){}
+      if(!_client.functions) return;
       const f = (_files || []).find(function(x){ return x.id === fileId; });
       const tc = (f && f.assigned_tc_id) ? _tcsById[f.assigned_tc_id] : null;
       const _body = { action:'delete', event: { file_id: fileId, key: key } };
