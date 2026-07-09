@@ -9594,7 +9594,7 @@ Tell me your planned move-out date and I will set the inspection.`
     renderDeadlinesForFile(file);
     try { renderHubStatus(file); } catch(_){}
     // Live calendar · a confirmed deadline drops off the calendar; un-confirming re-adds it.
-    try { if(actualDateISO) gcalDeleteDeadline(file.id, key); else gcalSyncDeadlines(file.id); } catch(_){}
+    try { if(actualDateISO){ gcalDeleteDeadline(file.id, key); } gcalSyncDeadlines(file.id); } catch(_){}
   }
   async function toggleDeadlineDone(file, key, dueISO){
     const status = _deadlinesByFile[file.id] || (_deadlinesByFile[file.id] = {});
@@ -9885,6 +9885,7 @@ Tell me your planned move-out date and I will set the inspection.`
   // Ensure a coordinator has their OWN dedicated calendar; create + share it on first
   // need (coordinator = writer, broker = reader so it auto-appears in the broker's
   // Google Calendar). The id is stored on the coordinator's agent row.
+  var _calProvisioning = {};
   async function _ensureTcCalendar(tc){
     if(!tc || !tc.id) return null;
     if(tc.gcal_calendar_id) return tc.gcal_calendar_id;
@@ -9893,6 +9894,10 @@ Tell me your planned move-out date and I will set the inspection.`
     // that would re-create a duplicate calendar every session). Others get theirs the
     // next time they open their own calendar.
     if(!_profile || tc.id !== _profile.id) return null;
+    // In-flight guard · a concurrent sync (self-heal + manual + ctSave) must not fire a
+    // second provision before the first persists, or it creates a duplicate calendar.
+    if(_calProvisioning[tc.id]) return null;
+    _calProvisioning[tc.id] = true;
     try {
       var readers = [];
       try { Object.keys(_tcsById).forEach(function(k){ var x = _tcsById[k]; if(x && String(x.role || '').toLowerCase() === 'broker' && x.email) readers.push(x.email); }); } catch(_){}
@@ -9904,7 +9909,7 @@ Tell me your planned move-out date and I will set the inspection.`
       var data = res && res.data;
       if(!data || !data.calendarId) return null;
       var calId = data.calendarId;
-      try { await _client.from('agents').update({ gcal_calendar_id: calId }).eq('id', tc.id); } catch(_){}
+      try { var _ur = await _client.from('agents').update({ gcal_calendar_id: calId }).eq('id', tc.id); if(_ur && _ur.error) console.warn('[gcal] calendar id did not persist', _ur.error.message); } catch(e){ console.warn('[gcal] calendar id persist threw', e); }
       tc.gcal_calendar_id = calId; if(_tcsById[tc.id]) _tcsById[tc.id].gcal_calendar_id = calId;
       return calId;
     } catch(_){ return null; }
@@ -9915,15 +9920,23 @@ Tell me your planned move-out date and I will set the inspection.`
   async function _persistFileDeadlines(items){
     try {
       if(!_client) return;
-      const rows = (items || []).map(function(d){
-        if(!d || !d.fileId || !d.key || !(d.date instanceof Date)) return null;
+      // Group the current deadline set by file, then REPLACE each file's cache rows
+      // (delete + insert) so nothing stale (a removed or completed deadline) lingers.
+      const byFile = {};
+      (items || []).forEach(function(d){
+        if(!d || !d.fileId || !d.key || !(d.date instanceof Date)) return;
         var ds = ''; try { ds = window.AariDeadlineEngine.ymd(d.date); } catch(_){}
-        if(!ds) return null;
+        if(!ds) return;
         var ref = null; try { if(d.isChase && d.dueDate) ref = window.AariDeadlineEngine.ymd(d.dueDate); } catch(_){}
-        return { file_id: d.fileId, key: d.key, name: (d.label || 'Deadline'), due_date: ds, is_chase: !!d.isChase, due_ref: ref, updated_at: new Date().toISOString() };
-      }).filter(Boolean);
-      if(!rows.length) return;
-      await _client.from('file_deadlines').upsert(rows, { onConflict: 'file_id,key' });
+        (byFile[d.fileId] = byFile[d.fileId] || []).push({ file_id: d.fileId, dkey: d.key, name: (d.label || 'Deadline'), due_date: ds, is_chase: !!d.isChase, due_ref: ref, updated_at: new Date().toISOString() });
+      });
+      const fids = Object.keys(byFile);
+      for(var i = 0; i < fids.length; i++){
+        try {
+          await _client.from('deadline_feed_cache').delete().eq('file_id', fids[i]);
+          if(byFile[fids[i]].length) await _client.from('deadline_feed_cache').insert(byFile[fids[i]]);
+        } catch(_){}
+      }
     } catch(_){}
   }
   // Live push · each coordinator's open deadlines go to THEIR OWN calendar (routed by
@@ -9961,9 +9974,7 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   async function gcalDeleteDeadline(fileId, key){
     try {
-      if(!_client) return;
-      try { await _client.from('file_deadlines').delete().eq('file_id', fileId).in('key', [key, key + '__chase']); } catch(_){}
-      if(!_client.functions) return;
+      if(!(_client && _client.functions)) return;
       const f = (_files || []).find(function(x){ return x.id === fileId; });
       const tc = (f && f.assigned_tc_id) ? _tcsById[f.assigned_tc_id] : null;
       const _body = { action:'delete', event: { file_id: fileId, key: key } };
