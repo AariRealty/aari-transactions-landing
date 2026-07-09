@@ -6824,7 +6824,7 @@ Tell me your planned move-out date and I will set the inspection.`
     if(Object.keys(_tcsById).length === 0){
       // Include brokers too · the broker can be the assigned coordinator on her own files,
       // so she shows up in the TC filter and her files resolve a coordinator name.
-      const { data: tcs } = await _client.from('agents').select('id, first_name, last_name').in('role',['tc','broker']);
+      const { data: tcs } = await _client.from('agents').select('id, first_name, last_name, email, role, gcal_calendar_id').in('role',['tc','broker']);
       (tcs || []).forEach(t => { _tcsById[t.id] = t; });
       if(role === 'broker') renderTcFilter();
     }
@@ -9882,28 +9882,74 @@ Tell me your planned move-out date and I will set the inspection.`
   // their shared "Aari Deadlines" calendar via the gcal-sync edge function. Each
   // event has a stable id (file+key) so re-syncing updates, never duplicates.
   // Auth is the logged-in Supabase session (no secret in the page). ----
+  // Ensure a coordinator has their OWN dedicated calendar; create + share it on first
+  // need (coordinator = writer, broker = reader so it auto-appears in the broker's
+  // Google Calendar). The id is stored on the coordinator's agent row.
+  async function _ensureTcCalendar(tc){
+    if(!tc || !tc.id) return null;
+    if(tc.gcal_calendar_id) return tc.gcal_calendar_id;
+    // Only the logged-in coordinator provisions their OWN calendar (RLS lets an agent
+    // update only their own row, so persisting the id would fail for anyone else, and
+    // that would re-create a duplicate calendar every session). Others get theirs the
+    // next time they open their own calendar.
+    if(!_profile || tc.id !== _profile.id) return null;
+    try {
+      var readers = [];
+      try { Object.keys(_tcsById).forEach(function(k){ var x = _tcsById[k]; if(x && String(x.role || '').toLowerCase() === 'broker' && x.email) readers.push(x.email); }); } catch(_){}
+      readers.push('marlenyi@aaritransactions.com');
+      readers = readers.filter(function(v, i, a){ return v && a.indexOf(v) === i; });
+      var writers = []; if(tc.email) writers.push(tc.email);
+      var _nm = ((tc.first_name || '') + ' ' + (tc.last_name || '')).trim() || 'Coordinator';
+      var res = await _client.functions.invoke('gcal-sync', { body: { action:'provision', title:'Aari Deadlines · ' + _nm, writers: writers, readers: readers } });
+      var data = res && res.data;
+      if(!data || !data.calendarId) return null;
+      var calId = data.calendarId;
+      try { await _client.from('agents').update({ gcal_calendar_id: calId }).eq('id', tc.id); } catch(_){}
+      tc.gcal_calendar_id = calId; if(_tcsById[tc.id]) _tcsById[tc.id].gcal_calendar_id = calId;
+      return calId;
+    } catch(_){ return null; }
+  }
+  // Live push · each coordinator's open deadlines go to THEIR OWN calendar (routed by
+  // the file's assigned_tc_id), never a shared one. Stable id (file+key) so re-sync
+  // updates, never duplicates. Auth = logged-in Supabase session.
   async function gcalSyncDeadlines(fileIdOpt){
     try {
       if(!_client || !_client.functions) return { ok:false, error:'no client' };
       let items = _tcCalDeadlines() || [];
       if(fileIdOpt) items = items.filter(function(d){ return d.fileId === fileIdOpt; });
-      const ev = [];
+      const _fileById = {}; (_files || []).forEach(function(f){ _fileById[f.id] = f; });
+      const _byTc = {};
       items.forEach(function(d){
         if(!d || !d.fileId || !d.key || !(d.date instanceof Date)) return;
+        const f = _fileById[d.fileId]; const tcId = f && f.assigned_tc_id; if(!tcId) return;
         let ds = ''; try { ds = window.AariDeadlineEngine.ymd(d.date); } catch(_){ return; }
         if(!ds) return;
         let _desc = String(d.address || '');
         try { if(d.isChase && d.dueDate) _desc += ' · due ' + window.AariDeadlineEngine.ymd(d.dueDate); } catch(_){}
-        ev.push({ file_id: d.fileId, key: d.key, summary: (d.label || 'Deadline') + ' · ' + String(d.address || '').split(',')[0], description: _desc, date: ds });
+        (_byTc[tcId] = _byTc[tcId] || []).push({ file_id: d.fileId, key: d.key, summary: (d.label || 'Deadline') + ' · ' + String(d.address || '').split(',')[0], description: _desc, date: ds });
       });
-      if(!ev.length) return { ok:true, count:0 };
-      const { data, error } = await _client.functions.invoke('gcal-sync', { body: { action:'bulk', events: ev } });
-      if(error) return { ok:false, error: (error && error.message) || String(error) };
-      return data || { ok:false };
+      const tcIds = Object.keys(_byTc);
+      if(!tcIds.length) return { ok:true, count:0 };
+      let total = 0, calendars = 0;
+      for(const tcId of tcIds){
+        const tc = _tcsById[tcId] || { id: tcId };
+        const calId = await _ensureTcCalendar(tc);
+        if(!calId) continue; // coordinator has no calendar yet (e.g. no email) · skip, never pile into a shared one
+        const res = await _client.functions.invoke('gcal-sync', { body: { action:'bulk', calendarId: calId, events: _byTc[tcId] } });
+        if(res && res.data && res.data.ok){ total += (res.data.count || 0); calendars++; }
+      }
+      return { ok:true, count: total, calendars: calendars };
     } catch(err){ return { ok:false, error: String(err && err.message || err) }; }
   }
   async function gcalDeleteDeadline(fileId, key){
-    try { if(_client && _client.functions) await _client.functions.invoke('gcal-sync', { body: { action:'delete', event: { file_id: fileId, key: key } } }); } catch(_){}
+    try {
+      if(!(_client && _client.functions)) return;
+      const f = (_files || []).find(function(x){ return x.id === fileId; });
+      const tc = (f && f.assigned_tc_id) ? _tcsById[f.assigned_tc_id] : null;
+      const _body = { action:'delete', event: { file_id: fileId, key: key } };
+      if(tc && tc.gcal_calendar_id) _body.calendarId = tc.gcal_calendar_id;
+      await _client.functions.invoke('gcal-sync', { body: _body });
+    } catch(_){}
   }
   // ---- FILE-FIRST triage · one row per FILE (not per deadline), grouped by the
   // action it needs: Needs a TC (unassigned) · Needs you (overdue/today) · On track.
