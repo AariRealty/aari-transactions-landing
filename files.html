@@ -6745,6 +6745,39 @@ Tell me your planned move-out date and I will set the inspection.`
     if(role === 'broker'){ const _rl = document.getElementById('rl-open-link'); if(_rl) _rl.style.display = ''; }
     wireUi();
     await loadAndRender();
+    maybeShowCalendarSetup();
+  }
+
+  // First-login nudge for coordinators who have not provisioned their deadline calendar.
+  // Value-list framing, and no "Later" by design: opening the calendar is the setup, and
+  // it is the one thing that guarantees no deadline slips. Broker is skipped (she has
+  // nothing to provision; each TC's calendar auto-shares into her Google calendar).
+  async function maybeShowCalendarSetup(){
+    try {
+      if(!_profile || String(_profile.role || '').toLowerCase() !== 'tc') return;
+      let calId = _profile.gcal_calendar_id;
+      if(calId === undefined){
+        const { data } = await _client.from('agents').select('gcal_calendar_id').eq('id', _profile.id).maybeSingle();
+        calId = data && data.gcal_calendar_id;
+      }
+      if(calId) return;                                   // already set up · never nag again
+      if(document.getElementById('cal-setup-ov')) return;
+      const ov = document.createElement('div');
+      ov.id = 'cal-setup-ov';
+      ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,0.5);display:flex;align-items:center;justify-content:center;z-index:99999;padding:20px;font-family:Inter,system-ui,sans-serif';
+      const val = function(txt){ return '<div style="display:flex;gap:10px;align-items:flex-start;margin-top:13px"><span style="flex:none;margin-top:1px;font-size:13px;color:#0f0f0f">&#10003;</span><span style="font-size:13.5px;color:#3a352e;line-height:1.5">' + txt + '</span></div>'; };
+      ov.innerHTML = '<div style="background:#fdfcf9;border-radius:16px;max-width:430px;width:100%;padding:30px 28px;box-shadow:0 24px 60px rgba(15,15,15,0.28)">' +
+        '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;color:#0f0f0f;line-height:1.25">Set up your deadline calendar</div>' +
+        '<div style="font-size:13.5px;color:#7a736a;margin-top:8px;line-height:1.5">One tap and every file you coordinate lives on your own Google calendar. Here is what that gets you.</div>' +
+        val('Every deadline on every file syncs to your calendar, automatically.') +
+        val('A reminder lands 3 business days before each one, so nothing sneaks up on you.') +
+        val('Change a date and the calendar updates itself. No manual entry, ever.') +
+        '<button type="button" id="cal-setup-go" style="margin-top:24px;width:100%;background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:14px;font-weight:600;padding:13px;border-radius:11px;cursor:pointer">Set up my calendar</button>' +
+      '</div>';
+      document.body.appendChild(ov);
+      const go = document.getElementById('cal-setup-go');
+      if(go) go.addEventListener('click', function(){ ov.remove(); try { setView('calendar'); } catch(_){} });
+    } catch(_){}
   }
 
   function showGate(title, msg, ctaHref){
@@ -11199,6 +11232,43 @@ Tell me your planned move-out date and I will set the inspection.`
   // 'files' row has no top-level contract_url column), so read both places.
   function contractUrlOf(file){ return file.contract_url || (file.raw_form_data || {}).contract_url || (file.raw_form_data || {}).contract_path || file._resolvedContract || ''; }
   function contractNameOf(file){ return file.contract_filename || (file.raw_form_data || {}).contract_filename || ''; }
+  // Upload guard · the executed-contract slot must hold an actual contract. When we scan
+  // an upload and find NO buyer AND NO contract date or type, it is almost certainly the
+  // wrong document (a net sheet, a disclosure, a seller worksheet). Flag it, and hold the
+  // intro email to all parties until the real contract is in or the coordinator overrides.
+  // Conservative on purpose: a real executed contract carries at least a buyer or a
+  // date/type, so a partial scan on a genuine contract will not false alarm.
+  const OPENING_EMAIL_TASKS = { wtc_opening_email:1, s_setup_opening_email:1 };
+  function contractLooksInvalid(file){
+    try {
+      const raw = file.raw_form_data || {};
+      if(raw.contract_override) return false;             // coordinator confirmed it is the contract
+      if(!contractUrlOf(file)) return false;              // nothing in the slot yet · not this guard's job
+      const ec = raw.extracted_contract;
+      if(!ec || !ec.fields) return false;                 // not scanned yet · do not cry wolf
+      const f = ec.fields, has = function(k){ return f[k] != null && String(f[k]).trim() !== ''; };
+      const hasBuyer = has('buyer');
+      const hasContractSignal = has('effective_date') || has('closing_date') || has('contract_type');
+      return !hasBuyer && !hasContractSignal;             // scanned, no buyer, no dates/type → not a contract
+    } catch(_){ return false; }
+  }
+  function contractGuardBannerHtml(file){
+    if(!contractLooksInvalid(file)) return '';
+    const fn = esc(contractNameOf(file) || 'the uploaded file');
+    return '<div style="background:#faeeda;border:1px solid #e9cf9a;border-left:3px solid #ba7517;border-radius:10px;padding:13px 15px;margin:0 0 12px">' +
+      '<div style="display:flex;gap:10px;align-items:flex-start">' +
+        '<span style="font-size:16px;line-height:1;flex:none;margin-top:1px">&#9888;</span>' +
+        '<div style="min-width:0;flex:1">' +
+          '<div style="font-size:13px;font-weight:700;color:#7a4e0b">This doesn&rsquo;t look like an executed contract</div>' +
+          '<div style="font-size:12.5px;color:#8a6d3b;line-height:1.5;margin-top:3px">We scanned <b>' + fn + '</b> and found no buyer and no contract dates. It reads like a net sheet or the wrong file. Upload the executed contract before this file goes out to all parties.</div>' +
+          '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
+            '<button type="button" data-contract-reupload="1" style="background:#0f0f0f;color:#fff;border:0;font-family:inherit;font-size:12px;font-weight:600;padding:7px 14px;border-radius:8px;cursor:pointer">Upload the executed contract</button>' +
+            '<button type="button" data-contract-override="1" style="background:none;border:0;color:#8a6d3b;font-family:inherit;font-size:12px;font-weight:600;padding:7px 8px;cursor:pointer;text-decoration:underline">It really is the contract, keep it</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
   // If no contract URL is saved on the row, the agent may still have uploaded
   // the file at intake — go look for it in storage at {submitted_by}/{file.id}/
   // and resolve a fresh signed URL. Cached per file (null = checked, none found).
@@ -12906,6 +12976,17 @@ Tell me your planned move-out date and I will set the inspection.`
   // View/Hide buttons keep working no matter how many times the panel re-renders.
   document.addEventListener('click', function(e){
     if(!e.target || !e.target.closest || !_currentFile) return;
+    const cov = e.target.closest('[data-contract-override]');
+    if(cov){
+      const raw = (_currentFile.raw_form_data && typeof _currentFile.raw_form_data === 'object') ? _currentFile.raw_form_data : {};
+      raw.contract_override = true; _currentFile.raw_form_data = raw;
+      const ff = (_files || []).find(function(x){ return x.id === _currentFile.id; }); if(ff){ ff.raw_form_data = raw; }
+      try { _client.from('files').update({ raw_form_data: raw }).eq('id', _currentFile.id).then(function(){}); } catch(_){}
+      try { renderStageChecklist(_currentFile); } catch(_){}
+      return;
+    }
+    const cru = e.target.closest('[data-contract-reupload]');
+    if(cru){ try { attachContract(_currentFile); } catch(_){} return; }
     const nc = e.target.closest('[data-ct-next-contacts]');
     if(nc){ _ctContactsStep = true; try { renderContractTerms(_currentFile); } catch(_){} return; }
     const bt = e.target.closest('[data-ct-back-terms]');
@@ -16196,16 +16277,18 @@ Tell me your planned move-out date and I will set the inspection.`
       const sends = _sendsByFile[(_drawerFile || {}).id] || {};
       // Email send-gate (Section 7 · Fix 6) — a task may require another task done
       // before its email can be sent. Until then the button is disabled with a note.
-      const _emGate = t.emailGate && (t.emailGate.requiresFn
+      const _ctHold = OPENING_EMAIL_TASKS[t.id] && contractLooksInvalid(file);
+      const _emGate = _ctHold || (t.emailGate && (t.emailGate.requiresFn
         ? !t.emailGate.requiresFn(file, done)
         : t.emailGate.requiresLogistics
           ? !((file.logistics || {})[t.emailGate.requiresLogistics])
-          : !(done[t.emailGate.requires] || ((file.logistics || {}).contacts_confirmed_at)));
+          : !(done[t.emailGate.requires] || ((file.logistics || {}).contacts_confirmed_at))));
       emailHtml = '<div class="ck-emails">' + ems.map(e => {
         const sent = sends[e.id];
         if(_emGate){
+          const _gnote = _ctHold ? 'Upload the executed contract before this goes out. The file in the contract slot does not read as a contract.' : (t.emailGate && t.emailGate.note);
           return '<button type="button" class="ck-send" disabled aria-disabled="true" style="opacity:.45;cursor:not-allowed">Send &middot; ' + esc(e.label) + '</button>' +
-            '<div class="ck-sub" style="margin:3px 0 8px;color:#a08a5a">' + esc(t.emailGate.note) + '</div>';
+            '<div class="ck-sub" style="margin:3px 0 8px;color:#a08a5a">' + esc(_gnote) + '</div>';
         }
         return '<button type="button" class="ck-send' + (sent ? ' sent' : '') + '" data-open-email="' + esc(e.id) + '">' +
             (sent ? '&check; Sent · ' : 'Send · ') + esc(e.label) +
@@ -16276,13 +16359,15 @@ Tell me your planned move-out date and I will set the inspection.`
     // to that step, so the prerequisite never hides in Coming up while this task is up top.
     let _lockHint = '';
     if(!rec && t.emailGate){
-      const _blocked = t.emailGate.requiresFn ? !t.emailGate.requiresFn(file, done)
+      const _ctHold2 = OPENING_EMAIL_TASKS[t.id] && contractLooksInvalid(file);
+      const _blocked = _ctHold2 || (t.emailGate.requiresFn ? !t.emailGate.requiresFn(file, done)
         : t.emailGate.requiresLogistics ? !((file.logistics || {})[t.emailGate.requiresLogistics])
-        : !(done[t.emailGate.requires] || ((file.logistics || {}).contacts_confirmed_at));
+        : !(done[t.emailGate.requires] || ((file.logistics || {}).contacts_confirmed_at)));
       if(_blocked){
-        const _req = t.emailGate.requires || '';
+        const _req = _ctHold2 ? '' : (t.emailGate.requires || '');
+        const _lnote = _ctHold2 ? 'Upload the executed contract before this goes out. The file in the contract slot does not read as a contract.' : (t.emailGate.note || 'A prerequisite step is needed first.');
         _lockHint = '<div class="ck-lock"' + (_req ? ' data-goto-task="' + esc(_req) + '"' : '') + '>&#128274; ' +
-          esc(t.emailGate.note || 'A prerequisite step is needed first.') + (_req ? ' <span class="ck-lock-go">open it &rsaquo;</span>' : '') + '</div>';
+          esc(_lnote) + (_req ? ' <span class="ck-lock-go">open it &rsaquo;</span>' : '') + '</div>';
       }
     }
     // TC follow-up cue · chase-able dated tasks show "Follow up by [date]" (3 business
@@ -17708,7 +17793,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const _showDueSoon = !_isSetupStage && stage !== 'under_contract';
     // "Update the agent" is a communication action, not a task — it sits at the BOTTOM
     // of the work (after the tracks, just above Move), not crowding the top of Do next.
-    host.innerHTML = fileMoneyHtml(file) + roBanner + saBanner + payBanner + closingBanner + gate + widget +
+    host.innerHTML = contractGuardBannerHtml(file) + fileMoneyHtml(file) + roBanner + saBanner + payBanner + closingBanner + gate + widget +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
       (_showDueSoon ? dueSoon : '') + ((_isSetupStage || _usedTracks) ? '' : updateBtnHtml(file)) + moveBtn;
     // During Setup, hide the whole "Your work" pop when it has nothing to show (no
