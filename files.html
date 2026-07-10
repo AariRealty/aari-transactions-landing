@@ -9089,7 +9089,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const rows = ENG.contractDeadlines(ct, effISO, clsISO, overridesJson).filter(function(it){
       if(_waived && (it.key === 'inspection_end' || it.key === 'seller_response')) return false;
       if(_noHoa && (it.key === 'hoa_review' || it.key === 'estoppel')) return false;
-      if(_cash && it.key === 'appraisal') return false;
+      if(_cash && (it.key === 'appraisal' || it.key === 'loan_app' || it.key === 'loan_approval' || it.key === 'finance_cont')) return false;
       if(_noAddl && it.key === 'additional_deposit') return false;
       return true;
     }).map(function(it){
@@ -11203,6 +11203,18 @@ Tell me your planned move-out date and I will set the inspection.`
       std = ENG.contractDeadlines(ct, file.effective_date, file.closing_date, {});
       act = ENG.contractDeadlines(ct, file.effective_date, file.closing_date, ovr);
     } catch(_){ return '<p class="ct-di-empty">Could not compute deadlines.</p>'; }
+    // Match the live ledger: a cash file has no loan/appraisal deadlines, a waived
+    // inspection drops those rows, no HOA drops the association rows, etc.
+    const _cashF = isCashFile(file), _waivedF = (typeof inspectionWaived === 'function' && inspectionWaived(file));
+    const _noHoaF = !hoaApplies(file), _noAddlF = !((emdData(file) || {}).additional_amount);
+    const _keepDl = function(d){
+      if(_waivedF && (d.key === 'inspection_end' || d.key === 'seller_response')) return false;
+      if(_noHoaF && (d.key === 'hoa_review' || d.key === 'estoppel')) return false;
+      if(_cashF && (d.key === 'appraisal' || d.key === 'loan_app' || d.key === 'loan_approval' || d.key === 'finance_cont')) return false;
+      if(_noAddlF && d.key === 'additional_deposit') return false;
+      return true;
+    };
+    std = std.filter(_keepDl); act = act.filter(_keepDl);
     const stdByKey = {}; std.forEach(function(d){ stdByKey[d.key] = d; });
     const fmt = function(d){ return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); };
     const diffs = [], same = [];
@@ -12038,7 +12050,7 @@ Tell me your planned move-out date and I will set the inspection.`
       // open to the full terms + dates without leaving the page.
       const _fmtMD2 = function(iso){ if(!iso) return ''; try { return new Date(String(iso).length === 10 ? iso + 'T00:00:00' : iso).toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } };
       let _dlCount = 0;
-      if(haveDates && ct){ try { _dlCount = ENG.contractDeadlines(ct, eff, cls, ov).length; } catch(_e){ console.warn('[deadline] count failed', _e); _dlCount = 0; } }
+      if(haveDates && ct){ try { _dlCount = fileContractDeadlines(file).length; } catch(_e){ console.warn('[deadline] count failed', _e); _dlCount = 0; } }
       const _datesBit = (shownEff && shownCls) ? (_fmtMD2(shownEff) + ' → ' + _fmtMD2(shownCls)) : '';
       const _pills = [ (shownCt ? ctLabelFor(shownCt) : ''), _datesBit, shownPrice, (_dlCount ? (_dlCount + ' deadline' + (_dlCount === 1 ? '' : 's')) : '') ].filter(Boolean);
       const _pillHtml = _pills.map(function(p){ return '<span style="font-size:10.5px;color:#5f5e5a;background:#f1ede6;border-radius:6px;padding:3px 8px">' + esc(p) + '</span>'; }).join('');
@@ -14090,7 +14102,10 @@ Tell me your planned move-out date and I will set the inspection.`
     // Under Contract once the contract type, parties, and financing are confirmed; the
     // outreach tasks (opening email, escrow, intros) live in Under Contract. The old
     // "complete all New tasks" block is gone — those tasks are hidden during setup.
-    if((cur === 'new' || cur === 'waiting_for_tc') && newStage !== 'new' && newStage !== 'waiting_for_tc'){
+    if((file.file_type || 'sale') === 'sale' && (cur === 'new' || cur === 'waiting_for_tc') && newStage !== 'new' && newStage !== 'waiting_for_tc'){
+      // Sale-only gate: contacts/financing/terms confirmations are stamped by the sale
+      // setup bar. Listing, rental, lease and compliance files have their own flows and
+      // never stamp these, so gating them here would trap them permanently at 'new'.
       const _lg = file.logistics || {};
       const _termsOk = (typeof termsAttested === 'function') ? termsAttested(file) : true;
       if(!(_termsOk && _lg.contacts_confirmed_at && _lg.financing_confirmed_at)){
@@ -16078,7 +16093,10 @@ Tell me your planned move-out date and I will set the inspection.`
     const _miss = [];
     if(!partyComplete(_P.buyers[0])) _miss.push('Buyer');
     if(!partyComplete(_P.sellers[0])) _miss.push('Seller');
-    contactRows(file).filter(function(r){ return r.key !== 'buyer' && r.key !== 'seller' && r.key !== 'lender'; })
+    // Only the buyer and seller block confirming the parties. Listing agent (FSBO deals
+    // have none) and title (often not chosen at effective date) must NOT trap the file at
+    // Setup — they are still tracked, and the escrow email has its own title gate.
+    contactRows(file).filter(function(r){ return r.key !== 'buyer' && r.key !== 'seller' && r.key !== 'lender' && r.key !== 'listing_agent' && r.key !== 'title'; })
       .forEach(function(r){ if(!r.complete) _miss.push(r.label); });
     if(_miss.length){
       if(_miss.indexOf('Buyer') !== -1 && typeof contractLooksInvalid === 'function' && contractLooksInvalid(file)){
@@ -16116,13 +16134,18 @@ Tell me your planned move-out date and I will set the inspection.`
     const eff = file.effective_date ? full(new Date(String(file.effective_date).slice(0, 10) + 'T12:00:00')) : '[Effective Date]';
     const fromS = full(fromDate) || '[current inspection deadline]';
     const toS = full(toDate) || '[new inspection deadline]';
+    // Paragraph 12 is the residential (CRSP / AS-IS) inspection clause. Vacant land and
+    // other forms number it differently, so only cite the paragraph on residential forms.
+    const _resid = /crsp|asis|as_is/i.test(String(file.contract_type || ''));
     return 'ADDENDUM TO CONTRACT\n\n' +
       'Property: ' + addr + '\n' +
       'Buyer(s): ' + buyers + '\n' +
       'Seller(s): ' + sellers + '\n' +
       'Effective Date of Contract: ' + eff + '\n\n' +
       'The Buyer and Seller agree to amend the Contract as follows.\n\n' +
-      'The Inspection Period referenced in Paragraph 12 (Property Inspection and Right to Cancel) is extended from ' + fromS + ' to ' + toS + '. The Buyer’s right to cancel under Paragraph 12 remains available through 5:00 p.m. on ' + toS + '.\n\n' +
+      (_resid
+        ? 'The Inspection Period referenced in Paragraph 12 (Property Inspection and Right to Cancel) is extended from ' + fromS + ' to ' + toS + '. The Buyer’s right to cancel under Paragraph 12 remains available through 5:00 p.m. on ' + toS + '.\n\n'
+        : 'The inspection or feasibility period defined in the Contract is extended from ' + fromS + ' to ' + toS + '. The Buyer’s right to cancel under that provision remains available through 5:00 p.m. on ' + toS + '.\n\n') +
       'All other terms and conditions of the Contract shall remain unchanged and in full force and effect.\n\n' +
       'Buyer: _____________________   Date: __________\n' +
       'Buyer: _____________________   Date: __________\n' +
