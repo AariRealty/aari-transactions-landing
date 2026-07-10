@@ -6745,6 +6745,8 @@ Tell me your planned move-out date and I will set the inspection.`
     if(role === 'broker'){ const _rl = document.getElementById('rl-open-link'); if(_rl) _rl.style.display = ''; }
     wireUi();
     await loadAndRender();
+    try { await loadInvoices(); renderFileList(); } catch(_){}
+    try { await syncCreditUses(); } catch(_){}
     maybeShowCalendarSetup();
   }
 
@@ -6857,7 +6859,7 @@ Tell me your planned move-out date and I will set the inspection.`
     if(Object.keys(_tcsById).length === 0){
       // Include brokers too · the broker can be the assigned coordinator on her own files,
       // so she shows up in the TC filter and her files resolve a coordinator name.
-      const { data: tcs } = await _client.from('agents').select('id, first_name, last_name, email, role, gcal_calendar_id').in('role',['tc','broker']);
+      const { data: tcs } = await _client.from('agents').select('id, first_name, last_name, email, role, gcal_calendar_id, tc_pay_pct').in('role',['tc','broker']);
       (tcs || []).forEach(t => { _tcsById[t.id] = t; });
       if(role === 'broker') renderTcFilter();
     }
@@ -9027,6 +9029,9 @@ Tell me your planned move-out date and I will set the inspection.`
     const hostEl = setupBody || document.getElementById('tpb-dl-body');
     const metaEl = document.getElementById('tpb-dl-meta');
     if(!hostEl) return;
+    // Offer Prep has no contract deadlines · hide the ledger entirely.
+    if(typeof isOfferPrepFile === 'function' && isOfferPrepFile(file)){ hostEl.innerHTML = ''; if(metaEl) metaEl.textContent = ''; var _b = document.getElementById('tpb-dl-body'); if(_b) _b.style.display = 'none'; return; }
+    var _b0 = document.getElementById('tpb-dl-body'); if(_b0) _b0.style.display = '';
     if((file.file_type || '') === 'rental'){ renderRentalDates(file, hostEl, metaEl); return; }
     // Deadlines unlock the moment the contract terms are confirmed — the effective
     // and closing dates are locked at that point, so the full ledger can compute.
@@ -10245,7 +10250,7 @@ Tell me your planned move-out date and I will set the inspection.`
       const f = it.f; const addr = String(f.property_address || 'Untitled file').split(',')[0];
       const cash = ((f.file_type || 'sale') === 'sale' && typeof isCashFile === 'function' && isCashFile(f)) ? ' <span style="font-size:9px;font-weight:600;letter-spacing:.3px;color:#854f0b;background:#faeeda;border-radius:4px;padding:1px 5px">CASH</span>' : '';
       const TYL = { sale:'Sale', listing:'Listing', rental:'Rental', lease:'Lease', buyer_rep:'Buyer rep', compliance:'Compliance' };
-      const ty = TYL[f.file_type] || 'Sale';
+      const ty = (typeof isOfferPrepFile === 'function' && isOfferPrepFile(f)) ? 'Offer Prep' : (TYL[f.file_type] || 'Sale');
       let sub = '', sc = '#8a857c';
       if(kind === 'needstc'){ sub = (f.created_at ? ('Submitted ' + fmt(new Date(f.created_at)) + ' · ') : '') + 'no coordinator yet'; }
       else if(kind === 'needsyou'){ const b = []; if(it.overdue) b.push(it.overdue + ' overdue'); if(it.todayN) b.push(it.todayN + ' due today'); sub = b.join(' · '); sc = (it.overdue || it.todayN) ? '#a3402f' : '#0f0f0f'; }
@@ -10731,9 +10736,159 @@ Tell me your planned move-out date and I will set the inspection.`
     if(d != null && d <= 0 && stage !== 'closed'){ tier = 'today'; }
     return { tier, dlText, dlTone, sortKey };
   }
+  // ===== Weekly TC invoicing. A file is billable when it's closed (or an upfront service
+  // reached its final stage), has TC pay, and isn't already on an invoice. The TC submits
+  // once a week (Thursday); the broker pays Friday from the Payables panel. =====
+  var _invoices = [];
+  async function loadInvoices(){
+    try { const { data } = await _client.from('tc_invoices').select('*').order('submitted_at', { ascending:false }); _invoices = data || []; }
+    catch(_){ _invoices = []; }
+  }
+  // Keep the member-facing credit meter honest: every file the cockpit computes as
+  // credit-covered gets a row in membership_credit_uses (deduped on file_id), so the
+  // agent's portal reflects credits used even when a coordinator input the work.
+  async function syncCreditUses(){
+    try {
+      var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
+      if(role !== 'broker' && role !== 'tc') return;
+      if(typeof computeCreditCoverage === 'function'){ try { computeCreditCoverage(); } catch(_){} }
+      var rows = [], overflowIds = [];
+      (_files || []).forEach(function(f){
+        if(!f || !f.id) return;
+        if(f.agent_id && _creditCoverByFile[f.id] === 'covered'){
+          // used_at stamped from the file's own cycle (created_at), not sync time, so a file
+          // covered in a prior month counts against that month's allowance, not this one.
+          rows.push({ agent_id:f.agent_id, file_id:f.id, service_id:f.service_type || '', used_at:(f.created_at || new Date().toISOString()) });
+        } else if(_creditCoverByFile[f.id] === 'overflow'){
+          overflowIds.push(f.id);   // explicitly computed NOT covered (member paid) → its credit-use row is stale
+        }
+      });
+      if(rows.length) await _client.from('membership_credit_uses').upsert(rows, { onConflict:'file_id', ignoreDuplicates:true });
+      // Broker reconcile (broker has the delete policy + sees all files): remove stale
+      // credit-use rows for files that are now over the limit, so the meter never overcounts.
+      if(role === 'broker' && overflowIds.length){
+        for(var i = 0; i < overflowIds.length; i += 200){ try { await _client.from('membership_credit_uses').delete().in('file_id', overflowIds.slice(i, i + 200)); } catch(_){} }
+      }
+    } catch(_){}
+  }
+  function fileTcPayCents(f){ try { return Math.round((tcPayFor(f) || 0) * 100); } catch(_){ return 0; } }
+  function fileCompleted(f){
+    if(deriveStage(f) === 'closed' || f.transaction_stage === 'closed' || f.status === 'closed') return true;
+    var tr = TC_SVC_TRACKS[String(f.service_type || '').toLowerCase()];
+    var atFinalStage = !!(tr && f.service_stage === tr[tr.length - 1]);
+    // Offer prep is done when its final checklist task is ticked (op_mark_delivered, or
+    // op_verify_execution on Complete) OR the service-stage dropdown is at the last stage.
+    if(isOfferPrepFile(f)){
+      var dt = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
+      var lastTask = String(f.service_type || '').toLowerCase() === 'offer_prep_complete' ? dt['op_verify_execution'] : dt['op_mark_delivered'];
+      return !!lastTask || atFinalStage;
+    }
+    if(UPFRONT_SERVICES.indexOf(f.service_type) !== -1) return atFinalStage;
+    return false;
+  }
+  function fileIsCovered(f){ return typeof isCreditCovered === 'function' && isCreditCovered(f); }
+  // Invoiceable = completed, not yet on an invoice, and either paid work OR credit-covered
+  // (covered files ride along at $0 so the coordinator's full week is on the record).
+  function fileIsBillable(f){
+    if(!f || f.invoice_id) return false;
+    if(!fileCompleted(f)) return false;
+    return fileTcPayCents(f) > 0 || fileIsCovered(f);
+  }
+  function clientName(f){
+    try { var m = (typeof fileMembership === 'function') && fileMembership(f); if(m){ var n = ((m.first_name || '') + ' ' + (m.last_name || '')).trim(); if(n) return n; } } catch(_){}
+    return (f && f.client_name) || (f && f.raw_form_data && f.raw_form_data.agent_name) || 'Client';
+  }
+  function myBillableFiles(){
+    if(!_profile) return [];
+    return (_files || []).filter(function(f){ return f.assigned_tc_id === _profile.id && fileIsBillable(f); });
+  }
+  function _money(c){ return '$' + (Math.round(c) / 100).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+  function _svcLabel(f){ return (typeof SERVICE_LABEL === 'object' && SERVICE_LABEL[f.service_type]) || f.service_type || 'Service'; }
+  function invoicingPanelHtml(){
+    var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
+    var card = 'background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:16px 18px;margin:0 0 14px';
+    if(role === 'broker'){
+      var sub = _invoices.filter(function(i){ return i.status === 'submitted'; });
+      if(!sub.length) return '';
+      var owed = sub.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
+      var rows = sub.map(function(i){
+        var byId = {}; (_tcsById && (byId = _tcsById)); var tc = byId[i.tc_id]; var nm = tc ? ((tc.first_name || '') + ' ' + (tc.last_name || '')).trim() : 'Coordinator';
+        var n = (i.line_items || []).length;
+        return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-top:0.5px solid #f0ebe0">' +
+          '<div><div style="font-size:13px;font-weight:500">' + esc(nm) + ' <span style="color:#8a857c;font-weight:400">&middot; ' + esc(i.invoice_number || '') + '</span></div>' +
+          '<div style="font-size:11px;color:#8a857c">' + n + ' file' + (n === 1 ? '' : 's') + '</div></div>' +
+          '<div style="display:flex;align-items:center;gap:10px"><span style="font-size:14px;font-weight:600">' + _money(i.total_cents || 0) + '</span>' +
+          '<button type="button" data-mark-invoice-paid="' + i.id + '" style="font-size:11.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:7px;padding:7px 12px;cursor:pointer;font-family:inherit">Mark paid</button></div></div>';
+      }).join('');
+      return '<div style="' + card + '"><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Payables &middot; coordinator invoices</span><span style="font-size:12px;color:#8a857c">' + _money(owed) + ' owed</span></div>' + rows + '</div>';
+    }
+    if(role === 'tc'){
+      var files = myBillableFiles();
+      if(!files.length) return '';
+      var total = files.reduce(function(s, f){ return s + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
+      var rows2 = files.map(function(f){
+        var cov = fileIsCovered(f);
+        var tag = cov ? ' <span style="font-size:8.5px;background:#eee7d6;color:#7a4e0b;border-radius:20px;padding:1px 6px;letter-spacing:.3px;vertical-align:1px">COVERED</span>' : '';
+        var amt = cov ? '<span style="font-size:13px;font-weight:600;white-space:nowrap;color:#a39e93">$0.00</span>' : '<span style="font-size:13px;font-weight:600;white-space:nowrap">' + _money(fileTcPayCents(f)) + '</span>';
+        return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:0.5px solid #f0ebe0">' +
+          '<div style="min-width:0"><div style="font-size:12.5px;font-weight:500;color:' + (cov ? '#5f5e5a' : '#0f0f0f') + '">' + esc((f.property_address || 'File').split(',')[0]) + tag + '</div>' +
+          '<div style="font-size:11px;color:#8a857c">' + esc(_svcLabel(f)) + (cov ? ' · ' + esc(clientName(f)) + '’s credit' : '') + '</div></div>' +
+          amt + '</div>';
+      }).join('');
+      return '<div style="' + card + '"><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Ready to invoice</span><span style="font-size:12px;color:#8a857c">' + files.length + ' file' + (files.length === 1 ? '' : 's') + '</span></div>' +
+        rows2 +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1.5px solid #0f0f0f">' +
+          '<span style="font-size:13px;font-weight:600">Total</span><span style="font-family:Georgia,serif;font-size:18px">' + _money(total) + '</span></div>' +
+        '<button type="button" data-submit-invoice="1" style="width:100%;margin-top:12px;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:12px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">Submit invoice to Aari</button>' +
+        '<div style="font-size:11px;color:#a39e93;text-align:center;margin-top:7px">Submit Thursday · paid Friday</div></div>';
+    }
+    return '';
+  }
+  async function submitMyInvoice(){
+    var files = myBillableFiles();
+    if(!files.length){ alert('Nothing to invoice yet.'); return; }
+    var creditNo = {};
+    var items = files.map(function(f){
+      var it = { file_id:f.id, address:(f.property_address || 'File'), service:_svcLabel(f), closed_date:(f.closing_date || ''), amount_cents:fileTcPayCents(f) };
+      if(fileIsCovered(f)){
+        var cl = clientName(f); creditNo[cl] = (creditNo[cl] || 0) + 1;
+        it.covered = true; it.client = cl; it.credit_no = creditNo[cl]; it.amount_cents = 0;
+      } else if(typeof fileMembership === 'function' && fileMembership(f) && typeof isCreditService === 'function' && isCreditService(f)){
+        it.over = true;   // a member's credit-eligible service that wasn't covered = over the limit (paid)
+      }
+      return it;
+    });
+    var total = items.reduce(function(s, it){ return s + (it.covered ? 0 : it.amount_cents); }, 0);
+    var iso = function(d){ return d.toISOString().slice(0, 10); };
+    var end = new Date(), start = new Date(); start.setDate(start.getDate() - 6);
+    if(!confirm('Submit ' + items.length + ' file' + (items.length === 1 ? '' : 's') + ' for ' + _money(total) + '?')) return;
+    try {
+      var res = await _client.functions.invoke('submit-tc-invoice', { body:{ tc_id:_profile.id, line_items:items, total_cents:total, period_start:iso(start), period_end:iso(end) } });
+      if(res.error){ alert('Could not submit: ' + res.error.message); return; }
+      var invId = (res.data && res.data.invoice_id) || 'pending';
+      files.forEach(function(f){ f.invoice_id = invId; });
+      await loadInvoices();
+      try { renderFileList(); } catch(_){}
+      alert('Invoice ' + ((res.data && res.data.invoice_number) || '') + ' sent. Payment Friday.');
+    } catch(e){ alert('Could not submit the invoice.'); }
+  }
+  async function markInvoicePaid(id){
+    try {
+      var res = await _client.from('tc_invoices').update({ status:'paid', paid_at:new Date().toISOString(), paid_by:(_profile && _profile.id) || null }).eq('id', id);
+      if(res.error){ alert('Not saved: ' + res.error.message); return; }
+      await loadInvoices(); try { renderFileList(); } catch(_){}
+    } catch(_){ alert('Not saved.'); }
+  }
+  document.addEventListener('click', function(e){
+    var s = e.target && e.target.closest && e.target.closest('[data-submit-invoice]');
+    if(s){ submitMyInvoice(); return; }
+    var m = e.target && e.target.closest && e.target.closest('[data-mark-invoice-paid]');
+    if(m){ markInvoicePaid(m.getAttribute('data-mark-invoice-paid')); return; }
+  });
   function renderFileList(){
     const host = document.getElementById('fileList');
     if(!host) return;
+    const _invPanel = (function(){ try { return invoicingPanelHtml(); } catch(_){ return ''; } })();
     const visible = _files
       .filter(f => (f.file_type || 'sale') === _fileTypeFilter)
       .filter(f => f.status !== 'archived')
@@ -10743,7 +10898,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const h = new Date().getHours();
     const greet = h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
     if(!visible.length){
-      host.innerHTML = '<div style="background:#0f0f0f;border-radius:12px;padding:16px 18px">' +
+      host.innerHTML = _invPanel + '<div style="background:#0f0f0f;border-radius:12px;padding:16px 18px">' +
         '<p style="font-family:\'Playfair Display\',Georgia,serif;font-size:20px;color:#fff;margin:0">' + greet + ', ' + esc(first) + '.</p>' +
         '<p style="font-size:11.5px;color:rgba(255,255,255,0.6);margin:4px 0 0">No active files in this lane. Quiet board, clear mind.</p></div>';
       return;
@@ -10815,7 +10970,7 @@ Tell me your planned move-out date and I will set the inspection.`
         '<span style="flex:1;font-size:11px;color:#555;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc((f.property_address || 'Untitled file').split(',')[0]) + badges(f) + ' <span style="color:#999">\u00b7 ' + esc(stageLabel) + (t.dlText ? ' \u00b7 ' + esc(t.dlText) : '') + '</span></span>' +
       '</div>';
     });
-    host.innerHTML = html;
+    host.innerHTML = _invPanel + html;
   }
 
   function renderKanbanShell(){
@@ -11772,6 +11927,8 @@ Tell me your planned move-out date and I will set the inspection.`
     const host = document.getElementById('tpb-terms');
     const meta = document.getElementById('tpb-terms-meta');
     if(!host) return;
+    // Offer Prep is a pre-contract drafting service · no contract terms panel.
+    if(typeof isOfferPrepFile === 'function' && isOfferPrepFile(file)){ host.innerHTML = ''; if(meta) meta.textContent = ''; return; }
     if((file.file_type || 'sale') !== 'sale'){
       if((file.file_type || '') === 'rental'){ renderRentalDetails(file, host, meta); try { renderRentalDocPane(file); } catch(_){} return; }
       // Spine only in this slot — the document archive renders at the BOTTOM (renderListingBottom)
@@ -13334,6 +13491,8 @@ Tell me your planned move-out date and I will set the inspection.`
     mls_setup: ['Received','MLS input','Live'],
     op_basic: ['Received','Drafting','Delivered'],
     op_complete: ['Received','Drafting','Counter','Executed'],
+    offer_prep_basic: ['Received','Drafting','Delivered'],
+    offer_prep_complete: ['Received','Drafting','Counter','Executed'],
     file_org: ['Received','Uploading','Broker review'],
     standalone_review: ['Received','Audit','Archived']
     // rental intentionally omitted · rentals advance via their own transaction_stage
@@ -14050,7 +14209,7 @@ Tell me your planned move-out date and I will set the inspection.`
 
   // Services billed UPFRONT (payment must clear before work starts). Everything
   // else is a TC service billed at closing → the Stage 1 payment row is hidden.
-  const UPFRONT_SERVICES = ['listing_docs','listing_coordinator','mls_setup','offer_prep','file_organization'];
+  const UPFRONT_SERVICES = ['listing_docs','listing_coordinator','mls_setup','offer_prep','offer_prep_basic','offer_prep_complete','file_organization'];
   // TC service files billed at closing.
   const TC_SERVICES = ['tc_one_side','tc_both_sides'];
   // Canonical Stripe payment links by service_type — mirrors supabase
@@ -17292,7 +17451,16 @@ Tell me your planned move-out date and I will set the inspection.`
   //                  price, the coordinating TC earns AT_TC_PCT (40%) of that price, AT keeps 60%.
   //   In-house file = our own Aari Realty agent's deal: coordination is covered, AT bills $0.
   //   File Organization = a flat $80 coordinator pay (kept as-is, not a 40% split).
-  var AT_TC_PCT = 40; // coordinator's (TC's) share of a service price per the documented comp schedule; Aari Transactions keeps 60%
+  var AT_TC_PCT = 40; // DEFAULT coordinator share of a service price; a coordinator may have a per-TC override (agents.tc_pay_pct). Aari Transactions keeps the remainder.
+  // Per-coordinator revenue share. A file's assigned TC may earn a custom % (e.g. Eileen 50/50);
+  // null falls back to the global AT_TC_PCT. Drives every pay figure + label on the file.
+  function tcPctFor(f){
+    try {
+      var tc = (f && f.assigned_tc_id && typeof _tcsById === 'object' && _tcsById) ? _tcsById[f.assigned_tc_id] : null;
+      var p = tc && tc.tc_pay_pct;
+      return (p != null && !isNaN(p)) ? Number(p) : AT_TC_PCT;
+    } catch(_){ return AT_TC_PCT; }
+  }
   // Live service prices, mirroring the public catalog + the +New service picker. Source of the 40% split.
   var SERVICE_PRICE = {
     tc_one_side: 399, tc_both_sides: 599, tc: 399,
@@ -17367,7 +17535,7 @@ Tell me your planned move-out date and I will set the inspection.`
   function memberTcDiscount(f){ return (isOutsideFile(f) && fileMembership(f) && isTcService(f)) ? MEMBER_TC_DISCOUNT : 0; }
   function svcPrice(f){ return SERVICE_PRICE[(f && f.service_type) || ''] || 0; }
   function chargedPrice(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? (p - memberTcDiscount(f)) : 0; } // what the client actually pays
-  function atTcCut(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? Math.round(p * AT_TC_PCT / 100) : 0; } // TC's full 40%; the member $50 comes out of Aari's share, NEVER the TC's pay; $0 if credit-covered
+  function atTcCut(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? Math.round(p * tcPctFor(f) / 100) : 0; } // TC's share (per-TC %, default 40); the member $50 comes out of Aari's share, NEVER the TC's pay; $0 if credit-covered
   function atCoCut(f){ var p = chargedPrice(f); return p ? (p - atTcCut(f)) : 0; } // AT keeps the remainder = its 60% less the member $50 (Aari absorbs the discount, not the TC)
   function isFileOrgFile(f){ return ((f.file_type || '') === 'compliance' || (f.service_type || '') === 'file_organization'); }
   function isOutsideFile(f){ return !isAariRealtyFile(f); }
@@ -17426,8 +17594,8 @@ Tell me your planned move-out date and I will set the inspection.`
       var disc = memberTcDiscount(f);                 // $50 only for an outside member's TC file
       var charged = chargedPrice(f);                  // what the client/agent pays (full price in-house)
       var inh = isAariRealtyFile(f) ? 'in-house &middot; ' : (disc ? 'member &middot; ' : '');
-      if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">$' + charged + '</span><span style="' + sub + '">' + inh + 'keep $' + atCoCut(f) + ' &middot; ' + AT_TC_PCT + '% TC</span></div>';
-      return '<div style="' + col + '"><span style="' + big + '">$' + atTcCut(f) + '</span><span style="' + sub + '">' + AT_TC_PCT + '% of $' + p + '</span></div>';
+      if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">$' + charged + '</span><span style="' + sub + '">' + inh + 'keep $' + atCoCut(f) + ' &middot; ' + tcPctFor(f) + '% TC</span></div>';
+      return '<div style="' + col + '"><span style="' + big + '">$' + atTcCut(f) + '</span><span style="' + sub + '">' + tcPctFor(f) + '% of $' + p + '</span></div>';
     }
     // Fallback (no price / unknown)
     return '<span style="' + faint + '">&mdash;</span>';
@@ -17457,12 +17625,12 @@ Tell me your planned move-out date and I will set the inspection.`
       var disc = memberTcDiscount(f), charged = chargedPrice(f);
       if(role === 'broker'){
         var ctx = isAariRealtyFile(f) ? 'in-house full price' : (disc ? 'member price' : 'service price');
-        var aariTxt = disc ? (' (' + (100 - AT_TC_PCT) + '% less $' + disc + ' member)') : '';
+        var aariTxt = disc ? (' (' + (100 - tcPctFor(f)) + '% less $' + disc + ' member)') : '';
         return { fig: '<span style="' + fBig + '">$' + charged + '</span>',
-          detail: '<b>$' + charged + '</b> ' + ctx + ' &middot; Aari keeps <b>$' + atCoCut(f) + '</b>' + aariTxt + ' &middot; TC earns <b>$' + atTcCut(f) + '</b> (' + AT_TC_PCT + '% of $' + p + ', full)' };
+          detail: '<b>$' + charged + '</b> ' + ctx + ' &middot; Aari keeps <b>$' + atCoCut(f) + '</b>' + aariTxt + ' &middot; TC earns <b>$' + atTcCut(f) + '</b> (' + tcPctFor(f) + '% of $' + p + ', full)' };
       }
       return { fig: '<span style="' + fBig + '">$' + atTcCut(f) + '</span>',
-        detail: 'You earn <b>$' + atTcCut(f) + '</b> &middot; ' + AT_TC_PCT + '% of $' + p + (disc ? ' &middot; the member $50 off comes from Aari, your pay is full' : '') };
+        detail: 'You earn <b>$' + atTcCut(f) + '</b> &middot; ' + tcPctFor(f) + '% of $' + p + (disc ? ' &middot; the member $50 off comes from Aari, your pay is full' : '') };
     }
     return { fig: '<span style="' + fMut + '">&mdash;</span>', detail: '' };
   }
@@ -17554,7 +17722,7 @@ Tell me your planned move-out date and I will set the inspection.`
     for(var i = 0; i < total; i++){ dots += '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px;background:' + (i < used ? '#0f0f0f' : '#d8d3ca') + '"></span>'; }
     var out = '<div style="flex-basis:100%;border-top:0.5px solid #ece8e0;margin-top:7px;padding-top:8px;font-size:11.5px;line-height:1.5">' +
       '<div><b style="color:#0f0f0f;font-weight:600">' + esc(tierName) + ' member</b> <span style="color:#8a857c">$' + fee + '/mo</span></div>';
-    if(disc) out += '<div style="color:#8a857c;margin-top:2px">$' + disc + ' member discount comes out of Aari&rsquo;s share &middot; the TC&rsquo;s ' + AT_TC_PCT + '% pay is unchanged</div>';
+    if(disc) out += '<div style="color:#8a857c;margin-top:2px">$' + disc + ' member discount comes out of Aari&rsquo;s share &middot; the TC&rsquo;s ' + tcPctFor(file) + '% pay is unchanged</div>';
     if(total) out += '<div style="margin-top:4px;display:flex;align-items:center;gap:7px"><span style="flex:none;line-height:1">' + dots + '</span><span style="color:' + (over ? '#a3402f' : '#8a857c') + '">' + used + ' of ' + total + ' service credits used this month' + (over ? ' &middot; ' + (meter.used - meter.total) + ' over, billable' : '') + resetTxt + '</span></div>';
     return out + '</div>';
   }
@@ -17576,8 +17744,8 @@ Tell me your planned move-out date and I will set the inspection.`
       var disc = memberTcDiscount(file);
       var inh = isAariRealtyFile(file) ? 'in-house full price, ' : (disc ? 'member, ' : '');
       if(!p){ parts.push('<span style="color:#a8a39a">Service price not set</span>'); }
-      else if(role === 'broker') parts.push('<span>Service <b style="color:#0f0f0f;font-weight:600">$' + chargedPrice(file) + '</b> <span style="color:#a8a39a">&middot; ' + inh + 'keep $' + atCoCut(file) + ', ' + AT_TC_PCT + '% to TC</span></span>');
-      else parts.push('<span>You earn <b style="color:#0f0f0f;font-weight:600">$' + atTcCut(file) + '</b> <span style="color:#a8a39a">&middot; ' + AT_TC_PCT + '% of $' + p + '</span></span>');
+      else if(role === 'broker') parts.push('<span>Service <b style="color:#0f0f0f;font-weight:600">$' + chargedPrice(file) + '</b> <span style="color:#a8a39a">&middot; ' + inh + 'keep $' + atCoCut(file) + ', ' + tcPctFor(file) + '% to TC</span></span>');
+      else parts.push('<span>You earn <b style="color:#0f0f0f;font-weight:600">$' + atTcCut(file) + '</b> <span style="color:#a8a39a">&middot; ' + tcPctFor(file) + '% of $' + p + '</span></span>');
     } else {
       // In-house brokerage deal: Aari Transactions does not bill; coordination pay still pending.
       parts.push('<span style="color:#a8a39a">In-house &middot; coordination covered</span>');
@@ -17586,10 +17754,69 @@ Tell me your planned move-out date and I will set the inspection.`
     if(!parts.length) return '';
     return '<div style="display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;color:#5f5e5a;background:#fbfaf7;border:0.5px solid #ece8e0;border-radius:9px;padding:9px 12px;margin-bottom:12px">' + parts.join('') + '</div>';
   }
+  // ===== Offer Prep · a pre-contract drafting service (paid upfront), NOT the sale
+  // pipeline. It has its own short 3-stage checklist. Basic = the 8 core steps;
+  // Complete adds counter coordination + execution verification. Tasks persist in
+  // stage_tasks (same jsonb as every other checklist). =====
+  function isOfferPrepFile(file){ return /^offer_prep/.test(String((file && file.service_type) || '').toLowerCase()); }
+  const OFFER_PREP_TASKS = [
+    { stage:'Received',  id:'op_confirm_order',       label:'Confirm the order',                     sub:'Buyer, agent, and property.' },
+    { stage:'Received',  id:'op_collect_terms',       label:'Collect the offer terms from the agent', sub:'Price, financing, closing date, deposit, contingencies. In writing.' },
+    { stage:'Drafting',  id:'op_draft_bba',           label:'Draft the Buyer Broker Agreement',      sub:'BBA.' },
+    { stage:'Drafting',  id:'op_draft_offer',         label:'Draft the offer',                       sub:'The purchase contract with the agent’s terms.' },
+    { stage:'Drafting',  id:'op_draft_comp_rider',    label:'Draft the compensation rider',          sub:'GG · Seller’s Agreement re: Buyer’s Broker Compensation.' },
+    { stage:'Drafting',  id:'op_draft_comp_agreement',label:'Draft the compensation agreement',      sub:'' },
+    { stage:'Delivered', id:'op_send_package',        label:'Send the package to the agent',         sub:'For buyer signature.' },
+    { stage:'Delivered', id:'op_mark_delivered',      label:'Mark delivered',                        sub:'Closes the order. One draft included; revisions $25 after the buyer signs.' },
+    { stage:'Counter',   id:'op_counter',             label:'Coordinate the counter',                sub:'One round of counter coordination.', completeOnly:true },
+    { stage:'Executed',  id:'op_verify_execution',    label:'Verify execution both sides',           sub:'Confirm every signature is in place.', completeOnly:true }
+  ];
+  document.addEventListener('change', function(e){
+    const cb = e.target && e.target.closest && e.target.closest('[data-op-task]');
+    if(!cb || !_currentFile) return;
+    const id = cb.getAttribute('data-op-task');
+    const st = Object.assign({}, _currentFile.stage_tasks || {});
+    if(cb.checked) st[id] = { done:true, at:new Date().toISOString(), by:(_profile && (_profile.first_name || _profile.email)) || 'TC' };
+    else delete st[id];
+    _currentFile.stage_tasks = st;
+    const ff = (_files || []).find(function(x){ return x.id === _currentFile.id; }); if(ff) ff.stage_tasks = st;
+    try { _client.from('files').update({ stage_tasks: st }).eq('id', _currentFile.id).then(function(r){ if(r && r.error) console.warn('[offer-prep] save failed', r.error.message); }); } catch(_){}
+    try { renderStageChecklist(_currentFile); } catch(_){}
+  });
+  function renderOfferPrepChecklist(file, host){
+    host.parentElement.style.display = '';
+    const isComplete = String(file.service_type || '').toLowerCase() === 'offer_prep_complete';
+    const done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    const payLock = (typeof isPaymentLocked === 'function') && isPaymentLocked(file);
+    const stageOrder = isComplete ? ['Received','Drafting','Counter','Executed'] : ['Received','Drafting','Delivered'];
+    const tasks = OFFER_PREP_TASKS.filter(function(t){ return isComplete ? true : !t.completeOnly; });
+    let body = '';
+    if(payLock){
+      body += '<div style="background:#fdecea;border:0.5px solid #f2a9a9;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#c96b6b;display:flex;gap:8px;align-items:flex-start">' +
+        '<span style="flex:none;font-size:14px;line-height:1.2">&#9888;&#65039;</span>' +
+        '<span><strong style="font-weight:600">Payment not confirmed.</strong> Do not start drafting until payment is received.</span></div>';
+    }
+    stageOrder.forEach(function(stg, si){
+      body += '<div style="font-size:10px;letter-spacing:1.5px;color:#a39e93;margin:' + (si ? '16px' : '2px') + ' 0 8px">' + (si + 1) + ' &middot; ' + stg.toUpperCase() + '</div>';
+      tasks.filter(function(t){ return t.stage === stg; }).forEach(function(t){
+        const on = !!done[t.id];
+        body += '<label class="ck-task" style="cursor:' + (payLock ? 'not-allowed' : 'pointer') + '">' +
+          '<input type="checkbox" data-op-task="' + t.id + '"' + (on ? ' checked' : '') + (payLock ? ' disabled' : '') + '>' +
+          '<span class="ck-body"><span class="ck-label" style="font-size:13.5px;font-weight:500;color:#0f0f0f' + (on ? ';text-decoration:line-through;color:#a39e93' : '') + '">' + esc(t.label) + '</span>' +
+          (t.sub ? '<span style="display:block;font-size:11.5px;color:#8a857c;margin-top:2px">' + esc(t.sub) + '</span>' : '') + '</span>' +
+        '</label>';
+      });
+    });
+    body += '<div style="background:#faf6ec;border:1px solid #e0d2a8;border-radius:9px;padding:11px 13px;margin-top:16px">' +
+      '<div style="font-size:11px;font-weight:600;color:#7a4e0b;margin-bottom:3px">Compliance</div>' +
+      '<div style="font-size:11.5px;color:#8a6d3b;line-height:1.5">The agent supplies and approves every term in writing. Aari prepares the documents only, no advice on price or terms.</div></div>';
+    host.innerHTML = (typeof fileMoneyHtml === 'function' ? fileMoneyHtml(file) : '') + body;
+  }
   function renderStageChecklist(file){
     const host = document.getElementById('tpb-checklist');
     const head = document.getElementById('tpb-ck-meta');
     if(!host) return;
+    if(isOfferPrepFile(file)){ try { renderOfferPrepChecklist(file, host); } catch(e){ console.warn('[offer-prep] render failed', e); } return; }
     if(!STAGE_CHECKLISTS[file.file_type || 'sale']){
       host.parentElement.style.display = 'none';
       return; // only file types with a defined checklist (sale, rental) render here
