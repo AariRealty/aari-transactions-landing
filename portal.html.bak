@@ -1520,32 +1520,11 @@
   // Fix 3 Reader 3 · open deadlines for a file from the SHARED engine (dates),
   // completion state still from file_deadlines (until Phase 3). Returns ALL
   // upcoming deadlines — not just the sparse rows a TC happened to stamp.
-  // Only show a deadline the client's file actually has. The flat engine emits all 10
-  // keys, so cash files showed loan deadlines and every sale showed phantom tenant/
-  // estoppel rows to the client. Mirror the cockpit's applicability filter.
-  function _portalApplicable(f, key){
-    const raw = f.raw_form_data || {}, lg = f.logistics || {}, ft = (f.file_type || 'sale');
-    const fin = String(lg.financing_confirmed || raw.financing_type || raw.pa_financing_type || '').toLowerCase();
-    const isCash = fin === 'cash' || raw.cash_offer === 'yes' || raw.lender_is_cash === '1' || raw.lender_is_cash === true;
-    if(isCash && (key === 'loan_app' || key === 'loan_approval')) return false;
-    const exf = (raw.extracted_contract && raw.extracted_contract.fields) || {};
-    const hasAddl = exf.additional_deposit || (f.emd && f.emd.additional_amount) || lg.additional_amount;
-    if(key === 'emd_additional' && !hasAddl) return false;
-    if(key === 'tenant_lease' && ft !== 'rental' && ft !== 'lease') return false;
-    const hasHoa = raw.has_hoa || raw.hoa === 'yes' || raw.pa_hoa || (lg.association && String(lg.association).toLowerCase() !== 'none');
-    if(key === 'estoppel' && !hasHoa) return false;
-    return true;
-  }
-  function _portalDeadlines(f){
-    const eng = window.AariDeadlineEngine; if(!eng) return {};
-    let dls = {}; try { dls = _portalDeadlines(f) || {}; } catch(_){ return {}; }
-    const out = {}; Object.keys(dls).forEach(k => { if(_portalApplicable(f, k)) out[k] = dls[k]; }); return out;
-  }
   function openDeadlinesForFile(f, now){
     const eng = window.AariDeadlineEngine;
     if(!eng) return [];
     let dls = {};
-    try { dls = _portalDeadlines(f) || {}; } catch(_){ return []; }
+    try { dls = eng.fileDeadlines(f) || {}; } catch(_){ return []; }
     const doneKeys = new Set(_deadlines.filter(d => d.file_id === f.id && d.completed_at).map(d => d.deadline_key));
     return Object.keys(dls)
       .filter(k => !doneKeys.has(k))
@@ -1886,7 +1865,7 @@
       const doneHtml = done.length
         ? '<ul style="margin:6px 0 0;padding-left:18px">' + done.map(l => '<li style="font-size:12px;color:#0f0f0f;margin:2px 0">' + esc(l) + '</li>').join('') + '</ul>'
         : '<p style="font-size:12px;color:#6b6b6b;margin:6px 0 0">Your TC is working behind the scenes on your file.</p>';
-      const dls = _portalDeadlines(f);
+      const dls = eng.fileDeadlines(f);
       const upcoming = Object.keys(dls).map(k => dls[k])
         .filter(d => { const x = new Date(d.date.getTime()); x.setHours(0,0,0,0); return x >= today; })
         .sort((a,b) => a.date - b.date).slice(0,2)
@@ -3409,7 +3388,7 @@
       // — Next deadline (most urgent upcoming · overdue in red if nothing upcoming)
       let dlHtml = '<span style="color:#9a9a9a">No dates on file yet</span>';
       if(sale){
-        const dls = _portalDeadlines(f);
+        const dls = eng.fileDeadlines(f);
         let next = null, lastPast = null;
         Object.keys(dls).forEach(k => {
           const e = dls[k];
@@ -3435,7 +3414,7 @@
         else if(st === 'received'){ txt = 'Received'; }
         else {
           // pending past the initial-deposit deadline = overdue
-          const dls = _portalDeadlines(f);
+          const dls = eng.fileDeadlines(f);
           if(dls.emd_initial){
             const d = new Date(dls.emd_initial.date.getTime()); d.setHours(0,0,0,0);
             if(d < today){ bg = '#fdecea'; fg = '#c96b6b'; txt = 'Overdue'; }
@@ -3612,7 +3591,7 @@
       return '—';
     }
     try {
-      const dls = _portalDeadlines(f); const today = new Date(); today.setHours(0,0,0,0);
+      const dls = eng.fileDeadlines(f); const today = new Date(); today.setHours(0,0,0,0);
       let next = null;
       Object.keys(dls).forEach(k => { const e = dls[k]; const d = new Date(e.date.getTime()); d.setHours(0,0,0,0); if(d>=today && (!next || d<next.d)) next = { d, e }; });
       if(next) return next.e.label + ' ' + eng.fmtDl(next.e.date);

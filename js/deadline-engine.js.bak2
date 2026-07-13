@@ -71,23 +71,6 @@
     return x;
   }
   function addDays(base, n){ const d = new Date(base.getTime()); d.setDate(d.getDate() + n); return d; }
-  // FR/BAR Standard F: a period of 5 days or fewer is counted in BUSINESS days
-  // (excludes Sat/Sun + federal holidays); periods over 5 days are calendar days.
-  function addBizIfShort(base, n){
-    if(Math.abs(n) <= 5){
-      const d = new Date(base.getTime()); const step = n >= 0 ? 1 : -1; let c = 0;
-      while(c < Math.abs(n)){ d.setDate(d.getDate() + step); const g = d.getDay(); if(g !== 0 && g !== 6 && !isFedHoliday(d)) c++; }
-      return d;
-    }
-    return addDays(base, n);
-  }
-  // FR/BAR loan approval / commitment = the EARLIER of (Effective + lappr) or (Closing - 10 days).
-  function loanApprovalDate(E, C, c){
-    const a = addDays(E, (c && c.lappr != null ? c.lappr : 30));
-    if(!C) return a;
-    const b = addDays(C, -10);
-    return a < b ? a : b;
-  }
   function parseDate(s){ if(!s) return null; const d = new Date(s + 'T12:00:00'); return isNaN(d) ? null : d; }
 
   const DEADLINE_DEFS = [
@@ -229,28 +212,28 @@
   const CONTRACT_DEADLINES = {
     'frbar_asis': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.dep), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · Paragraph 2(a).' },
       { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
         compute:(E,C,c)=>addDays(E, (c.addl||10)), bizDay:true,
         note:(c)=>((c&&c.addl)||10) + ' days after Effective Date (default 10 if left blank) · Paragraph 2(b) / additional deposit.' },
       { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.lapp), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.lapp), bizDay:true,
         note:(c)=>c.lapp + ' days after Effective Date · Paragraph 8(b).' },
       { key:'loan_approval',    category:'Financing',  name:'Loan Approval Period Expires',
-        compute:(E,C,c)=>loanApprovalDate(E, C, c), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.lappr), bizDay:true,
         note:(c)=>c.lappr + ' days after Effective Date · Paragraph 8(b). Failure to notify converts to cash.' },
       { key:'inspection_end',   category:'Inspections', name:'Inspection Period Ends',
         compute:(E,C,c)=>addDays(E, c.insp), bizDay:true,
         note:(c)=>c.insp + ' days after Effective Date · Paragraph 12. Buyer may terminate for any reason.' },
       { key:'survey_seller',    category:'Title',      name:'Seller Provides Existing Survey',
-        compute:(E,C,c)=>addBizIfShort(E, 5), bizDay:true,
+        compute:(E,C,c)=>addDays(E, 5), bizDay:true,
         note:()=>'5 days after Effective Date if in Seller possession.' },
       { key:'survey_notice',    category:'Title',      name:'Survey / Encroachment Notice Deadline',
-        compute:(E,C,c)=>addBizIfShort(C, -5), bizDay:true,
+        compute:(E,C,c)=>addDays(C, -5), bizDay:true,
         note:()=>'5 days prior to Closing · Standard A. Buyer must give written notice of survey defects or encroachments by this date.' },
       { key:'compensation_agreement', category:'Closing', name:'Compensation Agreement Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, (c.comp||3)), bizDay:true,
+        compute:(E,C,c)=>addDays(E, (c.comp||3)), bizDay:true,
         note:(c)=>{ var n=(c&&c.comp)||3; return n+(n===1?' day':' days')+' after Effective Date (default 3 if left blank) · Comprehensive Rider GG · Seller and Buyer\'s Broker execute the Compensation Agreement.'; } },
       { key:'title_evidence',   category:'Title',      name:'Title Evidence Deadline',
         compute:(E,C,c)=>addDays(C, -c.title), bizDay:true,
@@ -264,16 +247,16 @@
     ],
     'frbar_standard': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.dep), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · Paragraph 2(a).' },
       { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
         compute:(E,C,c)=>addDays(E, (c.addl||10)), bizDay:true,
         note:(c)=>((c&&c.addl)||10) + ' days after Effective Date (default 10 if left blank) · Paragraph 2(b) / additional deposit.' },
       { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.lapp), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.lapp), bizDay:true,
         note:(c)=>c.lapp + ' days after Effective Date · Paragraph 8(b).' },
       { key:'loan_approval',    category:'Financing',  name:'Loan Approval Period Expires',
-        compute:(E,C,c)=>loanApprovalDate(E, C, c), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.lappr), bizDay:true,
         note:(c)=>c.lappr + ' days after Effective Date · Paragraph 8(b).' },
       { key:'inspection_end',   category:'Inspections', name:'Inspection Period Ends',
         compute:(E,C,c)=>addDays(E, c.insp), bizDay:true,
@@ -282,13 +265,13 @@
         compute:(E,C,c)=>addDays(E, c.insp + c.sellerResp), bizDay:true,
         note:(c)=>c.sellerResp + ' days after Buyer notice · Seller repairs or estimate.' },
       { key:'survey_seller',    category:'Title',      name:'Seller Provides Existing Survey',
-        compute:(E,C,c)=>addBizIfShort(E, 5), bizDay:true,
+        compute:(E,C,c)=>addDays(E, 5), bizDay:true,
         note:()=>'5 days after Effective Date if in Seller possession.' },
       { key:'survey_notice',    category:'Title',      name:'Survey / Encroachment Notice Deadline',
-        compute:(E,C,c)=>addBizIfShort(C, -5), bizDay:true,
+        compute:(E,C,c)=>addDays(C, -5), bizDay:true,
         note:()=>'5 days prior to Closing · Standard A. Buyer must give written notice of survey defects or encroachments by this date.' },
       { key:'compensation_agreement', category:'Closing', name:'Compensation Agreement Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, (c.comp||3)), bizDay:true,
+        compute:(E,C,c)=>addDays(E, (c.comp||3)), bizDay:true,
         note:(c)=>{ var n=(c&&c.comp)||3; return n+(n===1?' day':' days')+' after Effective Date (default 3 if left blank) · Comprehensive Rider GG · Seller and Buyer\'s Broker execute the Compensation Agreement.'; } },
       { key:'title_evidence',   category:'Title',      name:'Title Evidence Deadline',
         compute:(E,C,c)=>addDays(C, -c.title), bizDay:true,
@@ -302,16 +285,16 @@
     ],
     'frbar_crsp': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.dep), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · Paragraph 2(a).' },
       { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
         compute:(E,C,c)=>addDays(E, (c.addl||10)), bizDay:true,
         note:(c)=>((c&&c.addl)||10) + ' days after Effective Date (default 10 if left blank) · Paragraph 2(b) / additional deposit.' },
       { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.lapp), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.lapp), bizDay:true,
         note:(c)=>c.lapp + ' days after Effective Date · Paragraph 8(b).' },
       { key:'loan_approval',    category:'Financing',  name:'Loan Approval Period Expires',
-        compute:(E,C,c)=>loanApprovalDate(E, C, c), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.lappr), bizDay:true,
         note:(c)=>c.lappr + ' days after Effective Date · Paragraph 8(b).' },
       { key:'inspection_end',   category:'Inspections', name:'Inspection Period Ends',
         compute:(E,C,c)=>addDays(E, c.insp), bizDay:true,
@@ -320,13 +303,13 @@
         compute:(E,C,c)=>addDays(E, c.hoa), bizDay:true,
         note:(c)=>c.hoa + ' days after association docs · Rider A/B. Cannot be waived.' },
       { key:'survey_seller',    category:'Title',      name:'Seller Provides Existing Survey',
-        compute:(E,C,c)=>addBizIfShort(E, 5), bizDay:true,
+        compute:(E,C,c)=>addDays(E, 5), bizDay:true,
         note:()=>'5 days after Effective Date if in Seller possession.' },
       { key:'survey_notice',    category:'Title',      name:'Survey / Encroachment Notice Deadline',
-        compute:(E,C,c)=>addBizIfShort(C, -5), bizDay:true,
+        compute:(E,C,c)=>addDays(C, -5), bizDay:true,
         note:()=>'5 days prior to Closing · Standard A. Buyer must give written notice of survey defects or encroachments by this date.' },
       { key:'compensation_agreement', category:'Closing', name:'Compensation Agreement Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, (c.comp||3)), bizDay:true,
+        compute:(E,C,c)=>addDays(E, (c.comp||3)), bizDay:true,
         note:(c)=>{ var n=(c&&c.comp)||3; return n+(n===1?' day':' days')+' after Effective Date (default 3 if left blank) · Comprehensive Rider GG · Seller and Buyer\'s Broker execute the Compensation Agreement.'; } },
       { key:'title_evidence',   category:'Title',      name:'Title Evidence Deadline',
         compute:(E,C,c)=>addDays(C, -c.title), bizDay:true,
@@ -340,13 +323,13 @@
     ],
     'nabor': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.dep), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date.' },
       { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
         compute:(E,C,c)=>addDays(E, (c.addl||10)), bizDay:true,
         note:(c)=>((c&&c.addl)||10) + ' days after Effective Date (default 10 if left blank) · Paragraph 2(b) / additional deposit.' },
       { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.lapp), bizDay:false,
+        compute:(E,C,c)=>addDays(E, c.lapp), bizDay:false,
         note:(c)=>c.lapp + ' days after Effective Date · Section 4(b).' },
       { key:'finance_cont',     category:'Financing',  name:'Finance Contingency Expires',
         compute:(E,C,c)=>addDays(E, c.fin), bizDay:false,
@@ -376,7 +359,7 @@
         compute:(E,C,c)=>addDays(C, -15), bizDay:false,
         note:()=>'15 days prior to closing · Standard A.' },
       { key:'buyer_survey',     category:'Closing',    name:'Buyer Survey Deadline',
-        compute:(E,C,c)=>addBizIfShort(C, -5), bizDay:false,
+        compute:(E,C,c)=>addDays(C, -5), bizDay:false,
         note:()=>'5 days prior to closing.' },
       { key:'walk_through',     category:'Closing',    name:'Walk-Through Inspection',
         compute:(E,C,c)=>addDays(C, -1), bizDay:false,
@@ -387,13 +370,13 @@
     ],
     'nab089': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.dep), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · Paragraph 4(a).' },
       { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
         compute:(E,C,c)=>addDays(E, (c.addl||10)), bizDay:true,
         note:(c)=>((c&&c.addl)||10) + ' days after Effective Date (default 10 if left blank) · Paragraph 2(b) / additional deposit.' },
       { key:'loan_app',         category:'Financing',  name:'Loan Application Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.lapp), bizDay:false,
+        compute:(E,C,c)=>addDays(E, c.lapp), bizDay:false,
         note:(c)=>c.lapp + ' days after Effective Date · Paragraph 6.' },
       { key:'finance_cont',     category:'Financing',  name:'Finance Contingency Expires',
         compute:(E,C,c)=>addDays(E, c.fin), bizDay:false,
@@ -419,16 +402,16 @@
     ],
     'builder': [
       { key:'init_deposit',   category:'Deposits',    name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.dep), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · confirm from the builder contract.' },
       { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
         compute:(E,C,c)=>addDays(E, (c.addl||10)), bizDay:true,
         note:(c)=>((c&&c.addl)||10) + ' days after Effective Date (default 10 if left blank) · Paragraph 2(b) / additional deposit.' },
       { key:'loan_app',       category:'Financing',   name:'Loan Application Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.lapp), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.lapp), bizDay:true,
         note:(c)=>c.lapp + ' days after Effective Date · confirm from the builder contract.' },
       { key:'loan_approval',  category:'Financing',   name:'Loan Approval / Commitment',
-        compute:(E,C,c)=>loanApprovalDate(E, C, c), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.lappr), bizDay:true,
         note:(c)=>c.lappr + ' days after Effective Date · confirm from the builder contract.' },
       { key:'inspection_end', category:'Inspections', name:'Inspection / Walk-Through Period',
         compute:(E,C,c)=>addDays(E, c.insp), bizDay:true,
@@ -445,7 +428,7 @@
     ],
     'vac_15': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.dep), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · Paragraph 2(a).' },
       { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
         compute:(E,C,c)=>addDays(E, (c.addl||10)), bizDay:true,
@@ -454,7 +437,7 @@
         compute:(E,C,c)=>addDays(E, c.feas), bizDay:true,
         note:(c)=>c.feas + ' days after Effective Date · Paragraph 9. Buyer may terminate.' },
       { key:'survey_seller',    category:'Title',      name:'Seller Provides Existing Survey',
-        compute:(E,C,c)=>addBizIfShort(E, 5), bizDay:true,
+        compute:(E,C,c)=>addDays(E, 5), bizDay:true,
         note:()=>'5 days after Effective Date if in Seller possession.' },
       { key:'title_evidence',   category:'Title',      name:'Title Evidence Deadline',
         compute:(E,C,c)=>addDays(C, -c.title), bizDay:true,
@@ -468,7 +451,7 @@
     ],
     'nab088': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.dep), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date.' },
       { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
         compute:(E,C,c)=>addDays(E, (c.addl||10)), bizDay:true,
@@ -491,7 +474,7 @@
     ],
     'cc_6': [
       { key:'init_deposit',     category:'Deposits',    name:'Initial Deposit Deadline',
-        compute:(E,C,c)=>addBizIfShort(E, c.dep), bizDay:true,
+        compute:(E,C,c)=>addDays(E, c.dep), bizDay:true,
         note:(c)=>c.dep + ' days after Effective Date · Paragraph 2.' },
       { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
         compute:(E,C,c)=>addDays(E, (c.addl||10)), bizDay:true,
@@ -617,7 +600,7 @@
   const SALE_TYPES = ['frbar_asis','frbar_standard','frbar_crsp','nabor','nab089','builder'];
   const SALE_EXTRAS = [
     { key:'appraisal', category:'Financing', name:'Appraisal Completed',
-      compute:(E,C,c)=>addBizIfShort(C, -5), bizDay:true,
+      compute:(E,C,c)=>addDays(C, -5), bizDay:true,
       note:()=>'Lender schedules the actual date · target a few days before the final walk-through. Update with the real date once the lender confirms.' },
     { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
       compute:(E,C,c)=>addDays(E, c.addlDep || 10), bizDay:true,
