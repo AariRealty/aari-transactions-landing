@@ -6368,8 +6368,11 @@ Tell me your planned move-out date and I will set the inspection.`
         template = template.split('{{dl_' + k + '}}').join(_dls[k].date.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }));
       });
       // No additional deposit on this contract? Drop the whole line instead of leaving a
-      // "[date pending]" for a deposit that does not exist (cash / single-deposit deals).
-      if(!(_dls['emd_additional'] && _dls['emd_additional'].date)){
+      // "[date pending]" for a deposit that does not exist. Key off the real signal
+      // (the additional-deposit amount), same as the ledger — fileDeadlines always emits
+      // an emd_additional date, so checking the date alone never fired.
+      const _hasAddl = (typeof emdData === 'function') ? !!(emdData(file).additional_amount) : !!(_dls['emd_additional'] && _dls['emd_additional'].date);
+      if(!_hasAddl){
         template = template.replace(/^.*\{\{dl_emd_additional\}\}.*\n?/gm, '');
       }
     } catch(_e){ console.warn('[deadline] {{dl_*}} token interpolation failed', _e); }
@@ -9228,7 +9231,13 @@ Tell me your planned move-out date and I will set the inspection.`
       const open = !!_dlWhyOpen[it.key];
       // One muted status line under the name (no green, no 4 columns).
       let statusTxt;
-      if(it.scheduled && !it.scheduledSet) statusTxt = 'lender sets the date';
+      if(it.key === 'cd_earliest'){
+        const _clo = file.closing_date ? new Date(file.closing_date + 'T12:00:00') : null;
+        statusTxt = (_clo && it.date > _clo)
+          ? 'earliest legal closing ' + fmtDl(it.date) + ' · AFTER your ' + fmtDl(_clo) + ' closing'
+          : 'clear to close on or after ' + fmtDl(it.date);
+      }
+      else if(it.scheduled && !it.scheduledSet) statusTxt = 'lender sets the date';
       else if(done){
         const c = new Date(rec.completed_at); c.setHours(0,0,0,0);
         const dd2 = new Date(it.date.getTime()); dd2.setHours(0,0,0,0);
@@ -9240,7 +9249,9 @@ Tell me your planned move-out date and I will set the inspection.`
       else statusTxt = 'due ' + fmtDl(it.date) + ' · ' + cd.tag;
       // Resting-row right control · only what the row needs right now.
       let action = '';
-      if(it.scheduled && !it.scheduledSet){
+      if(it.key === 'cd_earliest'){
+        action = ''; // informational TRID constraint · nothing to confirm or receive
+      } else if(it.scheduled && !it.scheduledSet){
         action = '<button type="button" data-due-open="' + esc(it.key) + '" style="flex:none;background:none;border:0;font-size:11px;color:#185FA5;cursor:pointer;font-family:inherit">+ set date</button>';
       } else if(!it.scheduled && !confirmedRow){
         action = '<button type="button" data-dl-confirm="' + esc(it.key) + '" data-dl-cdate="' + it.date.toISOString().slice(0,10) + '" style="flex:none;font-size:11px;font-weight:500;color:#fff;background:#0f0f0f;border:0;border-radius:20px;padding:4px 13px;cursor:pointer;font-family:inherit">Confirm</button>';
@@ -9325,6 +9336,11 @@ Tell me your planned move-out date and I will set the inspection.`
     rows.forEach(function(it){
       const rec = status[it.key];
       if(rec && rec.completed_at){ _g.done.push(it); return; }
+      if(it.key === 'cd_earliest'){
+        // TRID earliest-closing is informational · only a problem when it lands after closing.
+        const _clo = file.closing_date ? new Date(file.closing_date + 'T12:00:00') : null;
+        ((_clo && it.date > _clo) ? _g.needs : _g.coming).push(it); return;
+      }
       if(it.scheduled){ _g.coming.push(it); return; }
       if(!isConfirmed(it)){ _g.needs.push(it); return; }
       const cd = dlCountdown(it.date);
@@ -11172,7 +11188,7 @@ Tell me your planned move-out date and I will set the inspection.`
     if(type === 'hoa') return 3;
     return 0;
   }
-  const ASSOC_LABEL = { hoa:'HOA', condo:'Condominium', coop:'Co-op', none:'None' };
+  const ASSOC_LABEL = { hoa:'HOA', condo:'Condominium', condo_new:'New-Construction Condo', coop:'Co-op', none:'None' };
   function _calAdd(iso, n){ if(!iso) return null; const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + Number(n||0)); return d; }
   function _bizAdd(iso, n){ if(!iso) return null; const d = new Date(iso + 'T00:00:00'); let a = 0; while(a < Number(n||0)){ d.setDate(d.getDate()+1); const w = d.getDay(); if(w !== 0 && w !== 6) a++; } return d; }
   function _fmtMDY(d){ return d ? d.toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '—'; }
@@ -11227,6 +11243,32 @@ Tell me your planned move-out date and I will set the inspection.`
     const _dateOv = ov._dates || {};
     delete ov._dates;
     if(ov.insp == null && lg.inspection_days != null && lg.inspection_days !== '') ov.insp = Number(lg.inspection_days);
+    // Fix 4 · feed EVERY filled contract period the file has (not just inspection) so the
+    // engine stops assuming type defaults on loan approval, additional deposit, title, etc.
+    // Sources per period: a TC-entered logistics day-field, else a parsed extracted day-count.
+    try {
+      const _exf = ((file.raw_form_data || {}).extracted_contract || {}).fields || {};
+      const _num = function(a, b){ let v = (a != null && a !== '') ? a : b; if(v == null || v === '') return null; const n = parseInt(String(v).replace(/[^0-9]/g, ''), 10); return isNaN(n) ? null : n; };
+      const _feed = function(cfgKey, logKey, exKey){ if(ov[cfgKey] == null){ const v = _num(lg[logKey], _exf[exKey]); if(v != null) ov[cfgKey] = v; } };
+      _feed('insp',  'inspection_days', 'inspection_days');
+      _feed('lappr', 'loan_approval_days', 'loan_approval_days');
+      _feed('lapp',  'loan_application_days', 'loan_application_days');
+      _feed('addl',  'additional_deposit_days', 'additional_deposit_days');
+      _feed('dep',   'initial_deposit_days', 'initial_deposit_days');
+      _feed('title', 'title_days', 'title_days');
+      _feed('fin',   'finance_days', 'finance_days');
+      _feed('comp',  'compensation_days', 'compensation_days');
+      // HOA/condo review period: 3 days HOA · 7 condo resale · 15 new-construction condo.
+      if(ov.hoaReview == null){
+        const _at = String(lg.assoc_type || '').toLowerCase();
+        if(_at === 'condo_new') ov.hoaReview = 15;
+        else if(_at === 'condo') ov.hoaReview = lg.new_construction_condo ? 15 : 7;
+        else if(_at === 'hoa') ov.hoaReview = 3;
+      }
+      // TRID: closing may not occur until 3 business days after the CD is received.
+      // Only surfaces once the CD-received date is logged on the file.
+      if(ov.cd_received == null && lg.cd_received_date) ov.cd_received = lg.cd_received_date;
+    } catch(_){}
     let rows;
     try {
       rows = (file.effective_date && file.closing_date)
@@ -12195,7 +12237,7 @@ Tell me your planned move-out date and I will set the inspection.`
       ctLine('price', 'Purchase price', shownPrice, '<input type="number" id="ct-price" value="' + (priceCents ? (priceCents / 100) : '') + '" placeholder="209999" min="0" step="1" style="border:0.5px solid #d9d4ca;border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit;background:#fff;box-sizing:border-box;width:100%">', (raw.purchase_price && !priceCents) ? ('Agent entered ' + raw.purchase_price) : '', !!raw.purchase_price) +
       ctLine('emd', 'Binder deposit (EMD)', (emdAmt ? esc(emdAmt) : ''), '<input type="text" id="ct-emd" value="' + esc(emdAmt) + '" placeholder="$2,000" style="border:0.5px solid #d9d4ca;border-radius:8px;padding:7px 9px;font-size:13px;font-family:inherit;background:#fff;box-sizing:border-box;width:100%">', 'Also feeds the EMD tracker in Your Work.', !!raw.earnest_money) +
       ctLine('fin', 'Financing', (FIN_LABELS[shownFinType] || ''), segN(shownFinType || '', [['cash','Cash'],['conventional','Conv'],['fha','FHA'],['va','VA'],['usda','USDA']], 'fin'), (raw.pa_deal_type ? ('Agent said: ' + raw.pa_deal_type) : ''), !!(raw.pa_financing_type || raw.financing_type || raw.pa_deal_type)) +
-      (hoaApplies(file) ? ctLine('assoc', 'Association', (shownAssoc ? (ASSOC_LABEL[shownAssoc] || '') : ''), segN(shownAssoc || 'none', [['none','None'],['hoa','HOA'],['condo','Condo']], 'assoc'), (raw.pa_hoa && !assocType(file)) ? ('Agent said HOA: ' + raw.pa_hoa) : '', !!raw.pa_hoa) : '') +
+      (hoaApplies(file) ? ctLine('assoc', 'Association', (shownAssoc ? (ASSOC_LABEL[shownAssoc] || '') : ''), segN(shownAssoc || 'none', [['none','None'],['hoa','HOA'],['condo','Condo'],['condo_new','New Condo']], 'assoc'), (raw.pa_hoa && !assocType(file)) ? ('Agent said HOA: ' + raw.pa_hoa) : '', !!raw.pa_hoa) : '') +
       ctLine('tenant', 'Tenant occupied?', (shownTenant === 'yes' ? 'Yes' : (shownTenant === 'no' ? 'No' : '')), segN(shownTenant || '', [['yes','Yes'],['no','No']], 'tenant'), 'If a tenant lives there, the lease + estoppel tasks are added to the checklist.', false);
     // Standing terms · pulled from the agent profile defaults (shared with rental).
     // These are the SAME on every one of the agent's files, so they auto-fill here;
@@ -12269,7 +12311,7 @@ Tell me your planned move-out date and I will set the inspection.`
       // because they gate the lease / estoppel / association tasks. HOA only shows
       // when the file has an association.
       const _assocLabel = (shownAssoc === 'hoa' ? 'HOA' : (shownAssoc === 'condo' ? 'Condo' : (shownAssoc === 'none' ? 'None' : '—')));
-      const _assocCtl = segN(shownAssoc || '', [['none','None'],['hoa','HOA'],['condo','Condo']], 'assoc');
+      const _assocCtl = segN(shownAssoc || '', [['none','None'],['hoa','HOA'],['condo','Condo'],['condo_new','New Condo']], 'assoc');
       const _revTerms = [
         ['Contract type', shownCt ? ctLabelFor(shownCt) : '—', ctSelect],
         ['Effective date', fmtLineDate(shownEff) || '—', dateCtl('ct-eff', shownEff)],
@@ -12326,7 +12368,7 @@ Tell me your planned move-out date and I will set the inspection.`
         ['Closing date', dateCtl('ct-cls', shownCls), ''],
         ['Tenant occupied?', segN(shownTenant || '', [['yes','Yes'],['no','No']], 'tenant'), 'If a tenant lives there, the lease + estoppel tasks are added to the checklist.']
       ];
-      if(hoaApplies(file)) _confTerms.push(['HOA / association', segN(shownAssoc || '', [['none','None'],['hoa','HOA'],['condo','Condo']], 'assoc'), 'Drives the association timeline and estoppel task.']);
+      if(hoaApplies(file)) _confTerms.push(['HOA / association', segN(shownAssoc || '', [['none','None'],['hoa','HOA'],['condo','Condo'],['condo_new','New Condo']], 'assoc'), 'Drives the association timeline and estoppel task.']);
       const _ci = Math.max(0, Math.min(_ctConfStep || 0, _confTerms.length - 1));
       _ctConfStep = _ci;
       const _cTerm = _confTerms[_ci];
