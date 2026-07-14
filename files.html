@@ -13917,7 +13917,21 @@ Tell me your planned move-out date and I will set the inspection.`
         at: new Date().toISOString(),
       };
       const r = await _client.from('files').update({ delete_request: req }).eq('id', _currentFile.id);
-      if(!(r && r.error)){ _currentFile.delete_request = req; renderDeleteZone(_currentFile); }
+      if(!(r && r.error)){
+        _currentFile.delete_request = req; renderDeleteZone(_currentFile);
+        // Email the broker that a deletion was requested. Fire-and-forget: the
+        // request is already recorded + the banner shows regardless. Hosted in the
+        // reused 'realty-test-send' slot (= delete-request notifier) to avoid the
+        // edge-function count cap; rename to send-delete-request once a slot frees.
+        try {
+          const _sess = (await _client.auth.getSession()).data.session;
+          fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/realty-test-send', {
+            method: 'POST',
+            headers: { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + ((_sess && _sess.access_token) || '') },
+            body: JSON.stringify({ file_id: _currentFile.id, reason: req.reason }),
+          }).catch(function(){});
+        } catch(_){}
+      }
       else alert('Could not send the request \u2014 try again.');
       return;
     }
