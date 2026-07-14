@@ -1525,6 +1525,12 @@
   // estoppel rows to the client. Mirror the cockpit's applicability filter.
   function _portalApplicable(f, key){
     const raw = f.raw_form_data || {}, lg = f.logistics || {}, ft = (f.file_type || 'sale');
+    // Buyer-side contract deadlines belong to purchase (sale) files only. A listing,
+    // rental, or buyer-rep file must never show the client loan/inspection/title/deposit
+    // rows — the flat engine would otherwise fall back to FR/BAR offsets for any
+    // unrecognized type. tenant_lease (below) is the one deadline a rental keeps.
+    const SALE_KEYS = ['emd_initial','loan_app','emd_additional','inspection_end','loan_approval','title_commitment','estoppel','survey','walkthrough'];
+    if(ft !== 'sale' && SALE_KEYS.indexOf(key) !== -1) return false;
     const fin = String(lg.financing_confirmed || raw.financing_type || raw.pa_financing_type || '').toLowerCase();
     const isCash = fin === 'cash' || raw.cash_offer === 'yes' || raw.lender_is_cash === '1' || raw.lender_is_cash === true;
     if(isCash && (key === 'loan_app' || key === 'loan_approval')) return false;
@@ -1532,7 +1538,12 @@
     const hasAddl = exf.additional_deposit || (f.emd && f.emd.additional_amount) || lg.additional_amount;
     if(key === 'emd_additional' && !hasAddl) return false;
     if(key === 'tenant_lease' && ft !== 'rental' && ft !== 'lease') return false;
-    const hasHoa = raw.has_hoa || raw.hoa === 'yes' || raw.pa_hoa || (lg.association && String(lg.association).toLowerCase() !== 'none');
+    // Read the SAME authoritative field the cockpit uses (logistics.assoc_type) so the
+    // estoppel row shows/hides identically in the portal and the cockpit. Fall back to
+    // intake signals only when the TC hasn't set assoc_type yet.
+    const hasHoa = lg.assoc_type
+      ? (String(lg.assoc_type).toLowerCase() !== 'none')
+      : (raw.has_hoa || raw.hoa === 'yes' || raw.pa_hoa || (lg.association && String(lg.association).toLowerCase() !== 'none'));
     if(key === 'estoppel' && !hasHoa) return false;
     return true;
   }
