@@ -122,18 +122,71 @@
   // (contractDeadlines). The flat FAR/BAR offsets are only a fallback for the
   // few legacy keys the contract engine does not model for this contract type,
   // so the cards/calendar/digest now show the SAME dates as the file drawer.
+  // ---- SINGLE SOURCE for turning a file into engine overrides -------------
+  // Every consumer (cockpit ledger, client portal, client emails) MUST build
+  // overrides through this one function so the three surfaces can never show
+  // different dates for the same deadline. Pulls each filled contract period
+  // from a TC-entered logistics day-field, else a parsed extracted day-count,
+  // and maps to BOTH the FR/BAR key and the NABOR-family synonym so whichever
+  // contract type the file is, its filled value reaches the engine.
+  function _numOv(a, b){
+    let v = (a != null && a !== '') ? a : b;
+    if(v == null || v === '') return null;
+    const n = parseInt(String(v).replace(/[^0-9]/g, ''), 10);
+    return isNaN(n) ? null : n;
+  }
+  function buildFileOverrides(file){
+    const ov = {};
+    try {
+      const src = (file.deadline_overrides && typeof file.deadline_overrides === 'object') ? file.deadline_overrides : {};
+      Object.keys(src).forEach(k => { if(k !== '_dates') ov[k] = src[k]; });
+      const lg = file.logistics || {};
+      const exf = ((file.raw_form_data || {}).extracted_contract || {}).fields || {};
+      const feed = function(cfgKey, logKey, exKey){ if(ov[cfgKey] == null){ const v = _numOv(lg[logKey], exf[exKey]); if(v != null) ov[cfgKey] = v; } };
+      feed('insp',         'inspection_days',         'inspection_days');
+      feed('lappr',        'loan_approval_days',      'loan_approval_days');
+      feed('lapp',         'loan_application_days',   'loan_application_days');
+      feed('addl',         'additional_deposit_days', 'additional_deposit_days');
+      feed('dep',          'initial_deposit_days',    'initial_deposit_days');
+      feed('title',        'title_days',              'title_days');
+      feed('fin',          'finance_days',            'finance_days');
+      feed('comp',         'compensation_days',       'compensation_days');
+      feed('feas',         'feasibility_days',        'feasibility_days');
+      feed('sellerResp',   'seller_response_days',    'seller_response_days');
+      feed('due_diligence','due_diligence_days',      'due_diligence_days');
+      feed('surveyDays',   'survey_days',             'survey_days');
+      feed('leaseDays',    'lease_info_days',         'lease_info_days');
+      // NABOR-family types read titleDays, not title. Same filled value, second key.
+      if(ov.titleDays == null && ov.title != null) ov.titleDays = ov.title;
+      // HOA/condo doc-review period: 3 HOA · 7 condo resale · 15 new-construction condo.
+      if(ov.hoaReview == null){
+        const at = String(lg.assoc_type || '').toLowerCase();
+        if(at === 'condo_new') ov.hoaReview = 15;
+        else if(at === 'condo') ov.hoaReview = lg.new_construction_condo ? 15 : 7;
+        else if(at === 'hoa') ov.hoaReview = 3;
+      }
+      // frbar_crsp's own hoa_review row reads c.hoa (not c.hoaReview) — mirror it
+      // so CRSP condo files stop defaulting to 3 days.
+      if(ov.hoa == null && ov.hoaReview != null) ov.hoa = ov.hoaReview;
+      // TRID: closing no earlier than 3 business days after CD received (once logged).
+      if(ov.cd_received == null && lg.cd_received_date) ov.cd_received = lg.cd_received_date;
+    } catch(_){}
+    return ov;
+  }
+  function fileContractDeadlines(file){
+    if(!file || !file.effective_date || !file.closing_date) return [];
+    return contractDeadlines(file.contract_type || 'frbar_asis', file.effective_date, file.closing_date, buildFileOverrides(file)) || [];
+  }
   function fileDeadlines(file){
     const eff = parseDate(file.effective_date);
     const close = parseDate(file.closing_date);
     const ov = (file.deadline_overrides && typeof file.deadline_overrides === 'object') ? file.deadline_overrides : {};
-    // Contract-aware dates for this file (mirrors fileContractDeadlines' override
-    // handling: strip the absolute _dates store, pull inspection days from logistics).
+    // Contract-aware dates for this file. Overrides come from the ONE shared
+    // builder so the portal computes exactly what the cockpit ledger does.
     const byKey = {};
     const dateOv = (ov._dates && typeof ov._dates === 'object') ? ov._dates : {};
     try {
-      const ovc = Object.assign({}, ov); delete ovc._dates;
-      const lg = file.logistics || {};
-      if(ovc.insp == null && lg.inspection_days != null && lg.inspection_days !== '') ovc.insp = Number(lg.inspection_days);
+      const ovc = buildFileOverrides(file);
       const rows = contractDeadlines(file.contract_type || 'frbar_asis', file.effective_date, file.closing_date, ovc) || [];
       rows.forEach(r => { if(r && r.key && r.date) byKey[r.key] = r.date; });
     } catch(_){ /* fall back to flat offsets below */ }
@@ -674,5 +727,7 @@
     // Fix 3 · contract-type system (Phase 1)
     CONTRACT_DEFAULTS, CONTRACT_LABELS, CONTRACT_DEADLINES,
     contractDeadlines, contractLabel, LEGACY_ALIAS: _LEGACY_ALIAS,
+    // Shared file→overrides builder · the ONE path all surfaces use.
+    buildFileOverrides, fileContractDeadlines,
   };
 })(window);

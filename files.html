@@ -6338,7 +6338,7 @@ Tell me your planned move-out date and I will set the inspection.`
         const _ct = file && file.contract_type;
         const _ENG = window.AariDeadlineEngine;
         if(_ct && file.effective_date && file.closing_date && _ENG && _ENG.CONTRACT_DEADLINES && _ENG.CONTRACT_DEADLINES[_ct]){
-          const _sched = _ENG.contractDeadlines(_ct, file.effective_date, file.closing_date, file.deadline_overrides || {});
+          const _sched = _ENG.contractDeadlines(_ct, file.effective_date, file.closing_date, _ENG.buildFileOverrides(file));
           const _ov = (_deadlinesByFile[file.id] || {});
           const _byKey = {};
           _sched.forEach(it => {
@@ -6346,6 +6346,15 @@ Tell me your planned move-out date and I will set the inspection.`
             _byKey[it.key] = (rec && rec.due_date)
               ? new Date(String(rec.due_date).length === 10 ? (rec.due_date + 'T00:00:00') : rec.due_date)
               : it.date;
+          });
+          // Emit a token for EVERY contract-specific deadline key (survey_seller,
+          // title_evidence, seller_response, leases_provided, feasibility_end, …) so
+          // seller-side / NABOR / vacant-land templates stop printing "[date pending]"
+          // for dates the engine already knows. Flat aliases below still resolve too.
+          _sched.forEach(it => {
+            if(it && it.key && _byKey[it.key] instanceof Date && !isNaN(_byKey[it.key].getTime()) && !_dls[it.key]){
+              _dls[it.key] = { label: it.name || it.key, date: _byKey[it.key] };
+            }
           });
           const _map = {
             emd_initial:      _byKey['init_deposit'],
@@ -11236,39 +11245,14 @@ Tell me your planned move-out date and I will set the inspection.`
     const ct = file.contract_type;
     if(!ENG || !ct || !ENG.CONTRACT_DEADLINES || !ENG.CONTRACT_DEADLINES[ct]) return [];
     const lg = file.logistics || {};
-    const ov = Object.assign({}, file.deadline_overrides || {});
     // Per-deadline absolute-date overrides live in deadline_overrides._dates
-    // ({ <key>: 'YYYY-MM-DD' }). Strip them before the day-count engine runs,
-    // then stamp them onto the matching row's final date below.
-    const _dateOv = ov._dates || {};
-    delete ov._dates;
-    if(ov.insp == null && lg.inspection_days != null && lg.inspection_days !== '') ov.insp = Number(lg.inspection_days);
-    // Fix 4 · feed EVERY filled contract period the file has (not just inspection) so the
-    // engine stops assuming type defaults on loan approval, additional deposit, title, etc.
-    // Sources per period: a TC-entered logistics day-field, else a parsed extracted day-count.
-    try {
-      const _exf = ((file.raw_form_data || {}).extracted_contract || {}).fields || {};
-      const _num = function(a, b){ let v = (a != null && a !== '') ? a : b; if(v == null || v === '') return null; const n = parseInt(String(v).replace(/[^0-9]/g, ''), 10); return isNaN(n) ? null : n; };
-      const _feed = function(cfgKey, logKey, exKey){ if(ov[cfgKey] == null){ const v = _num(lg[logKey], _exf[exKey]); if(v != null) ov[cfgKey] = v; } };
-      _feed('insp',  'inspection_days', 'inspection_days');
-      _feed('lappr', 'loan_approval_days', 'loan_approval_days');
-      _feed('lapp',  'loan_application_days', 'loan_application_days');
-      _feed('addl',  'additional_deposit_days', 'additional_deposit_days');
-      _feed('dep',   'initial_deposit_days', 'initial_deposit_days');
-      _feed('title', 'title_days', 'title_days');
-      _feed('fin',   'finance_days', 'finance_days');
-      _feed('comp',  'compensation_days', 'compensation_days');
-      // HOA/condo review period: 3 days HOA · 7 condo resale · 15 new-construction condo.
-      if(ov.hoaReview == null){
-        const _at = String(lg.assoc_type || '').toLowerCase();
-        if(_at === 'condo_new') ov.hoaReview = 15;
-        else if(_at === 'condo') ov.hoaReview = lg.new_construction_condo ? 15 : 7;
-        else if(_at === 'hoa') ov.hoaReview = 3;
-      }
-      // TRID: closing may not occur until 3 business days after the CD is received.
-      // Only surfaces once the CD-received date is logged on the file.
-      if(ov.cd_received == null && lg.cd_received_date) ov.cd_received = lg.cd_received_date;
-    } catch(_){}
+    // ({ <key>: 'YYYY-MM-DD' }). Kept aside, stamped onto rows below.
+    const _dateOv = (file.deadline_overrides && file.deadline_overrides._dates) || {};
+    // ONE shared builder feeds every filled contract period (loan approval,
+    // additional deposit, title incl. NABOR titleDays, finance, feasibility,
+    // survey, HOA/condo review, CD/TRID) so the cockpit, the client portal, and
+    // client emails all compute the exact same dates. See engine buildFileOverrides.
+    const ov = ENG.buildFileOverrides(file);
     let rows;
     try {
       rows = (file.effective_date && file.closing_date)
