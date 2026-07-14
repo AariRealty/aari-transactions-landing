@@ -4,6 +4,11 @@
 import * as React from "react";
 import { Hr, Link, Section, Text } from "@react-email/components";
 
+// CAN-SPAM · FILL with the real registered Aari Transactions LLC mailing address
+// (street or PO box, city, FL, ZIP). Shared wording with send-checklist's
+// POSTAL_ADDRESS — keep the two in sync.
+const POSTAL_ADDRESS = "‹FILL: Aari Transactions LLC mailing address — street/PO box, Lehigh Acres, FL, ZIP›";
+
 interface FooterProps {
   category?: "transactional" | "marketing" | "review_requests";
   unsubscribeUrl?: string;
@@ -28,7 +33,7 @@ export const BrandFooter: React.FC<FooterProps> = ({ category = "transactional",
     </Text>
 
     <Text style={addressStyle}>
-      Aari Transactions LLC &middot; PO Box address on file with Florida DBPR &middot; Lehigh Acres, FL
+      Aari Transactions LLC &middot; {POSTAL_ADDRESS}
     </Text>
 
     {category !== "transactional" && unsubscribeUrl ? (

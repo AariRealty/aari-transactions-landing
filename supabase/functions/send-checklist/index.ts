@@ -27,6 +27,15 @@ function isValidEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 }
 
+// CAN-SPAM · a marketing email MUST carry a valid physical postal address and a
+// working opt-out. FILL THIS with the real registered mailing address for Aari
+// Transactions LLC (street or PO box, city, FL, ZIP), e.g.
+//   "1234 Example Rd, Suite 5, Lehigh Acres, FL 33936"
+const POSTAL_ADDRESS = "‹FILL: Aari Transactions LLC mailing address — street/PO box, Lehigh Acres, FL, ZIP›";
+// Opt-out. Simple, compliant, no PII in the URL and no token dependency for a
+// fresh lead: a monitored mailto that Marlenyi processes.
+const UNSUBSCRIBE_MAILTO = "mailto:hello@aaritransactions.com?subject=Unsubscribe";
+
 function buildChecklistHtml(checklistUrl: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -84,8 +93,12 @@ function buildChecklistHtml(checklistUrl: string): string {
         &nbsp;&middot;&nbsp;
         <a href="https://aaritransactions.com" style="color:#0f0f0f;text-decoration:underline;">aaritransactions.com</a>
       </p>
+      <p style="font-size:11px;color:#888;margin:0 0 8px;line-height:1.5;">
+        Aari Transactions LLC &middot; ${POSTAL_ADDRESS}
+      </p>
       <p style="font-size:11px;color:#888;margin:0;line-height:1.5;">
-        Aari Transactions LLC
+        You're receiving this because you requested the Florida Pre-Close Compliance Checklist.
+        &nbsp;<a href="${UNSUBSCRIBE_MAILTO}" style="color:#888;text-decoration:underline;">Unsubscribe</a>.
       </p>
     </div>
 
@@ -111,7 +124,9 @@ If you ever want a broker-owned TC to run this for you on every file, hit reply.
 Florida Real Estate Broker · Aari Transactions
 
 hello@aaritransactions.com · 239.688.1770 · aaritransactions.com
-Aari Transactions LLC`;
+Aari Transactions LLC · ${POSTAL_ADDRESS}
+
+You're receiving this because you requested the Florida Pre-Close Compliance Checklist. To unsubscribe, reply with "Unsubscribe" or email hello@aaritransactions.com.`;
 }
 
 Deno.serve(async (req) => {
