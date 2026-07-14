@@ -135,13 +135,20 @@
     btn.disabled = true; btn.textContent = 'Sending…';
     status.className = 'status';
     try {
-      const { error } = await client.from('agent_nps').update({
-        score: score,
-        comment: comment || null,
-        may_share_as_testimonial: perm,
-        responded_at: new Date().toISOString(),
-      }).eq('token', token).is('responded_at', null);
-      if(error) throw error;
+      // Token is verified server-side (submit-nps-response) so a caller can only
+      // record their own response — the raw anon UPDATE was globally tamperable.
+      const resp = await fetch(window.SUPABASE_URL + '/functions/v1/submit-nps-response', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': window.SUPABASE_ANON_KEY },
+        body: JSON.stringify({
+          token: token,
+          score: score,
+          comment: comment || null,
+          may_share_as_testimonial: perm,
+        }),
+      });
+      const out = await resp.json().catch(() => ({}));
+      if(!resp.ok || !out.ok) throw new Error(out.error === 'already_responded' ? 'This feedback link was already used.' : (out.error || 'submit failed'));
       document.getElementById('form-view').style.display = 'none';
       document.getElementById('done-view').style.display = 'block';
     } catch(err){
