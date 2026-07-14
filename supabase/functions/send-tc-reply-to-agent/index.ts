@@ -135,6 +135,10 @@ serve(async (req) => {
           headers: { "Authorization": `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             from: FROM_EMAIL, to: [agent.email],
+            // Route the agent's Reply to the TC who actually replied, not the
+            // unmonitored noreply@ sender. Without this, an agent hitting Reply
+            // dead-ended into a black hole.
+            ...(user.email ? { reply_to: user.email } : {}),
             subject: `${tcName} replied · ${addr}`,
             html,
           }),
