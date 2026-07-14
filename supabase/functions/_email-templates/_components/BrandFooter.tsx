@@ -7,7 +7,7 @@ import { Hr, Link, Section, Text } from "@react-email/components";
 // CAN-SPAM · FILL with the real registered Aari Transactions LLC mailing address
 // (street or PO box, city, FL, ZIP). Shared wording with send-checklist's
 // POSTAL_ADDRESS — keep the two in sync.
-const POSTAL_ADDRESS = "‹FILL: Aari Transactions LLC mailing address — street/PO box, Lehigh Acres, FL, ZIP›";
+const POSTAL_ADDRESS = "9160 Forum Corporate Pkwy, Ste 350 PMB 17078022, Fort Myers, FL 33905";
 
 interface FooterProps {
   category?: "transactional" | "marketing" | "review_requests";

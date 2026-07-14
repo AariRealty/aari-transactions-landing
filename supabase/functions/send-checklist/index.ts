@@ -31,7 +31,7 @@ function isValidEmail(s: string): boolean {
 // working opt-out. FILL THIS with the real registered mailing address for Aari
 // Transactions LLC (street or PO box, city, FL, ZIP), e.g.
 //   "1234 Example Rd, Suite 5, Lehigh Acres, FL 33936"
-const POSTAL_ADDRESS = "‹FILL: Aari Transactions LLC mailing address — street/PO box, Lehigh Acres, FL, ZIP›";
+const POSTAL_ADDRESS = "9160 Forum Corporate Pkwy, Ste 350 PMB 17078022, Fort Myers, FL 33905";
 // Opt-out. Simple, compliant, no PII in the URL and no token dependency for a
 // fresh lead: a monitored mailto that Marlenyi processes.
 const UNSUBSCRIBE_MAILTO = "mailto:hello@aaritransactions.com?subject=Unsubscribe";

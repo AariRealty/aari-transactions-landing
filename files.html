@@ -7174,11 +7174,9 @@ Tell me your planned move-out date and I will set the inspection.`
       status.className = 'amp-reply-status';
       try {
         const session = (await _client.auth.getSession()).data.session;
-        // Reply-to-agent sender. Temporarily hosted in the reused 'nabor-debug' slot
-        // (= TC->agent reply) because the edge-function count cap blocks new functions.
-        // Rename to send-tc-reply-to-agent once a slot frees. (Was calling a function
-        // that was never deployed, so replies had been silently failing.)
-        const r = await fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/nabor-debug', {
+        // Reply-to-agent sender (send-tc-reply-to-agent). Inserts the reply, stamps
+        // replied_at, and SMS + emails the agent with reply_to set to the TC.
+        const r = await fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/send-tc-reply-to-agent', {
           method: 'POST',
           headers: { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + ((session && session.access_token) || '') },
           body: JSON.stringify({ original_message_id: mid, reply: reply }),
@@ -13929,13 +13927,11 @@ Tell me your planned move-out date and I will set the inspection.`
       const r = await _client.from('files').update({ delete_request: req }).eq('id', _currentFile.id);
       if(!(r && r.error)){
         _currentFile.delete_request = req; renderDeleteZone(_currentFile);
-        // Email the broker that a deletion was requested. Fire-and-forget: the
-        // request is already recorded + the banner shows regardless. Hosted in the
-        // reused 'realty-test-send' slot (= delete-request notifier) to avoid the
-        // edge-function count cap; rename to send-delete-request once a slot frees.
+        // Email the broker that a deletion was requested (send-delete-request).
+        // Fire-and-forget: the request is already recorded + the banner shows regardless.
         try {
           const _sess = (await _client.auth.getSession()).data.session;
-          fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/realty-test-send', {
+          fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/send-delete-request', {
             method: 'POST',
             headers: { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + ((_sess && _sess.access_token) || '') },
             body: JSON.stringify({ file_id: _currentFile.id, reason: req.reason }),
@@ -13965,11 +13961,11 @@ Tell me your planned move-out date and I will set the inspection.`
       _currentFile.status = 'archived';
       const f2 = (_files || []).find(function(x){ return x.id === fid; }); if(f2){ f2.status = 'archived'; f2.logistics = lg; }
       try { writeAuditLog('file_archived_by_tc', fid, { reason: reason, property_address: _currentFile.property_address || null }); } catch(_){}
-      // Email the broker (fire-and-forget · archive is already saved). Reuses the
-      // realty-test-send notifier slot with kind='archived'.
+      // Email the broker (fire-and-forget · archive is already saved) via
+      // send-delete-request with kind='archived'.
       try {
         const _sess = (await _client.auth.getSession()).data.session;
-        fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/realty-test-send', {
+        fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/send-delete-request', {
           method: 'POST',
           headers: { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + ((_sess && _sess.access_token) || '') },
           body: JSON.stringify({ file_id: fid, reason: reason, kind: 'archived' }),
