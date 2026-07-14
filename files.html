@@ -13852,9 +13852,15 @@ Tell me your planned move-out date and I will set the inspection.`
       _items += '<a href="#" data-del-link style="display:block;font-size:12.5px;color:#a3402f;padding:7px 11px;border-radius:6px;text-decoration:none">Delete file</a>';
       head.innerHTML = delMenu(_items);
     } else if(_profile && _profile.role === 'tc'){
-      head.innerHTML = req
-        ? '<span style="font-size:10.5px;color:#9a7c3a;margin-right:2px">Deletion requested</span>'
-        : delMenu('<a href="#" data-del-request style="display:block;font-size:12.5px;color:#7a756c;padding:8px 11px;border-radius:6px;text-decoration:none">Request deletion</a>');
+      // Self-serve archive (reversible · for a file added by mistake) is the easy
+      // path; it moves the file off the active board and emails the broker. Actual
+      // deletion (permanent) stays a broker-approved request.
+      var _tcItems = '<a href="#" data-archive-file style="display:block;font-size:12.5px;color:#0f0f0f;padding:8px 11px;border-radius:6px;text-decoration:none">Archive file &middot; added by mistake</a>' +
+        '<div style="height:1px;background:#f1ede6;margin:4px 6px"></div>' +
+        (req
+          ? '<span style="display:block;font-size:11px;color:#9a7c3a;padding:8px 11px">Deletion requested</span>'
+          : '<a href="#" data-del-request style="display:block;font-size:12.5px;color:#7a756c;padding:8px 11px;border-radius:6px;text-decoration:none">Request deletion</a>');
+      head.innerHTML = delMenu(_tcItems);
     } else { head.innerHTML = ''; }
   }
   document.addEventListener('click', async (e) => {
@@ -13933,6 +13939,40 @@ Tell me your planned move-out date and I will set the inspection.`
         } catch(_){}
       }
       else alert('Could not send the request \u2014 try again.');
+      return;
+    }
+    const arch = e.target.closest && e.target.closest('[data-archive-file]');
+    if(arch && _currentFile){
+      e.preventDefault();
+      try { document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; }); } catch(_){}
+      if(!confirm('Archive this file? It moves off your active board. Nothing is deleted, and the broker can bring it back if needed.')) return;
+      const reason = (prompt('Quick note for the broker (optional) — e.g. duplicate, wrong file:') || '').trim();
+      const fid = _currentFile.id;
+      const lg = _currentFile.logistics || (_currentFile.logistics = {});
+      lg.archived = {
+        by: _profile.id,
+        by_name: ((_profile.first_name || '') + ' ' + (_profile.last_name || '')).trim(),
+        reason: reason,
+        prev_status: _currentFile.status || null,
+        at: new Date().toISOString(),
+      };
+      const r = await _client.from('files').update({ status: 'archived', logistics: lg }).eq('id', fid);
+      if(r && r.error){ alert('Could not archive — the database rejected the change. You may not have edit permission on this file.'); return; }
+      _currentFile.status = 'archived';
+      const f2 = (_files || []).find(function(x){ return x.id === fid; }); if(f2){ f2.status = 'archived'; f2.logistics = lg; }
+      try { writeAuditLog('file_archived_by_tc', fid, { reason: reason, property_address: _currentFile.property_address || null }); } catch(_){}
+      // Email the broker (fire-and-forget · archive is already saved). Reuses the
+      // realty-test-send notifier slot with kind='archived'.
+      try {
+        const _sess = (await _client.auth.getSession()).data.session;
+        fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/realty-test-send', {
+          method: 'POST',
+          headers: { 'Content-Type':'application/json', 'Authorization': 'Bearer ' + ((_sess && _sess.access_token) || '') },
+          body: JSON.stringify({ file_id: fid, reason: reason, kind: 'archived' }),
+        }).catch(function(){});
+      } catch(_){}
+      try { closePlaybook(); } catch(_){}
+      try { renderKanban(); } catch(_){}
       return;
     }
     const ddis = e.target.closest && e.target.closest('[data-del-dismiss]');
