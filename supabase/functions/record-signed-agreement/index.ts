@@ -26,7 +26,18 @@
 //   { ok: true, signature_id: string, signed_at: ISO, ip_address: string|null }
 // ============================================================================
 
-import { supabaseAdmin } from "../_shared/supabase.ts";
+import { createClient } from "supabase";
+
+// Service-role client (inlined so this function deploys as a single self-contained
+// file). Used for the ownership check + the immutable signature insert.
+const _adminUrl = Deno.env.get("SUPABASE_URL");
+const _adminKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+if (!_adminUrl || !_adminKey) {
+  throw new Error("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set in edge function secrets.");
+}
+const supabaseAdmin = createClient(_adminUrl, _adminKey, {
+  auth: { persistSession: false },
+});
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,6 +51,33 @@ Deno.serve(async (req) => {
   }
   if (req.method !== "POST") {
     return new Response("Method not allowed", { status: 405, headers: corsHeaders });
+  }
+
+  // ---- 0. AUTHENTICATE THE CALLER (security fix · July 2026) ----
+  // Previously this endpoint trusted body.agent_id / body.file_id with no auth,
+  // so anyone could POST a forged, legally-attributed ESIGN signature row for
+  // any agent/file. Now we require the caller's JWT, derive the signer identity
+  // from it, and (when a file is named) verify the caller owns that file. The
+  // one legitimate caller — js/intake-submit.js — runs authenticated and
+  // Supabase functions.invoke forwards the user's access token automatically.
+  const authHeader = req.headers.get("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token) {
+    return json({ ok: false, error: "unauthorized" }, 401);
+  }
+  const supaUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!supaUrl || !anonKey) {
+    return json({ ok: false, error: "server_misconfigured" }, 500);
+  }
+  const authClient = createClient(supaUrl, anonKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false },
+  });
+  const { data: userData, error: userErr } = await authClient.auth.getUser();
+  const authedAgentId = userData?.user?.id;
+  if (userErr || !authedAgentId) {
+    return json({ ok: false, error: "unauthorized" }, 401);
   }
 
   // ---- 1. Capture IP from request headers (priority order) ----
@@ -63,14 +101,29 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "invalid_json" }, 400);
   }
 
-  const agentId = body.agent_id as string | undefined;
+  // Identity comes from the verified JWT, NOT the request body — a caller cannot
+  // attribute a signature to someone else.
+  const agentId = authedAgentId;
   const fileId = body.file_id as string | undefined;
   const typedFullName = body.typed_full_name as string | undefined;
   const agreementType = (body.agreement_type as string | undefined) || "service_agreement";
   const agreementVersion = body.agreement_version as string | undefined;
 
-  if (!agentId || !typedFullName || !agreementVersion) {
+  if (!typedFullName || !agreementVersion) {
     return json({ ok: false, error: "missing_required_fields" }, 400);
+  }
+
+  // If a file is named, the caller must own it (blocks attaching a signature to
+  // another agent's file).
+  if (fileId) {
+    const { data: ownRow, error: ownErr } = await supabaseAdmin
+      .from("files")
+      .select("agent_id")
+      .eq("id", fileId)
+      .maybeSingle();
+    if (ownErr || !ownRow || ownRow.agent_id !== agentId) {
+      return json({ ok: false, error: "file_not_owned" }, 403);
+    }
   }
 
   // ---- 3. Insert agreement_signatures row · server-side signed_at + IP ----
