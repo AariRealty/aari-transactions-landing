@@ -165,7 +165,15 @@ function parseContract(T: string): Record<string, string> {
   if (ll) out.legal = clean(ll.split(/legal description is\s*/i)[1]).replace(/\s+together with.*/i, "");
   if (!out.legal) { const lgl = findLine(/Legal Description:/i); if (lgl) out.legal = clean((lgl.split(/Legal Description:\s*/i)[1] || "")).replace(/_+/g, "").trim(); }
 
-  const dollar = (l: string) => { const m = clean(l).match(/([\d,]+\.\d{2})/g); return m ? m[m.length - 1] : ""; };
+  const dollar = (l: string) => {
+    const c = clean(l);
+    const m = c.match(/([\d,]+\.\d{2})/g);
+    if (m) return m[m.length - 1];
+    // Fallback: a whole-dollar amount written without cents (e.g. "$350,000").
+    // Previously these returned blank -> price/EMD silently missing on the draft.
+    const w = c.match(/\$\s*([\d,]{4,})/);
+    return w ? w[1] : "";
+  };
   out.price = dollar(findLine(/2\.\s*PURCHASE PRICE/));
   if (!out.price) out.price = dollar(findLine(/Purchase Price/i));
   out.emd = dollar(findLine(/Initial deposit to be held/));
@@ -182,13 +190,37 @@ function parseContract(T: string): Record<string, string> {
   out.flag_home_warranty = /home warranty/i.test(T) ? "yes" : "";
   out.flag_turnkey = (/\bturn[\s-]?key\b/i.test(T) || /conveyed[^.]{0,60}furnishings/i.test(T)) ? "yes" : "";
 
+  // Date fragment matches BOTH "July 12, 2025" and DocuSign's "7/12/2025" (M/D/YYYY).
+  // Without the slash form, DocuSign-stamped dates were silently missed -> blank
+  // closing/effective dates -> the engine fell back to defaults or the agent's guess.
+  const DATE_FRAG = "[A-Z][a-z]+ \\d{1,2}, \\d{4}|\\d{1,2}\\/\\d{1,2}\\/\\d{2,4}";
+  const DATE_RE = new RegExp(DATE_FRAG);
   const ci = findIdx(/Closing shall occur on/);
-  if (ci >= 0) for (let k = ci - 2; k <= ci + 1; k++) { if (k < 0 || k >= lines.length) continue; const m = clean(lines[k]).match(/[A-Z][a-z]+ \d{1,2}, \d{4}/); if (m) { out.closing_date = m[0]; break; } }
-  if (!out.closing_date) { const cl = findLine(/will close on/i); if (cl) { const cmd = clean(cl).match(/[A-Z][a-z]+ \d{1,2}, \d{4}/); if (cmd) out.closing_date = cmd[0]; } }
+  if (ci >= 0) for (let k = ci - 2; k <= ci + 1; k++) { if (k < 0 || k >= lines.length) continue; const m = clean(lines[k]).match(DATE_RE); if (m) { out.closing_date = m[0]; break; } }
+  if (!out.closing_date) { const cl = findLine(/will close on/i); if (cl) { const cmd = clean(cl).match(DATE_RE); if (cmd) out.closing_date = cmd[0]; } }
 
+  // Effective date = latest party signature date. A signature line is one that
+  // carries a "Date:" field (distinguishing it from the "Buyer:/Seller:" party
+  // header lines at the top). We only emit the effective date when EVERY signature
+  // line we saw is dated. If a signer left the date blank (the classic seller-
+  // undated case), the true effective date depends on that undated signer, so we
+  // leave it blank for the TC to confirm rather than emit the too-early latest of
+  // the dated ones.
+  const sigDateRe = new RegExp("Date:\\s*(" + DATE_FRAG + ")");
   const sig: string[] = [];
-  for (const l of lines) { const s = stripNum(l); if (/^(Buyer|Seller):/.test(s)) { const m = s.match(/Date:\s*([A-Z][a-z]+ \d{1,2}, \d{4})/); if (m) sig.push(m[1]); } }
-  if (sig.length) { const ds = sig.map((d) => ({ d, t: Date.parse(d) })).filter((x) => !isNaN(x.t)).sort((a, b) => b.t - a.t); if (ds.length) out.effective_date = ds[0].d; }
+  let sigBlocks = 0, sigDated = 0;
+  for (const l of lines) {
+    const s = stripNum(l);
+    if (/^(Buyer|Seller):/.test(s) && /Date:/.test(s)) {
+      sigBlocks++;
+      const m = s.match(sigDateRe);
+      if (m) { sigDated++; sig.push(m[1]); }
+    }
+  }
+  if (sig.length && sigDated === sigBlocks) {
+    const ds = sig.map((d) => ({ d, t: Date.parse(d) })).filter((x) => !isNaN(x.t)).sort((a, b) => b.t - a.t);
+    if (ds.length) out.effective_date = ds[0].d;
+  }
 
   const ei = findIdx(/Escrow Agent Name:/);
   let nm = "";

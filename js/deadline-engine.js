@@ -175,9 +175,18 @@
   }
   function fileContractDeadlines(file){
     if(!file || !file.effective_date || !file.closing_date) return [];
-    return contractDeadlines(file.contract_type || 'frbar_asis', file.effective_date, file.closing_date, buildFileOverrides(file)) || [];
+    // No confirmed contract type = do NOT guess. Guessing FR/BAR AS-IS applied the
+    // wrong periods to NABOR / vacant-land / lease / commercial files. An unconfirmed
+    // file shows no computed deadlines until the TC sets the type (the cockpit already
+    // gates on this) rather than confidently-wrong ones.
+    if(!file.contract_type) return [];
+    return contractDeadlines(file.contract_type, file.effective_date, file.closing_date, buildFileOverrides(file)) || [];
   }
   function fileDeadlines(file){
+    // Same rule as fileContractDeadlines: never guess a contract type. Without one,
+    // the flat DEADLINE_DEFS fallback below would emit FR/BAR-shaped deadlines on a
+    // file that may be NABOR/land/lease — wrong dates in the portal, emails, calendar.
+    if(!file || !file.contract_type) return {};
     const eff = parseDate(file.effective_date);
     const close = parseDate(file.closing_date);
     const ov = (file.deadline_overrides && typeof file.deadline_overrides === 'object') ? file.deadline_overrides : {};
