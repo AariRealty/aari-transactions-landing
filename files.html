@@ -728,6 +728,11 @@
   .cal-money-detail b{color:#0f0f0f;font-weight:600}
   .cal-money-cell{flex:none;text-align:right;min-width:64px;cursor:pointer}
   .cal-money-cell .car{font-size:10px;color:#c3bdb2;margin-left:4px}
+  /* Row progress · hairline track to the file's OWN finish line. Greyscale only, no rails. */
+  .cal-prog{height:2px;background:#f0ede6;border-radius:2px;margin-top:9px}
+  .cal-prog-fill{height:2px;background:#0f0f0f;border-radius:2px;transition:width .2s ease}
+  .cal-pay-word{font-size:10px;color:#a39d92;letter-spacing:.4px;margin-top:1px}
+  .cal-pay-word.cal-pay-strong{color:#5f5e5a}
   /* Calendar list · bottom P&L breakdown that opens when you tap the net */
   .cal-pl-detail{max-height:0;overflow:hidden;transition:max-height .2s ease,padding .2s ease,margin .2s ease;padding:0}
   .cal-pl-detail.cal-open{max-height:220px;padding-top:10px;margin-top:8px;border-top:0.5px solid #3a352c}
@@ -9875,8 +9880,15 @@ Tell me your planned move-out date and I will set the inspection.`
   // ============== RENDER ==============
   function renderKpis(){
     let active = 0, closingWk = 0, ytd = 0;
+    // "Actively managing" must mean the same thing here as in the list below. Two leaks used to
+    // inflate it: archived files still counted as active (renderPipelineBar already excluded them,
+    // so the page carried two different definitions of "active"), and for a coordinator the
+    // unassigned claim pool counted as theirs before anyone had claimed it.
+    const _tcView = String((_profile && _profile.role) || '').toLowerCase() === 'tc';
     _files.forEach(f => {
       if((f.raw_form_data || {}).test_pool) return; // test-pool files never count in production numbers
+      if(f.status === 'archived') return;           // archived = pulled off the board, not active
+      if(_tcView && !f.assigned_tc_id) return;      // claim pool is nobody's book until claimed
       const stage = deriveStage(f);
       const d = daysToClose(f);
       if(stage === 'closed') ytd++;
@@ -10401,6 +10413,54 @@ Tell me your planned move-out date and I will set the inspection.`
       });
     });
   }
+  // ===== Row progress · THE FILE'S OWN FINISH LINE =====
+  // Every file climbs its own ladder, not one shared idea of "closing". A full-TC sale walks the
+  // sale pipeline to Closed; an upfront service (MLS Setup, Offer Prep, Listing Docs, File Org)
+  // walks its own short service track to delivered. So a full bar always means "my work on this
+  // file is done" and never "the property closed" — which is why an active MLS listing does not
+  // read as a closed sale.
+  // NOTE: TC_SVC_TRACKS is keyed by the SHORT service ids (lc, op_basic, file_org) while svcKey()
+  // resolves to the LONG ones, and the track table has no 'listing_coordinator'/'file_organization'
+  // entry. Check the raw id FIRST, then the alias, or lc + file_org silently lose their ladder.
+  function fileProgress(f){
+    try {
+      if(!f) return null;
+      var raw = String(f.service_type || '').toLowerCase();
+      var trk = (typeof TC_SVC_TRACKS === 'object' && TC_SVC_TRACKS) ? (TC_SVC_TRACKS[raw] || TC_SVC_TRACKS[svcKey(f)]) : null;
+      if(trk && trk.length){
+        // service_stage is null until a coordinator touches the stage dropdown, and that dropdown
+        // already renders `f.service_stage || track[0]` (see the service-stage selector). Mirror it
+        // exactly: null reads as the FIRST stage, not as zero progress. Otherwise the bar would sit
+        // empty while the dropdown right next to it says "Received".
+        var cur = f.service_stage || trk[0];
+        var i = trk.indexOf(cur);
+        var dS = (i < 0) ? 1 : (i + 1);
+        return { done:dS, total:trk.length, pct:Math.round(dS / trk.length * 100), label:(i < 0 ? trk[0] : trk[i]) };
+      }
+      var ladder = (typeof STAGES_BY_TYPE === 'object' && STAGES_BY_TYPE) ? (STAGES_BY_TYPE[f.file_type || 'sale'] || STAGES_BY_TYPE.sale) : null;
+      if(!ladder || !ladder.length) return null;
+      var st = deriveStage(f);
+      var j = ladder.indexOf(st);
+      var dL = (j < 0) ? 0 : (j + 1);
+      return { done:dL, total:ladder.length, pct:Math.round(dL / ladder.length * 100), label:((typeof STAGE_LABELS === 'object' && STAGE_LABELS[st]) || st) };
+    } catch(_){ return null; }
+  }
+  // ===== Payment word · where THIS file's money is, from the coordinator's side =====
+  // A coordinator is paid off the weekly invoice (submit Thursday, paid Friday) whether the client
+  // paid upfront or at closing, so the ladder is identical for every service: work in progress ->
+  // ready to invoice -> invoiced -> paid. Credit-covered files pay $0 by design (see isCreditCovered).
+  function tcPayWord(f){
+    try {
+      if(!f) return null;
+      if(typeof isCreditCovered === 'function' && isCreditCovered(f)) return { w:'COVERED', strong:false };
+      if(f.invoice_id){
+        var inv = (_invoices || []).filter(function(i){ return i.id === f.invoice_id; })[0];
+        return (inv && inv.status === 'paid') ? { w:'PAID', strong:true } : { w:'INVOICED', strong:false };
+      }
+      if(typeof fileCompleted === 'function' && fileCompleted(f) && typeof tcPayFor === 'function' && tcPayFor(f) > 0) return { w:'READY', strong:true };
+      return { w:'UNBILLED', strong:false };
+    } catch(_){ return null; }
+  }
   function renderTcCalendar(){
     try { renderNeedsAttention(); } catch(_){}
     const host = document.getElementById('fileCalendar'); if(!host) return;
@@ -10435,14 +10495,25 @@ Tell me your planned move-out date and I will set the inspection.`
       // Aari Transactions money · ONE clean figure on the row; tap it to slide open the full
       // breakdown beneath (member price, what Aari keeps, what the TC earns, credit/reset, etc).
       const mp = (kind === 'needstc') ? { fig:'', detail:'' } : atMoneyParts(f);
+      // Payment word rides under the money figure · UNBILLED / READY / INVOICED / PAID / COVERED.
+      // Unclaimed pool files show no money and no word: they are not this coordinator's yet.
+      const pw = (kind === 'needstc') ? null : tcPayWord(f);
+      const payWord = pw ? ('<div class="cal-pay-word' + (pw.strong ? ' cal-pay-strong' : '') + '">' + esc(pw.w) + '</div>') : '';
       const moneyCell = mp.fig
-        ? ('<div class="cal-money-cell"' + (mp.detail ? ' data-money-toggle="1"' : '') + '>' + mp.fig + (mp.detail ? '<span class="car">&#9662;</span>' : '') + '</div>')
+        ? ('<div class="cal-money-cell"' + (mp.detail ? ' data-money-toggle="1"' : '') + '>' + mp.fig + (mp.detail ? '<span class="car">&#9662;</span>' : '') + payWord + '</div>')
+        : '';
+      // Hairline progress to this file's own finish line. Hidden on the claim pool (not yours yet).
+      const prog = (kind === 'needstc') ? null : fileProgress(f);
+      const progBar = prog
+        ? ('<div class="cal-prog" title="' + esc(prog.label + ' · step ' + prog.done + ' of ' + prog.total) + '"><div class="cal-prog-fill" style="width:' + prog.pct + '%"></div></div>')
         : '';
       const claim = (kind === 'needstc') ? '<span data-claim-file="' + esc(f.id) + '" style="flex:none;font-size:11px;font-weight:500;color:#fff;background:#0f0f0f;border-radius:20px;padding:5px 13px;cursor:pointer;font-family:inherit">Claim</span>' : '';
       return '<div class="cal-file-wrap">' +
-        '<div data-file-open="' + esc(f.id) + '" style="display:flex;align-items:center;gap:12px;padding:11px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
-          '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:500;color:#0f0f0f">' + esc(addr) + '</div>' + (subLine ? ('<div style="font-size:11.5px;margin-top:2px">' + subLine + '</div>') : '') + '</div>' +
-          rightChip + moneyCell + claim + '</div>' +
+        '<div data-file-open="' + esc(f.id) + '" style="padding:11px 0 ' + (progBar ? '9px' : '11px') + ';border-top:0.5px solid #f3f0ea;cursor:pointer">' +
+          '<div style="display:flex;align-items:center;gap:12px">' +
+            '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:500;color:#0f0f0f">' + esc(addr) + '</div>' + (subLine ? ('<div style="font-size:11.5px;margin-top:2px">' + subLine + '</div>') : '') + '</div>' +
+            rightChip + moneyCell + claim +
+          '</div>' + progBar + '</div>' +
         (mp.detail ? ('<div class="cal-money-detail" data-money-detail="' + esc(f.id) + '">' + mp.detail + '</div>') : '') +
         '</div>';
     };
@@ -10493,8 +10564,12 @@ Tell me your planned move-out date and I will set the inspection.`
     // In-house / file-org files · flat $80 TC pay (no AT external revenue).
     var _foItems = ntc.concat(nyou, ont).filter(function(it){ return paysFileOrg(it.f); });
     var _foPay = _foItems.length * FILE_ORG_PAY;
-    // Total the coordinator earns across everything in view (40% cuts + $80 file-org/in-house).
-    var _tcTotal = ntc.concat(nyou, ont).reduce(function(s, it){ return s + tcPayFor(it.f); }, 0);
+    // A coordinator's OWN book = files assigned to them (Needs you + On track). The claim pool
+    // (ntc) is unassigned work ANY coordinator can grab, so it must never count toward their
+    // earnings or their active count. The per-row money already hides the pool; before this the
+    // total did not, so the headline figure disagreed with the rows underneath it.
+    var _mine = nyou.concat(ont);
+    var _tcTotal = _mine.reduce(function(s, it){ return s + tcPayFor(it.f); }, 0);
     if(_billItems.length || _coveredCount || _foItems.length){
       var _rev = _billItems.reduce(function(s, it){ return s + chargedPrice(it.f); }, 0); // what clients actually pay (member $50 off applied)
       var _pay = _billItems.reduce(function(s, it){ return s + atTcCut(it.f); }, 0);
@@ -10517,9 +10592,12 @@ Tell me your planned move-out date and I will set the inspection.`
           (_detail ? ('<div class="cal-pl-detail">' + _detail + '</div>') : '') +
         '</div>';
       } else {
+        // Counts come from _mine so the headline can never disagree with the rows above it.
+        var _myEarning = _mine.filter(function(it){ return tcPayFor(it.f) > 0; }).length;
+        var _myCovered = _mine.filter(function(it){ return isCreditCovered(it.f); }).length;
         html += '<div style="display:flex;align-items:center;gap:12px;background:#0f0f0f;color:#fff;border-radius:12px;padding:14px 18px;margin-top:4px">' +
-          '<span style="flex:1;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#cfcabf">You earn</span>' +
-          '<span style="font-size:11px;color:#a8a39a">' + (_billItems.length + _foItems.length) + ' paid' + (_coveredCount ? (' &middot; ' + _coveredCount + ' covered') : '') + '</span>' +
+          '<span style="flex:1;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#cfcabf">You earn &middot; ' + _mine.length + ' active</span>' +
+          '<span style="font-size:11px;color:#a8a39a">' + _myEarning + ' paid' + (_myCovered ? (' &middot; ' + _myCovered + ' covered') : '') + '</span>' +
           '<span style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums">$' + _tcTotal.toLocaleString() + '</span></div>';
       }
     }
