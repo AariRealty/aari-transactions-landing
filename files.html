@@ -10930,7 +10930,7 @@ Tell me your planned move-out date and I will set the inspection.`
       var lastTask = String(f.service_type || '').toLowerCase() === 'offer_prep_complete' ? dt['op_verify_execution'] : dt['op_mark_delivered'];
       return !!lastTask || atFinalStage;
     }
-    if(UPFRONT_SERVICES.indexOf(f.service_type) !== -1) return atFinalStage;
+    if(UPFRONT_SERVICES.indexOf(svcKey(f)) !== -1) return atFinalStage;
     return false;
   }
   function fileIsCovered(f){ return typeof isCreditCovered === 'function' && isCreditCovered(f); }
@@ -10950,7 +10950,7 @@ Tell me your planned move-out date and I will set the inspection.`
     return (_files || []).filter(function(f){ return f.assigned_tc_id === _profile.id && fileIsBillable(f); });
   }
   function _money(c){ return '$' + (Math.round(c) / 100).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
-  function _svcLabel(f){ return (typeof SERVICE_LABEL === 'object' && SERVICE_LABEL[f.service_type]) || f.service_type || 'Service'; }
+  function _svcLabel(f){ return (typeof SERVICE_LABEL === 'object' && SERVICE_LABEL[svcKey(f)]) || f.service_type || 'Service'; }
   function invoicingPanelHtml(){
     var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
     var card = 'background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:16px 18px;margin:0 0 14px';
@@ -14849,7 +14849,7 @@ Tell me your planned move-out date and I will set the inspection.`
         { id:'new_contract_attached', label:'Confirm contract + addenda attached',
           sub:'Confirm the fully executed contract, flood disclosure, and all riders and addenda are uploaded to the file and signed by all parties before proceeding.' },
         { id:'new_payment_check',   label:'Payment status', systemCheck:'payment',
-          showIf:(f)=>UPFRONT_SERVICES.indexOf(f.service_type) !== -1 },
+          showIf:(f)=>UPFRONT_SERVICES.indexOf(svcKey(f)) !== -1 },
         { id:'new_signatures_verified', label:'Verify all signatures',
           sub:'Go through every page. Check every signature line. Check every initial box. Do not check this box until everything is signed and initialed.' },
         { id:'new_va_fha_rider',    label:'Verify VA/FHA rider attached',
@@ -15125,7 +15125,7 @@ Tell me your planned move-out date and I will set the inspection.`
     rental: {
       new: [
         { id:'rnew_payment_check', label:'Payment status', systemCheck:'payment',
-          showIf:(f)=>UPFRONT_SERVICES.indexOf(f.service_type) !== -1 },
+          showIf:(f)=>UPFRONT_SERVICES.indexOf(svcKey(f)) !== -1 },
         { id:'rnew_accept', label:'Accept file',
           sub:'Once you accept, this file is yours and the clock starts. Reply to the assignment text or check this box.', systemCheck:'accept' },
         { id:'rnew_ella_executed', label:'Confirm ELLA signed',
@@ -17656,6 +17656,26 @@ Tell me your planned move-out date and I will set the inspection.`
   //                  price, the coordinating TC earns AT_TC_PCT (40%) of that price, AT keeps 60%.
   //   In-house file = our own Aari Realty agent's deal: coordination is covered, AT bills $0.
   //   File Organization = a flat $80 coordinator pay (kept as-is, not a 40% split).
+  // ===== Service id vocabulary · ONE resolver =====
+  // The public catalog, the intake, the database and the stage engine all speak SHORT ids
+  // (lc, op_basic, op_complete, file_org). The money constants below were written against
+  // LONG ids (listing_coordinator, offer_prep_basic, ...). Both spellings are live and real,
+  // so EVERY money lookup resolves through svcKey() first. Without this a short-id file finds
+  // no price, pays the coordinator $0, and disappears from invoicing. TC_SVC_TRACKS already
+  // carries the same both-spellings fix for stages; this is that fix for the money layer.
+  // Add new aliases HERE only · never duplicate a price under a second key (that is how the
+  // two vocabularies drifted apart in the first place).
+  var SERVICE_ALIAS = {
+    lc:'listing_coordinator', listing:'listing_coordinator',
+    op_basic:'offer_prep_basic', op_complete:'offer_prep_complete',
+    file_org:'file_organization'
+  };
+  // Canonical service key for a file · short id in, long id out. Unknown ids pass through
+  // unchanged so they still land on the existing "price not set" path rather than guessing.
+  function svcKey(f){
+    var s = String((f && f.service_type) || '').toLowerCase();
+    return SERVICE_ALIAS[s] || s;
+  }
   var AT_TC_PCT = 40; // DEFAULT coordinator share of a service price; a coordinator may have a per-TC override (agents.tc_pay_pct). Aari Transactions keeps the remainder.
   // Per-coordinator revenue share. A file's assigned TC may earn a custom % (e.g. Eileen 50/50);
   // null falls back to the global AT_TC_PCT. Drives every pay figure + label on the file.
@@ -17682,8 +17702,8 @@ Tell me your planned move-out date and I will set the inspection.`
   // eligible (they get the $50 discount instead) per the catalog rule.
   var CREDIT_SERVICES = { mls_setup:1, listing_docs:1, offer_prep_basic:1, offer_prep_complete:1, file_organization:1, standalone_review:1 };
   function fileMembership(f){ return (f && f.agent_id && _membersById) ? _membersById[f.agent_id] : null; }
-  function isTcService(f){ return !!TC_SERVICE_TYPES[(f && f.service_type) || '']; }
-  function isCreditService(f){ return !!CREDIT_SERVICES[(f && f.service_type) || '']; }
+  function isTcService(f){ return !!TC_SERVICE_TYPES[svcKey(f)]; }
+  function isCreditService(f){ return !!CREDIT_SERVICES[svcKey(f)]; }
   // Membership credits reset each billing month and do NOT roll over. So credit-eligible files are
   // bucketed into monthly cycles (anchored on the membership's current_period_start day); each cycle
   // gets a fresh `credits_total`. Within a cycle, earliest files are covered, the rest overflow to
@@ -17738,11 +17758,11 @@ Tell me your planned move-out date and I will set the inspection.`
   // $50 off applies only to OUTSIDE TC clients on a membership. In-house Aari Realty agents who
   // order full TC pay full price, no discount.
   function memberTcDiscount(f){ return (isOutsideFile(f) && fileMembership(f) && isTcService(f)) ? MEMBER_TC_DISCOUNT : 0; }
-  function svcPrice(f){ return SERVICE_PRICE[(f && f.service_type) || ''] || 0; }
+  function svcPrice(f){ return SERVICE_PRICE[svcKey(f)] || 0; }
   function chargedPrice(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? (p - memberTcDiscount(f)) : 0; } // what the client actually pays
   function atTcCut(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? Math.round(p * tcPctFor(f) / 100) : 0; } // TC's share (per-TC %, default 40); the member $50 comes out of Aari's share, NEVER the TC's pay; $0 if credit-covered
   function atCoCut(f){ var p = chargedPrice(f); return p ? (p - atTcCut(f)) : 0; } // AT keeps the remainder = its 60% less the member $50 (Aari absorbs the discount, not the TC)
-  function isFileOrgFile(f){ return ((f.file_type || '') === 'compliance' || (f.service_type || '') === 'file_organization'); }
+  function isFileOrgFile(f){ return ((f.file_type || '') === 'compliance' || svcKey(f) === 'file_organization'); }
   function isOutsideFile(f){ return !isAariRealtyFile(f); }
   // Manual override · mark any file as File Organization. Set raw_form_data.fo_override = true.
   function isFoOverride(f){ var v = f && f.raw_form_data && f.raw_form_data.fo_override; return v === true || v === 'true'; }
@@ -17875,7 +17895,7 @@ Tell me your planned move-out date and I will set the inspection.`
     var rowsHtml = files.length ? files.map(function(f){
       var addr = String(f.property_address || 'Untitled').split(',')[0];
       var ty = (f.file_type === 'sale' ? 'Sale' : f.file_type === 'listing' ? 'Listing' : (f.file_type || ''));
-      var svc = f.service_type ? (SERVICE_LABEL[f.service_type] || f.service_type) : '';
+      var svc = f.service_type ? (SERVICE_LABEL[svcKey(f)] || f.service_type) : '';
       var sub = [ty, svc].filter(Boolean).join(' &middot; ');
       return '<div data-cp-open="' + esc(f.id) + '" style="display:flex;align-items:center;gap:12px;padding:11px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
         '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f">' + esc(addr) + '</div><div style="font-size:11.5px;color:#8a857c">' + sub + '</div></div>' +
@@ -17963,7 +17983,7 @@ Tell me your planned move-out date and I will set the inspection.`
   // pipeline. It has its own short 3-stage checklist. Basic = the 8 core steps;
   // Complete adds counter coordination + execution verification. Tasks persist in
   // stage_tasks (same jsonb as every other checklist). =====
-  function isOfferPrepFile(file){ return /^offer_prep/.test(String((file && file.service_type) || '').toLowerCase()); }
+  function isOfferPrepFile(file){ return /^offer_prep/.test(svcKey(file)); }
   const OFFER_PREP_TASKS = [
     { stage:'Received',  id:'op_confirm_order',       label:'Confirm the order',                     sub:'Buyer, agent, and property.' },
     { stage:'Received',  id:'op_collect_terms',       label:'Collect the offer terms from the agent', sub:'Price, financing, closing date, deposit, contingencies. In writing.' },
