@@ -6985,9 +6985,13 @@ Tell me your planned move-out date and I will set the inspection.`
     // comes out of the coordinating TC's 40%, not the company's share). Keyed by agent_id.
     if(Object.keys(_membersById).length === 0){
       try {
-        const { data: mems } = await _client.from('memberships').select('agent_id, tier, status, credits_total, credits_used').eq('status','active');
+        const { data: mems, error: _memErr } = await _client.from('memberships').select('agent_id, tier, status, credits_total, credits_used').eq('status','active');
+        // Silent-failure guard · if this load fails _membersById stays empty, computeCreditCoverage
+        // finds no members, and a member whose credit SHOULD cover a file gets charged full price
+        // instead of $0. That is a client-facing billing error, not just a display one. Say so.
+        if(_memErr) console.error('memberships load failed · credit coverage + member discounts will not apply, files may over-bill', _memErr);
         (mems || []).forEach(m => { _membersById[m.agent_id] = m; });
-      } catch(_){}
+      } catch(e){ console.error('memberships load threw · credit coverage will not apply', e); }
     }
     computeCreditCoverage();
     // Pull email sends for the visible files
