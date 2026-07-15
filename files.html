@@ -6965,8 +6965,16 @@ Tell me your planned move-out date and I will set the inspection.`
     if(Object.keys(_tcsById).length === 0){
       // Include brokers too · the broker can be the assigned coordinator on her own files,
       // so she shows up in the TC filter and her files resolve a coordinator name.
-      const { data: tcs } = await _client.from('agents').select('id, first_name, last_name, email, role, gcal_calendar_id, tc_pay_pct').in('role',['tc','broker']);
+      const { data: tcs } = await _client.from('agents').select('id, first_name, last_name, email, role, gcal_calendar_id').in('role',['tc','broker']);
       (tcs || []).forEach(t => { _tcsById[t.id] = t; });
+      // Pay rates are SENSITIVE and live in their own row-secured table (tc_pay_rates), never on
+      // agents: a TC only ever receives their OWN rate, the broker receives all. Merged onto the
+      // roster here so tcPctFor() keeps reading tc.tc_pay_pct unchanged. An absent row = the
+      // AT_TC_PCT default. If this load fails every figure silently falls back to the default,
+      // so it is checked loudly rather than swallowed.
+      const { data: rates, error: _rateErr } = await _client.from('tc_pay_rates').select('tc_id, pct');
+      if(_rateErr) console.error('tc_pay_rates load failed · pay % falls back to the ' + AT_TC_PCT + '% default', _rateErr);
+      (rates || []).forEach(r => { if(_tcsById[r.tc_id]) _tcsById[r.tc_id].tc_pay_pct = r.pct; });
       if(role === 'broker') renderTcFilter();
     }
     // Active Aari Transactions memberships · a member gets $50 off every TC file (the discount
