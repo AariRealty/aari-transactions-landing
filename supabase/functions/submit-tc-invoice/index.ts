@@ -18,10 +18,15 @@
 // here is a true CEILING, and the client's `covered` flag may only pull a line down to zero. A
 // tampered client can therefore only ever under-claim, which costs the coordinator, not the company.
 //
-// ⚠️ THE PRICE + PAY RULES BELOW ARE A MIRROR OF files.html (SERVICE_PRICE / SERVICE_ALIAS /
-// FILE_ORG_PAY / tcPayFor). If you change money rules there, change them HERE too or the invoice
-// will disagree with the cockpit. Verified at parity against every live file when written.
+// MONEY RULES COME FROM THE SHARED ENGINE — /js/pay-engine.js, the same file the cockpit loads.
+// This function ships that exact file in its bundle, so there is ONE place to change a price and
+// the invoice can never disagree with the screen the coordinator was looking at. (An earlier
+// version hand-copied SERVICE_PRICE here, which is how /js/deadline-engine.js already ended up
+// with two drifting "keep in sync" ports in friday-summary and loan-deadline-ping.)
+// ⚠️ The bundle pins the copy it was deployed with: after editing a price in pay-engine.js,
+// REDEPLOY this function or the server keeps the old number. `node js/pay-engine.test.js` guards it.
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import "./pay-engine.js";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const RESEND = Deno.env.get("RESEND_API_KEY") ?? "";
@@ -33,36 +38,13 @@ function esc(s: string){ return String(s ?? "").replace(/&/g,"&amp;").replace(/<
 function money(c: number){ return "$" + (Math.round(c)/100).toLocaleString("en-US",{ minimumFractionDigits:2, maximumFractionDigits:2 }); }
 function jwtSub(req: Request){ try { const a = req.headers.get("authorization") || ""; const t = a.replace(/^Bearer\s+/i,""); const p = t.split("."); if(p.length<2) return null; const b = JSON.parse(atob(p[1].replace(/-/g,"+").replace(/_/g,"/"))); return b.sub || null; } catch(_){ return null; } }
 
-// ---- money rules · MIRROR OF files.html ----
-const AT_TC_PCT = 40;
-const FILE_ORG_PAY = 80;
-const SERVICE_PRICE: Record<string, number> = {
-  tc_one_side: 399, tc_both_sides: 599, tc: 399,
-  listing_coordinator: 249, listing_docs: 99, mls_setup: 149,
-  file_organization: 99, standalone_review: 149,
-  offer_prep_basic: 79, offer_prep_complete: 149,
-};
-const SERVICE_ALIAS: Record<string, string> = {
-  lc:"listing_coordinator", listing:"listing_coordinator",
-  op_basic:"offer_prep_basic", op_complete:"offer_prep_complete",
-  file_org:"file_organization",
-};
-const TC_SERVICE_TYPES: Record<string, number> = { tc:1, tc_one_side:1, tc_both_sides:1 };
-function svcKey(f: any){ const s = String(f?.service_type || "").toLowerCase(); return SERVICE_ALIAS[s] || s; }
-function isTcService(f: any){ return !!TC_SERVICE_TYPES[svcKey(f)]; }
-function svcPrice(f: any){ return SERVICE_PRICE[svcKey(f)] || 0; }
-function isAariRealtyFile(f: any){ const r = f?.raw_form_data || {}; if(r.aari_realty === true || r.aari_realty === "true") return true; if(r.submitted_by_tc) return false; return String(r.source || "") === "master_import"; }
-function isOutsideFile(f: any){ return !isAariRealtyFile(f); }
-function isFileOrgFile(f: any){ return (String(f?.file_type || "") === "compliance") || svcKey(f) === "file_organization"; }
-function isFoOverride(f: any){ const v = f?.raw_form_data?.fo_override; return v === true || v === "true"; }
-function isSelfCoordinated(f: any){ if(!f?.assigned_tc_id) return false; if(isOutsideFile(f)) return false; return !!(f.agent_id && String(f.agent_id) === String(f.assigned_tc_id)); }
-function paysFileOrg(f: any){ return isFileOrgFile(f) || isFoOverride(f) || isSelfCoordinated(f) || (isAariRealtyFile(f) && !isTcService(f)); }
-// Ceiling pay for a file, ignoring credit coverage (coverage can only reduce this to 0).
-function tcPayCeiling(f: any, pct: number){
-  if(paysFileOrg(f)) return FILE_ORG_PAY;
-  const p = svcPrice(f);
-  return p ? Math.round(p * pct / 100) : 0;
-}
+// ---- money rules · from the shared engine, not a copy ----
+// pay-engine.js declares no import/export, so it is valid as BOTH a browser <script> and an ES
+// module. Importing it for side effects hangs AariPayEngine off globalThis here exactly as it
+// hangs off window in the cockpit.
+const PAY = (globalThis as any).AariPayEngine;
+if (!PAY) throw new Error("pay-engine.js did not load · refusing to price an invoice without the shared rules");
+const AT_TC_PCT: number = PAY.AT_TC_PCT;
 
 function row2(left: string, right: string, border: boolean){
   return `<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='${border?"border-top:0.5px solid #f0ebe0;":""}'><tr><td valign='top' style='padding:10px 0'>${left}</td><td valign='top' align='right' style='padding:10px 0;white-space:nowrap;font-size:12.5px;font-weight:600;color:#0f0f0f'>${right}</td></tr></table>`;
@@ -136,9 +118,13 @@ Deno.serve(async (req) => {
   if (already.length) return j(409,{ ok:false, error:`file(s) already invoiced: ${already.join(", ")}` });
 
   // Recompute every line from the DB row. Client `covered` may only pull a line to $0.
+  const tcName = ((tc.first_name||"")+" "+(tc.last_name||"")).trim();
   const safeItems = items.map((it: any)=>{
     const f = byId.get(String(it.file_id));
-    const ceiling = tcPayCeiling(f, pct);
+    // Same call the cockpit makes. The TC's name lets the engine catch imported files whose agent
+    // is stored as free text — the old hand-copy here omitted that branch, so the server and the
+    // screen already disagreed on self-coordinated files.
+    const ceiling = PAY.tcPayCeiling(f, pct, tcName);
     const covered = it.covered === true;
     const amount = covered ? 0 : ceiling;
     return {
@@ -168,13 +154,13 @@ Deno.serve(async (req) => {
   const upd = await admin.from("files").update({ invoice_id: inv.id }).in("id", fileIds).is("invoice_id", null);
   if (upd.error) { await admin.from("tc_invoices").delete().eq("id", inv.id); return j(500,{ ok:false, error:"file marking failed, invoice rolled back: " + upd.error.message }); }
 
-  const tcName = ((tc.first_name||"")+" "+(tc.last_name||"")).trim() || "A coordinator";
+  const tcLabel = tcName || "A coordinator";
   const period = (body.period_start && body.period_end) ? (body.period_start + " – " + body.period_end) : "";
   const { data: broker } = await admin.from("agents").select("email").eq("role","broker").order("created_at",{ ascending:true }).limit(1).maybeSingle();
   const brokerEmail = (broker && broker.email) || "marlenyi@aaritransactions.com";
-  const html = invoiceEmailHtml({ invoice_number: inv.invoice_number, period, tc_name: tcName, items: safeItems, total_cents: total });
+  const html = invoiceEmailHtml({ invoice_number: inv.invoice_number, period, tc_name: tcLabel, items: safeItems, total_cents: total });
   const tcHtml = `<div style='font-family:Arial,Helvetica,sans-serif;color:#0f0f0f'><p>Hi ${esc(tc.first_name||"there")},</p><p>Your invoice <b>${esc(inv.invoice_number)}</b> for <b>${money(total)}</b> was sent to Aari Transactions. Payment goes out Friday.</p><p style='font-size:12px;color:#8a857c'>Aari Transactions</p></div>`;
-  await sendEmail(brokerEmail, `New invoice from ${tcName} · ${money(total)}`, html);
+  await sendEmail(brokerEmail, `New invoice from ${tcLabel} · ${money(total)}`, html);
   if (tc.email) await sendEmail(tc.email, `Invoice ${inv.invoice_number} sent · ${money(total)}`, tcHtml);
   return j(200,{ ok:true, invoice_id:inv.id, invoice_number:inv.invoice_number, total_cents:total });
 });

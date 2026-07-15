@@ -1296,6 +1296,7 @@
 <script src="/js/supabase-config.js"></script>
 <script src="/js/auth.js"></script>
 <script src="/js/deadline-engine.js"></script>
+<script src="/js/pay-engine.js"></script>
 <script>
 (function(){
   'use strict';
@@ -17747,13 +17748,7 @@ Tell me your planned move-out date and I will set the inspection.`
   // Samantha Haringa, who is also a role='agent' account) carry NO company fee. The current
   // book comes in tagged source='master_import'; future portal submissions can set
   // raw_form_data.aari_realty=true. submitted_by_tc files are always outside client work.
-  function isAariRealtyFile(f){
-    if(!f) return false;
-    var rfd = f.raw_form_data || {};
-    if(rfd.aari_realty === true || rfd.aari_realty === 'true') return true;
-    if(rfd.submitted_by_tc) return false;
-    return String(rfd.source || '') === 'master_import';
-  }
+  var isAariRealtyFile = PAY.isAariRealtyFile;
   function aariRealtyFee(f){ var pt = String((f && f.raw_form_data && f.raw_form_data.property_type) || '').toLowerCase(); return ((f.file_type || '') === 'rental' || pt.indexOf('land') !== -1) ? 299 : 499; }
   // ===== Aari Transactions money (THIS cockpit only shows AT money, never Aari Realty's) =====
   // The $499/$299 Aari Realty brokerage fee is intentionally NOT shown here: it is Aari Realty
@@ -17763,27 +17758,18 @@ Tell me your planned move-out date and I will set the inspection.`
   //                  price, the coordinating TC earns AT_TC_PCT (40%) of that price, AT keeps 60%.
   //   In-house file = our own Aari Realty agent's deal: coordination is covered, AT bills $0.
   //   File Organization = a flat $80 coordinator pay (kept as-is, not a 40% split).
-  // ===== Service id vocabulary · ONE resolver =====
-  // The public catalog, the intake, the database and the stage engine all speak SHORT ids
-  // (lc, op_basic, op_complete, file_org). The money constants below were written against
-  // LONG ids (listing_coordinator, offer_prep_basic, ...). Both spellings are live and real,
-  // so EVERY money lookup resolves through svcKey() first. Without this a short-id file finds
-  // no price, pays the coordinator $0, and disappears from invoicing. TC_SVC_TRACKS already
-  // carries the same both-spellings fix for stages; this is that fix for the money layer.
-  // Add new aliases HERE only · never duplicate a price under a second key (that is how the
-  // two vocabularies drifted apart in the first place).
-  var SERVICE_ALIAS = {
-    lc:'listing_coordinator', listing:'listing_coordinator',
-    op_basic:'offer_prep_basic', op_complete:'offer_prep_complete',
-    file_org:'file_organization'
-  };
-  // Canonical service key for a file · short id in, long id out. Unknown ids pass through
-  // unchanged so they still land on the existing "price not set" path rather than guessing.
-  function svcKey(f){
-    var s = String((f && f.service_type) || '').toLowerCase();
-    return SERVICE_ALIAS[s] || s;
-  }
-  var AT_TC_PCT = 40; // DEFAULT coordinator share of a service price; a coordinator may have a per-TC override (agents.tc_pay_pct). Aari Transactions keeps the remainder.
+  // ===== Money rules · SHARED · /js/pay-engine.js =====
+  // Every price and pay branch lives in the pay engine, which the submit-tc-invoice edge
+  // function ships in its own bundle. ONE file to edit, so the invoice can never disagree
+  // with what the coordinator saw on this screen. Do NOT re-declare a price or a branch
+  // here — `node js/pay-engine.test.js` fails the moment anything drifts.
+  // Page STATE stays here and is passed in: who the TCs are (_tcsById), which files a
+  // membership credit covered (_creditCoverByFile), who holds a membership (_membersById).
+  var PAY = (typeof globalThis !== 'undefined' && globalThis.AariPayEngine) ? globalThis.AariPayEngine : null;
+  if(!PAY) console.error('pay-engine.js failed to load · every price and pay figure on this page will be wrong');
+  var AT_TC_PCT = PAY.AT_TC_PCT;
+  var SERVICE_ALIAS = PAY.SERVICE_ALIAS;
+  var svcKey = PAY.svcKey;
   // Per-coordinator revenue share. A file's assigned TC may earn a custom % (e.g. Eileen 50/50);
   // null falls back to the global AT_TC_PCT. Drives every pay figure + label on the file.
   function tcPctFor(f){
@@ -17793,24 +17779,16 @@ Tell me your planned move-out date and I will set the inspection.`
       return (p != null && !isNaN(p)) ? Number(p) : AT_TC_PCT;
     } catch(_){ return AT_TC_PCT; }
   }
-  // Live service prices, mirroring the public catalog + the +New service picker. Source of the 40% split.
-  var SERVICE_PRICE = {
-    tc_one_side: 399, tc_both_sides: 599, tc: 399,
-    listing_coordinator: 249, listing_docs: 99, mls_setup: 149,
-    file_organization: 99, standalone_review: 149,
-    offer_prep_basic: 79, offer_prep_complete: 149
-  };
-  // Membership: a member pays $50 off every TC file. The $50 comes OUT OF the TC's 40%, so the
-  // company's 60% is untouched. Monthly membership fees are separate AT recurring income.
-  var MEMBER_TC_DISCOUNT = 50;
+  var SERVICE_PRICE = PAY.SERVICE_PRICE;
+  // The member $50 comes out of AARI's share, never the coordinator's pay (atTcCut is computed
+  // off the FULL price). Monthly membership fees are separate AT recurring income.
+  var MEMBER_TC_DISCOUNT = PAY.MEMBER_TC_DISCOUNT;
   var MEMBERSHIP_FEE = { producer: 129, starter: 79 };
-  var TC_SERVICE_TYPES = { tc:1, tc_one_side:1, tc_both_sides:1 };
-  // Services a membership CREDIT can cover (the monthly 4/2 credits). TC files are NOT credit-
-  // eligible (they get the $50 discount instead) per the catalog rule.
-  var CREDIT_SERVICES = { mls_setup:1, listing_docs:1, offer_prep_basic:1, offer_prep_complete:1, file_organization:1, standalone_review:1 };
+  var TC_SERVICE_TYPES = PAY.TC_SERVICE_TYPES;
+  var CREDIT_SERVICES = PAY.CREDIT_SERVICES;
   function fileMembership(f){ return (f && f.agent_id && _membersById) ? _membersById[f.agent_id] : null; }
-  function isTcService(f){ return !!TC_SERVICE_TYPES[svcKey(f)]; }
-  function isCreditService(f){ return !!CREDIT_SERVICES[svcKey(f)]; }
+  var isTcService = PAY.isTcService;
+  var isCreditService = PAY.isCreditService;
   // Membership credits reset each billing month and do NOT roll over. So credit-eligible files are
   // bucketed into monthly cycles (anchored on the membership's current_period_start day); each cycle
   // gets a fresh `credits_total`. Within a cycle, earliest files are covered, the rest overflow to
@@ -17864,43 +17842,35 @@ Tell me your planned move-out date and I will set the inspection.`
   function creditMeter(f){ return (f && (_creditMeterByFile[f.id] || (f.agent_id ? _creditMeterByAgent[f.agent_id] : null))) || null; }
   // $50 off applies only to OUTSIDE TC clients on a membership. In-house Aari Realty agents who
   // order full TC pay full price, no discount.
-  function memberTcDiscount(f){ return (isOutsideFile(f) && fileMembership(f) && isTcService(f)) ? MEMBER_TC_DISCOUNT : 0; }
-  function svcPrice(f){ return SERVICE_PRICE[svcKey(f)] || 0; }
-  function chargedPrice(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? (p - memberTcDiscount(f)) : 0; } // what the client actually pays
-  function atTcCut(f){ if(isCreditCovered(f)) return 0; var p = svcPrice(f); return p ? Math.round(p * tcPctFor(f) / 100) : 0; } // TC's share (per-TC %, default 40); the member $50 comes out of Aari's share, NEVER the TC's pay; $0 if credit-covered
-  function atCoCut(f){ var p = chargedPrice(f); return p ? (p - atTcCut(f)) : 0; } // AT keeps the remainder = its 60% less the member $50 (Aari absorbs the discount, not the TC)
-  function isFileOrgFile(f){ return ((f.file_type || '') === 'compliance' || svcKey(f) === 'file_organization'); }
-  function isOutsideFile(f){ return !isAariRealtyFile(f); }
+  // Thin wrappers · the RULES live in the pay engine, the page only supplies its own state
+  // (this file's membership, this file's credit coverage, this coordinator's %).
+  function memberTcDiscount(f){ return PAY.memberTcDiscount(f, !!fileMembership(f)); }
+  var svcPrice = PAY.svcPrice;
+  function chargedPrice(f){ return PAY.chargedPrice(f, { covered: isCreditCovered(f), hasMembership: !!fileMembership(f) }); }
+  function atTcCut(f){ if(isCreditCovered(f)) return 0; return PAY.atTcCut(f, tcPctFor(f)); }
+  function atCoCut(f){ var p = chargedPrice(f); return p ? (p - atTcCut(f)) : 0; } // AT keeps the remainder = its share less the member $50 (Aari absorbs the discount, not the TC)
+  var isFileOrgFile = PAY.isFileOrgFile;
+  var isOutsideFile = PAY.isOutsideFile;
   // Manual override · mark any file as File Organization. Set raw_form_data.fo_override = true.
-  function isFoOverride(f){ var v = f && f.raw_form_data && f.raw_form_data.fo_override; return v === true || v === 'true'; }
+  var isFoOverride = PAY.isFoOverride;
   // Self-coordination · the agent IS the assigned TC (they ran their own deal), so it is file-org
   // work, not a paid service. Matches by id, or by name for imported files where the agent is text.
-  function isSelfCoordinated(f){
-    if(!f || !f.assigned_tc_id) return false;
-    // An OUTSIDE file (a TC client from another company, e.g. Samantha) is NEVER self-coordinated
-    // file-org: it is always a full-price split. agent_id can equal assigned_tc_id purely because
-    // the TC uploaded the file (uploader stamped as agent) - that artifact must not bill as file-org.
-    if(isOutsideFile(f)) return false;
-    if(f.agent_id && String(f.agent_id) === String(f.assigned_tc_id)) return true;
-    var an = (f.raw_form_data && f.raw_form_data.agent_name) ? String(f.raw_form_data.agent_name).trim().toLowerCase() : '';
-    var t = (typeof _tcsById === 'object' && _tcsById) ? _tcsById[f.assigned_tc_id] : null;
-    if(an && t){ var tn = ((t.first_name || '') + ' ' + (t.last_name || '')).trim().toLowerCase(); if(tn && an === tn) return true; }
-    return false;
+  // The engine matches an imported file's free-text agent_name against the coordinator's name,
+  // but it cannot know who the coordinators are — that is page state, so we hand it the name.
+  function _tcNameFor(f){
+    var t = (f && f.assigned_tc_id && typeof _tcsById === 'object' && _tcsById) ? _tcsById[f.assigned_tc_id] : null;
+    return t ? ((t.first_name || '') + ' ' + (t.last_name || '')).trim() : '';
   }
-  // A billable service file (full price, 40% TC split): ANY full-TC service (in-house agents who
-  // order full TC pay full price, no discount), plus outside non-file-org services. In-house NON-TC
-  // coordination (MLS, listing prep) and any fo_override file are the $80 file-org rate, not this.
-  function isSplitFile(f){ return !isFileOrgFile(f) && !isFoOverride(f) && !isSelfCoordinated(f) && !(isAariRealtyFile(f) && !isTcService(f)); }
-  // File Organization pay = a flat $80 to the coordinator: explicit File Organization / compliance
-  // files, an fo_override or self-coordinated file, AND in-house Aari Realty coordination that is
-  // NOT a full-TC service.
-  var FILE_ORG_PAY = 80;
-  function paysFileOrg(f){ return !isCreditCovered(f) && (isFileOrgFile(f) || isFoOverride(f) || isSelfCoordinated(f) || (isAariRealtyFile(f) && !isTcService(f))); }
+  function isSelfCoordinated(f){ return PAY.isSelfCoordinated(f, _tcNameFor(f)); }
+  function isSplitFile(f){ return PAY.isSplitFile(f, _tcNameFor(f)); }
+  var FILE_ORG_PAY = PAY.FILE_ORG_PAY;
+  // A credit-covered file pays nothing at all, so it is never "file org pay" either. That guard is
+  // page state (coverage), so it stays here; the classification itself is the engine's.
+  function paysFileOrg(f){ return !isCreditCovered(f) && PAY.paysFileOrg(f, _tcNameFor(f)); }
   // What the coordinating TC earns on a file, regardless of who is viewing.
   function tcPayFor(f){
-    if(isCreditCovered(f)) return 0;       // membership credit covered it · no TC pay
-    if(paysFileOrg(f)) return FILE_ORG_PAY; // file org / in-house · flat $80
-    return atTcCut(f);                      // outside service · 40% (less member $50)
+    if(isCreditCovered(f)) return 0;                                  // membership credit covered it · no TC pay
+    return PAY.tcPayCeiling(f, tcPctFor(f), _tcNameFor(f));           // file-org flat, else the % split
   }
   // Right-side money block for a cockpit list row, by viewer role.
   function atRowMoneyHtml(f){
