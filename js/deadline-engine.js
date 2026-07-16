@@ -320,9 +320,33 @@
       { key:'walk_through',     category:'Closing',    name:'Walk-Through Inspection',
         compute:(E,C,c)=>addDays(C, -1), bizDay:false,
         note:()=>'Day prior to closing.' },
+      // STANDARD F ROLL · read verbatim off an executed FloridaRealtors/FloridaBar ASIS-7x
+      // Rev. 2/26 (1216 NW 32nd Pl, July 2026), Standard F, lines 429 to 436:
+      //   "Other than time for acceptance and Effective Date as set forth in Paragraph 3, any
+      //    time periods provided for OR DATES SPECIFIED in this Contract, whether preprinted,
+      //    handwritten, typewritten or inserted herein, which shall end or occur on a Saturday,
+      //    Sunday, national legal public holiday (as defined in 5 U.S.C. Sec. 6103(a)), or a day
+      //    on which a national legal public holiday is observed because it fell on a Saturday or
+      //    Sunday, shall extend to the next calendar day which is not a Saturday, Sunday,
+      //    national legal public holiday, or a day on which a national legal public holiday is
+      //    observed."
+      // The Closing Date is a "date specified", so it rolls. This entry used to carry
+      // bizDay:false, on the reasoning that "time is of the essence" makes the date immovable.
+      // That reads Standard F backwards: the Standard says time is of the essence AND THEN
+      // grants the weekend/holiday extension, in the same sentence. They are not in tension.
+      // Only acceptance and Effective Date are carved out, and neither is computed here.
+      // flBusinessDay() advances past Sat, Sun and federal holidays, exactly the set Standard F
+      // names, and only ever moves forward.
+      // SCOPE: verified for THIS form only. frbar_standard, frbar_crsp, vac_15, nabor, nab089,
+      // nab088, builder and cc_6 keep bizDay:false on closing because their own time provisions
+      // have not been read yet. Do not copy this flag across on the assumption that they match.
+      // WALK-THROUGH is deliberately left alone. It is "day prior to Closing Date", so when
+      // closing rolls Sat -> Mon the walk-through reads Sunday, and whether Standard F then
+      // extends the walk-through into the closing day itself is a question for counsel, not a
+      // guess to bury in code.
       { key:'closing',          category:'Closing',    name:'Closing Date',
-        compute:(E,C,c)=>C, bizDay:false,
-        note:()=>'As set in contract. Time is of the essence.' },
+        compute:(E,C,c)=>C, bizDay:true,
+        note:()=>'As set in contract. Time is of the essence. A Closing Date landing on a Saturday, Sunday or national legal public holiday extends to the next day that is none of those \u00b7 Standard F.' },
     ],
     'frbar_standard': [
       { key:'init_deposit',     category:'Deposits',   name:'Initial Deposit Deadline',
