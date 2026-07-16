@@ -248,6 +248,44 @@ function parseContract(T: string): Record<string, string> {
   return out;
 }
 
+// ===== Which side are WE on? · derived from Paragraph 19, not guessed =====
+// The contract already tells us: Cooperating Sales Associate = buyer side, Listing = seller side,
+// and parseContract lifts both into buyer_agent / seller_agent. Nothing was ever mapping that to
+// files.client_type, so imported files stayed untagged forever (the questionnaire asks, but email
+// and SkySlope imports never do). Match OUR agent against the two names and the side falls out.
+//
+// Real values this has to survive, taken from live files:
+//   "Samantha Haringa/P3581615"   · license number appended after a slash
+//   "649 Jenny Dao"               · stray leading column number from the PDF grid
+//   "Thomas Rosen PA"             · suffixes
+//   "CoastalEdge Real Estate LLC" · sometimes the brokerage lands in the agent column (parser
+//                                   glitch) — that simply fails to match a person, which is fine
+function normName(s: unknown): string {
+  return String(s ?? "")
+    .split("/")[0]              // drop "/P3581615"
+    .replace(/\d+/g, " ")       // drop stray grid numbers
+    .replace(/[^A-Za-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+function nameMatches(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a.length < 5 || b.length < 5) return false; // too short to trust
+  return a === b || a.includes(b) || b.includes(a);
+}
+// Returns 'buyer' | 'seller' | null. Null whenever it is ambiguous — an unset side is a visible
+// gap the coordinator can fix, a WRONG side silently files the deal under the wrong workflow.
+function sideFromContract(agentName: string, fields: Record<string, string>): string | null {
+  const me = normName(agentName);
+  if (!me) return null;
+  const inBuyer  = nameMatches(me, normName(fields.buyer_agent));
+  const inSeller = nameMatches(me, normName(fields.seller_agent));
+  if (inBuyer && !inSeller) return "buyer";
+  if (inSeller && !inBuyer) return "seller";
+  return null; // on both sides, or on neither · let a human decide
+}
+
 function j(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 }
@@ -264,7 +302,7 @@ Deno.serve(async (req) => {
   if (body.pdf_base64) {
     bytes = Uint8Array.from(atob(body.pdf_base64), (c) => c.charCodeAt(0));
   } else if (body.file_id) {
-    const { data: f, error } = await admin.from("files").select("id, raw_form_data, logistics").eq("id", body.file_id).maybeSingle();
+    const { data: f, error } = await admin.from("files").select("id, raw_form_data, logistics, client_type, agent_id").eq("id", body.file_id).maybeSingle();
     if (error) return j(500, { ok: false, error: "File lookup failed: " + error.message });
     if (!f) return j(404, { ok: false, error: "File not found" });
     file = f;
@@ -312,9 +350,34 @@ Deno.serve(async (req) => {
       } catch (_e) { /* split is best-effort */ }
     }
     const raw = Object.assign({}, file.raw_form_data || {});
-    raw.extracted_contract = { fields, documents, at: new Date().toISOString(), source: "extract-contract-fields/v15" };
-    const { error } = await admin.from("files").update({ raw_form_data: raw }).eq("id", body.file_id);
+    raw.extracted_contract = { fields, documents, at: new Date().toISOString(), source: "extract-contract-fields/v16" };
+
+    // Set the side from the contract, but ONLY when the file has none. A human (or the
+    // questionnaire) always wins: never overwrite an existing client_type.
+    const patch: Record<string, unknown> = { raw_form_data: raw };
+    const existing = String(file.client_type || "").trim();
+    if (!existing) {
+      let agentName = String(raw.agent_name || "").trim();
+      if (!agentName && file.agent_id) {
+        const { data: ag } = await admin.from("agents").select("first_name, last_name").eq("id", file.agent_id).maybeSingle();
+        if (ag) agentName = ((ag.first_name || "") + " " + (ag.last_name || "")).trim();
+      }
+      const side = sideFromContract(agentName, fields);
+      if (side) {
+        patch.client_type = side;
+        // Provenance, so a wrong call is traceable to the line that made it.
+        raw.client_type_source = {
+          from: "contract_p19",
+          agent: agentName,
+          buyer_agent: fields.buyer_agent || null,
+          seller_agent: fields.seller_agent || null,
+          at: new Date().toISOString(),
+        };
+      }
+    }
+    const { error } = await admin.from("files").update(patch).eq("id", body.file_id);
     if (error) return j(500, { ok: false, fields, documents, error: "Draft save failed: " + error.message });
+    return j(200, { ok: true, fields, documents, client_type: patch.client_type ?? existing ?? null });
   }
   return j(200, { ok: true, fields, documents });
 });
