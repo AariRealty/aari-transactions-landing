@@ -10795,9 +10795,13 @@ Tell me your planned move-out date and I will set the inspection.`
     html += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px">' + cells + '</div>';
     html += '<div style="font-size:9.5px;color:#a39e95;margin-top:9px">Today is ringed · tap a day to see it</div></div>';
     // RIGHT · overdue + selected day, pinned
-    const rowHtml = function(d, right, rc){
-      return '<div data-cal-open="' + esc(d.fileId) + '" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
-        '<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:#0f0f0f">' + esc(d.label) + '</div><div style="font-size:11px;color:#8a857c">' + esc(d.address) + '</div></div>' +
+    // `narrow` = rendered inside one of the three side columns, which are a third of the
+    // old full width. The label wraps instead of truncating (a half-read deadline name is
+    // worse than a taller row) and the address drops to the street line only.
+    const rowHtml = function(d, right, rc, narrow){
+      const addr = narrow ? String(d.address || '').split(',')[0] : (d.address || '');
+      return '<div data-cal-open="' + esc(d.fileId) + '" title="' + esc((d.label || '') + ' · ' + (d.address || '')) + '" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:' + (narrow ? '11.5px;line-height:1.35' : '12.5px') + ';color:#0f0f0f">' + esc(d.label) + '</div><div style="font-size:' + (narrow ? '10.5px' : '11px') + ';color:#8a857c;margin-top:1px">' + esc(addr) + '</div></div>' +
         (right ? ('<span style="flex:none;font-size:11px;color:' + (rc || '#8a857c') + '">' + esc(right) + '</span>') : '') + '</div>';
     };
     html += '<div>';
@@ -10806,8 +10810,34 @@ Tell me your planned move-out date and I will set the inspection.`
     const sel = new Date(_calSelDay), sd = byDay[_calSelDay] || [];
     const selLab = (_calSelDay === t0 ? 'Today · ' : '') + sel.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
     html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:2px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">' + esc(selLab) + '</span><span style="font-size:11px;font-weight:600;color:#fff;background:#0f0f0f;border-radius:20px;padding:1px 7px">' + sd.length + '</span></div>';
+    // ===== The day's deadlines, split by side · Buyer | Seller | Not set =====
+    // Every calendar item carries fileId, so the side resolves from the file itself and the
+    // deadline engine stays untouched. A file whose client_type is anything other than buyer
+    // or seller lands in "Not set" rather than being dropped: a deadline that silently
+    // disappears is how one gets missed, and 5 live sale files currently have no side.
+    // NOTE: this calendar is sale-only (see _tcCalDeadlines), so listings never reach here.
+    const _sideOf = function(d){
+      try {
+        const f = (_files || []).find(function(x){ return x.id === d.fileId; });
+        const s = String((f || {}).client_type || '').toLowerCase();
+        return (s === 'buyer' || s === 'seller') ? s : 'notset';
+      } catch(_){ return 'notset'; }
+    };
+    const _cols = { buyer:[], seller:[], notset:[] };
+    sd.forEach(function(d){ _cols[_sideOf(d)].push(d); });
+    const _colHtml = function(items, title, count, accent, muted){
+      let h = '<div style="min-width:0"><div style="font-size:10px;font-weight:600;letter-spacing:.4px;color:' + accent + ';padding-bottom:6px;border-bottom:1.5px solid ' + (muted || accent) + '">' + title + ' <span style="color:#a39e95;font-weight:400">' + count + '</span></div>';
+      h += items.length
+        ? items.map(function(d){ return rowHtml(d, '', '#0f0f0f', true); }).join('')
+        : '<div style="padding:22px 4px;text-align:center;font-size:10.5px;color:#c3bdb2">None</div>';
+      return h + '</div>';
+    };
     html += sd.length
-      ? sd.map(function(d){ return rowHtml(d, (_calSelDay === t0 ? 'today' : ''), '#0f0f0f'); }).join('')
+      ? ('<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px;margin-top:6px">' +
+          _colHtml(_cols.buyer,  'BUYERS',  _cols.buyer.length,  '#0f0f0f') +
+          _colHtml(_cols.seller, 'SELLERS', _cols.seller.length, '#0f0f0f') +
+          _colHtml(_cols.notset, 'NOT SET', _cols.notset.length, '#8a6d1b', '#efe4cf') +
+        '</div>')
       : '<div style="font-size:12px;color:#a39e95;padding:9px 0 2px;border-top:0.5px solid #f3f0ea">' + (_calSelDay === t0 ? 'Nothing due today. You’re ahead.' : 'Nothing due this day.') + '</div>';
     html += '</div></div></div>';
     host.innerHTML = html; _wireCal(host);
