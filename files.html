@@ -8945,6 +8945,31 @@ Tell me your planned move-out date and I will set the inspection.`
   function addDays(date, days){ const d = new Date(date); d.setDate(d.getDate()+days); return d; }
   function nextBiz(date){ const d = new Date(date); while(d.getDay()===0||d.getDay()===6) d.setDate(d.getDate()+1); return d; }
   function fmtFullDate(d){ try { return d.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}); } catch(_){ return ''; } }
+  // ===== Weekend / holiday closing guard =====
+  // A closing on a Saturday, Sunday or federal holiday is nearly always wrong: title offices are
+  // shut. Nothing else in the system catches it, because the closing date is the ONE date the
+  // engine deliberately never moves (deadline-engine key 'closing' is bizDay:false, "As set in
+  // contract. Time is of the essence.") while every other deadline is bizDay:true and rolls. So a
+  // mis-typed closing sits on the calendar looking deliberate, and every date computed backward
+  // from it inherits the error. Surface it where the date is edited so the TC can fix the source.
+  // NOTE: this flags, it does not correct. Whether FAR/BAR Standard F pushes a weekend closing to
+  // the next business day is a contract question for Marlenyi, not something to silently apply.
+  function closingDayWarn(file){
+    try {
+      if(!file || !file.closing_date) return '';
+      const ENG = window.AariDeadlineEngine;
+      const d = (ENG && ENG.parseDate) ? ENG.parseDate(file.closing_date) : new Date(String(file.closing_date).slice(0,10) + 'T12:00:00');
+      if(!(d instanceof Date) || isNaN(d.getTime())) return '';
+      const dow = d.getDay();
+      const hol = (ENG && ENG.isFedHoliday) ? ENG.isFedHoliday(d) : false;
+      if(dow !== 0 && dow !== 6 && !hol) return '';
+      const what = hol ? 'a federal holiday' : d.toLocaleDateString('en-US', { weekday:'long' });
+      return '<div style="display:flex;gap:8px;align-items:flex-start;background:#fbf7ee;border:0.5px solid #efe4cf;border-radius:8px;padding:9px 11px;margin:8px 0 0">' +
+        '<span style="flex:none;color:#8a6d1b;font-weight:700;line-height:1.4">!</span>' +
+        '<span style="font-size:11.5px;color:#7a5c12;line-height:1.5">This closing lands on <b>' + esc(what) + '</b>. Title offices are closed, so this is usually a typo or an addendum date entered wrong. Check the contract and any addendum, then fix the date above. The closing date never rolls on its own, so every deadline counted back from it is using this date.</span>' +
+        '</div>';
+    } catch(_){ return ''; }
+  }
   function dlCountdown(date){
     const today = new Date(); today.setHours(0,0,0,0);
     const diff = Math.round((date - today)/86400000);
@@ -17115,7 +17140,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const _anchors = '<div style="display:flex;gap:24px;flex-wrap:wrap;padding-bottom:13px;border-bottom:0.5px solid #ece8e0">' +
       '<div><div style="font-size:11px;color:#9a958c;margin-bottom:3px">Effective</div><input type="date" data-nf-anchor="effective_date" value="' + (file.effective_date || '') + '" style="font:inherit;font-size:13px;font-weight:600;border:0;border-bottom:1px solid #d9d4ca;padding:2px 0;color:#0f0f0f;background:transparent"></div>' +
       '<div><div style="font-size:11px;color:#9a958c;margin-bottom:3px">Closing</div><input type="date" data-nf-anchor="closing_date" value="' + (file.closing_date || '') + '" style="font:inherit;font-size:13px;font-weight:600;border:0;border-bottom:1px solid #d9d4ca;padding:2px 0;color:#0f0f0f;background:transparent"></div>' +
-      '</div><div style="font-size:11px;color:#9a958c;margin:9px 0 4px">Fix a date here and the deadlines recalculate. Weekends roll to the next business day.</div>';
+      '</div><div style="font-size:11px;color:#9a958c;margin:9px 0 4px">Fix a date here and the deadlines recalculate. Deadlines roll to the next business day; the closing date never rolls.</div>' + closingDayWarn(file);
     const _dlInner = file.effective_date
       ? (_anchors + (_dlRowsHtml || '<div style="font-size:13px;color:#9a958c;padding:10px 0">No deadlines for this contract type.</div>'))
       : (_anchors + '<div style="font-size:13px;color:#9a958c;padding:10px 0">Add the effective date above to generate the deadlines.</div>');
@@ -17239,7 +17264,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const _anchors = '<div style="display:flex;gap:24px;flex-wrap:wrap;padding-bottom:13px;border-bottom:0.5px solid #ece8e0">' +
       '<div><div style="font-size:11px;color:#9a958c;margin-bottom:3px">Effective</div><input type="date" data-nf-anchor="effective_date" value="' + (file.effective_date || '') + '" style="font:inherit;font-size:13px;font-weight:600;border:0;border-bottom:1px solid #d9d4ca;padding:2px 0;color:#0f0f0f;background:transparent"></div>' +
       '<div><div style="font-size:11px;color:#9a958c;margin-bottom:3px">Closing</div><input type="date" data-nf-anchor="closing_date" value="' + (file.closing_date || '') + '" style="font:inherit;font-size:13px;font-weight:600;border:0;border-bottom:1px solid #d9d4ca;padding:2px 0;color:#0f0f0f;background:transparent"></div>' +
-      '</div><div style="font-size:11px;color:#9a958c;margin:9px 0 4px">Fix a date here and the deadlines recalculate. Weekends roll to the next business day.</div>';
+      '</div><div style="font-size:11px;color:#9a958c;margin:9px 0 4px">Fix a date here and the deadlines recalculate. Deadlines roll to the next business day; the closing date never rolls.</div>' + closingDayWarn(file);
     const _dlInner = file.effective_date
       ? (_anchors + (_dlRowsHtml || '<div style="font-size:13px;color:#9a958c;padding:10px 0">No deadlines for this contract type.</div>'))
       : (_anchors + '<div style="font-size:13px;color:#9a958c;padding:10px 0">Add the effective date above to generate the deadlines.</div>');
