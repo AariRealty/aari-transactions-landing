@@ -10477,14 +10477,11 @@ Tell me your planned move-out date and I will set the inspection.`
   // walks its own short service track to delivered. So a full bar always means "my work on this
   // file is done" and never "the property closed" — which is why an active MLS listing does not
   // read as a closed sale.
-  // NOTE: TC_SVC_TRACKS is keyed by the SHORT service ids (lc, op_basic, file_org) while svcKey()
-  // resolves to the LONG ones, and the track table has no 'listing_coordinator'/'file_organization'
-  // entry. Check the raw id FIRST, then the alias, or lc + file_org silently lose their ladder.
+  // Track resolution lives in svcTrack() — one resolver, canonical ids. See TC_SVC_TRACKS.
   function fileProgress(f){
     try {
       if(!f) return null;
-      var raw = String(f.service_type || '').toLowerCase();
-      var trk = (typeof TC_SVC_TRACKS === 'object' && TC_SVC_TRACKS) ? (TC_SVC_TRACKS[raw] || TC_SVC_TRACKS[svcKey(f)]) : null;
+      var trk = (typeof svcTrack === 'function') ? svcTrack(f) : null;
       if(trk && trk.length){
         // service_stage is null until a coordinator touches the stage dropdown, and that dropdown
         // already renders `f.service_stage || track[0]` (see the service-stage selector). Mirror it
@@ -11145,7 +11142,7 @@ Tell me your planned move-out date and I will set the inspection.`
   function fileTcPayCents(f){ try { return Math.round((tcPayFor(f) || 0) * 100); } catch(_){ return 0; } }
   function fileCompleted(f){
     if(deriveStage(f) === 'closed' || f.transaction_stage === 'closed' || f.status === 'closed') return true;
-    var tr = TC_SVC_TRACKS[String(f.service_type || '').toLowerCase()];
+    var tr = svcTrack(f);
     var atFinalStage = !!(tr && f.service_stage === tr[tr.length - 1]);
     // Offer prep is done when its final checklist task is ticked (op_mark_delivered, or
     // op_verify_execution on Complete) OR the service-stage dropdown is at the last stage.
@@ -11175,6 +11172,50 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   function _money(c){ return '$' + (Math.round(c) / 100).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
   function _svcLabel(f){ return (typeof SERVICE_LABEL === 'object' && SERVICE_LABEL[svcKey(f)]) || f.service_type || 'Service'; }
+  // Files I am working that WOULD pay, but have not reached the last rung of their service ladder.
+  // These are the near misses the empty panel names. Sale TC files are excluded on purpose: they
+  // ride the numbered spine to Closed and have no service track, so "move the dropdown" is not the
+  // answer for them and listing them would only be noise.
+  function myNearlyBillableFiles(){
+    if(!_profile) return [];
+    return (_files || []).filter(function(f){
+      if(!f || f.invoice_id) return false;
+      if(f.assigned_tc_id !== _profile.id) return false;
+      if(fileCompleted(f)) return false;
+      var tr = svcTrack(f);
+      if(!tr || !tr.length) return false;
+      return fileTcPayCents(f) > 0 || fileIsCovered(f);
+    });
+  }
+  function emptyInvoicePanelHtml(card){
+    var near = myNearlyBillableFiles();
+    var waiting = (_files || []).filter(function(f){
+      return f && !f.invoice_id && f.assigned_tc_id === (_profile && _profile.id) &&
+             !fileCompleted(f) && !svcTrack(f) && tcSvcIsTc(f);
+    }).length;
+    var head = '<div style="' + card + '"><div style="display:flex;align-items:baseline;justify-content:space-between">' +
+      '<span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Ready to invoice</span>' +
+      '<span style="font-size:12px;color:#8a857c">0 files</span></div>' +
+      '<p style="font-size:13px;color:#5f5e5a;margin:10px 0 0;line-height:1.55">Nothing is ready to invoice yet. A file becomes billable when its <b>Service stage</b> reaches the last step, or when a sale closes.</p>';
+    var body = '';
+    if(near.length){
+      body += '<p style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#8a857c;font-weight:700;margin:16px 0 2px">Almost there &middot; ' + near.length + ' file' + (near.length === 1 ? '' : 's') + '</p>' +
+        near.map(function(f){
+          var tr = svcTrack(f);
+          var cur = f.service_stage || tr[0];
+          var last = tr[tr.length - 1];
+          return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:0.5px solid #f0ebe0">' +
+            '<div style="min-width:0"><div style="font-size:12.5px;font-weight:500">' + esc((f.property_address || 'File').split(',')[0]) + '</div>' +
+            '<div style="font-size:11px;color:#8a857c">' + esc(_svcLabel(f)) + ' &middot; at ' + esc(cur) + ', pays at ' + esc(last) + '</div></div>' +
+            '<span style="font-size:13px;font-weight:600;white-space:nowrap;color:#a39e93">' + _money(fileTcPayCents(f)) + '</span></div>';
+        }).join('');
+      var stuck = near.reduce(function(s, f){ return s + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
+      body += '<p style="font-size:12px;color:#5f5e5a;margin:12px 0 0;line-height:1.55">Open each one, set <b>Service stage</b> to its last step, and it lands here. That is ' + _money(stuck) + ' waiting on the dropdown.</p>';
+    }
+    if(waiting) body += '<p style="font-size:12px;color:#8a857c;margin:12px 0 0;line-height:1.55">' + waiting + ' sale file' + (waiting === 1 ? '' : 's') + ' pay' + (waiting === 1 ? 's' : '') + ' at closing. Nothing to do now.</p>';
+    if(!near.length && !waiting) body += '<p style="font-size:12px;color:#8a857c;margin:12px 0 0">Nothing of yours is close to billable this week.</p>';
+    return head + body + '<div style="font-size:11px;color:#a39e93;text-align:center;margin-top:14px;padding-top:12px;border-top:0.5px solid #f0ebe0">Submit Thursday &middot; paid Friday</div></div>';
+  }
   function invoicingPanelHtml(){
     var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
     var card = 'background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:16px 18px;margin:0 0 14px';
@@ -11195,7 +11236,12 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     if(role === 'tc'){
       var files = myBillableFiles();
-      if(!files.length) return '';
+      // EMPTY IS NOT THE SAME AS ABSENT. This used to `return ''` on an empty list, so the Thursday
+      // reminder email ("Submit my invoice" → files.html) landed on a cockpit with no invoice UI
+      // anywhere on it. Both coordinators read that as a broken link and neither got paid. An empty
+      // list is information: say so, and say exactly what turns a file billable, because the answer
+      // is almost always "nobody moved the Service stage dropdown to its last rung".
+      if(!files.length) return emptyInvoicePanelHtml(card);
       var total = files.reduce(function(s, f){ return s + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
       var rows2 = files.map(function(f){
         var cov = fileIsCovered(f);
@@ -13900,26 +13946,39 @@ Tell me your planned move-out date and I will set the inspection.`
   }
 
   // ===== SERVICE STAGE · non-TC files · TC advances the stage the agent sees =====
+  // KEYED BY THE CANONICAL (LONG) SERVICE ID — the same vocabulary svcKey() and the pay engine
+  // speak. It used to be keyed by the SHORT ids (lc, op_basic, file_org) with a couple of long
+  // twins bolted on by hand, and that half-and-half table cost real money: a file typed
+  // `file_organization` matched NOTHING, so renderServiceStage() hid its dropdown, service_stage
+  // stayed null forever, fileCompleted() never returned true, and the file could never reach an
+  // invoice. Same short-vs-long split that once had Eileen's file org paying $0 instead of $80.
+  // One vocabulary, one table, one resolver (svcTrack). Do not add short keys back — add an alias
+  // to SERVICE_ALIAS in js/pay-engine.js instead, and both the price and the ladder follow.
   const TC_SVC_TRACKS = {
-    lc: ['Intake','Docs','MLS Live','Under contract','Closed'],
-    listing: ['Intake','Docs','MLS Live','Under contract','Closed'],
+    listing_coordinator: ['Intake','Docs','MLS Live','Under contract','Closed'],
     listing_docs: ['Received','Package prep','Signed & reviewed'],
     mls_setup: ['Received','MLS input','Live'],
-    op_basic: ['Received','Drafting','Delivered'],
-    op_complete: ['Received','Drafting','Counter','Executed'],
     offer_prep_basic: ['Received','Drafting','Delivered'],
     offer_prep_complete: ['Received','Drafting','Counter','Executed'],
-    file_org: ['Received','Uploading','Broker review'],
+    file_organization: ['Received','Uploading','Broker review'],
     standalone_review: ['Received','Audit','Archived']
     // rental intentionally omitted · rentals advance via their own transaction_stage
     // pipeline (STAGES_BY_TYPE.rental), not service_stage — avoids two stage models.
   };
+  // The ONLY way to get a file's service ladder. svcKey() first (canonical), raw id second so a
+  // service_type we have not aliased yet still finds a table entry if one happens to match.
+  function svcTrack(f){
+    if(!f) return null;
+    try {
+      return TC_SVC_TRACKS[svcKey(f)] || TC_SVC_TRACKS[String(f.service_type || '').toLowerCase()] || null;
+    } catch(_){ return null; }
+  }
   function tcSvcIsTc(f){ const s = String(f.service_type||'').toLowerCase(); return s==='tc' || s.indexOf('tc_')===0 || (!s && (f.file_type||'sale')==='sale'); }
   function renderServiceStage(){
     const right = document.getElementById('rail-right'); if(!right || !_currentFile) return;
     const f = _currentFile;
     let el = document.getElementById('rail-service-stage');
-    const track = TC_SVC_TRACKS[String(f.service_type||'').toLowerCase()] || TC_SVC_TRACKS[svcKey(f)];
+    const track = svcTrack(f);
     // Some "tracks" are really just the listing lifecycle re-spelled (Listing Coordinator =
     // Intake/Docs/MLS Live/Under contract/Closed). Those DO duplicate the numbered spine, so they
     // keep the spine as their single tracker and get no second dropdown — that was the original
