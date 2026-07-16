@@ -1108,11 +1108,11 @@
        and the file-type filter don't error. -->
   <div id="needsAttention" style="margin:0 0 14px;display:none"></div>
   <div id="fileCalendar"></div>
-  <div id="calHeatmap" style="margin-top:16px"></div>
-  <!-- Board · lives BELOW the calendar on purpose. The agenda answers "what needs me today",
-       the calendar answers "when", the board answers "where is everything by stage". -->
-  <div id="boardWrap" style="margin-top:22px">
-    <p class="kanban-title" id="kanban-title">Pipeline by stage</p>
+  <!-- Board · part of the Active files section, shown when its Board/List toggle is on Board.
+       It sits directly under that header (not below the calendar) because it REPLACES the agenda
+       rows rather than adding a third stacked view of the same files. -->
+  <div id="boardWrap" style="margin-top:2px">
+    <p class="kanban-title" id="kanban-title" style="display:none">Pipeline by stage</p>
     <!-- One tab per service family. Each keeps its OWN stage ladder, because the services do not
          share a lifecycle: a Sale runs to Clear-to-close and Closed, an MLS Setup never closes at
          all. Forcing them onto shared columns would file a listing under a stage that cannot
@@ -1122,6 +1122,9 @@
     <div id="fileList" style="display:none"></div>
     <div class="kanban" id="kanban"></div>
   </div>
+  <!-- Calendar · stays, below the Active files section. Answers "when", which neither the board
+       (where by stage) nor the list (what needs me) answers. -->
+  <div id="calHeatmap" style="margin-top:22px"></div>
 
 </main>
 
@@ -10516,6 +10519,29 @@ Tell me your planned move-out date and I will set the inspection.`
       return { w:'UNBILLED', strong:false };
     } catch(_){ return null; }
   }
+  // ===== Active files · Board (default) or List =====
+  // The board replaces the agenda rather than sitting under it: three stacked views of the same
+  // files (agenda, calendar, board) buried the service tabs so far down the page that the
+  // Listings tab may as well not have existed. One section, board by default, List kept as the
+  // escape hatch because that is where "Needs you" and the overdue counts live.
+  let _activeView = 'board';
+  try { _activeView = localStorage.getItem('aari_active_view_' + ((_profile && _profile.id) ? _profile.id : 'anon')) || 'board'; } catch(_){}
+  function _viewToggleHtml(){
+    const pill = function(v, label){
+      const on = _activeView === v;
+      return '<span data-active-view="' + v + '" style="font-size:11px;font-weight:600;padding:5px 13px;cursor:pointer;' +
+        (on ? 'background:#0f0f0f;color:#fff' : 'color:#5f5e5a') + '">' + label + '</span>';
+    };
+    return '<span style="flex:none;display:inline-flex;border:0.5px solid #e6e1d6;border-radius:20px;overflow:hidden;margin-right:8px">' +
+      pill('board', 'Board') + pill('list', 'List') + '</span>';
+  }
+  // The board lives in its own wrapper below this section; show it only in Board view.
+  function _syncBoardVisibility(){
+    try {
+      const bw = document.getElementById('boardWrap');
+      if(bw) bw.style.display = (_activeView === 'board') ? '' : 'none';
+    } catch(_){}
+  }
   function renderTcCalendar(){
     try { renderNeedsAttention(); } catch(_){}
     const host = document.getElementById('fileCalendar'); if(!host) return;
@@ -10574,6 +10600,7 @@ Tell me your planned move-out date and I will set the inspection.`
     };
     let html = '<div style="display:flex;align-items:center;gap:9px;margin-bottom:13px">' +
       '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:19px;font-weight:600;color:#0f0f0f">Active files</span>' +
+      _viewToggleHtml() +
       '<input id="cal-search" value="' + esc(_calSearch) + '" placeholder="Search…" style="width:140px;font-size:12px;color:#0f0f0f;border:0.5px solid #ece8e0;border-radius:8px;padding:7px 11px;font-family:inherit;background:#fff"></div>';
     const ntc = g.needstc.filter(keep), nyou = g.needsyou.filter(keep), ont = g.ontrack.filter(keep);
     if(!(ntc.length + nyou.length + ont.length)){
@@ -10581,25 +10608,29 @@ Tell me your planned move-out date and I will set the inspection.`
       host.innerHTML = html; _wireCal(host); return;
     }
     const broker = (_profile && String(_profile.role || '').toLowerCase() === 'broker');
+    // Board view · the columns below carry the files, so skip the row groups here and keep only
+    // the header, the toggle and the earnings box. `_showRows` gates every group in one place so
+    // the two views can never disagree about which files exist.
+    const _showRows = (_activeView === 'list');
     // Broker · assigning unassigned files is the job → "Needs a TC" leads, at top.
-    if(broker && ntc.length){
+    if(_showRows && broker && ntc.length){
       html += '<div style="background:#fff;border:1.5px solid #0f0f0f;border-radius:12px;padding:13px 16px;margin-bottom:10px">' +
         '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">Needs a TC</span><span style="font-size:11px;font-weight:600;color:#fff;background:#0f0f0f;border-radius:20px;padding:1px 8px">' + ntc.length + '</span></div>' +
         ntc.map(function(it){ return fileRow(it, 'needstc'); }).join('') + '</div>';
     }
-    if(nyou.length){
+    if(_showRows && nyou.length){
       html += '<div style="background:#fff;border:0.5px solid #f0cfca;border-radius:12px;padding:13px 16px;margin-bottom:10px">' +
         '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#a3402f">Needs you</span><span style="font-size:11px;font-weight:600;color:#a3402f;background:#fbecea;border-radius:20px;padding:1px 8px">' + nyou.length + '</span></div>' +
         nyou.map(function(it){ return fileRow(it, 'needsyou'); }).join('') + '</div>';
     }
-    if(ont.length){
+    if(_showRows && ont.length){
       html += _calOpen.ontrack
         ? '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px;margin-bottom:10px"><div data-cal-group="ontrack" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">On track</span><span style="font-size:11px;color:#a39e95">' + ont.length + '</span><span style="font-size:13px;color:#a39e95">&#9662;</span></div>' + ont.map(function(it){ return fileRow(it, 'ontrack'); }).join('') + '</div>'
         : '<div data-cal-group="ontrack" style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px;margin-bottom:10px;display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:12.5px;color:#5f5e5a">On track</span><span style="font-size:12px;color:#a39e95">' + ont.length + '</span><span style="font-size:13px;color:#a39e95">&#8250;</span></div>';
     }
     // Single TC · the claim pool is secondary work, so it sits at the BOTTOM as
     // "Available to claim" (collapsed), below their own files. (Broker handled it up top.)
-    if(!broker && ntc.length){
+    if(_showRows && !broker && ntc.length){
       html += _calOpen.claim
         ? '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px"><div data-cal-group="claim" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">Available to claim</span><span style="font-size:11px;color:#a39e95">' + ntc.length + '</span><span style="font-size:13px;color:#a39e95">&#9662;</span></div>' + ntc.map(function(it){ return fileRow(it, 'needstc'); }).join('') + '</div>'
         : '<div data-cal-group="claim" style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px;display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:12.5px;color:#5f5e5a">Available to claim</span><span style="font-size:12px;color:#a39e95">' + ntc.length + '</span><span style="font-size:13px;color:#a39e95">&#8250;</span></div>';
@@ -10883,6 +10914,18 @@ Tell me your planned move-out date and I will set the inspection.`
   // Shared wiring · attaches only what exists inside the given host (scoped, so
   // calling it for both the agenda host and the heatmap host never double-binds).
   function _wireCal(host){
+    // Board / List switch · persists per user so a coordinator lands in the view they left in.
+    _syncBoardVisibility();
+    host.querySelectorAll('[data-active-view]').forEach(function(b){
+      b.addEventListener('click', function(){
+        const v = this.getAttribute('data-active-view');
+        if(v === _activeView) return;
+        _activeView = v;
+        try { localStorage.setItem('aari_active_view_' + ((_profile && _profile.id) ? _profile.id : 'anon'), v); } catch(_){}
+        renderTcCalendar();
+        _syncBoardVisibility();
+      });
+    });
     // Self-heal · once per session, when the calendar opens, quietly re-push every
     // deadline so nothing on the coordinator's calendar can drift stale.
     try { if(!window.__aariGcalSelfHealed){ window.__aariGcalSelfHealed = true; setTimeout(function(){ try { gcalSyncDeadlines(); } catch(_){} }, 1500); } } catch(_){}
