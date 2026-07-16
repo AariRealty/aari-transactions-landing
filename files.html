@@ -11228,12 +11228,46 @@ Tell me your planned move-out date and I will set the inspection.`
     if(!near.length && !waiting) body += '<p style="font-size:12px;color:#8a857c;margin:12px 0 0">Nothing of yours is close to billable this week.</p>';
     return head + body + '<div style="font-size:11px;color:#a39e93;text-align:center;margin-top:14px;padding-top:12px;border-top:0.5px solid #f0ebe0">Submit Thursday &middot; paid Friday</div></div>';
   }
+  // Do I coordinate anything myself? True for every TC, and true for a broker who picks up file
+  // org or an MLS setup personally. Drives whether the coordinator panel renders at all, so a
+  // broker who never coordinates is not shown an empty panel they will never use.
+  function iCoordinateFiles(){
+    if(!_profile) return false;
+    return (_files || []).some(function(f){ return f && f.assigned_tc_id === _profile.id; });
+  }
+  // My pay rate, or null when nobody has ever set one. Kept separate from tcPctFor() on purpose:
+  // tcPctFor() answers "what percent do I compute with" and correctly falls back to the
+  // AT_TC_PCT default, while this answers "did a human actually choose that number". The panel
+  // needs the second question, because silently invoicing at a default nobody picked is how the
+  // money goes quietly wrong.
+  function myPayPctOrNull(){
+    try {
+      var me = (_profile && _tcsById) ? _tcsById[_profile.id] : null;
+      var p = me && me.tc_pay_pct;
+      return (p != null && !isNaN(p)) ? Number(p) : null;
+    } catch(_){ return null; }
+  }
+  function noRateWarningHtml(){
+    if(myPayPctOrNull() != null) return '';
+    return '<div style="background:#fbf7ee;border:0.5px solid #efe4cf;border-radius:8px;padding:9px 11px;margin:10px 0 0">' +
+      '<div style="font-size:11.5px;color:#7a5c12;line-height:1.5"><b>No pay rate is set for you.</b> These figures use the ' + AT_TC_PCT + '% default, which nobody chose. Set your rate before you submit, or the invoice records a number you did not pick.</div></div>';
+  }
   function invoicingPanelHtml(){
     var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
     var card = 'background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:16px 18px;margin:0 0 14px';
+    // A broker is not only a payer. Marlenyi coordinates file org and MLS setups herself, and the
+    // work is real whether the broker or a TC did it. This used to `return` inside the broker
+    // branch, so a broker could never see the coordinator panel and could never bill their own
+    // work, even though submit-tc-invoice has always accepted role "broker" (see its role check).
+    // The UI was the only thing in the way. Panels are independent now: Payables is about money
+    // going OUT to coordinators, Ready to invoice is about MY OWN coordinator work. A broker who
+    // does both gets both, stacked, with Payables first because approving others comes before
+    // billing yourself.
+    var out = '';
     if(role === 'broker'){
       var sub = _invoices.filter(function(i){ return i.status === 'submitted'; });
-      if(!sub.length) return '';
+      if(!sub.length) out += '';
+      else {
       var owed = sub.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
       var rows = sub.map(function(i){
         var byId = {}; (_tcsById && (byId = _tcsById)); var tc = byId[i.tc_id]; var nm = tc ? ((tc.first_name || '') + ' ' + (tc.last_name || '')).trim() : 'Coordinator';
@@ -11244,16 +11278,18 @@ Tell me your planned move-out date and I will set the inspection.`
           '<div style="display:flex;align-items:center;gap:10px"><span style="font-size:14px;font-weight:600">' + _money(i.total_cents || 0) + '</span>' +
           '<button type="button" data-mark-invoice-paid="' + i.id + '" style="font-size:11.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:7px;padding:7px 12px;cursor:pointer;font-family:inherit">Mark paid</button></div></div>';
       }).join('');
-      return '<div style="' + card + '"><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Payables &middot; coordinator invoices</span><span style="font-size:12px;color:#8a857c">' + _money(owed) + ' owed</span></div>' + rows + '</div>';
+      out += '<div style="' + card + '"><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Payables &middot; coordinator invoices</span><span style="font-size:12px;color:#8a857c">' + _money(owed) + ' owed</span></div>' + rows + '</div>';
+      }
     }
-    if(role === 'tc'){
+    // Coordinator panel · every TC, plus a broker who actually coordinates files.
+    if(role === 'tc' || (role === 'broker' && iCoordinateFiles())){
       var files = myBillableFiles();
       // EMPTY IS NOT THE SAME AS ABSENT. This used to `return ''` on an empty list, so the Thursday
       // reminder email ("Submit my invoice" → files.html) landed on a cockpit with no invoice UI
       // anywhere on it. Both coordinators read that as a broken link and neither got paid. An empty
       // list is information: say so, and say exactly what turns a file billable, because the answer
       // is almost always "nobody moved the Service stage dropdown to its last rung".
-      if(!files.length) return emptyInvoicePanelHtml(card);
+      if(!files.length) return out + emptyInvoicePanelHtml(card);
       var total = files.reduce(function(s, f){ return s + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
       var rows2 = files.map(function(f){
         var cov = fileIsCovered(f);
@@ -11264,18 +11300,33 @@ Tell me your planned move-out date and I will set the inspection.`
           '<div style="font-size:11px;color:#8a857c">' + esc(_svcLabel(f)) + (cov ? ' · ' + esc(clientName(f)) + '’s credit' : '') + '</div></div>' +
           amt + '</div>';
       }).join('');
-      return '<div style="' + card + '"><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Ready to invoice</span><span style="font-size:12px;color:#8a857c">' + files.length + ' file' + (files.length === 1 ? '' : 's') + '</span></div>' +
+      // A broker sees this panel next to Payables, so the heading has to say WHICH money it is.
+      var heading = (role === 'broker') ? 'Ready to invoice &middot; my coordinator work' : 'Ready to invoice';
+      var noRate = noRateWarningHtml();
+      // No rate set means every figure here is the AT_TC_PCT default nobody picked. Show the work,
+      // show the numbers, but do not let it be submitted: an invoice is a financial record, and
+      // the first one this system ever cuts should not enshrine a default by accident.
+      var submitBtn = noRate
+        ? '<button type="button" disabled style="width:100%;margin-top:12px;background:#e8e4db;color:#8a857c;border:0;border-radius:9px;padding:12px;font-size:13.5px;font-weight:600;cursor:not-allowed;font-family:inherit">Set your pay rate to submit</button>'
+        : '<button type="button" data-submit-invoice="1" style="width:100%;margin-top:12px;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:12px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">Submit invoice to Aari</button>';
+      return out + '<div style="' + card + '"><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">' + heading + '</span><span style="font-size:12px;color:#8a857c">' + files.length + ' file' + (files.length === 1 ? '' : 's') + '</span></div>' +
         rows2 +
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1.5px solid #0f0f0f">' +
           '<span style="font-size:13px;font-weight:600">Total</span><span style="font-family:Georgia,serif;font-size:18px">' + _money(total) + '</span></div>' +
-        '<button type="button" data-submit-invoice="1" style="width:100%;margin-top:12px;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:12px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">Submit invoice to Aari</button>' +
-        '<div style="font-size:11px;color:#a39e93;text-align:center;margin-top:7px">Submit Thursday · paid Friday</div></div>';
+        noRate +
+        submitBtn +
+        '<div style="font-size:11px;color:#a39e93;text-align:center;margin-top:7px">Submit Thursday &middot; paid Friday</div></div>';
     }
-    return '';
+    // `out` and NOT '': a broker with payables but no coordinator work of their own still gets the
+    // Payables panel. Returning '' here would have silently swallowed it.
+    return out;
   }
   async function submitMyInvoice(){
     var files = myBillableFiles();
     if(!files.length){ alert('Nothing to invoice yet.'); return; }
+    // Belt and braces. The button is disabled without a rate, but this is the function that writes
+    // a financial record, so it checks for itself rather than trusting the button that called it.
+    if(myPayPctOrNull() == null){ alert('No pay rate is set for you.\n\nThese figures use the ' + AT_TC_PCT + '% default, which nobody chose. Set your rate first so the invoice records the number you meant.'); return; }
     var creditNo = {};
     var items = files.map(function(f){
       var it = { file_id:f.id, address:(f.property_address || 'File'), service:_svcLabel(f), closed_date:(f.closing_date || ''), amount_cents:fileTcPayCents(f) };
