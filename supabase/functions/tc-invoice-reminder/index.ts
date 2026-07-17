@@ -36,7 +36,7 @@ function bodyHtml(first: string){
     `<p style='margin:0 0 13px'>It&rsquo;s Thursday. You know what that means.</p>`+
     `<p style='margin:0 0 13px'>Every file you closed or wrapped this week is already totaled and sitting in your cockpit. Nothing to build. Nothing to chase. No math.</p>`+
     `<p style='margin:0 0 18px'>Open your Ready to invoice list, look it over, hit submit.</p>`+
-    `<div style='text-align:center;margin:0 0 18px'><a href='https://aaritransactions.com/files.html' style='display:inline-block;background:#0f0f0f;color:#ffffff;text-decoration:none;font-size:14px;font-weight:bold;padding:12px 24px;border-radius:8px'>Submit my invoice</a></div>`+
+    `<div style='text-align:center;margin:0 0 18px'><a href='https://aaritransactions.com/files.html?view=invoice' style='display:inline-block;background:#0f0f0f;color:#ffffff;text-decoration:none;font-size:14px;font-weight:bold;padding:12px 24px;border-radius:8px'>Submit my invoice</a></div>`+
     `<p style='margin:0 0 16px'>Payment goes out Friday. The whole thing takes about thirty seconds.</p>`+
     `<div style='margin-top:20px;padding-top:14px;border-top:0.5px solid #e6e2d8'><div style='font-family:Georgia,serif;font-size:20px'>Aari Transactions</div><div style='font-size:10px;letter-spacing:2px;color:#8a857c;margin-top:5px'>FLORIDA TRANSACTION COORDINATION</div></div>`+
     `</td></tr></table></td></tr></table>`;

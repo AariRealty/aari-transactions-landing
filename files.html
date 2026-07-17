@@ -1122,6 +1122,12 @@
     <div id="fileList" style="display:none"></div>
     <div class="kanban" id="kanban"></div>
   </div>
+  <!-- Invoice · the third view, and the only one about money leaving the company. It is a SIBLING
+       of the board, not a panel inside it. The invoicing panel used to live inside #fileList,
+       which is display:none and sits inside #boardWrap, so it was invisible in Board view AND in
+       List view. Nobody could see the thing the Thursday email told them to click. A view this
+       important owns its own container. -->
+  <div id="invoiceScreen" style="display:none;margin-top:2px"></div>
   <!-- Calendar · stays, below the Active files section. Answers "when", which neither the board
        (where by stage) nor the list (what needs me) answers. -->
   <div id="calHeatmap" style="margin-top:22px"></div>
@@ -10534,20 +10540,49 @@ Tell me your planned move-out date and I will set the inspection.`
   // escape hatch because that is where "Needs you" and the overdue counts live.
   let _activeView = 'board';
   try { _activeView = localStorage.getItem('aari_active_view_' + ((_profile && _profile.id) ? _profile.id : 'anon')) || 'board'; } catch(_){}
-  function _viewToggleHtml(){
-    const pill = function(v, label){
-      const on = _activeView === v;
-      return '<span data-active-view="' + v + '" style="font-size:11px;font-weight:600;padding:5px 13px;cursor:pointer;' +
-        (on ? 'background:#0f0f0f;color:#fff' : 'color:#5f5e5a') + '">' + label + '</span>';
-    };
-    return '<span style="flex:none;display:inline-flex;border:0.5px solid #e6e1d6;border-radius:20px;overflow:hidden;margin-right:8px">' +
-      pill('board', 'Board') + pill('list', 'List') + '</span>';
+  // DEEP LINK · ?view=invoice (also #invoice). The Thursday email says "Submit my invoice", so the
+  // link has to land ON the invoice, not near it. A saved preference must not win over an explicit
+  // link the person just clicked, so the URL is read AFTER localStorage and overrides it. Not
+  // persisted: arriving by link should not silently change which view they see tomorrow.
+  try {
+    var _vq = new URLSearchParams(location.search).get('view');
+    if(_vq === 'invoice' || location.hash === '#invoice') _activeView = 'invoice';
+    else if(_vq === 'board' || _vq === 'list') _activeView = _vq;
+  } catch(_){}
+  // How many of my own files are sitting billable right now. Drives the count on the Invoice tab,
+  // so money waiting to be claimed is visible from the board without opening anything.
+  function _invoiceBadgeCount(){
+    try { return (typeof myBillableFiles === 'function') ? myBillableFiles().length : 0; }
+    catch(_){ return 0; }
   }
-  // The board lives in its own wrapper below this section; show it only in Board view.
+  function _viewToggleHtml(){
+    const pill = function(v, label, badge){
+      const on = _activeView === v;
+      const b = badge ? ('<span style="margin-left:5px;opacity:' + (on ? '.65' : '1') + ';font-weight:700">' + badge + '</span>') : '';
+      return '<span data-active-view="' + v + '" style="font-size:11px;font-weight:600;padding:5px 13px;cursor:pointer;' +
+        (on ? 'background:#0f0f0f;color:#fff' : 'color:#5f5e5a') + '">' + label + b + '</span>';
+    };
+    // Invoice is only offered to people who actually coordinate files. An agent-side viewer or a
+    // broker who never picks up work has nothing to invoice, and a dead tab is worse than no tab.
+    const role = (_profile && String(_profile.role || '').toLowerCase()) || '';
+    const showInvoice = (role === 'tc') || (role === 'broker');
+    const n = showInvoice ? _invoiceBadgeCount() : 0;
+    return '<span style="flex:none;display:inline-flex;border:0.5px solid #e6e1d6;border-radius:20px;overflow:hidden;margin-right:8px">' +
+      pill('board', 'Board') + pill('list', 'List') +
+      (showInvoice ? pill('invoice', 'Invoice', n ? String(n) : '') : '') + '</span>';
+  }
+  // Exactly one view is on screen at a time. #fileCalendar is deliberately NOT touched: it carries
+  // the Active files header, the earnings box and this very toggle, so hiding it would strand the
+  // user with no way back. Board and heatmap step aside for Invoice.
   function _syncBoardVisibility(){
     try {
       const bw = document.getElementById('boardWrap');
       if(bw) bw.style.display = (_activeView === 'board') ? '' : 'none';
+      const inv = document.getElementById('invoiceScreen');
+      if(inv) inv.style.display = (_activeView === 'invoice') ? '' : 'none';
+      const heat = document.getElementById('calHeatmap');
+      if(heat) heat.style.display = (_activeView === 'invoice') ? 'none' : '';
+      if(_activeView === 'invoice') renderInvoiceScreen();
     } catch(_){}
   }
   function renderTcCalendar(){
@@ -11252,6 +11287,86 @@ Tell me your planned move-out date and I will set the inspection.`
     return '<div style="background:#fbf7ee;border:0.5px solid #efe4cf;border-radius:8px;padding:9px 11px;margin:10px 0 0">' +
       '<div style="font-size:11.5px;color:#7a5c12;line-height:1.5"><b>No pay rate is set for you.</b> These figures use the ' + AT_TC_PCT + '% default, which nobody chose. Set your rate before you submit, or the invoice records a number you did not pick.</div></div>';
   }
+  // ===== Invoice screen · the third view =====
+  // Reads like a document, not a widget: the period it covers, one line per file with the rate
+  // that produced the figure, a total, and one button. The rate is ON the line on purpose. A pay
+  // percent nobody chose is how this system quietly under-paid a coordinator before, so the number
+  // that did the multiplying is shown next to the money it made.
+  function _invoiceWeek(){
+    var end = new Date(); end.setHours(0,0,0,0);
+    while(end.getDay() !== 6) end.setDate(end.getDate() + 1);   // week ends Saturday
+    var start = new Date(end.getTime()); start.setDate(start.getDate() - 5); // Monday
+    var f = function(d){ return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); };
+    return f(start) + ' to ' + f(end);
+  }
+  function renderInvoiceScreen(){
+    var host = document.getElementById('invoiceScreen'); if(!host) return;
+    var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
+    var card = 'background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:20px 22px;margin:0 0 14px';
+    var files = [];
+    try { files = myBillableFiles(); } catch(_){ files = []; }
+    var pct = myPayPctOrNull();
+    var noRate = noRateWarningHtml();
+    var payables = '';
+    if(role === 'broker'){
+      try {
+        var sub = (_invoices || []).filter(function(i){ return i.status === 'submitted'; });
+        if(sub.length){
+          var owed = sub.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
+          var prows = sub.map(function(i){
+            var tc = (_tcsById || {})[i.tc_id];
+            var nm = tc ? ((tc.first_name || '') + ' ' + (tc.last_name || '')).trim() : 'Coordinator';
+            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-top:0.5px solid #f0ebe0">' +
+              '<div><div style="font-size:13px;font-weight:500">' + esc(nm) + ' <span style="color:#8a857c;font-weight:400">&middot; ' + esc(i.invoice_number || '') + '</span></div>' +
+              '<div style="font-size:11px;color:#8a857c">' + ((i.line_items || []).length) + ' file' + (((i.line_items || []).length) === 1 ? '' : 's') + '</div></div>' +
+              '<div style="display:flex;align-items:center;gap:10px"><span style="font-size:14px;font-weight:600">' + _money(i.total_cents || 0) + '</span>' +
+              '<button type="button" data-mark-invoice-paid="' + i.id + '" style="font-size:11.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:7px;padding:7px 12px;cursor:pointer;font-family:inherit">Mark paid</button></div></div>';
+          }).join('');
+          payables = '<div style="' + card + '"><div style="display:flex;align-items:baseline;justify-content:space-between">' +
+            '<span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Payables &middot; coordinator invoices</span>' +
+            '<span style="font-size:12px;color:#8a857c">' + _money(owed) + ' owed</span></div>' + prows + '</div>';
+        }
+      } catch(_){}
+    }
+    var head = '<div style="' + card + '">' +
+      '<p style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;margin:0 0 2px">This week&rsquo;s invoice</p>' +
+      '<p style="font-size:12px;color:#8a857c;margin:0 0 16px">' + esc(_invoiceWeek()) + ' &middot; submit Thursday, paid Friday</p>';
+    if(!files.length){
+      host.innerHTML = payables + head +
+        '<p style="font-size:13px;color:#5f5e5a;line-height:1.55;margin:0">Nothing is ready to invoice yet. A file becomes billable when its <b>Service stage</b> reaches the last step, or when a sale closes.</p>' +
+        (function(){
+          var near = []; try { near = myNearlyBillableFiles(); } catch(_){}
+          if(!near.length) return '';
+          var rows = near.map(function(f){
+            var tr = svcTrack(f); var cur = f.service_stage || tr[0]; var last = tr[tr.length - 1];
+            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:0.5px solid #f0ebe0">' +
+              '<div style="min-width:0"><div style="font-size:12.5px;font-weight:500">' + esc((f.property_address || 'File').split(',')[0]) + '</div>' +
+              '<div style="font-size:11px;color:#8a857c">' + esc(_svcLabel(f)) + ' &middot; at ' + esc(cur) + ', pays at ' + esc(last) + '</div></div>' +
+              '<span style="font-size:13px;font-weight:600;white-space:nowrap;color:#a39e93">' + _money(fileTcPayCents(f)) + '</span></div>';
+          }).join('');
+          var stuck = near.reduce(function(s, f){ return s + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
+          return '<p style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#8a857c;font-weight:700;margin:18px 0 2px">Almost there &middot; ' + near.length + '</p>' + rows +
+            '<p style="font-size:12px;color:#5f5e5a;margin:12px 0 0;line-height:1.55">Open each one, set <b>Service stage</b> to its last step, and it lands here. That is ' + _money(stuck) + ' waiting on the dropdown.</p>';
+        })() + '</div>';
+      return;
+    }
+    var total = files.reduce(function(s, f){ return s + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
+    var rows = files.map(function(f){
+      var cov = fileIsCovered(f);
+      var sub = esc(_svcLabel(f)) + (cov ? ' &middot; ' + esc(clientName(f)) + '&rsquo;s credit' : (pct != null ? ' &middot; ' + pct + '%' : ''));
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-top:0.5px solid #f0ebe0">' +
+        '<div style="min-width:0"><div style="font-size:13.5px;font-weight:500;color:' + (cov ? '#5f5e5a' : '#0f0f0f') + '">' + esc((f.property_address || 'File').split(',')[0]) + '</div>' +
+        '<div style="font-size:11px;color:#8a857c">' + sub + '</div></div>' +
+        '<span style="font-size:13.5px;font-weight:600;white-space:nowrap;color:' + (cov ? '#a39e93' : '#0f0f0f') + '">' + (cov ? '$0.00' : _money(fileTcPayCents(f))) + '</span></div>';
+    }).join('');
+    var btn = noRate
+      ? '<button type="button" disabled style="width:100%;margin-top:14px;background:#e8e4db;color:#8a857c;border:0;border-radius:9px;padding:14px;font-size:13.5px;font-weight:600;cursor:not-allowed;font-family:inherit">Set your pay rate to submit</button>'
+      : '<button type="button" data-submit-invoice="1" style="width:100%;margin-top:14px;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:14px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">Submit invoice to Aari</button>';
+    host.innerHTML = payables + head + rows +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding-top:14px;border-top:1.5px solid #0f0f0f">' +
+        '<span style="font-size:13px;font-weight:600">Total</span><span style="font-family:\'Playfair Display\',Georgia,serif;font-size:26px">' + _money(total) + '</span></div>' +
+      noRate + btn + '</div>';
+  }
   function invoicingPanelHtml(){
     var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
     var card = 'background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:16px 18px;margin:0 0 14px';
@@ -11368,7 +11483,12 @@ Tell me your planned move-out date and I will set the inspection.`
   function renderFileList(){
     const host = document.getElementById('fileList');
     if(!host) return;
-    const _invPanel = (function(){ try { return invoicingPanelHtml(); } catch(_){ return ''; } })();
+    // The invoicing panel USED to be built in here and prepended to every branch below. #fileList
+    // is display:none in the markup and sits inside #boardWrap, so it rendered into a container
+    // nobody could ever see, in either view. That is why the Thursday email looked broken: the
+    // panel existed in the DOM the whole time. Invoicing is its own view now (renderInvoiceScreen,
+    // #invoiceScreen). One surface, one owner. Do not re-add it here.
+    const _invPanel = '';
     const visible = _files
       .filter(f => (f.file_type || 'sale') === _fileTypeFilter)
       .filter(f => f.status !== 'archived')
