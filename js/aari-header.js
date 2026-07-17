@@ -275,8 +275,14 @@
     var roleWord = { tc: 'Transaction Coordinator', agent: 'Agent', broker: 'Broker' }[viewAs] || viewAs.toUpperCase();
     var banner = document.createElement('div');
     banner.id = 'aari-preview-banner';
+    // Say exactly what this is. It used to read "You're seeing what a Transaction Coordinator
+    // sees", full stop, while the page underneath still rendered as broker, because nothing but
+    // this banner ever read aari-view-as. files.html now honours the preview role, so the SCREEN
+    // really is the TC's screen. The DATA is not: RLS hands a broker every row whichever view
+    // is painted, so a broker previewing as TC sees the TC layout over the broker's own files.
+    // That distinction is the whole reason this banner is worth trusting, so it is on the banner.
     banner.innerHTML = '<span class="apb-eb">Preview mode</span>' +
-      '<span class="apb-body">You\'re seeing what a <strong>' + esc(roleWord) + '</strong> sees.</span>' +
+      '<span class="apb-body">The <strong>' + esc(roleWord) + '</strong> screen, over your own data. Layout and figures match what they see, the files are still yours.</span>' +
       '<button type="button" class="apb-exit" id="aari-preview-exit">Return to my view</button>';
     document.body.insertBefore(banner, document.body.firstChild);
     document.body.classList.add('aari-preview-mode');

@@ -6881,6 +6881,33 @@ Tell me your planned move-out date and I will set the inspection.`
     if(!session){ return showGate('Sign in required.', 'Sign in with your Aari account.', '/login.html'); }
     _profile = await window.AariAuth.getAgentProfile();
     if(!_profile){ return showGate('Profile missing.', 'Contact hello@aaritransactions.com.', null); }
+
+    // ===== PREVIEW MODE · make the banner tell the truth =====
+    // aari-header.js writes sessionStorage['aari-view-as'] and paints a bar reading "You're seeing
+    // what a Transaction Coordinator sees." Nothing else ever read that key. files.html branches
+    // on _profile.role in 21 places and none of them knew preview existed, so the page kept
+    // rendering as broker underneath the banner. Marlenyi opened the TC preview, saw AARI
+    // TRANSACTIONS NET with the full revenue and margin breakdown, and reasonably concluded her
+    // coordinators could see the company's books. They cannot. The preview could.
+    //
+    // A preview that lies is worse than no preview, because it is the exact tool you reach for to
+    // check what your team sees, and it answers wrong with total confidence.
+    //
+    // One override here fixes all 21 sites at once. VIEW ONLY: this changes what is rendered, not
+    // what is fetched. RLS still hands a broker every row, so a broker previewing as TC sees the
+    // TC's chrome over broker data. The banner says so.
+    _profile._realRole = String(_profile.role || '').toLowerCase();
+    try {
+      var _viewAs = sessionStorage.getItem('aari-view-as');
+      // ONLY a real broker may preview. Otherwise anyone could set the key and paint themselves a
+      // broker UI. RLS would still refuse the data, but they would get broker-only controls that
+      // fail silently, which is its own bug class in this codebase.
+      if(_viewAs && _profile._realRole === 'broker' && ['tc','agent','broker'].indexOf(_viewAs) !== -1){
+        _profile.role = _viewAs;
+        _profile._previewing = true;
+      }
+    } catch(_){}
+
     const role = (_profile.role || 'agent').toLowerCase();
     if(role !== 'tc' && role !== 'broker'){
       return showGate('Staff access only.', 'This page is for TCs and brokers. Agents use /portal.html.', '/portal.html');
