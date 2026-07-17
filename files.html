@@ -18517,7 +18517,25 @@ Tell me your planned move-out date and I will set the inspection.`
   // bucketed into monthly cycles (anchored on the membership's current_period_start day); each cycle
   // gets a fresh `credits_total`. Within a cycle, earliest files are covered, the rest overflow to
   // billable. A new month = a new set of credits, automatically.
-  function _asDate(x){ return (x instanceof Date) ? x : new Date(x); }
+  // A DATE-ONLY value is a CALENDAR DAY, not an instant. new Date('2026-06-28') parses as UTC
+  // midnight, which west of Greenwich is the EVENING OF THE 27th. getDate() then answers 27.
+  //
+  // That silently cost a client money. memberships.current_period_start is a date column, so
+  // Samantha's billing anchor of 2026-06-28 became "Jun 27 20:00" in Eastern, and cycleIndex()
+  // compares day-of-month: her June 27 files were no longer BEFORE the anchor day (27 < 27 is
+  // false), so they never fell into the previous cycle. Six credit services collapsed into one
+  // month against four credits, and two of her July listings billed at $80 apiece instead of $0.
+  // Nothing on screen said why, and the arithmetic looked perfect.
+  //
+  // Noon local, which is what deadline-engine.js has always done in parseDate() for exactly this
+  // reason. Noon survives every timezone offset and both DST edges, so the calendar day a human
+  // typed is the calendar day the code reads. Timestamps (with a T and an offset) are real
+  // instants and are left alone.
+  function _asDate(x){
+    if(x instanceof Date) return x;
+    var s = String(x == null ? '' : x);
+    return new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? (s + 'T12:00:00') : s);
+  }
   // Whole monthly cycles between an anchor date and a given date (0 = the anchor's own cycle).
   function cycleIndex(dateLike, anchorLike){
     var d = _asDate(dateLike), a = _asDate(anchorLike);
