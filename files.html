@@ -10677,9 +10677,19 @@ Tell me your planned move-out date and I will set the inspection.`
   } catch(_){}
   // How many of my own files are sitting billable right now. Drives the count on the Invoice tab,
   // so money waiting to be claimed is visible from the board without opening anything.
+  // The badge must count what the tab CONTAINS, for the person reading it.
+  // A coordinator's Invoice tab is her own files, so the count is her own files.
+  // A broker's Invoice tab is the whole team's board, so counting only her own work would put a
+  // "1" on a screen showing three coordinators. Hers counts what is WAITING ON HER: every
+  // coordinator invoice submitted and not yet paid, plus her own work if she has any to send.
   function _invoiceBadgeCount(){
-    try { return (typeof myBillableFiles === 'function') ? myBillableFiles().length : 0; }
-    catch(_){ return 0; }
+    try {
+      var mine = (typeof myBillableFiles === 'function') ? myBillableFiles().length : 0;
+      var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
+      if(role !== 'broker') return mine;
+      var owed = (_invoices || []).filter(function(i){ return i.status === 'submitted'; }).length;
+      return owed + (mine ? 1 : 0);
+    } catch(_){ return 0; }
   }
   function _viewToggleHtml(){
     const pill = function(v, label, badge){
@@ -11531,10 +11541,167 @@ Tell me your planned move-out date and I will set the inspection.`
       '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#a39e93;font-weight:700;margin-bottom:10px">Next invoice &middot; closing soon</div>' +
       rows + '</div>';
   }
+  // ===== BROKER · WHERE EACH INVOICE STANDS =====
+  // The coordinator's invoice screen answers "what am I owed". The broker's cannot: her question is
+  // "who owes me work, who am I waiting on, and who do I pay today", across every coordinator at
+  // once. Same data, different question, so it gets a different shape: three columns by STATE, one
+  // card per coordinator, which is the same language as her board.
+  //
+  // Collapsed it answers who-owes-what. Expanded (Details) it opens every line AND surfaces the
+  // coordinators with nothing billable, because when you are auditing, a coordinator with zero is a
+  // fact you want stated, not an absence you have to notice.
+  //
+  // SEND IS NOT HERE. A coordinator's invoice is her attestation about her own pay. The broker can
+  // read Eileen's lines before they are sent; she cannot send them for her. Only the broker's OWN
+  // card carries Send, and it routes through the same submitMyInvoice() the coordinators use.
+  var _invDetails = false;
+  try { _invDetails = localStorage.getItem('aari_invoice_details') === '1'; } catch(_){}
+  function _tcDisplayName(id){
+    var t = (typeof _tcsById === 'object' && _tcsById) ? _tcsById[id] : null;
+    var n = t ? ((t.first_name || '') + ' ' + (t.last_name || '')).trim() : '';
+    return n || 'Coordinator';
+  }
+  // Every coordinator who has a live file, billable or not. A coordinator with nothing to bill is
+  // NOT dropped: "Milennys has no card" and "Milennys has no work" look identical on a screen, and
+  // only one of them is true.
+  function _brokerInvoiceGroups(){
+    var by = {};
+    (_files || []).forEach(function(f){
+      if(!f || !f.assigned_tc_id) return;
+      if(f.invoice_id) return;                                              // already on an invoice
+      if(f.status === 'archived' || f.archived_at) return;
+      if((f.raw_form_data || {}).test_pool) return;
+      var g = by[f.assigned_tc_id] || (by[f.assigned_tc_id] = { id:f.assigned_tc_id, billable:[], open:0 });
+      if(fileIsBillable(f)) g.billable.push(f); else g.open++;
+    });
+    return Object.keys(by).map(function(k){ return by[k]; }).sort(function(a, b){
+      var av = a.billable.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
+      var bv = b.billable.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
+      if(av !== bv) return bv - av;                                          // money first
+      return _tcDisplayName(a.id).localeCompare(_tcDisplayName(b.id));
+    });
+  }
+  function _invColHtml(label, amountText, inner){
+    return '<div><div style="display:flex;align-items:baseline;justify-content:space-between;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#a39e93;font-weight:700;padding:0 2px 8px">' +
+      '<span>' + label + '</span><span>' + amountText + '</span></div>' + inner + '</div>';
+  }
+  function _invEmptyColHtml(text){
+    return '<div style="border:0.5px dashed #ddd7cb;border-radius:10px;padding:22px 13px;text-align:center">' +
+      '<div style="font-size:11px;color:#a39e93;line-height:1.5">' + text + '</div></div>';
+  }
+  function brokerInvoiceBoardHtml(){
+    var groups = _brokerInvoiceGroups();
+    var mine = (_profile && _profile.id) || '';
+    var working = groups.filter(function(g){ return g.billable.length; });
+    var idle    = groups.filter(function(g){ return !g.billable.length; });
+    var notSentTotal = working.reduce(function(s, g){
+      return s + g.billable.reduce(function(t, f){ return t + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
+    }, 0);
+
+    var cards = working.map(function(g){
+      var isMe  = String(g.id) === String(mine);
+      var paid  = g.billable.filter(function(f){ return !fileIsCovered(f); });
+      var cov   = g.billable.filter(function(f){ return fileIsCovered(f); });
+      var total = paid.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
+      var bits  = [];
+      if(paid.length) bits.push(paid.length + ' paid line' + (paid.length === 1 ? '' : 's'));
+      if(cov.length)  bits.push(cov.length + ' credit' + (cov.length === 1 ? '' : 's'));
+
+      // Details · one row per file. The rate is shown ONLY where a rate produced the figure: file
+      // org pays a flat $80 and no percentage is involved, so printing a percent there is a lie the
+      // reader cannot reconcile. Credit lines are dimmed: counted, not paid.
+      var det = '';
+      if(_invDetails){
+        var rowsHtml = paid.map(function(f){
+          var flat = false; try { flat = !isSplitFile(f); } catch(_){}
+          var basis = flat ? 'flat fee' : (tcPctFor(f) + '%');
+          return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:6px 0;border-top:0.5px solid #f0ebe0">' +
+            '<span style="font-size:11px;line-height:1.35;min-width:0">' + esc((f.property_address || 'File').split(',')[0]) +
+            '<br><span style="color:#a39e93;font-size:10px">' + esc(_svcLabel(f)) + ' &middot; ' + esc(basis) + '</span></span>' +
+            '<span style="font-size:11px;white-space:nowrap">' + _money(fileTcPayCents(f)) + '</span></div>';
+        }).join('') + cov.map(function(f){
+          return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:6px 0;border-top:0.5px solid #f0ebe0;opacity:.5">' +
+            '<span style="font-size:11px;line-height:1.35;min-width:0">' + esc((f.property_address || 'File').split(',')[0]) +
+            '<br><span style="font-size:10px">' + esc(_svcLabel(f)) + ' &middot; credit</span></span>' +
+            '<span style="font-size:11px;white-space:nowrap">$0.00</span></div>';
+        }).join('');
+        det = '<div style="margin-top:10px;padding-top:4px;border-top:0.5px solid #f0ebe0">' + rowsHtml + '</div>';
+      }
+
+      // Send only on her own card, and only with a rate set · an invoice must not record a percent
+      // nobody chose. Everyone else's card says who it is waiting on instead.
+      var foot = isMe
+        ? (myPayPctOrNull() == null
+            ? '<div style="background:#fbf7ee;border:0.5px solid #efe4cf;border-radius:6px;padding:7px;text-align:center;font-size:10.5px;color:#7a5c12;font-weight:600;margin-top:9px">Set your pay rate to send</div>'
+            : '<button type="button" data-submit-invoice="1" style="width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:6px;padding:7px;text-align:center;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:9px">Send</button>')
+        : '<div style="font-size:10.5px;color:#a39e93;margin-top:8px;padding-top:8px;border-top:0.5px solid #f0ebe0">Waiting on ' + esc(_tcDisplayName(g.id).split(' ')[0]) + '</div>';
+
+      return '<div style="background:#fff;border:0.5px solid ' + (isMe ? '#ddd7cb' : '#e8e4db') + ';border-radius:10px;padding:13px;margin-bottom:8px">' +
+        '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">' +
+        '<span style="font-size:12.5px;font-weight:500">' + esc(isMe ? 'You' : _tcDisplayName(g.id).split(' ')[0]) + '</span>' +
+        '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:17px;font-variant-numeric:tabular-nums">' + _money(total) + '</span></div>' +
+        (bits.length ? '<div style="font-size:10.5px;color:#8a857c;margin-top:4px">' + bits.join(' &middot; ') + '</div>' : '') +
+        det + foot + '</div>';
+    }).join('');
+
+    // Coordinators with nothing to bill · details only. Says WHY, using their real open count, so
+    // "$0" reads as a fact about the week rather than a suspicion about the software.
+    if(_invDetails){
+      cards += idle.map(function(g){
+        return '<div style="background:#fff;border:0.5px solid #e8e4db;border-radius:10px;padding:13px;margin-bottom:8px;opacity:.6">' +
+          '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">' +
+          '<span style="font-size:12.5px">' + esc(_tcDisplayName(g.id).split(' ')[0]) + '</span>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:17px">$0.00</span></div>' +
+          '<div style="font-size:10.5px;color:#a39e93;margin-top:4px;line-height:1.4">Nothing billable.' +
+          (g.open ? ' ' + g.open + ' open file' + (g.open === 1 ? '' : 's') + '.' : '') + '</div></div>';
+      }).join('');
+    }
+
+    var subs = (_invoices || []).filter(function(i){ return i.status === 'submitted'; });
+    var paidInv = (_invoices || []).filter(function(i){ return i.status === 'paid'; });
+    var invCardHtml = function(i, payable){
+      return '<div style="background:#fff;border:0.5px solid #e8e4db;border-radius:10px;padding:13px;margin-bottom:8px">' +
+        '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">' +
+        '<span style="font-size:12.5px;font-weight:500">' + esc(_tcDisplayName(i.tc_id).split(' ')[0]) + '</span>' +
+        '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:17px;font-variant-numeric:tabular-nums">' + _money(i.total_cents || 0) + '</span></div>' +
+        '<div style="font-size:10.5px;color:#8a857c;margin-top:4px">' + esc(i.invoice_number || '') + ' &middot; ' + ((i.line_items || []).length) + ' file' + (((i.line_items || []).length) === 1 ? '' : 's') + '</div>' +
+        (_invDetails ? '<div style="margin-top:10px;padding-top:4px;border-top:0.5px solid #f0ebe0">' + (i.line_items || []).map(function(it){
+          return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:6px 0;border-top:0.5px solid #f0ebe0' + (it.covered ? ';opacity:.5' : '') + '">' +
+            '<span style="font-size:11px;line-height:1.35;min-width:0">' + esc(String(it.address || 'File').split(',')[0]) +
+            '<br><span style="color:#a39e93;font-size:10px">' + esc(it.service || '') + (it.covered ? ' &middot; credit' : '') + '</span></span>' +
+            '<span style="font-size:11px;white-space:nowrap">' + _money(it.amount_cents || 0) + '</span></div>';
+        }).join('') + '</div>' : '') +
+        (payable
+          ? '<button type="button" data-mark-invoice-paid="' + esc(i.id) + '" style="width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:6px;padding:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:9px">Mark paid</button>'
+          : '<div style="font-size:10.5px;color:#a39e93;margin-top:8px;padding-top:8px;border-top:0.5px solid #f0ebe0">Paid' + (i.paid_at ? ' ' + esc(new Date(i.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : '') + '</div>') +
+        '</div>';
+    };
+
+    var toggle = '<label style="margin-left:auto;display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none">' +
+      '<span style="font-size:11.5px;color:' + (_invDetails ? '#0f0f0f;font-weight:600' : '#8a857c') + '">Details</span>' +
+      '<span style="width:34px;height:19px;border-radius:999px;background:' + (_invDetails ? '#0f0f0f' : '#ddd7cb') + ';position:relative;display:inline-block;transition:background .18s">' +
+      '<span style="position:absolute;top:2px;left:' + (_invDetails ? '17px' : '2px') + ';width:15px;height:15px;border-radius:50%;background:#fff;transition:left .18s;box-shadow:0 1px 2px rgba(0,0,0,.2)"></span></span>' +
+      '<button type="button" data-invoice-details="1" style="position:absolute;opacity:0;width:0;height:0;padding:0;border:0"></button></label>';
+
+    return '<div style="display:flex;align-items:center;gap:10px;margin:0 0 12px;position:relative">' +
+        '<span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Where each invoice stands</span>' +
+        '<span style="font-size:11.5px;color:#a39e93">' + esc(_invoicePeriod()) + '</span>' + toggle + '</div>' +
+      '<div style="background:#faf8f3;border-radius:12px;padding:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:start" data-invoice-board="1">' +
+        _invColHtml('Not sent', _money(notSentTotal), cards || _invEmptyColHtml('Nothing billable this week<br>across any coordinator.')) +
+        _invColHtml('Sent &middot; unpaid', _money(subs.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0)),
+          subs.length ? subs.map(function(i){ return invCardHtml(i, true); }).join('') : _invEmptyColHtml('Nothing waiting on you.<br>Invoices land here Thursday.')) +
+        _invColHtml('Paid', _money(paidInv.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0)),
+          paidInv.length ? paidInv.slice(0, 8).map(function(i){ return invCardHtml(i, false); }).join('') : _invEmptyColHtml('No invoice has ever<br>been submitted.')) +
+      '</div>';
+  }
   function renderInvoiceScreen(){
     var host = document.getElementById('invoiceScreen'); if(!host) return;
     var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
     var card = 'background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:16px 18px;margin:0 0 14px';
+
+    // The broker sees the whole team's money, not just her own. Her own coordinator work is one
+    // card in that board like anyone else's, because that is what it is.
+    if(role === 'broker'){ host.innerHTML = brokerInvoiceBoardHtml(); return; }
     var files = [];
     try { files = myBillableFiles(); } catch(_){ files = []; }
     var pct = myPayPctOrNull();
@@ -11592,7 +11759,16 @@ Tell me your planned move-out date and I will set the inspection.`
     var total = paidFiles.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
 
     var lineHtml = function(f, muted){
-      var sub = esc(_svcLabel(f)) + (muted ? '' : (pct != null ? ' &middot; ' + pct + '%' : ''));
+      // The rate belongs on the line ONLY when a rate actually produced the figure. File org and
+      // in-house work pay a FLAT $80 (see PAY.paysFileOrg) and no percentage is involved, so
+      // "File Organization · 50%" next to $80.00 was simply a lie: it invited the reader to check
+      // 50% of something and find nothing that squares. A split file shows its percent because
+      // the coordinator should be able to verify her own pay against her Compensation Schedule.
+      var isFlat = false;
+      try { isFlat = !isSplitFile(f); } catch(_){}
+      var rateBit = (muted || isFlat || pct == null) ? '' : (' &middot; ' + pct + '%');
+      var flatBit = (!muted && isFlat) ? ' &middot; flat fee' : '';
+      var sub = esc(_svcLabel(f)) + rateBit + flatBit;
       return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:' + (muted ? '6px' : '11px') + ' 0;border-top:0.5px solid #f0ebe0">' +
         '<div style="min-width:0"><div style="font-size:' + (muted ? '12.5px' : '13.5px') + ';font-weight:' + (muted ? '400' : '500') + ';color:' + (muted ? '#5f5e5a' : '#0f0f0f') + '">' + esc((f.property_address || 'File').split(',')[0]) + '</div>' +
         (muted ? '' : '<div style="font-size:11px;color:#8a857c">' + sub + '</div>') + '</div>' +
@@ -11678,6 +11854,14 @@ Tell me your planned move-out date and I will set the inspection.`
     if(s){ submitMyInvoice(); return; }
     var m = e.target && e.target.closest && e.target.closest('[data-mark-invoice-paid]');
     if(m){ markInvoicePaid(m.getAttribute('data-mark-invoice-paid')); return; }
+    // Details is a way of reading, not a thing you do. It survives the reload.
+    var d = e.target && e.target.closest && e.target.closest('[data-invoice-details]');
+    if(d){
+      _invDetails = !_invDetails;
+      try { localStorage.setItem('aari_invoice_details', _invDetails ? '1' : '0'); } catch(_){}
+      try { renderInvoiceScreen(); } catch(_){}
+      return;
+    }
   });
   function renderFileList(){
     const host = document.getElementById('fileList');
