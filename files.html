@@ -13687,18 +13687,43 @@ Tell me your planned move-out date and I will set the inspection.`
   // who moved a file's stage, who overrode a deadline, when, and why.
   // Best-effort · never blocks the user action. Silent catch so a logging
   // failure doesn't break the operational write.
+  // ===== AUDIT LOG =====
+  // This wrote actor_type:'staff' for months. audit_log has a CHECK constraint and 'staff' was
+  // never in it, so EVERY write from this page was rejected by the database. Zero rows. Not one
+  // deadline_confirmed, deadline_unconfirmed or stage_changed has ever been recorded, while the
+  // comment at the call site promised "append-only, FREC-defensible". The insert was awaited
+  // inside a try/catch whose only response was console.warn, so a check-constraint violation
+  // looked exactly like success. It failed silently every single time, on one wrong word.
+  //
+  // actor_type now mirrors agents.role (agent | tc | broker), which is the vocabulary the rest of
+  // the app already speaks and the constraint now accepts. Do not invent a new word here.
+  //
+  // And it no longer swallows. An audit write that fails is a compliance problem, not a warning:
+  // it means an action happened with no record that it happened. It still does not block the
+  // user's action (losing the work would be worse than losing the log line), but it reports
+  // loudly, once, so a silent hole can never sit unnoticed for months again.
+  let _auditFailWarned = false;
   async function writeAuditLog(action, fileId, details){
     try {
       const { data: { user } } = await _client.auth.getUser();
-      await _client.from('audit_log').insert({
+      const actorType = (_profile && _profile._realRole) ? _profile._realRole
+                      : ((_profile && String(_profile.role || '').toLowerCase()) || 'tc');
+      const r = await _client.from('audit_log').insert({
         actor_id: user ? user.id : null,
-        actor_type: 'staff',
+        actor_type: actorType,
         action: action,
         target_table: 'files',
         target_id: fileId,
         details: details || {},
       });
-    } catch(err){ console.warn('[files] audit_log write failed', action, err); }
+      if(r && r.error){
+        console.error('[files] AUDIT LOG REJECTED · ' + action + ' on ' + fileId + ' · ' + r.error.message);
+        if(!_auditFailWarned){
+          _auditFailWarned = true;
+          alert('Heads up: this action saved, but the audit log did not record it.\n\n' + r.error.message + '\n\nThe work is fine. The compliance record is not. Send Marlenyi this message.');
+        }
+      }
+    } catch(err){ console.error('[files] audit_log write threw', action, err); }
   }
 
   // ============== KANBAN INTERACTION (delegated) ==============
