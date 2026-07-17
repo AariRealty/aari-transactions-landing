@@ -11345,6 +11345,27 @@ Tell me your planned move-out date and I will set the inspection.`
   // These are the near misses the empty panel names. Sale TC files are excluded on purpose: they
   // ride the numbered spine to Closed and have no service track, so "move the dropdown" is not the
   // answer for them and listing them would only be noise.
+  // ===== A CREDIT SERVICE WITH NO AGENT LINK CANNOT COVER, AND MUST SAY SO =====
+  // fileMembership() is `f.agent_id && _membersById[f.agent_id]`. No agent_id, no membership, no
+  // coverage. Silently. The file just bills full price and nothing on any screen explains why.
+  //
+  // This is not hypothetical. All 12 imported MLS Setups carry agent_id NULL with the agent as
+  // free text only ("Alied Machuca", "Flavia Aguilera", "Roosevelt Sanchez"), and three of those
+  // people are not in the agents table at all, so nothing can ever resolve them. Marlenyi is about
+  // to submit three listings meant to be paid by Samantha's credits. If they land the same way,
+  // the credits will not apply, Eileen gets billed $80 a piece instead of $0, and the invoice
+  // looks perfectly normal.
+  //
+  // The rule stays as it is: no agent link, no coverage. That is correct, a credit belongs to a
+  // person. What changes is that it stops being invisible.
+  function creditLinkBroken(f){
+    try {
+      if(!f) return false;
+      if(!PAY.CREDIT_SERVICES[svcKey(f)]) return false;   // only services a credit can pay for
+      if(f.agent_id) return false;                         // linked · coverage can be decided
+      return true;                                         // credit service, nobody to bill it to
+    } catch(_){ return false; }
+  }
   function myNearlyBillableFiles(){
     if(!_profile) return [];
     return (_files || []).filter(function(f){
@@ -11477,9 +11498,14 @@ Tell me your planned move-out date and I will set the inspection.`
     var rows = files.map(function(f){
       var cov = fileIsCovered(f);
       var sub = esc(_svcLabel(f)) + (cov ? ' &middot; ' + esc(clientName(f)) + '&rsquo;s credit' : (pct != null ? ' &middot; ' + pct + '%' : ''));
+      // A credit service with no agent linked is being billed at full price when a membership
+      // credit may well have been meant to cover it. Say it on the line, next to the money.
+      var broke = creditLinkBroken(f) && !cov;
+      var warn = broke ? '<div style="font-size:11px;color:#8a6d1b;line-height:1.45;margin-top:3px">No agent linked, so no credit can apply. Billing full price. Set the agent on this file if a membership credit should cover it.</div>' : '';
       return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-top:0.5px solid #f0ebe0">' +
-        '<div style="min-width:0"><div style="font-size:13.5px;font-weight:500;color:' + (cov ? '#5f5e5a' : '#0f0f0f') + '">' + esc((f.property_address || 'File').split(',')[0]) + '</div>' +
-        '<div style="font-size:11px;color:#8a857c">' + sub + '</div></div>' +
+        '<div style="min-width:0"><div style="font-size:13.5px;font-weight:500;color:' + (cov ? '#5f5e5a' : '#0f0f0f') + '">' + esc((f.property_address || 'File').split(',')[0]) +
+          (broke ? ' <span style="font-size:8.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#8a6d1b;background:#fbf7ee;border:0.5px solid #efe4cf;border-radius:3px;padding:1px 5px;vertical-align:1px">No agent</span>' : '') + '</div>' +
+        '<div style="font-size:11px;color:#8a857c">' + sub + '</div>' + warn + '</div>' +
         '<span style="font-size:13.5px;font-weight:600;white-space:nowrap;color:' + (cov ? '#a39e93' : '#0f0f0f') + '">' + (cov ? '$0.00' : _money(fileTcPayCents(f))) + '</span></div>';
     }).join('');
     var btn = noRate
