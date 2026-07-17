@@ -10363,14 +10363,26 @@ Tell me your planned move-out date and I will set the inspection.`
       const stage = deriveStage(f);
       const status = _deadlinesByFile[f.id] || {};
       let overdue = 0, todayN = 0, next = null;
+      // THE CLOCK ONLY RUNS ON WORK THE COORDINATOR IS ALLOWED TO DO.
+      // NW 308th St sat in Eileen's Needs attention at "5 late, worst 10 days" while the file was
+      // payment_pending. The cockpit's own words on that file: "Do not start work until payment is
+      // confirmed." So the system forbade the work, then billed her for not doing it. That is not
+      // her being behind, it is an unpaid invoice wearing her name.
+      // This is not a new policy. The file-score already says, in its own comment, that deadlines
+      // "already past when the file reached the TC" are flagged softly because "the TC didn't miss
+      // those". That principle simply never reached this panel, which is the one she reads every
+      // morning.
+      const clockLocked = !!f.payment_pending;
       try {
-        fileContractDeadlines(f).forEach(function(d){
+        if(!clockLocked) fileContractDeadlines(f).forEach(function(d){
           if(!(d && d.date instanceof Date) || isNaN(d.date.getTime())) return;
           const rec = status[d.key]; if(rec && rec.completed_at) return;
           const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); const xt = x.getTime();
           if(xt < t0) overdue++; else if(xt === t0) todayN++; else if(!next || x < next.date) next = { name:d.name, date:x };
         });
-        _calExtraItems(f).forEach(function(it){
+        // Same gate · the derived reminders (inspection check-in etc.) are work too, and a locked
+        // file must not accrue them either. Without this the count drops but never reaches zero.
+        if(!clockLocked) _calExtraItems(f).forEach(function(it){
           const x = new Date(it.date.getTime()); x.setHours(0, 0, 0, 0); const xt = x.getTime();
           if(xt < t0) overdue++; else if(xt === t0) todayN++; else if(!next || x < next.date) next = { name:it.label, date:x };
         });
