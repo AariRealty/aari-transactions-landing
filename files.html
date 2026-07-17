@@ -7083,7 +7083,20 @@ Tell me your planned move-out date and I will set the inspection.`
     // comes out of the coordinating TC's 40%, not the company's share). Keyed by agent_id.
     if(Object.keys(_membersById).length === 0){
       try {
-        const { data: mems, error: _memErr } = await _client.from('memberships').select('agent_id, tier, status, credits_total, credits_used').eq('status','active');
+        // current_period_start IS LOAD-BEARING. It is the anchor computeCreditCoverage() measures
+        // every billing cycle from:
+        //     var anchor = m.current_period_start || m.created_at || f.created_at;
+        // Both of the first two used to be missing from this select, so both were undefined and
+        // the anchor fell through to THE FILE'S OWN created_at. cycleIndex(f.created_at,
+        // f.created_at) is 0 for every file, which collapsed every month into a single bucket:
+        // credits never reset, and a member paid full price forever once they had used their
+        // lifetime allowance. Samantha (Producer, 4/mo) used 3 in June, so only the FIRST of her
+        // three July listings covered and the other two billed at $80 each. Nothing on screen
+        // said why. It would have overcharged every member the moment they passed their total.
+        // If you add a field to the cycle math, add it here.
+        const { data: mems, error: _memErr } = await _client.from('memberships')
+          .select('agent_id, tier, status, credits_total, credits_used, current_period_start, created_at')
+          .eq('status','active');
         // Silent-failure guard · if this load fails _membersById stays empty, computeCreditCoverage
         // finds no members, and a member whose credit SHOULD cover a file gets charged full price
         // instead of $0. That is a client-facing billing error, not just a display one. Say so.
@@ -18522,7 +18535,21 @@ Tell me your planned move-out date and I will set the inspection.`
       if((f.raw_form_data || {}).test_pool) return;
       var m = f.agent_id ? _membersById[f.agent_id] : null;
       if(!m || !isCreditService(f)) return;
-      var anchor = m.current_period_start || m.created_at || f.created_at;
+      // ANCHOR = the day this member's billing month starts. NEVER the file's own date.
+      // The old fallback chain ended in `|| f.created_at`, which looks harmless and is not: if the
+      // membership row is missing its period fields, every file becomes its own anchor,
+      // cycleIndex() returns 0 for all of them, and every cycle collapses into one bucket. Credits
+      // then never reset and the member is overcharged forever, silently. That is exactly what
+      // happened, because the select above did not fetch current_period_start.
+      // Fail loudly instead of billing on a made-up cycle.
+      var anchor = m.current_period_start || m.created_at;
+      if(!anchor){
+        if(!computeCreditCoverage._warned){
+          computeCreditCoverage._warned = true;
+          console.error('membership ' + f.agent_id + ' has no current_period_start or created_at · cannot tell when their credits reset, so coverage is being skipped rather than guessed. Files will bill at full price. Fix the membership row.');
+        }
+        return;
+      }
       anchorOf[f.agent_id] = anchor;
       var ci = cycleIndex(f.created_at || anchor, anchor);
       var key = f.agent_id + '|' + ci;
