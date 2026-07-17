@@ -10708,6 +10708,13 @@ Tell me your planned move-out date and I will set the inspection.`
       if(inv) inv.style.display = (_activeView === 'invoice') ? '' : 'none';
       const heat = document.getElementById('calHeatmap');
       if(heat) heat.style.display = (_activeView === 'invoice') ? 'none' : '';
+      // The earnings box does not belong on an invoice. #fileCalendar has to stay (it carries the
+      // toggle), and the earnings box rides along inside it, so the broker's "Aari Transactions
+      // net" with its revenue and TC-pay breakdown was sitting directly above her own invoice.
+      // Marlenyi: "I didn't want to show too much information as far as how we're splitting the
+      // income. The invoice section should actually show an invoice."
+      const earn = document.getElementById('earnBox');
+      if(earn) earn.style.display = (_activeView === 'invoice') ? 'none' : '';
       if(_activeView === 'invoice') renderInvoiceScreen();
     } catch(_){}
   }
@@ -10845,7 +10852,7 @@ Tell me your planned move-out date and I will set the inspection.`
         // reading like a footnote. Playfair carries the figure the same way it carries the invoice
         // total, so the money looks like money everywhere. Still ONE black element and still calm
         // by default, so the locked rule holds: the breakdown stays behind a tap.
-        html += '<div style="background:#0f0f0f;color:#fff;border-radius:12px;padding:22px 20px;margin-top:4px">' +
+        html += '<div id="earnBox" style="background:#0f0f0f;color:#fff;border-radius:12px;padding:22px 20px;margin-top:4px">' +
           '<div data-pl-toggle="1" style="text-align:center;cursor:pointer">' +
             '<div style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#8f8a80;font-weight:700;margin-bottom:6px">Aari Transactions net</div>' +
             '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:46px;line-height:1;font-variant-numeric:tabular-nums">$' + _net.toLocaleString() + '</div>' +
@@ -10857,7 +10864,7 @@ Tell me your planned move-out date and I will set the inspection.`
         // Counts come from _mine so the headline can never disagree with the rows above it.
         var _myEarning = _mine.filter(function(it){ return tcPayFor(it.f) > 0; }).length;
         var _myCovered = _mine.filter(function(it){ return isCreditCovered(it.f); }).length;
-        html += '<div style="display:flex;align-items:center;gap:12px;background:#0f0f0f;color:#fff;border-radius:12px;padding:14px 18px;margin-top:4px">' +
+        html += '<div id="earnBox" style="display:flex;align-items:center;gap:12px;background:#0f0f0f;color:#fff;border-radius:12px;padding:14px 18px;margin-top:4px">' +
           '<span style="flex:1;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#cfcabf">You earn &middot; ' + _mine.length + ' active</span>' +
           '<span style="font-size:11px;color:#a8a39a">' + _myEarning + ' paid' + (_myCovered ? (' &middot; ' + _myCovered + ' covered') : '') + '</span>' +
           '<span style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums">$' + _tcTotal.toLocaleString() + '</span></div>';
@@ -11467,21 +11474,67 @@ Tell me your planned move-out date and I will set the inspection.`
   // that produced the figure, a total, and one button. The rate is ON the line on purpose. A pay
   // percent nobody chose is how this system quietly under-paid a coordinator before, so the number
   // that did the multiplying is shown next to the money it made.
-  function _invoiceWeek(){
+  // ===== INVOICE SCREEN · a document, not a dashboard =====
+  // Marlenyi picked this shape: the amount and the Send button together in the black hero, so a
+  // coordinator reads what she is owed and acts in the same place, then the work below as the
+  // record that justifies it. Paid lines and credit-covered lines are SEPARATED, because they
+  // answer different questions: one is money, one is proof the week is complete.
+  //
+  // NOTHING about how Aari splits income appears here. The earnings box is hidden in this view
+  // (see _syncBoardVisibility). A coordinator's own rate stays, because it is her contracted
+  // split and she is entitled to check her own pay against it.
+  function _invoicePeriod(){
+    // The real Mon-Sat window this invoice covers. It used to say "this week" in the hero, which
+    // is true on any day and therefore says nothing on a Tuesday.
     var end = new Date(); end.setHours(0,0,0,0);
     while(end.getDay() !== 6) end.setDate(end.getDate() + 1);   // week ends Saturday
     var start = new Date(end.getTime()); start.setDate(start.getDate() - 5); // Monday
     var f = function(d){ return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); };
     return f(start) + ' to ' + f(end);
   }
+  // What lands on the NEXT invoice: my sale files with a closing date still ahead. Answers the
+  // question every coordinator asks the moment she submits, without her opening the board.
+  function _nextInvoiceItems(){
+    try {
+      if(!_profile) return [];
+      var today = new Date(); today.setHours(0,0,0,0);
+      return (_files || []).filter(function(f){
+        if(!f || f.invoice_id || f.assigned_tc_id !== _profile.id) return false;
+        if(f.status === 'archived' || f.archived_at || (f.raw_form_data || {}).test_pool) return false;
+        if((f.file_type || 'sale') !== 'sale' || !f.closing_date) return false;
+        if(deriveStage(f) === 'closed') return false;          // already closed = this invoice
+        return fileTcPayCents(f) > 0;
+      }).map(function(f){
+        var d = new Date(String(f.closing_date).slice(0,10) + 'T12:00:00');
+        return { f:f, date:d, days: Math.round((d - today) / 86400000) };
+      }).filter(function(x){ return !isNaN(x.date.getTime()); })
+        .sort(function(a,b){ return a.date - b.date; }).slice(0, 5);
+    } catch(_){ return []; }
+  }
+  function _nextInvoiceCardHtml(card){
+    var items = _nextInvoiceItems();
+    if(!items.length) return '';
+    var rows = items.map(function(x){
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0">' +
+        '<span style="font-size:12.5px;min-width:0">' + esc((x.f.property_address || 'File').split(',')[0]) + '</span>' +
+        '<span style="font-size:12px;color:#8a857c;white-space:nowrap">' + esc(x.date.toLocaleDateString('en-US', { month:'short', day:'numeric' })) +
+        ' &middot; ' + _money(fileTcPayCents(x.f)) + '</span></div>';
+    }).join('');
+    return '<div style="' + card + '">' +
+      '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#a39e93;font-weight:700;margin-bottom:10px">Next invoice &middot; closing soon</div>' +
+      rows + '</div>';
+  }
   function renderInvoiceScreen(){
     var host = document.getElementById('invoiceScreen'); if(!host) return;
     var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
-    var card = 'background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:20px 22px;margin:0 0 14px';
+    var card = 'background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:16px 18px;margin:0 0 14px';
     var files = [];
     try { files = myBillableFiles(); } catch(_){ files = []; }
     var pct = myPayPctOrNull();
     var noRate = noRateWarningHtml();
+
+    // Broker only · money going OUT to coordinators. Kept above her own invoice: approving the
+    // team comes before billing yourself.
     var payables = '';
     if(role === 'broker'){
       try {
@@ -11503,12 +11556,13 @@ Tell me your planned move-out date and I will set the inspection.`
         }
       } catch(_){}
     }
-    var head = '<div style="' + card + '">' +
-      '<p style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;margin:0 0 2px">This week&rsquo;s invoice</p>' +
-      '<p style="font-size:12px;color:#8a857c;margin:0 0 16px">' + esc(_invoiceWeek()) + ' &middot; submit Thursday, paid Friday</p>';
+
+    // Nothing billable · say so, and say what would change it.
     if(!files.length){
-      host.innerHTML = payables + head +
-        '<p style="font-size:13px;color:#5f5e5a;line-height:1.55;margin:0">Nothing is ready to invoice yet. A file becomes billable when its <b>Service stage</b> reaches the last step, or when a sale closes.</p>' +
+      host.innerHTML = payables + '<div style="' + card + '">' +
+        '<p style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;margin:0 0 2px">Nothing to invoice yet</p>' +
+        '<p style="font-size:12px;color:#8a857c;margin:0 0 14px">' + esc(_invoicePeriod()) + '</p>' +
+        '<p style="font-size:13px;color:#5f5e5a;line-height:1.55;margin:0">A file becomes billable when its <b>Service stage</b> reaches the last step, or when a sale closes.</p>' +
         (function(){
           var near = []; try { near = myNearlyBillableFiles(); } catch(_){}
           if(!near.length) return '';
@@ -11522,100 +11576,58 @@ Tell me your planned move-out date and I will set the inspection.`
           var stuck = near.reduce(function(s, f){ return s + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
           return '<p style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:#8a857c;font-weight:700;margin:18px 0 2px">Almost there &middot; ' + near.length + '</p>' + rows +
             '<p style="font-size:12px;color:#5f5e5a;margin:12px 0 0;line-height:1.55">Open each one, set <b>Service stage</b> to its last step, and it lands here. That is ' + _money(stuck) + ' waiting on the dropdown.</p>';
-        })() + '</div>';
+        })() + '</div>' + _nextInvoiceCardHtml(card);
       return;
     }
-    var total = files.reduce(function(s, f){ return s + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
-    var rows = files.map(function(f){
-      var cov = fileIsCovered(f);
-      var sub = esc(_svcLabel(f)) + (cov ? ' &middot; ' + esc(clientName(f)) + '&rsquo;s credit' : (pct != null ? ' &middot; ' + pct + '%' : ''));
-      // A credit service with no agent linked is being billed at full price when a membership
-      // credit may well have been meant to cover it. Say it on the line, next to the money.
-      var broke = creditLinkBroken(f) && !cov;
-      var warn = broke ? '<div style="font-size:11px;color:#8a6d1b;line-height:1.45;margin-top:3px">No agent linked, so no credit can apply. Billing full price. Set the agent on this file if a membership credit should cover it.</div>' : '';
-      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 0;border-top:0.5px solid #f0ebe0">' +
-        '<div style="min-width:0"><div style="font-size:13.5px;font-weight:500;color:' + (cov ? '#5f5e5a' : '#0f0f0f') + '">' + esc((f.property_address || 'File').split(',')[0]) +
-          (broke ? ' <span style="font-size:8.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#8a6d1b;background:#fbf7ee;border:0.5px solid #efe4cf;border-radius:3px;padding:1px 5px;vertical-align:1px">No agent</span>' : '') + '</div>' +
-        '<div style="font-size:11px;color:#8a857c">' + sub + '</div>' + warn + '</div>' +
-        '<span style="font-size:13.5px;font-weight:600;white-space:nowrap;color:' + (cov ? '#a39e93' : '#0f0f0f') + '">' + (cov ? '$0.00' : _money(fileTcPayCents(f))) + '</span></div>';
-    }).join('');
+
+    var paidFiles = files.filter(function(f){ return !fileIsCovered(f); });
+    var covFiles  = files.filter(function(f){ return fileIsCovered(f); });
+    var total = paidFiles.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
+
+    var lineHtml = function(f, muted){
+      var sub = esc(_svcLabel(f)) + (muted ? '' : (pct != null ? ' &middot; ' + pct + '%' : ''));
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:' + (muted ? '6px' : '11px') + ' 0;border-top:0.5px solid #f0ebe0">' +
+        '<div style="min-width:0"><div style="font-size:' + (muted ? '12.5px' : '13.5px') + ';font-weight:' + (muted ? '400' : '500') + ';color:' + (muted ? '#5f5e5a' : '#0f0f0f') + '">' + esc((f.property_address || 'File').split(',')[0]) + '</div>' +
+        (muted ? '' : '<div style="font-size:11px;color:#8a857c">' + sub + '</div>') + '</div>' +
+        '<span style="font-size:' + (muted ? '12px' : '13.5px') + ';font-weight:' + (muted ? '400' : '600') + ';white-space:nowrap;color:' + (muted ? '#a39e93' : '#0f0f0f') + '">' +
+        (muted ? '$0.00' : _money(fileTcPayCents(f))) + '</span></div>';
+    };
+
+    // The button lives in the hero, on cream against the black, so the amount and the action are
+    // one gesture. Disabled without a pay rate · an invoice must not record a percent nobody chose.
     var btn = noRate
-      ? '<button type="button" disabled style="width:100%;margin-top:14px;background:#e8e4db;color:#8a857c;border:0;border-radius:9px;padding:14px;font-size:13.5px;font-weight:600;cursor:not-allowed;font-family:inherit">Set your pay rate to submit</button>'
-      : '<button type="button" data-submit-invoice="1" style="width:100%;margin-top:14px;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:14px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">Submit invoice to Aari</button>';
-    host.innerHTML = payables + head + rows +
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;padding-top:14px;border-top:1.5px solid #0f0f0f">' +
-        '<span style="font-size:13px;font-weight:600">Total</span><span style="font-family:\'Playfair Display\',Georgia,serif;font-size:26px">' + _money(total) + '</span></div>' +
-      noRate + btn + '</div>';
-  }
-  function invoicingPanelHtml(){
-    var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
-    var card = 'background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:16px 18px;margin:0 0 14px';
-    // A broker is not only a payer. Marlenyi coordinates file org and MLS setups herself, and the
-    // work is real whether the broker or a TC did it. This used to `return` inside the broker
-    // branch, so a broker could never see the coordinator panel and could never bill their own
-    // work, even though submit-tc-invoice has always accepted role "broker" (see its role check).
-    // The UI was the only thing in the way. Panels are independent now: Payables is about money
-    // going OUT to coordinators, Ready to invoice is about MY OWN coordinator work. A broker who
-    // does both gets both, stacked, with Payables first because approving others comes before
-    // billing yourself.
-    var out = '';
-    if(role === 'broker'){
-      var sub = _invoices.filter(function(i){ return i.status === 'submitted'; });
-      if(!sub.length) out += '';
-      else {
-      var owed = sub.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
-      var rows = sub.map(function(i){
-        var byId = {}; (_tcsById && (byId = _tcsById)); var tc = byId[i.tc_id]; var nm = tc ? ((tc.first_name || '') + ' ' + (tc.last_name || '')).trim() : 'Coordinator';
-        var n = (i.line_items || []).length;
-        return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-top:0.5px solid #f0ebe0">' +
-          '<div><div style="font-size:13px;font-weight:500">' + esc(nm) + ' <span style="color:#8a857c;font-weight:400">&middot; ' + esc(i.invoice_number || '') + '</span></div>' +
-          '<div style="font-size:11px;color:#8a857c">' + n + ' file' + (n === 1 ? '' : 's') + '</div></div>' +
-          '<div style="display:flex;align-items:center;gap:10px"><span style="font-size:14px;font-weight:600">' + _money(i.total_cents || 0) + '</span>' +
-          '<button type="button" data-mark-invoice-paid="' + i.id + '" style="font-size:11.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:7px;padding:7px 12px;cursor:pointer;font-family:inherit">Mark paid</button></div></div>';
-      }).join('');
-      out += '<div style="' + card + '"><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Payables &middot; coordinator invoices</span><span style="font-size:12px;color:#8a857c">' + _money(owed) + ' owed</span></div>' + rows + '</div>';
-      }
+      ? '<div style="background:rgba(255,255,255,0.14);color:#cfcabf;text-align:center;border-radius:9px;padding:12px;font-size:13px;font-weight:600;margin-top:16px">Set your pay rate to send</div>'
+      : '<button type="button" data-submit-invoice="1" style="width:100%;background:#fff;color:#0f0f0f;border:0;border-radius:9px;padding:13px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:16px">Send invoice to Aari</button>';
+
+    var hero = '<div style="background:#0f0f0f;padding:24px 22px;text-align:center">' +
+      '<div style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#8f8a80;font-weight:700">Due to you</div>' +
+      '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:44px;color:#fff;line-height:1.05;margin-top:5px;font-variant-numeric:tabular-nums">' + _money(total) + '</div>' +
+      '<div style="font-size:11px;color:#8f8a80;margin-top:6px">' + esc(_invoicePeriod()) + ' &middot; paid Friday</div>' +
+      btn + '</div>';
+
+    var body = '<div style="padding:18px 22px 20px">';
+    if(paidFiles.length){
+      body += '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#0f0f0f;font-weight:700;margin-bottom:2px">Paid &middot; ' + paidFiles.length + '</div>' +
+        paidFiles.map(function(f){ return lineHtml(f, false); }).join('');
     }
-    // Coordinator panel · every TC, plus a broker who actually coordinates files.
-    if(role === 'tc' || (role === 'broker' && iCoordinateFiles())){
-      var files = myBillableFiles();
-      // EMPTY IS NOT THE SAME AS ABSENT. This used to `return ''` on an empty list, so the Thursday
-      // reminder email ("Submit my invoice" → files.html) landed on a cockpit with no invoice UI
-      // anywhere on it. Both coordinators read that as a broken link and neither got paid. An empty
-      // list is information: say so, and say exactly what turns a file billable, because the answer
-      // is almost always "nobody moved the Service stage dropdown to its last rung".
-      if(!files.length) return out + emptyInvoicePanelHtml(card);
-      var total = files.reduce(function(s, f){ return s + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
-      var rows2 = files.map(function(f){
-        var cov = fileIsCovered(f);
-        var tag = cov ? ' <span style="font-size:8.5px;background:#eee7d6;color:#7a4e0b;border-radius:20px;padding:1px 6px;letter-spacing:.3px;vertical-align:1px">COVERED</span>' : '';
-        var amt = cov ? '<span style="font-size:13px;font-weight:600;white-space:nowrap;color:#a39e93">$0.00</span>' : '<span style="font-size:13px;font-weight:600;white-space:nowrap">' + _money(fileTcPayCents(f)) + '</span>';
-        return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:0.5px solid #f0ebe0">' +
-          '<div style="min-width:0"><div style="font-size:12.5px;font-weight:500;color:' + (cov ? '#5f5e5a' : '#0f0f0f') + '">' + esc((f.property_address || 'File').split(',')[0]) + tag + '</div>' +
-          '<div style="font-size:11px;color:#8a857c">' + esc(_svcLabel(f)) + (cov ? ' · ' + esc(clientName(f)) + '’s credit' : '') + '</div></div>' +
-          amt + '</div>';
-      }).join('');
-      // A broker sees this panel next to Payables, so the heading has to say WHICH money it is.
-      var heading = (role === 'broker') ? 'Ready to invoice &middot; my coordinator work' : 'Ready to invoice';
-      var noRate = noRateWarningHtml();
-      // No rate set means every figure here is the AT_TC_PCT default nobody picked. Show the work,
-      // show the numbers, but do not let it be submitted: an invoice is a financial record, and
-      // the first one this system ever cuts should not enshrine a default by accident.
-      var submitBtn = noRate
-        ? '<button type="button" disabled style="width:100%;margin-top:12px;background:#e8e4db;color:#8a857c;border:0;border-radius:9px;padding:12px;font-size:13.5px;font-weight:600;cursor:not-allowed;font-family:inherit">Set your pay rate to submit</button>'
-        : '<button type="button" data-submit-invoice="1" style="width:100%;margin-top:12px;background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:12px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit">Submit invoice to Aari</button>';
-      return out + '<div style="' + card + '"><div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">' + heading + '</span><span style="font-size:12px;color:#8a857c">' + files.length + ' file' + (files.length === 1 ? '' : 's') + '</span></div>' +
-        rows2 +
-        '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1.5px solid #0f0f0f">' +
-          '<span style="font-size:13px;font-weight:600">Total</span><span style="font-family:Georgia,serif;font-size:18px">' + _money(total) + '</span></div>' +
-        noRate +
-        submitBtn +
-        '<div style="font-size:11px;color:#a39e93;text-align:center;margin-top:7px">Submit Thursday &middot; paid Friday</div></div>';
+    if(covFiles.length){
+      var who = covFiles.map(function(f){ return clientName(f); }).filter(function(v, i, a){ return a.indexOf(v) === i; });
+      body += '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#a39e93;font-weight:700;margin:' + (paidFiles.length ? '18px' : '0') + ' 0 2px">Covered by credits &middot; ' + covFiles.length + ' &middot; no pay</div>' +
+        covFiles.map(function(f){ return lineHtml(f, true); }).join('') +
+        '<p style="font-size:11px;color:#a39e93;margin:8px 0 0;line-height:1.5">' + esc(who.join(' and ')) + '&rsquo;s membership already paid for ' + (covFiles.length === 1 ? 'this' : 'these') + '. Here so your week is complete.</p>';
     }
-    // `out` and NOT '': a broker with payables but no coordinator work of their own still gets the
-    // Payables panel. Returning '' here would have silently swallowed it.
-    return out;
+    body += noRate + '</div>';
+
+    host.innerHTML = payables +
+      '<div style="background:#fff;border:0.5px solid #e8e4db;border-radius:12px;overflow:hidden;margin:0 0 14px">' + hero + body + '</div>' +
+      _nextInvoiceCardHtml(card);
   }
+  // invoicingPanelHtml() lived here. It was the ORIGINAL invoice panel, built into #fileList,
+  // which is display:none inside #boardWrap, so nobody could ever see it. That is the bug that
+  // started this whole thread. Invoicing is its own view now (renderInvoiceScreen), and this
+  // function had no callers left: dead code carrying a live-looking "Submit invoice to Aari"
+  // button and its own copy of the payables rows and the money rules. Deleted rather than left to
+  // be re-wired by someone who finds it and assumes it works.
   async function submitMyInvoice(){
     var files = myBillableFiles();
     if(!files.length){ alert('Nothing to invoice yet.'); return; }
