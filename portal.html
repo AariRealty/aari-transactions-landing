@@ -1106,6 +1106,23 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
 .rtx-lb-units{font-size:11px;color:#9a958c;}
 .rtx-lock-banner{background:#fff;border:0.5px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:12px;color:var(--muted);}
 @media (max-width:860px){ .rtx-shell{flex-direction:column;} .rtx-sidebar{width:100%;position:static;margin-right:0;margin-bottom:14px;} }
+/* ===== Home panel ===== */
+.rtx-home-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px;}
+.rtx-home-card{background:#fff;border:1px solid var(--line);border-radius:13px;padding:16px;}
+.rtx-home-card-title{font-family:'Playfair Display',Georgia,serif;font-size:15px;font-weight:600;margin-bottom:10px;}
+.rtx-ann{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.rtx-ann-ico{width:30px;height:30px;border-radius:8px;background:#F4EFE6;display:flex;align-items:center;justify-content:center;font-size:14px;flex:none;}
+.rtx-empty-i{color:#9a958c;font-size:12px;font-style:italic;}
+.rtx-home-stat{display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid #f3f0ea;font-size:12px;}
+.rtx-home-stat:first-of-type{border-top:none;}
+.rtx-home-stat .l{color:#9a958c;}
+.rtx-home-stat .v{font-weight:600;}
+.rtx-credit-bar{height:6px;background:#F4EFE6;border-radius:4px;overflow:hidden;margin-top:8px;}
+.rtx-credit-bar .f{height:100%;background:#161310;}
+.rtx-home-divider{border-top:1px solid #f3f0ea;margin:10px 0;}
+.rtx-home-cta{width:100%;margin-top:10px;background:#161310;color:#fff;border:0;border-radius:9px;padding:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;}
+.rtx-home-cta:hover{opacity:.9;}
+@media (max-width:860px){ .rtx-home-grid{grid-template-columns:1fr;} }
 </style>
 </head>
 <body>
@@ -1168,8 +1185,11 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
           <div class="rtx-sidebar-sub">Transactions Portal</div>
         </div>
         <div class="rtx-group">
+          <div class="rtx-item on" data-rtx-panel="home">Home</div>
+        </div>
+        <div class="rtx-group">
           <div class="rtx-group-label">Transactions</div>
-          <div class="rtx-item on" data-rtx-panel="my-tx">My transactions</div>
+          <div class="rtx-item" data-rtx-panel="my-tx">My transactions</div>
           <div class="rtx-item" data-rtx-panel="new-tx">New transaction <span class="rtx-pill new">Start</span></div>
           <div class="rtx-item" data-rtx-panel="my-production">My production</div>
           <div class="rtx-item rtx-broker-only" data-rtx-panel="leaderboard" hidden>Leaderboard</div>
@@ -1189,8 +1209,15 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
         </div>
         <div id="rtx-toast" class="rtx-toast" hidden></div>
 
+        <!-- ============ HOME ============ -->
+        <div id="rtx-panel-home" class="rtx-panel active">
+          <div class="rtx-panel-label">Home</div>
+          <div class="rtx-panel-title">Good day, <span id="rtx-home-name">Agent</span></div>
+          <div id="rtx-home-body"><div class="rtx-loading">Loading&hellip;</div></div>
+        </div>
+
         <!-- ============ MY TRANSACTIONS ============ -->
-        <div id="rtx-panel-my-tx" class="rtx-panel active">
+        <div id="rtx-panel-my-tx" class="rtx-panel">
           <div class="rtx-panel-label">Transactions</div>
           <div class="rtx-panel-title">My transactions</div>
           <div class="rtx-panel-sub">Every transaction you have submitted, from draft to paid.</div>
@@ -5906,7 +5933,8 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     document.querySelectorAll('.rtx-panel').forEach(function(p){ p.classList.remove('active'); });
     document.querySelectorAll('.rtx-item[data-rtx-panel]').forEach(function(i){ i.classList.toggle('on', i.getAttribute('data-rtx-panel')===name); });
     const el = document.getElementById('rtx-panel-' + name); if(el) el.classList.add('active');
-    if(name==='my-tx') rtxLoadMyTx();
+    if(name==='home') rtxLoadHome();
+    else if(name==='my-tx') rtxLoadMyTx();
     else if(name==='broker-queue') rtxLoadQueue();
     else if(name==='my-production') rtxLoadProduction();
     else if(name==='leaderboard') rtxLoadLeaderboard();
@@ -6218,6 +6246,61 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
   }
   window.rtxOpenMarkPaid = rtxOpenMarkPaid;
 
+  // ===== Home =====
+  async function rtxLoadHome(){
+    const nameEl = document.getElementById('rtx-home-name');
+    if(nameEl) nameEl.textContent = (_profile && _profile.first_name) || 'there';
+    const host = document.getElementById('rtx-home-body'); if(!host) return;
+    host.innerHTML = '<div class="rtx-loading">Loading&hellip;</div>';
+    try {
+      const [dashRes, memRes, payRes] = await Promise.allSettled([
+        rtx('dashboard', {}),
+        _client.from('memberships').select('*').eq('agent_id', _profile.id).order('created_at', {ascending:false}).limit(1).maybeSingle(),
+        _client.from('payments').select('*').eq('agent_id', _profile.id).order('paid_at', {ascending:false}).limit(5),
+      ]);
+      const dash = dashRes.status==='fulfilled' ? dashRes.value : {};
+      const mem = (memRes.status==='fulfilled' && memRes.value && memRes.value.data) || null;
+      const pays = (payRes.status==='fulfilled' && payRes.value && payRes.value.data) || [];
+      const plan = dash.plan, y = dash.ytd || {};
+
+      const planCard = plan
+        ? '<div class="rtx-home-stat"><span class="l">Split</span><span class="v">' + rtxEsc(plan.label) + '</span></div>' +
+          (plan.monthly_fee ? '<div class="rtx-home-stat"><span class="l">Monthly plan fee</span><span class="v">' + rtxMoney(plan.monthly_fee) + '</span></div>' : '') +
+          (plan.quarterly_fee ? '<div class="rtx-home-stat"><span class="l">' + rtxEsc(plan.quarterly_fee.label) + '</span><span class="v">' + rtxMoney(plan.quarterly_fee.amount) + '/qtr</span></div>' : '') +
+          (plan.fee_exempt ? '<div class="rtx-home-stat"><span class="l">Fee status</span><span class="v">Exempt</span></div>' : '')
+        : '<div class="rtx-empty-i">No commission plan on file yet, ask your broker.</div>';
+
+      const memCard = mem
+        ? '<div class="rtx-home-stat"><span class="l">Tier</span><span class="v">' + rtxEsc(mem.tier || '&mdash;') + '</span></div>' +
+          '<div class="rtx-home-stat"><span class="l">Status</span><span class="v">' + rtxEsc(mem.status || '&mdash;') + '</span></div>' +
+          (mem.next_renewal_at ? '<div class="rtx-home-stat"><span class="l">Renews</span><span class="v">' + new Date(mem.next_renewal_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) + '</span></div>' : '') +
+          (mem.credits_total ? '<div class="rtx-home-stat"><span class="l">Credits</span><span class="v">' + (mem.credits_used||0) + ' of ' + mem.credits_total + ' used</span></div><div class="rtx-credit-bar"><div class="f" style="width:' + Math.min(100, Math.round((mem.credits_used||0)/mem.credits_total*100)) + '%"></div></div>' : '')
+        : '<div class="rtx-empty-i">No membership on file yet.</div>';
+
+      const paysRows = pays.length
+        ? pays.map(function(p){ return '<div class="rtx-home-stat"><span class="l">' + rtxEsc(p.service_type||'Payment') + '</span><span class="v">' + rtxMoney((p.amount_cents||0)/100) + '</span></div>'; }).join('')
+        : '<div class="rtx-empty-i">No payments yet.</div>';
+
+      host.innerHTML =
+        '<div class="rtx-home-grid">' +
+          '<div class="rtx-home-card"><div class="rtx-ann"><div class="rtx-ann-ico">&#128276;</div><div class="rtx-home-card-title" style="margin:0">Announcements</div></div><div class="rtx-empty-i">No announcements yet.</div></div>' +
+          '<div class="rtx-home-card"><div class="rtx-home-card-title">Your plan</div>' + planCard + '</div>' +
+          '<div class="rtx-home-card"><div class="rtx-home-card-title">Production, year to date</div>' +
+            '<div class="rtx-home-stat"><span class="l">Volume</span><span class="v">' + rtxMoney(y.volume) + '</span></div>' +
+            '<div class="rtx-home-stat"><span class="l">Closed deals</span><span class="v">' + (y.units||0) + '</span></div>' +
+            '<div class="rtx-home-stat"><span class="l">Commission payout</span><span class="v">' + rtxMoney(y.net) + '</span></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="rtx-home-card" style="margin-bottom:18px">' +
+          '<div class="rtx-home-card-title">Membership &amp; payments</div>' + memCard +
+          '<div class="rtx-home-divider"></div>' + paysRows +
+          '<button type="button" class="rtx-home-cta" id="rtx-home-new-tx">+ New transaction</button>' +
+        '</div>';
+      const ctaBtn = document.getElementById('rtx-home-new-tx');
+      if(ctaBtn) ctaBtn.addEventListener('click', function(){ rtxShowPanel('new-tx'); });
+    } catch(e){ host.innerHTML = '<div class="rtx-error">' + rtxEsc(e.message) + '</div>'; }
+  }
+
   // ===== My production =====
   async function rtxLoadProduction(){
     const host = document.getElementById('rtx-production-body'); if(!host) return;
@@ -6251,7 +6334,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     if(_rtxInited) return; _rtxInited = true;
     rtxWireNav();
     await rtxBootstrap();
-    rtxShowPanel('my-tx');
+    rtxShowPanel('home');
   };
 })();
 </script>
