@@ -18537,14 +18537,36 @@ Tell me your planned move-out date and I will set the inspection.`
     return new Date(/^\d{4}-\d{2}-\d{2}$/.test(s) ? (s + 'T12:00:00') : s);
   }
   // Whole monthly cycles between an anchor date and a given date (0 = the anchor's own cycle).
+  // UTC, DELIBERATELY. memberships.current_period_start is a timestamptz written by Stripe: a real
+  // instant, in UTC, marking the day the member's billing month turns over. Reading it with local
+  // date parts moves it.
+  //
+  // Samantha's period begins 2026-06-28T02:17:16Z. In Eastern that renders as Sat Jun 27 22:17, so
+  // getDate() answered 27 instead of 28. Her three June MLS Setups were created Jun 27 at 02:42
+  // Eastern, which is BEFORE she had a membership at all. But 27 < 27 is false, so they never fell
+  // into the previous cycle. They sat in July's bucket, ate three of her four credits, and two of
+  // her July listings billed at $80 each instead of $0.
+  //
+  // The tell: in UTC the old code was already correct. It only broke west of Greenwich. Two
+  // coordinators looking at the same member on the same day would see different credit coverage
+  // depending on where they were sitting. Money must not depend on the reader's timezone.
+  //
+  // Compare the instant in the frame it was written in. Both sides in UTC, always.
   function cycleIndex(dateLike, anchorLike){
     var d = _asDate(dateLike), a = _asDate(anchorLike);
-    var m = (d.getFullYear() - a.getFullYear()) * 12 + (d.getMonth() - a.getMonth());
-    if(d.getDate() < a.getDate()) m -= 1;   // before the anchor day = still the previous cycle
+    var m = (d.getUTCFullYear() - a.getUTCFullYear()) * 12 + (d.getUTCMonth() - a.getUTCMonth());
+    if(d.getUTCDate() < a.getUTCDate()) m -= 1;   // before the anchor day = still the previous cycle
     return m;
   }
   // The reset date (next cycle start) for cycle `ci` measured from the anchor.
-  function cycleResetDate(anchorLike, ci){ var a = _asDate(anchorLike); return new Date(a.getFullYear(), a.getMonth() + ci + 1, a.getDate()); }
+  // Built from the same UTC parts cycleIndex() counts in, or the meter would say a member's
+  // credits reset on a day the coverage math disagrees with. Noon UTC so that rendering it with
+  // toLocaleDateString() cannot slide it to the previous day for anyone west of Greenwich, which
+  // is the exact trap that put Samantha's June files in July's cycle.
+  function cycleResetDate(anchorLike, ci){
+    var a = _asDate(anchorLike);
+    return new Date(Date.UTC(a.getUTCFullYear(), a.getUTCMonth() + ci + 1, a.getUTCDate(), 12));
+  }
   function computeCreditCoverage(){
     _creditCoverByFile = {}; _creditMeterByFile = {}; _creditMeterByAgent = {};
     var byAgentCycle = {}, anchorOf = {};
