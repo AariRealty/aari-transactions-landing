@@ -11305,8 +11305,29 @@ Tell me your planned move-out date and I will set the inspection.`
   function fileIsCovered(f){ return typeof isCreditCovered === 'function' && isCreditCovered(f); }
   // Invoiceable = completed, not yet on an invoice, and either paid work OR credit-covered
   // (covered files ride along at $0 so the coordinator's full week is on the record).
+  // ARCHIVED IS NOT DONE. THIS IS THE MOST EXPENSIVE BUG IN THE FILE.
+  //
+  // deriveStage() maps BOTH 'closed' and 'archived' onto the stage 'closed', which is right for a
+  // board (an archived file is off the pipeline) and catastrophic for money: fileCompleted() bills
+  // a TC file the moment it reads 'closed'. So archiving a file did not remove it. It INVOICED it.
+  //
+  // Eileen's first invoice came to $1,600 across 8 lines. Seven were archived: "ROUTING TEST -
+  // Samantha to Eileen", "Not Valid", and duplicate email imports of 313 NE 5th Ter (twice), 3815
+  // NW 22nd Ter (twice) and 1130 NW 14th Ter. Exactly one line was real, 1216 NW 32nd Pl, which
+  // actually closed. $1,400 of tests and duplicates, and submit-tc-invoice would have recorded all
+  // of it as legitimate, because the server checks ownership and double-billing but never asked
+  // whether the file still exists as far as the business is concerned.
+  //
+  // Archiving is how a coordinator says "this was a mistake, take it off my board". Every one of
+  // those clicks was quietly worth $200. Marlenyi caught it by reading her own screen before
+  // hitting Submit. Nothing in the software would have.
+  //
+  // test_pool files are excluded for the same reason. The board already hides them everywhere.
+  // Money must not be the one surface that still counts them.
   function fileIsBillable(f){
     if(!f || f.invoice_id) return false;
+    if(f.status === 'archived' || f.archived_at) return false;
+    if((f.raw_form_data || {}).test_pool) return false;
     if(!fileCompleted(f)) return false;
     return fileTcPayCents(f) > 0 || fileIsCovered(f);
   }

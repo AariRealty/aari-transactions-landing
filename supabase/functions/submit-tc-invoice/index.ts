@@ -113,7 +113,7 @@ Deno.serve(async (req) => {
   if (!fileIds.length) return j(400,{ ok:false, error:"no file_id on any line item" });
   const { data: dbFiles, error: fErr } = await admin
     .from("files")
-    .select("id, service_type, file_type, agent_id, assigned_tc_id, invoice_id, property_address, raw_form_data")
+    .select("id, service_type, file_type, agent_id, assigned_tc_id, invoice_id, property_address, raw_form_data, status, archived_at")
     .in("id", fileIds);
   if (fErr) return j(500,{ ok:false, error:"file lookup failed: " + fErr.message });
   const byId = new Map((dbFiles||[]).map((f: any)=>[String(f.id), f]));
@@ -121,6 +121,22 @@ Deno.serve(async (req) => {
   // Ownership + double-bill gates.
   const notFound = fileIds.filter((id: any)=>!byId.has(String(id)));
   if (notFound.length) return j(400,{ ok:false, error:`unknown file(s): ${notFound.join(", ")}` });
+
+  // ARCHIVED AND TEST FILES ARE NOT BILLABLE, AND THE SERVER SAYS SO TOO.
+  //
+  // deriveStage() in the cockpit maps 'archived' onto the stage 'closed', and a TC file bills when
+  // it closes. So archiving a mistake INVOICED it. Eileen's first invoice was $1,600 across 8
+  // lines: seven were archived tests and duplicate email imports ("ROUTING TEST - Samantha to
+  // Eileen", "Not Valid", 313 NE 5th Ter twice, 3815 NW 22nd Ter twice, 1130 NW 14th Ter). One was
+  // real. $1,400 of nothing, and THIS function would have accepted every line, because it checked
+  // ownership and double-billing but never whether the file still counts.
+  //
+  // The client now filters them. That is not enough: the client is also what produced this list.
+  // A rule this expensive belongs where it cannot be skipped.
+  const dead = (dbFiles||[]).filter((f: any)=>
+    f.status === "archived" || f.archived_at || (f.raw_form_data && f.raw_form_data.test_pool));
+  if (dead.length) return j(422,{ ok:false,
+    error: "archived or test file(s) cannot be invoiced: " + dead.map((f: any)=>f.property_address || f.id).join(", ") });
   const notYours = (dbFiles||[]).filter((f: any)=>String(f.assigned_tc_id||"") !== String(tcId)).map((f: any)=>f.id);
   if (notYours.length) return j(403,{ ok:false, error:`file(s) not assigned to you: ${notYours.join(", ")}` });
   const already = (dbFiles||[]).filter((f: any)=>f.invoice_id).map((f: any)=>f.id);
