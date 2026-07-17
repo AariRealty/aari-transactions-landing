@@ -1123,6 +1123,30 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
 .rtx-home-cta{width:100%;margin-top:10px;background:#161310;color:#fff;border:0;border-radius:9px;padding:9px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;}
 .rtx-home-cta:hover{opacity:.9;}
 @media (max-width:860px){ .rtx-home-grid{grid-template-columns:1fr;} }
+/* ===== Home calendar ===== */
+.rtx-cal-toggle{display:inline-flex;border:1px solid var(--line);border-radius:20px;overflow:hidden;}
+.rtx-cal-pill{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:6px 13px;cursor:pointer;color:#9a958c;border:0;background:none;font-family:inherit;}
+.rtx-cal-pill.on{background:#161310;color:#fff;}
+.rtx-cal-next{border:1px solid var(--line);background:#F4EFE6;border-radius:10px;padding:10px 14px;font-size:12px;color:var(--muted);margin-bottom:14px;display:flex;gap:8px;}
+.rtx-cal-next b{color:#161310;font-size:10px;letter-spacing:1.5px;text-transform:uppercase;font-weight:700;}
+.rtx-cal-split{display:flex;gap:24px;}
+.rtx-cal-left{flex:1;min-width:0;}
+.rtx-cal-right{width:250px;flex-shrink:0;border-left:1px solid var(--line);padding-left:22px;}
+.rtx-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}
+.rtx-cal-dow{font-size:9.5px;letter-spacing:1px;text-transform:uppercase;color:#9a958c;text-align:center;padding-bottom:6px;font-weight:700;}
+.rtx-cal-day{aspect-ratio:1;border-radius:8px;font-size:12px;display:flex;flex-direction:column;align-items:flex-start;padding:6px;color:#3a3936;border:1px solid transparent;gap:3px;cursor:pointer;}
+.rtx-cal-day:hover{background:#faf8f3;}
+.rtx-cal-day.today{border-color:#161310;font-weight:700;}
+.rtx-cal-day.selected{background:#F4EFE6;border-color:#161310;}
+.rtx-cal-day.blank{visibility:hidden;cursor:default;}
+.rtx-cal-chip{font-size:8px;background:#e7dcc0;color:#5a4a1e;border-radius:4px;padding:1px 4px;font-weight:700;}
+.rtx-cal-right-date{font-size:12px;font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:14px;}
+.rtx-cal-right-badge{background:#161310;color:#fff;font-size:11px;font-weight:700;border-radius:999px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;flex:none;}
+.rtx-cal-right-item{padding:8px 0;border-bottom:1px solid #f3f0ea;font-size:12px;}
+.rtx-cal-right-item .t{font-weight:600;}
+.rtx-cal-right-item .s{color:#9a958c;font-size:11px;}
+.rtx-cal-right-caption{color:#9a958c;font-size:11px;}
+@media (max-width:700px){ .rtx-cal-split{flex-direction:column;} .rtx-cal-right{width:100%;border-left:0;border-top:1px solid var(--line);padding-left:0;padding-top:14px;} }
 </style>
 </head>
 <body>
@@ -6253,14 +6277,16 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     const host = document.getElementById('rtx-home-body'); if(!host) return;
     host.innerHTML = '<div class="rtx-loading">Loading&hellip;</div>';
     try {
-      const [dashRes, memRes, payRes] = await Promise.allSettled([
+      const [dashRes, memRes, payRes, txRes] = await Promise.allSettled([
         rtx('dashboard', {}),
         _client.from('memberships').select('*').eq('agent_id', _profile.id).order('created_at', {ascending:false}).limit(1).maybeSingle(),
         _client.from('payments').select('*').eq('agent_id', _profile.id).order('paid_at', {ascending:false}).limit(5),
+        rtx('list_mine', {}),
       ]);
       const dash = dashRes.status==='fulfilled' ? dashRes.value : {};
       const mem = (memRes.status==='fulfilled' && memRes.value && memRes.value.data) || null;
       const pays = (payRes.status==='fulfilled' && payRes.value && payRes.value.data) || [];
+      const myTxs = (txRes.status==='fulfilled' && txRes.value && txRes.value.transactions) || [];
       const plan = dash.plan, y = dash.ytd || {};
 
       const planCard = plan
@@ -6295,10 +6321,70 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
           '<div class="rtx-home-card-title">Membership &amp; payments</div>' + memCard +
           '<div class="rtx-home-divider"></div>' + paysRows +
           '<button type="button" class="rtx-home-cta" id="rtx-home-new-tx">+ New transaction</button>' +
+        '</div>' +
+        '<div class="rtx-home-card">' +
+          '<div class="card-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">' +
+            '<div class="rtx-home-card-title" style="margin:0">Your calendar</div>' +
+            '<div class="rtx-cal-toggle"><button type="button" class="rtx-cal-pill on" id="rtx-cal-tgl-tx">Transactions</button><button type="button" class="rtx-cal-pill" id="rtx-cal-tgl-ev">Events</button></div>' +
+          '</div>' +
+          '<div class="rtx-cal-next" id="rtx-cal-next"><b>Next closings</b> <span id="rtx-cal-next-text">No closings scheduled yet.</span></div>' +
+          '<div class="rtx-cal-split">' +
+            '<div class="rtx-cal-left"><div class="rtx-cal-grid" id="rtx-cal-grid"></div></div>' +
+            '<div class="rtx-cal-right"><div class="rtx-cal-right-date" id="rtx-cal-detail-date"></div><div id="rtx-cal-detail-body"></div><div class="rtx-cal-right-caption">Today is ringed &middot; tap any day to see details.</div></div>' +
+          '</div>' +
         '</div>';
       const ctaBtn = document.getElementById('rtx-home-new-tx');
       if(ctaBtn) ctaBtn.addEventListener('click', function(){ rtxShowPanel('new-tx'); });
+      rtxRenderHomeCalendar(myTxs);
     } catch(e){ host.innerHTML = '<div class="rtx-error">' + rtxEsc(e.message) + '</div>'; }
+  }
+
+  function rtxRenderHomeCalendar(myTxs){
+    const now = new Date();
+    const year = now.getFullYear(), month = now.getMonth(), today = now.getDate();
+    const firstDow = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month+1, 0).getDate();
+    const byDay = {};
+    (myTxs||[]).forEach(function(t){
+      if(!t.closing_date) return;
+      const d = new Date(t.closing_date + 'T00:00:00');
+      if(d.getFullYear()===year && d.getMonth()===month){
+        const day = d.getDate();
+        (byDay[day] = byDay[day] || []).push({ t: t.property_address || 'Closing', s: 'Closing' });
+      }
+    });
+    let selected = today;
+    const grid = document.getElementById('rtx-cal-grid');
+    function draw(){
+      const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+      let html = dow.map(function(d){ return '<div class="rtx-cal-dow">'+d+'</div>'; }).join('');
+      for(let i=0;i<firstDow;i++) html += '<div class="rtx-cal-day blank"></div>';
+      for(let d=1; d<=daysInMonth; d++){
+        const items = byDay[d] || [];
+        const chip = items.length ? '<span class="rtx-cal-chip">' + (items.length>1 ? items.length+' closings' : rtxEsc(items[0].t)) + '</span>' : '';
+        html += '<div class="rtx-cal-day' + (d===today?' today':'') + (d===selected?' selected':'') + '" data-day="' + d + '">' + d + chip + '</div>';
+      }
+      grid.innerHTML = html;
+      grid.querySelectorAll('.rtx-cal-day[data-day]').forEach(function(el){
+        el.addEventListener('click', function(){ selected = Number(el.getAttribute('data-day')); draw(); });
+      });
+      const items = byDay[selected] || [];
+      const monthName = now.toLocaleDateString('en-US', {month:'short'}).toUpperCase();
+      document.getElementById('rtx-cal-detail-date').innerHTML = monthName + ' ' + selected + ', ' + year + ' <span class="rtx-cal-right-badge">' + items.length + '</span>';
+      document.getElementById('rtx-cal-detail-body').innerHTML = items.length
+        ? items.map(function(i){ return '<div class="rtx-cal-right-item"><div class="t">' + rtxEsc(i.t) + '</div><div class="s">' + rtxEsc(i.s) + '</div></div>'; }).join('')
+        : '<div class="rtx-empty-i" style="padding-bottom:14px;border-bottom:1px solid #f3f0ea;margin-bottom:10px">Nothing on this day.</div>';
+    }
+    draw();
+    const upcoming = Object.keys(byDay).map(Number).filter(function(d){ return d >= today; }).sort(function(a,b){ return a-b; });
+    const nextText = document.getElementById('rtx-cal-next-text');
+    if(nextText && upcoming.length){
+      const d = upcoming[0], items = byDay[d];
+      nextText.textContent = items[0].t + (items.length>1 ? ' +' + (items.length-1) + ' more' : '') + ', ' + now.toLocaleDateString('en-US',{month:'short'}) + ' ' + d;
+    }
+    const tgl1 = document.getElementById('rtx-cal-tgl-tx'), tgl2 = document.getElementById('rtx-cal-tgl-ev');
+    if(tgl1) tgl1.addEventListener('click', function(){ tgl1.classList.add('on'); tgl2.classList.remove('on'); });
+    if(tgl2) tgl2.addEventListener('click', function(){ tgl2.classList.add('on'); tgl1.classList.remove('on'); rtxToast('No events data model yet, only transaction closings.'); });
   }
 
   // ===== My production =====
