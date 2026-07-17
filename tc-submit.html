@@ -95,6 +95,19 @@
     <input type="file" id="fileInput" accept="application/pdf" style="display:none">
     <div id="filezone"></div>
 
+    <!-- WHOSE FILE IS THIS · the question this form never asked.
+         It used to hardcode `agent_id: uid` on the insert, so a coordinator submitting for an
+         agent was recorded as her own client. Eileen submitted three listings for Samantha and
+         all three landed with Eileen as the agent. Membership credit coverage keys off agent_id,
+         so Samantha's credits could not apply, and Eileen would have been billed $80 a piece for
+         work a credit had already paid for. There was no field, so there was no way to get it
+         right. -->
+    <div class="qlabel">Whose file is this?</div>
+    <select id="agentPick" style="width:100%;font-family:inherit;font-size:15px;padding:12px 13px;border:1px solid rgba(15,15,15,0.18);border-radius:8px;background:#fff;color:#0f0f0f;margin-bottom:4px">
+      <option value="">Select the agent…</option>
+    </select>
+    <p class="scansub" id="agentHint" style="margin:0 0 14px;font-size:12px;color:#8a857c">The agent this file belongs to. Their membership credits pay for it, so this has to be right.</p>
+
     <div class="qlabel">Which side?</div>
     <div class="seg" id="seg">
       <button type="button" data-side="listing">Listing</button>
@@ -159,10 +172,44 @@
       if(!uid){ showGate('Please <a href="/login.html?next=/tc-submit.html">sign in</a> to submit a file.'); return; }
       try{ profile = await window.AariAuth.getAgentProfile(); }catch(_){ profile=null; }
       var nm = profile ? ([profile.first_name, profile.last_name].filter(Boolean).join(' ')) : '';
-      if(nm) $('tcName').textContent = 'Submitting as ' + nm + '. Drop it, pick your side, scan. I read every line and fill the file for you to confirm.';
+      if(nm) $('tcName').textContent = 'Submitting as ' + nm + '. Say whose file it is, drop it, pick the side, scan. I read every line and fill the file for you to confirm.';
+      await loadAgents();
       $('gate').classList.add('hide'); show('s1');
     }catch(err){ showGate('Something went wrong loading the form. <a href="/login.html">Sign in</a> and try again.'); }
   }
+
+  // ---- whose file is this ----
+  // The roster, so a coordinator can name the agent she is submitting for. RLS already decides
+  // which rows she can read; this only renders what she is allowed to see.
+  var _agentId = null;
+  async function loadAgents(){
+    var sel = $('agentPick');
+    try {
+      var r = await client.from('agents').select('id, first_name, last_name, email, role')
+        .in('role', ['agent','tc','broker']).order('first_name');
+      var rows = (r && r.data) || [];
+      if(r && r.error) throw r.error;
+      // Never swallow an empty roster. If this list fails to load, the coordinator cannot answer
+      // the one question that decides whether a membership credit applies, and the old code would
+      // have silently defaulted the agent to her.
+      if(!rows.length){ $('agentHint').textContent = 'Could not load the agent list. Do not submit; tell Marlenyi.'; $('agentHint').style.color = '#c0392b'; return; }
+      rows.forEach(function(a){
+        var label = [a.first_name, a.last_name].filter(Boolean).join(' ') || a.email || 'Agent';
+        if(a.id === uid) label += ' (me)';
+        else if(a.role !== 'agent') label += ' · ' + a.role;
+        var o = document.createElement('option');
+        o.value = a.id; o.textContent = label;
+        sel.appendChild(o);
+      });
+      sel.addEventListener('change', function(){ _agentId = sel.value || null; syncStart(); });
+    } catch(err){
+      $('agentHint').textContent = 'Could not load the agent list (' + (err.message || 'error') + '). Do not submit; tell Marlenyi.';
+      $('agentHint').style.color = '#c0392b';
+    }
+  }
+  // One place decides whether Scan is allowed, so a missing agent cannot slip through the way a
+  // missing side never could.
+  function syncStart(){ $('startBtn').disabled = !(_file && _side && _agentId); }
 
   // ---- upload ----
   function pickFile(f){
@@ -174,9 +221,9 @@
     $('rmFile').addEventListener('click', clearFile);
     $('dropbig').textContent = 'Add a different file';
     $('status1').textContent='';
-    $('startBtn').disabled = !_side;
+    syncStart();
   }
-  function clearFile(){ _file=null; $('filezone').innerHTML=''; $('dropbig').textContent='Drag and drop, or click to browse a PDF'; $('startBtn').disabled=true; }
+  function clearFile(){ _file=null; $('filezone').innerHTML=''; $('dropbig').textContent='Drag and drop, or click to browse a PDF'; syncStart(); }
 
   // ---- map extracted fields -> the 4 setup sections ----
   function buildGroups(f, docs){
@@ -259,11 +306,18 @@
       var signed = (su && su.data && su.data.signedUrl) || '';
       if(signed){ try{ $('pdfframe').src = signed + '#toolbar=0&view=FitH&navpanes=0'; }catch(_){ } }
 
+      // agent_id is the AGENT THIS FILE BELONGS TO, never the coordinator typing the form.
+      // It used to read `agent_id: uid`, which quietly made every coordinator her own client.
+      // Membership credit coverage looks the membership up by agent_id, so a file submitted for a
+      // member landed uncovered and got billed at full price with nothing on screen to explain it.
+      var _agentLabel = '';
+      try { var _o = $('agentPick'); _agentLabel = _o.options[_o.selectedIndex] ? _o.options[_o.selectedIndex].textContent.replace(/ \(me\)$| · (agent|tc|broker)$/,'') : ''; } catch(_){}
       var row = {
-        id: subId, agent_id: uid, service_type: svc.id, file_type: svc.file_type,
+        id: subId, agent_id: _agentId, service_type: svc.id, file_type: svc.file_type,
         property_address:'', assigned_tc_id: uid, is_aari_engaged:true,
         status:'intake_received', transaction_stage:'new',
         raw_form_data:{ submitted_by_tc:true, tc_submitter_id:uid, represents:_side,
+          agent_name:_agentLabel, submitted_for_agent_id:_agentId,
           contract_url:signed, contract_filename:safe, contract_path:path, submission_id:subId }
       };
       var ins = await client.from('files').insert(row).select('id').single();
@@ -306,7 +360,7 @@
       b.addEventListener('click', function(){
         document.querySelectorAll('#seg button').forEach(function(s){ s.classList.remove('sel'); });
         b.classList.add('sel'); _side = b.getAttribute('data-side');
-        $('startBtn').disabled = !_file;
+        syncStart();
       });
     });
     $('startBtn').addEventListener('click', startReading);
