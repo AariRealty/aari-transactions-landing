@@ -1106,7 +1106,7 @@
   <!-- ONE PAGE · boxed deadlines agenda leads, the heatmap calendar follows
        (it replaced the kanban). The board markup is kept hidden so its renderers
        and the file-type filter don't error. -->
-  <div id="needsAttention" style="margin:0 0 14px;display:none"></div>
+  <!-- Needs Attention banner removed July 2026 · attention_snapshot was not reliably surfacing the right files. See renderTcCalendar for the replacement approach (checkbox-based, on portal.html's own "Your deadlines" agenda). -->
   <!-- ORDER · Calendar FIRST, Active files after. Marlenyi's call, twice, and it stands.
        History, so nobody undoes this again: it got flipped, reverted, and re-applied inside an
        hour. The revert was a mistake of MINE. She reported "I cannot see the calendar and I
@@ -10442,178 +10442,13 @@ Tell me your planned move-out date and I will set the inspection.`
     g.ontrack.sort(function(a, b){ const ad = a.next ? a.next.date.getTime() : 8.64e15, bd = b.next ? b.next.date.getTime() : 8.64e15; return ad - bd; });
     return g;
   }
-  // ===== NEEDS ATTENTION (broker + TC) · files with a contract deadline that is
-  // past its date and still not confirmed. Broker sees every file grouped by the
-  // assigned coordinator (plus a No TC assigned group); a coordinator sees only
-  // their own files, no grouping headers. Reads the same contract engine
-  // (fileContractDeadlines) + completion cache (_deadlinesByFile) the rest of the
-  // cockpit uses, so it can never disagree with a file's own deadline view. Hidden
-  // entirely when nothing is late. · #needsAttention
-  function _attentionData(){
-    const today = new Date(); today.setHours(0, 0, 0, 0); const t0 = today.getTime();
-    const role = (_profile && String(_profile.role || '').toLowerCase()) || '';
-    const mine = _profile && _profile.id;
-    const byTc = {}; // tcId (or '__none') -> { name, files:[ { file, items:[{name,daysLate}] } ] }
-    (_files || []).forEach(function(f){
-      if(deriveStage(f) === 'closed' || f.status === 'archived') return;
-      if((f.raw_form_data || {}).test_pool) return;
-      if((f.file_type || 'sale') !== 'sale') return;
-      // Coordinator view: only files actually assigned to them (skip the claim pool).
-      if(role === 'tc' && f.assigned_tc_id !== mine) return;
-      // A file the coordinator is locked out of never appears here. See deadlineClockLocked.
-      // THIS is the function that renders the panel Marlenyi reads. _fileTriage was fixed first
-      // and the screen did not move, because these two count overdue independently.
-      if(deadlineClockLocked(f)) return;
-      const status = _deadlinesByFile[f.id] || {};
-      const items = [];
-      try {
-        fileContractDeadlines(f).forEach(function(d){
-          if(!(d && d.date instanceof Date) || isNaN(d.date.getTime())) return;
-          const rec = status[d.key]; if(rec && rec.completed_at) return; // confirmed · not a slip
-          const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0);
-          const late = Math.round((t0 - x.getTime()) / 86400000);
-          if(late > 0) items.push({ name: d.name || 'Deadline', daysLate: late });
-        });
-      } catch(_){}
-      if(!items.length) return;
-      items.sort(function(a, b){ return b.daysLate - a.daysLate; });
-      const key = f.assigned_tc_id || '__none';
-      let nm = 'No TC assigned';
-      if(f.assigned_tc_id){
-        const tc = (typeof _tcsById !== 'undefined' && _tcsById) ? _tcsById[f.assigned_tc_id] : null;
-        nm = tc ? ((tc.first_name || '') + ' ' + (tc.last_name || '')).trim() : '';
-        if(!nm) nm = 'Coordinator';
-      }
-      (byTc[key] = byTc[key] || { name: nm, files: [] }).files.push({ file: f, items: items });
-    });
-    return { role: role, byTc: byTc };
-  }
-  // Broker session is the source of truth: it can see every file, so when it
-  // recomputes attention it mirrors the result into attention_snapshot. The TC
-  // landing pages (eileen.html / milennys.html) read their own rows from there
-  // instead of re-running the engine. Signature-guarded so it writes only on
-  // change, and broker-gated so a coordinator's partial view never clobbers it.
-  let _attnSig = null;
-  async function _syncAttentionSnapshot(data){
-    try {
-      if(!_client) return;
-      if(String((_profile && _profile.role) || '').toLowerCase() !== 'broker') return;
-      const rows = [];
-      Object.keys(data.byTc).forEach(function(k){
-        data.byTc[k].files.forEach(function(x){
-          rows.push({
-            file_id: x.file.id,
-            tc_id: x.file.assigned_tc_id || null,
-            address: String(x.file.property_address || '').split(',')[0],
-            items: x.items,
-            overdue_count: x.items.length,
-            computed_at: new Date().toISOString(),
-          });
-        });
-      });
-      const sig = JSON.stringify(rows.map(function(r){ return [r.file_id, r.overdue_count, (r.items[0] || {}).daysLate || 0]; }).sort());
-      if(sig === _attnSig) return;
-      _attnSig = sig;
-      const ids = rows.map(function(r){ return r.file_id; });
-      if(rows.length){
-        await _client.from('attention_snapshot').upsert(rows, { onConflict: 'file_id' });
-        await _client.from('attention_snapshot').delete().not('file_id', 'in', '(' + ids.join(',') + ')');
-      } else {
-        await _client.from('attention_snapshot').delete().neq('file_id', '00000000-0000-0000-0000-000000000000');
-      }
-    } catch(_){}
-  }
-  // Option B display · one collapsed row per file (address + "N late, worst X days"
-  // + chevron); tap toggles its deadline list. Expand state persists in _naExpanded
-  // and is folded into the render signature so the cockpit's frequent re-renders
-  // don't collapse an open row or flicker.
-  var _naExpanded = {};
-  var _naRenderSig = null;
-  function renderNeedsAttention(force){
-    const host = document.getElementById('needsAttention'); if(!host) return;
-    // Wait for the deadline completion cache to load, so a confirmed deadline is
-    // never briefly shown as a slip on first paint.
-    if(!_calLoaded){ host.style.display = 'none'; host.innerHTML = ''; _naRenderSig = null; return; }
-    const data = _attentionData();
-    try { _syncAttentionSnapshot(data); } catch(_){}
-    const keys = Object.keys(data.byTc);
-    if(!keys.length){ host.style.display = 'none'; host.innerHTML = ''; _naRenderSig = null; return; }
-    keys.sort(function(a, b){
-      if(a === '__none') return 1; if(b === '__none') return -1; // No TC group sinks to the bottom
-      const ma = Math.max.apply(null, data.byTc[a].files.map(function(x){ return x.items[0].daysLate; }));
-      const mb = Math.max.apply(null, data.byTc[b].files.map(function(x){ return x.items[0].daysLate; }));
-      return mb - ma;
-    });
-    // Skip the DOM rewrite when nothing changed (data + expand state), so an open
-    // row stays open across triage re-renders.
-    const sig = JSON.stringify(keys.map(function(k){ return [k, data.byTc[k].files.map(function(x){ return [x.file.id, x.items.length, x.items[0].daysLate]; })]; })) + '|' + JSON.stringify(_naExpanded);
-    if(!force && sig === _naRenderSig && host.innerHTML){ return; }
-    _naRenderSig = sig;
-    let total = 0; keys.forEach(function(k){ total += data.byTc[k].files.length; }); // count FILES, not deadlines
-    const lateTxt = function(n){ return n + (n === 1 ? ' day late' : ' days late'); };
-    const worstTxt = function(n){ return 'worst ' + n + (n === 1 ? ' day' : ' days'); };
-    const isBroker = data.role === 'broker';
-    let secs = '';
-    keys.forEach(function(k){
-      const g = data.byTc[k]; const none = (k === '__none');
-      if(isBroker){
-        secs += '<div style="font-size:12px;font-weight:500;margin:12px 0 6px 2px;color:' + (none ? '#a32d2d' : '#5f5e5a') + '">' + esc(g.name) + ' &middot; ' + g.files.length + (g.files.length === 1 ? ' file' : ' files') + '</div>';
-      }
-      secs += '<div style="background:#fff;border:0.5px solid #e6e1d6;border-radius:12px;overflow:hidden">';
-      g.files.forEach(function(x, fi){
-        const addr = String(x.file.property_address || 'Untitled file').split(',')[0];
-        const notLast = fi < g.files.length - 1;
-        const exp = !!_naExpanded[x.file.id];
-        const worst = x.items[0].daysLate;
-        secs += '<div style="' + (notLast ? 'border-bottom:0.5px solid #e6e1d6;' : '') + '">';
-        // Collapsed summary row · taps to expand
-        secs += '<div data-na-toggle="' + esc(x.file.id) + '" style="display:flex;gap:10px;align-items:center;justify-content:space-between;padding:12px 14px;cursor:pointer">' +
-          '<span style="font-size:13px;font-weight:600;color:#2c2c2a">' + esc(addr) + '</span>' +
-          '<span style="flex:none;font-size:12px;font-weight:500;color:#a32d2d;display:flex;align-items:center;gap:6px">' +
-            x.items.length + ' late, ' + worstTxt(worst) +
-            '<span style="color:#c9c4ba;font-size:15px;display:inline-block;line-height:1;transition:transform .12s;transform:rotate(' + (exp ? '90' : '0') + 'deg)">&#8250;</span>' +
-          '</span>' +
-        '</div>';
-        // Expanded deadline list · tapping a deadline opens the file
-        if(exp){
-          secs += '<div style="padding-bottom:8px">';
-          x.items.forEach(function(it){
-            secs += '<div data-na-open="' + esc(x.file.id) + '" style="display:flex;gap:12px;align-items:baseline;justify-content:space-between;padding:4px 14px 4px 22px;cursor:pointer">' +
-              '<span style="font-size:13px;color:#5f5e5a">' + esc(it.name) + '</span>' +
-              '<span style="flex:none;font-size:12px;font-weight:500;color:#a32d2d">' + lateTxt(it.daysLate) + '</span>' +
-            '</div>';
-          });
-          secs += '</div>';
-        }
-        secs += '</div>';
-      });
-      secs += '</div>';
-    });
-    host.style.display = '';
-    host.innerHTML =
-      '<div style="background:#f1efe8;border-radius:12px;padding:14px">' +
-        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">' +
-          '<span style="color:#a32d2d;font-size:17px;line-height:1" aria-hidden="true">&#9888;</span>' +
-          '<span style="font-size:15px;font-weight:500;color:#2c2c2a">Needs attention</span>' +
-          '<span style="font-size:12px;font-weight:500;color:#a32d2d;background:#f8e4e4;border-radius:20px;padding:2px 9px">' + total + (total === 1 ? ' file' : ' files') + '</span>' +
-        '</div>' + secs +
-      '</div>';
-    host.querySelectorAll('[data-na-toggle]').forEach(function(row){
-      row.addEventListener('click', function(){
-        const id = row.getAttribute('data-na-toggle');
-        _naExpanded[id] = !_naExpanded[id];
-        try { renderNeedsAttention(true); } catch(_){}
-      });
-    });
-    host.querySelectorAll('[data-na-open]').forEach(function(row){
-      row.addEventListener('click', function(e){
-        e.stopPropagation();
-        const id = row.getAttribute('data-na-open');
-        const f = (_files || []).find(function(x){ return x.id === id; });
-        if(f) openPlaybook(f);
-      });
-    });
-  }
+  // ===== NEEDS ATTENTION banner removed July 2026 · Marlenyi: "isn't reliably surfacing the
+  // right things." Pulled the whole mechanism (attentionData, attention_snapshot sync, the
+  // #needsAttention panel) rather than patch it. NOTE: attention_snapshot fed eileen.html /
+  // milennys.html's own "Needs attention" panels too, those files were NOT touched this pass,
+  // so their panels will simply go quiet as the table stops refreshing. See
+  // commission_payout_portal_mockups memory entry for the follow-up note. Replacement for
+  // "what needs me right now": the checkbox-driven agenda on portal.html's "Your deadlines".
   // ===== Row progress · THE FILE'S OWN FINISH LINE =====
   // Every file climbs its own ladder, not one shared idea of "closing". A full-TC sale walks the
   // sale pipeline to Closed; an upfront service (MLS Setup, Offer Prep, Listing Docs, File Org)
@@ -10659,11 +10494,15 @@ Tell me your planned move-out date and I will set the inspection.`
       return { w:'UNBILLED', strong:false };
     } catch(_){ return null; }
   }
-  // ===== Active files · Board (default) or List =====
-  // The board replaces the agenda rather than sitting under it: three stacked views of the same
-  // files (agenda, calendar, board) buried the service tabs so far down the page that the
-  // Listings tab may as well not have existed. One section, board by default, List kept as the
-  // escape hatch because that is where "Needs you" and the overdue counts live.
+  // ===== Active files · Overview (default) or Invoice =====
+  // The board (labelled "Overview") replaces the agenda rather than sitting under it: three
+  // stacked views of the same files (agenda, calendar, board) buried the service tabs so far
+  // down the page that the Listings tab may as well not have existed.
+  // List view REMOVED July 2026 (Marlenyi: "I don't like that"). List was the one place "Needs
+  // you" and overdue counts lived outside the (also-removed) Needs Attention banner, dropping
+  // both in the same pass means Overview's kanban cards are now the ONLY surface in files.html
+  // for urgency. Worth revisiting if a broker/TC needs a faster way to see "what needs me right
+  // now" than scanning columns. Flagged, not solved, in this pass.
   let _activeView = 'board';
   try { _activeView = localStorage.getItem('aari_active_view_' + ((_profile && _profile.id) ? _profile.id : 'anon')) || 'board'; } catch(_){}
   // DEEP LINK · ?view=invoice (also #invoice). The Thursday email says "Submit my invoice", so the
@@ -10673,8 +10512,10 @@ Tell me your planned move-out date and I will set the inspection.`
   try {
     var _vq = new URLSearchParams(location.search).get('view');
     if(_vq === 'invoice' || location.hash === '#invoice') _activeView = 'invoice';
-    else if(_vq === 'board' || _vq === 'list') _activeView = _vq;
+    else if(_vq === 'board') _activeView = _vq;
   } catch(_){}
+  // List view removed July 2026 · fold any stale saved preference or old bookmarked link back to Overview.
+  if(_activeView === 'list') _activeView = 'board';
   // How many of my own files are sitting billable right now. Drives the count on the Invoice tab,
   // so money waiting to be claimed is visible from the board without opening anything.
   // The badge must count what the tab CONTAINS, for the person reading it.
@@ -10704,7 +10545,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const showInvoice = (role === 'tc') || (role === 'broker');
     const n = showInvoice ? _invoiceBadgeCount() : 0;
     return '<span style="flex:none;display:inline-flex;border:0.5px solid #e6e1d6;border-radius:20px;overflow:hidden;margin-right:8px">' +
-      pill('board', 'Board') + pill('list', 'List') +
+      pill('board', 'Overview') +
       (showInvoice ? pill('invoice', 'Invoice', n ? String(n) : '') : '') + '</span>';
   }
   // Exactly one view is on screen at a time. #fileCalendar is deliberately NOT touched: it carries
@@ -10729,7 +10570,7 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){}
   }
   function renderTcCalendar(){
-    try { renderNeedsAttention(); } catch(_){}
+    // renderNeedsAttention() removed July 2026, see note above.
     const host = document.getElementById('fileCalendar'); if(!host) return;
     const g = _fileTriage();
     const q = (_calSearch || '').toLowerCase();
