@@ -1,4 +1,4 @@
-// Aari Transactions · submit-tc-invoice (v7, hardened).
+// Aari Transactions · submit-tc-invoice (v10, hardened + server-verified credit coverage).
 // Coordinator submits their weekly invoice.
 //
 // TRUST MODEL. Everything below the JWT is treated as hostile:
@@ -12,11 +12,20 @@
 //     client's numbers are never trusted, only compared. Previously the server summed the
 //     browser's amount_cents, so an edited page could invoice any figure.
 //
-// CREDIT COVERAGE. Whether a membership credit covers a file depends on billing-cycle math over
-// every file for that agent (computeCreditCoverage in files.html). Rather than port that, we lean
-// on an invariant: coverage can only ever REDUCE pay to $0, never raise it. So the amount computed
-// here is a true CEILING, and the client's `covered` flag may only pull a line down to zero. A
-// tampered client can therefore only ever under-claim, which costs the coordinator, not the company.
+// CREDIT COVERAGE. Decided HERE, against membership_credit_uses, not taken from the browser.
+//
+// The old reasoning was: coverage can only REDUCE pay to $0, so the figure computed here is a
+// true CEILING and a tampered client can only ever under-claim, which costs the coordinator and
+// not the company. That is sound about TAMPERING and it misses the accident. If `covered` arrives
+// false or missing for an innocent reason (stale tab, membership load that failed, a race on the
+// credit query) the server bills the FULL amount on a file a member already paid for with a
+// credit, and stamps it legitimate. Aari pays twice for one job and the invoice looks perfect.
+//
+// A consumed credit is a fact in a table this function can read with the service role. So it
+// reads it. `covered` from the client is still honoured on the way DOWN (a coordinator may waive
+// their own pay), but it can no longer raise a line off $0 by staying silent. The lookup fails
+// closed: if coverage cannot be established either way, the invoice is refused rather than
+// priced at full.
 //
 // MONEY RULES COME FROM THE SHARED ENGINE — /js/pay-engine.js, the same file the cockpit loads.
 // This function ships that exact file in its bundle, so there is ONE place to change a price and
@@ -117,15 +126,41 @@ Deno.serve(async (req) => {
   const already = (dbFiles||[]).filter((f: any)=>f.invoice_id).map((f: any)=>f.id);
   if (already.length) return j(409,{ ok:false, error:`file(s) already invoiced: ${already.join(", ")}` });
 
-  // Recompute every line from the DB row. Client `covered` may only pull a line to $0.
+  // MEMBERSHIP CREDIT COVERAGE · decided HERE, from the database, not from the browser.
+  //
+  // This used to be `const covered = it.covered === true` and nothing else: the server took the
+  // page's word for whether a membership credit had already paid for a file. The ceiling above
+  // stops a line being inflated, so the risk was never someone over-billing. It was the quiet
+  // opposite. If `covered` arrived false or missing for ANY reason (a stale tab, a membership
+  // lookup that failed, a race on the credit query, an edited page) the server billed the full
+  // amount on a file the member had already paid for with a credit, and recorded it as
+  // legitimate. Aari pays twice for one job and nothing on the invoice looks wrong.
+  //
+  // A consumed credit is a FACT in membership_credit_uses, and this function holds the service
+  // role, so it can just look. It does. The client no longer gets a vote on the way down.
+  const { data: creditRows, error: cErr } = await admin
+    .from("membership_credit_uses")
+    .select("file_id, agent_id, service_id")
+    .in("file_id", fileIds);
+  // Fail closed. If we cannot prove coverage either way, do NOT silently bill the full amount.
+  if (cErr) return j(500,{ ok:false, error:"credit lookup failed, refusing to price this invoice: " + cErr.message });
+  const coveredByServer = new Set((creditRows||[]).map((r: any)=>String(r.file_id)));
+
+  // Recompute every line from the DB row.
   const tcName = ((tc.first_name||"")+" "+(tc.last_name||"")).trim();
+  const disagreed: string[] = [];
   const safeItems = items.map((it: any)=>{
     const f = byId.get(String(it.file_id));
     // Same call the cockpit makes. The TC's name lets the engine catch imported files whose agent
     // is stored as free text — the old hand-copy here omitted that branch, so the server and the
     // screen already disagreed on self-coordinated files.
     const ceiling = PAY.tcPayCeiling(f, pct, tcName);
-    const covered = it.covered === true;
+    const serverCovered = coveredByServer.has(String(f.id));
+    // The client may still pull a line to $0 on its own (it can only ever REDUCE, and a
+    // coordinator waiving their own pay is allowed). It can no longer raise one off $0 by
+    // forgetting to say "covered".
+    const covered = serverCovered || it.covered === true;
+    if (serverCovered && it.covered !== true) disagreed.push(String(f.id));
     const amount = covered ? 0 : ceiling;
     return {
       file_id: f.id,
@@ -133,10 +168,12 @@ Deno.serve(async (req) => {
       service: it.service || f.service_type || "Service",
       closed_date: it.closed_date || "",
       amount_cents: amount * 100,
-      ...(covered ? { covered:true, client: it.client, credit_no: it.credit_no } : {}),
+      ...(covered ? { covered:true, covered_source: serverCovered ? "membership_credit_uses" : "client", client: it.client, credit_no: it.credit_no } : {}),
       ...(it.over ? { over:true } : {}),
     };
   });
+  // Loud, because this means a screen showed a coordinator money they were never owed.
+  if (disagreed.length) console.error(`CREDIT COVERAGE MISMATCH · tc=${tcId} · server says covered, page did not: ${disagreed.join(", ")} · billed $0 per the database`);
   const total = safeItems.filter((it: any)=>!it.covered).reduce((s: number, it: any)=>s + (Number(it.amount_cents)||0), 0);
 
   // If the browser's arithmetic disagreed with ours, record it. Ours wins.
