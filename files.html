@@ -11509,15 +11509,22 @@ Tell me your planned move-out date and I will set the inspection.`
         return { f:f, date:d, days: Math.round((d - today) / 86400000) };
       }).filter(function(x){ return !isNaN(x.date.getTime()); })
         .sort(function(a,b){ return a.date - b.date; }).slice(0, 5);
+      // (past-dated files sort first naturally · oldest date, top of the list, where they nag)
     } catch(_){ return []; }
   }
   function _nextInvoiceCardHtml(card){
     var items = _nextInvoiceItems();
     if(!items.length) return '';
     var rows = items.map(function(x){
+      // A date in the past is not "soon". Say so on the line instead of printing a stale date
+      // next to the word "closing soon" and hoping nobody reads it.
+      var past = closingDatePassed(x.f);
+      var when = past
+        ? '<span style="color:#8a6d1b">' + esc(x.date.toLocaleDateString('en-US', { month:'short', day:'numeric' })) + ' &middot; date passed</span>'
+        : esc(x.date.toLocaleDateString('en-US', { month:'short', day:'numeric' }));
       return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0">' +
         '<span style="font-size:12.5px;min-width:0">' + esc((x.f.property_address || 'File').split(',')[0]) + '</span>' +
-        '<span style="font-size:12px;color:#8a857c;white-space:nowrap">' + esc(x.date.toLocaleDateString('en-US', { month:'short', day:'numeric' })) +
+        '<span style="font-size:12px;color:#8a857c;white-space:nowrap">' + when +
         ' &middot; ' + _money(fileTcPayCents(x.f)) + '</span></div>';
     }).join('');
     return '<div style="' + card + '">' +
@@ -13542,10 +13549,32 @@ Tell me your planned move-out date and I will set the inspection.`
       };
     } catch(_){ return null; }
   }
+  // ===== THE CLOSING DATE HAS PASSED AND THE FILE IS STILL OPEN =====
+  // 1514 Wagner Ave sat in "Next invoice · closing soon" reading "Jun 30", seventeen days after
+  // Jun 30. A date in the past is not "soon". Either the deal blew its closing date, or the date
+  // is simply stale, and both need a person: the file has no contract attached, so nothing here
+  // can know the real one. Flag it, never guess it. Same rule as the weekend-closing warning and
+  // the contract-mismatch banner: this points at the problem, it does not invent an answer.
+  function closingDatePassed(f){
+    try {
+      if(!f || !f.closing_date) return 0;
+      if((f.file_type || 'sale') !== 'sale') return 0;
+      if(f.status === 'archived' || f.archived_at) return 0;
+      if(deriveStage(f) === 'closed' || f.transaction_stage === 'closed' || f.status === 'closed') return 0;
+      var ENG = window.AariDeadlineEngine;
+      var d = (ENG && ENG.parseDate) ? ENG.parseDate(String(f.closing_date).slice(0,10)) : null;
+      if(!d || isNaN(d.getTime())) return 0;
+      var today = new Date(); today.setHours(0,0,0,0);
+      var days = Math.round((today - d) / 86400000);
+      return days > 0 ? days : 0;
+    } catch(_){ return 0; }
+  }
   function cardHtml(f){
     var addr = f.property_address || 'Untitled file';
     var dupes = duplicatesOf(f);
     var _cm = contractClosingMismatch(f);
+    var _past = closingDatePassed(f);
+    var pastBadge = _past ? '<span title="The closing date on this file was ' + _past + ' day' + (_past === 1 ? '' : 's') + ' ago and the file is still open. Either it closed and nobody moved it, or the date is wrong." style="display:inline-block;font-size:8.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#8a6d1b;background:#fbf7ee;border:0.5px solid #efe4cf;border-radius:3px;padding:1px 5px;margin-left:6px;vertical-align:middle">Date passed</span>' : '';
     var mismatchBadge = _cm ? '<span title="The closing date on this file does not match the closing date on the contract. Open the file to compare." style="display:inline-block;font-size:8.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#8a6d1b;background:#fbf7ee;border:0.5px solid #efe4cf;border-radius:3px;padding:1px 5px;margin-left:6px;vertical-align:middle">Date?</span>' : '';
     var dupeBadge = dupes.length ? '<span title="Another active file has this same address and closing date. Open it to compare, then archive whichever is the mistake." style="display:inline-block;font-size:8.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#8a6d1b;background:#fbf7ee;border:0.5px solid #efe4cf;border-radius:3px;padding:1px 5px;margin-left:6px;vertical-align:middle">Duplicate?</span>' : '';
     var cash = isCashFile(f);
@@ -13588,7 +13617,7 @@ Tell me your planned move-out date and I will set the inspection.`
     return '<div class="card' + (cash ? ' cash' : '') + '" draggable="true" data-file-id="' + esc(f.id) + '">' +
       '<div class="cardv2-face">' +
         '<div class="cardv2-top">' +
-          '<p class="cardv2-addr" title="' + esc(addr) + '">' + esc(addr.split(',')[0]) + cashBadge + payBadge + saBadge + dupeBadge + mismatchBadge + testBadge + ucBoardTag(f) + '</p>' +
+          '<p class="cardv2-addr" title="' + esc(addr) + '">' + esc(addr.split(',')[0]) + cashBadge + payBadge + saBadge + dupeBadge + mismatchBadge + pastBadge + testBadge + ucBoardTag(f) + '</p>' +
           scoreBadge +
         '</div>' +
         nameLine +
@@ -14520,8 +14549,34 @@ Tell me your planned move-out date and I will set the inspection.`
       '</div>';
   }
 
+  // Sits at the top of a file whose closing date has already gone by while the file is still open.
+  // Two honest possibilities and the banner names both, because the software cannot tell them
+  // apart and guessing would be worse than asking.
+  function renderClosingPassedBanner(){
+    const right = document.getElementById('rail-right');
+    if(!right || !_currentFile) return;
+    let el = document.getElementById('rail-closing-passed');
+    const days = closingDatePassed(_currentFile);
+    if(!days){ if(el) el.style.display = 'none'; return; }
+    if(!el){
+      el = document.createElement('div'); el.id = 'rail-closing-passed';
+      right.insertBefore(el, right.firstChild);
+    }
+    el.style.display = 'block';
+    const ENG = window.AariDeadlineEngine;
+    const d = ENG && ENG.parseDate ? ENG.parseDate(String(_currentFile.closing_date).slice(0,10)) : null;
+    const nice = d ? d.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' }) : String(_currentFile.closing_date);
+    el.innerHTML = '<div style="background:#fbf7ee;border:1px solid #efe4cf;border-radius:10px;padding:12px 14px;margin:0 0 14px">' +
+      '<p style="font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#8a6d1b;font-weight:700;margin:0 0 6px">Closing date has passed &middot; ' + days + ' day' + (days === 1 ? '' : 's') + ' ago</p>' +
+      '<p style="font-size:12px;color:#7a5c12;line-height:1.5;margin:0">This file says it closes <b>' + esc(nice) + '</b>, and it is still open.</p>' +
+      '<p style="font-size:11.5px;color:#7a5c12;line-height:1.5;margin:8px 0 0">Either it closed and nobody moved the card, or the date is wrong. Both matter: every deadline on this file counts off that date, and it stays out of your invoice until the file is marked closed. Move it to Closed, or fix the date above.</p>' +
+      '<p style="font-size:11px;color:#a3925f;line-height:1.5;margin:7px 0 0">Nothing has been changed. This is a flag, not a correction.</p>' +
+      '</div>';
+  }
+
   function openPlaybook(file){
     _currentFile = file;
+    renderClosingPassedBanner();
     renderClosingMismatchBanner();
     renderDuplicateBanner();
     renderAgentRequestsBanner();
