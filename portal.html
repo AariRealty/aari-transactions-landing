@@ -4406,7 +4406,23 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
         setTimeout(function(){ const tt = document.getElementById('tab-team'); if(tt && tt.hidden) tabBtn.click(); }, 500);
       }
       renderTeamView();
-    } catch(e){ console.warn('[team] load failed', e); }
+    } catch(e){
+      console.warn('[team] load failed', e);
+      // Only surface a visible error once we already know this is a team lead (tab
+      // unhidden) · a failure before that point is just the lead-detection query itself
+      // failing, which every regular agent hits too and has no team tab to error into.
+      if(_team){
+        const host = document.getElementById('tab-team');
+        if(host && !document.getElementById('team-load-error')){
+          const banner = document.createElement('div');
+          banner.id = 'team-load-error';
+          banner.className = 'rtx-error';
+          banner.style.margin = '0 0 14px';
+          banner.textContent = 'Something went wrong loading your team’s data. Refresh the page to try again.';
+          host.insertBefore(banner, host.firstChild);
+        }
+      }
+    }
   }
   function teamAgentName(id){ const a = _teamAgents[id]; return a ? (((a.first_name||'')+' '+(a.last_name||'')).trim() || 'Agent') : 'Agent'; }
   // Broker-only · full roster for the deal-editor "Reassign agent" picker. Loaded once.
@@ -4842,27 +4858,13 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     const ex = (100 + 90*Math.cos(rad)).toFixed(1), ey = (100 - 90*Math.sin(rad)).toFixed(1);
     const gPath = pct <= 0.5 ? '' : '<path d="M10,100 A90,90 0 0,1 '+ex+','+ey+'" fill="none" stroke="#161310" stroke-width="13" stroke-linecap="round"/>';
     // Per-agent
-    const byAgent = {}; files.forEach(f => { byAgent[f.agent_id] = (byAgent[f.agent_id]||0) + teamComm(f); });
-    const agentIds = Object.keys(byAgent).sort((a,b)=>byAgent[b]-byAgent[a]);
-    const fileRow = function(f){
-      const track = txTrack(f), total = track.length;
-      const idx = Math.max(0, Math.min(txStageIdx(f), total-1));
-      return '<div class="pv-frow"><span class="adr">'+esc(f.property_address || f.client_name || 'File')+'</span>' +
-        '<span class="prog"><span class="pbar"><span class="pfill" style="width:'+Math.round((idx+1)/total*100)+'%"></span></span><span class="pst">'+esc(track[idx])+' &middot; '+(idx+1)+'/'+total+'</span></span>' +
-        '<span class="mny">'+teamFmt(teamPrice(f))+'</span></div>';
-    };
     const agInitials = function(id){ var nm=teamAgentName(id); return (nm.split(' ').map(function(w){return w.charAt(0);}).join('').slice(0,2)||'··').toUpperCase(); };
     const fileLabel = function(f){ var a=f.property_address||''; var hasAddr = a && a.indexOf('Buyer representation')!==0; return hasAddr ? a : (f.client_name || a || 'File'); };
-    const flatRow = function(f){ var track=txTrack(f), total=track.length; var idx=Math.max(0,Math.min(txStageIdx(f),total-1)); return '<div class="pv-flat"><span class="a">'+esc(fileLabel(f))+'</span><span class="st">'+esc(track[idx])+'</span><span class="mny">'+teamFmt(teamPrice(f))+'</span></div>'; };
     // agentRows is built below (after pending groups are known) so real + pending agents render in ONE unified list under their names.
-    const fgBars = fgIds.length
-      ? ('<div class="pv-rank">'+fgIds.map(function(id,i){ var pc=Math.round(fgCount[id]/(files.length||1)*100); return '<div class="pv-rrow'+(i===0?' top':'')+'"><span class="nm">'+esc(_fgNames[id]||'TC')+'</span><span class="ld"></span><span class="vv">'+fgCount[id]+'</span><span class="pc">'+pc+'%</span></div>'; }).join('')+'</div>')
-      : '<div style="font-size:11px;color:var(--muted);margin-top:6px">No File-Org files yet.</div>';
 
     // Mix · representation (client_type) + service (service_type) — real data
     const repMap = {}; files.forEach(function(f){ var t=(f.client_type||'').toLowerCase(); var lbl = t==='buyer'?'Buyer':t==='seller'?'Seller':t==='tenant'?'Tenant':t==='landlord'?'Landlord':(t?(t.charAt(0).toUpperCase()+t.slice(1)):'Other'); repMap[lbl]=(repMap[lbl]||0)+1; });
     const svcMap = {}; files.forEach(function(f){ var s=txSvc(f); var lbl=(s==='tc'||s.indexOf('tc_')===0)?'Contract to Close':(s==='lc'||s==='listing'||s==='listing_docs'||s==='mls_setup')?'Listing':(s.indexOf('op_')===0)?'Offer Prep':(s==='file_org')?'File Organization':(s==='standalone_review')?'Review':(s==='rental')?'Rental':'Other'; svcMap[lbl]=(svcMap[lbl]||0)+1; });
-    const mixBars = function(map){ var ks=Object.keys(map).sort(function(a,b){return map[b]-map[a];}); var tot=ks.reduce(function(s,k){return s+map[k];},0)||1; return '<div class="pv-rank">'+ks.map(function(k,i){ var pc=Math.round(map[k]/tot*100); return '<div class="pv-rrow'+(i===0?' top':'')+'"><span class="nm">'+esc(k)+'</span><span class="ld"></span><span class="vv">'+map[k]+'</span><span class="pc">'+pc+'%</span></div>'; }).join('')+'</div>'; };
 
     // Pending · ownerless imported files grouped by intended owner
     const PENDING_NAMES = { 'rooseveltsanchezrealestate@gmail.com':'Roosevelt Sanchez', 'flaviamaguilera@gmail.com':'Flavia Aguilera', 'machuca.alied@gmail.com':'Alied Machuca', 'puentesana99@gmail.com':'Ana Puentes' };
