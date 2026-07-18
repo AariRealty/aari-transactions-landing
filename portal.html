@@ -1997,7 +1997,25 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     wireMembership();
     wireAgentAgreements();
     forceKanbanLayout();
-    await loadAll();
+    try {
+      await loadAll();
+    } catch(e) {
+      // Unlike every other async block in this file, loadAll() had no error handling at
+      // all · a failed first fetch (network blip, RLS reject) left the tab frozen on
+      // "Loading your files..." forever with nothing in the console but a silent rejection.
+      console.error('[portal] loadAll failed', e);
+      const msg = document.getElementById('today-msg');
+      if(msg) msg.textContent = 'Could not load your files. Refresh the page to try again.';
+      const tf = document.getElementById('tab-files');
+      if(tf && !document.getElementById('files-load-error')){
+        const banner = document.createElement('div');
+        banner.id = 'files-load-error';
+        banner.className = 'rtx-error';
+        banner.style.margin = '0 0 14px';
+        banner.textContent = 'Something went wrong loading your files. Refresh the page to try again.';
+        tf.insertBefore(banner, tf.firstChild);
+      }
+    }
     // Item 1 · live stage updates · agent sees TC moves without refreshing.
     mfInitRealtime(session.user.id);
     renderMyAgreement();
@@ -4379,8 +4397,14 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
       // zero-own-files "submit your first file" welcome and restore the board.
       const wc = document.getElementById('welcome-card'); if(wc) wc.style.display = 'none';
       const ks = document.querySelector('.kanban-section'); if(ks) ks.style.display = '';
-      // Land them on the Team tab by default · that's the lead's primary view.
-      if(tabBtn && !tabBtn._defaulted){ tabBtn._defaulted = true; tabBtn.click(); }
+      // Land them on the Team tab by default · that's the lead's primary view. This runs
+      // as an independent async chain from the sidebar's own "land on Home" boot call, with
+      // no guaranteed order between them · re-assert once more shortly after in case Home
+      // wins the race and silently steals the redirect back.
+      if(tabBtn && !tabBtn._defaulted){
+        tabBtn._defaulted = true; tabBtn.click();
+        setTimeout(function(){ const tt = document.getElementById('tab-team'); if(tt && tt.hidden) tabBtn.click(); }, 500);
+      }
       renderTeamView();
     } catch(e){ console.warn('[team] load failed', e); }
   }
