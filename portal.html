@@ -2856,7 +2856,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     const evs = [];
     const tcName = function(id){ const t = _tcs[id]; return t && t.first_name ? t.first_name : 'Your TC'; };
     const addrById = {};
-    (_files || []).forEach(function(f){
+    myFilesAll().forEach(function(f){
       const addr = f.property_address || 'Your file';
       addrById[f.id] = addr;
       if(f.created_at) evs.push({ ts:f.created_at, cat:'file', icon:'ti-file-text', color:'#5f5e5a', text:'File submitted', addr:addr });
@@ -2998,11 +2998,14 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
   function renderBillingDocuments(){
     const body = document.getElementById('bd-body');
     if(!body) return;
-    const files = _files || [];
+    const isStaff = _effRole() === 'tc' || _effRole() === 'broker';
+    // Staff (TC/broker) legitimately need every file they can see for the glance line below.
+    // Everyone else (including a team lead, whose _files also holds their team via RLS) only
+    // sees their OWN billing/payment status here.
+    const files = isStaff ? (_files || []) : myFilesAll();
     _bdDocs = [];
     const unpaid = files.filter(function(f){ return !bdPaid(f); });
     const paid = files.filter(function(f){ return bdPaid(f); });
-    const isStaff = _effRole() === 'tc' || _effRole() === 'broker';
     let html = '';
 
     // Staff (TC/broker) glance · how many need payment vs paid across the files
@@ -4358,6 +4361,17 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
       const t = await _client.from('teams').select('id, name').eq('lead_agent_id', _profile.id).order('created_at',{ascending:true}).limit(1).maybeSingle();
       if(!t || !t.data) return; // not a team lead · tab stays hidden
       _team = t.data;
+      // myFilesAll() only scopes down to OWN files once _team is known truthy. The personal
+      // panels below already ran once at boot (before this async chain resolved) using the
+      // unscoped fallback, so they were showing this lead's whole team as "my production."
+      // Re-render them now that _team is confirmed so they reflect the correct, scoped data.
+      try { renderMyFiles(); } catch(_){}
+      try { renderKanban(); } catch(_){}
+      try { renderClosed(); } catch(_){}
+      try { wkRender(); } catch(_){}
+      try { renderEarnings(); } catch(_){}
+      try { renderSoloProduction(); } catch(_){}
+      try { var _eg = document.getElementById('welcome-greet'); if(_eg){ var _g = agentGreeting(); if(_g) _eg.innerHTML = _g; } } catch(_){}
       const mem = await _client.from('team_members').select('agent_id').eq('team_id', _team.id);
       const ids = (mem.data || []).map(m => m.agent_id);
       if(!ids.length) return;
@@ -4466,7 +4480,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
   const COMPANY_LEAD_AGENT_PCT = 37.5;
   // Per-agent commission split · the % the AGENT KEEPS (company gets the rest + the transaction fee).
   // Everyone is 80/20 by default; Eileen + Odalis are 75/25; Milennys / Alejandro / Marlenyi are
-  // owner exceptions (set to 100 = keep all, no company split — CONFIRM their real numbers).
+  // owner exceptions (set to 100 = keep all, no company split). Confirmed correct 2026-07-18.
   var DEFAULT_AGENT_KEEP = 80;
   var AGENT_SPLIT_KEEP = {
     'eileen hernandez':75, 'odalis mora':75,
@@ -4570,7 +4584,10 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
   function buildYourProduction(){
     const myFiles = myFilesAll().filter(f => !isClosed(f));
     // New agent · no files yet → a welcoming first-run state instead of empty tables.
-    if(!_files || !_files.length){
+    // Checked against myFilesAll(), not raw _files: a team lead's _files also holds their
+    // whole team's rows (files_team_lead_read RLS), so a lead with zero deals of their own
+    // would otherwise skip straight past this into a $0 tile block instead of the welcome state.
+    if(!myFilesAll().length){
       var nm=(_profile && _profile.first_name)? _profile.first_name : 'there';
       var unsigned = !!(_profile && !_profile.agreement_signed_at);
       var hasGoal = !!(_profile && _profile.monthly_volume_goal_cents);
@@ -4594,7 +4611,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     // Your own momentum · this month vs last month commission (needs history to show).
     var _ypN=new Date(), _ypCur=_ypN.getFullYear()+'-'+('0'+(_ypN.getMonth()+1)).slice(-2);
     var _ypL=new Date(_ypN.getFullYear(),_ypN.getMonth()-1,1), _ypLast=_ypL.getFullYear()+'-'+('0'+(_ypL.getMonth()+1)).slice(-2);
-    var _ytv=0,_ylv=0; (_files||[]).forEach(function(f){ var s=f.closing_date?(''+f.closing_date).slice(0,7):''; var v=agentNetOf(f); if(s===_ypCur)_ytv+=v; else if(s===_ypLast)_ylv+=v; });
+    var _ytv=0,_ylv=0; myFilesAll().forEach(function(f){ var s=f.closing_date?(''+f.closing_date).slice(0,7):''; var v=agentNetOf(f); if(s===_ypCur)_ytv+=v; else if(s===_ypLast)_ylv+=v; });
     var momLine=''; if(_ylv>0){ var _ych=Math.round((_ytv-_ylv)/_ylv*100); if(_ych>=10) momLine='<div class="yp-mom">&#9650; Up '+_ych+'% from last month</div>'; else if(_ych<=-10) momLine='<div class="yp-mom" style="color:var(--muted)">&#9660; Down '+Math.abs(_ych)+'% from last month</div>'; }
     var money = '<div class="pv-eyebrow">Your money &middot; '+mo+'</div>' +
       '<table class="pv-rollup"><tbody>' +
@@ -4619,7 +4636,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
   // Everyday greeting for the header (no name; the header already shows it). Recognition is layered on by renderMemberPodium.
   function agentGreeting(){
     if(!_profile) return '';
-    var active=(_files||[]).filter(function(f){ return !isClosed(f); });
+    var active=myFilesAll().filter(function(f){ return !isClosed(f); });
     if(!active.length) return '';
     var goalCents=_profile.monthly_volume_goal_cents; var goalVol=goalCents?Number(goalCents)/100:0;
     var myVol=active.reduce(function(s,f){ return s+teamPrice(f); },0);
@@ -4803,11 +4820,14 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     if(Array.isArray(f.splits) && f.splits.some(function(s){ return String(s.agent_id) === String(_profile.id); })) return true;
     return false;
   }
-  // Personal-view file set. A broker can READ every file (RLS), so her personal tabs (My files,
-  // earnings, calendar) must be scoped to her OWN production. Normal agents already only read
-  // their own, so they are unaffected. Always recomputed from _files so it never goes stale.
+  // Personal-view file set. A broker can READ every file (RLS), and a team lead's read grant
+  // (files_team_lead_read policy) ALSO pulls their whole team into the same _files array, so
+  // both roles' personal tabs (My files, earnings, calendar, greeting, activity, billing) must
+  // be scoped to their OWN production. Normal agents already only read their own file rows, so
+  // they are unaffected. Always recomputed from _files/_team so it never goes stale.
   function myFilesAll(){
-    if(_profile && String(_profile.role||'').toLowerCase() === 'broker') return (_files||[]).filter(isMyProductionFile);
+    var isBrokerRole = _profile && String(_profile.role||'').toLowerCase() === 'broker';
+    if(isBrokerRole || _team) return (_files||[]).filter(isMyProductionFile);
     return _files || [];
   }
   function renderTeamView(){
