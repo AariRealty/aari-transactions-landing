@@ -1039,6 +1039,9 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
 .rtx-toast.err{background:#fbecea;color:var(--red);}
 .rtx-panel{display:none;}
 .rtx-panel.active{display:block;}
+/* Single-tab iframe embeds (?embed=1&tab=files|business|team) only want the legacy
+   #tab-* content · the sidebar and every rtx-panel (Home included) must stay out of the way. */
+.aari-embed .rtx-sidebar, .aari-embed .rtx-panel.active{display:none!important;}
 .rtx-panel-label{font-size:10px;letter-spacing:2px;text-transform:uppercase;font-weight:700;color:#9a958c;margin-bottom:6px;}
 .rtx-panel-title{font-family:'Playfair Display',Georgia,serif;font-size:24px;font-weight:600;color:var(--ink);letter-spacing:-0.3px;margin-bottom:4px;}
 .rtx-panel-sub{font-size:12.5px;color:var(--muted);margin-bottom:18px;}
@@ -1193,18 +1196,14 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     </div>
   </div>
 
-  <!-- Portal tabs · Files (default) vs Business · panes populated by setupPortalTabs() -->
-  <div class="ptabs" id="ptabs" hidden>
+  <!-- Legacy tab bridge · buttons stay in the DOM (embed script + old logic click them by
+       id/selector) but are never shown; the sidebar below is the one visible nav now. -->
+  <div class="ptabs" id="ptabs" hidden style="display:none">
     <button type="button" class="ptab on" data-ptab="files">My files</button>
     <button type="button" class="ptab" data-ptab="business">Production</button>
     <button type="button" class="ptab" data-ptab="team" id="ptab-team" hidden>Production</button>
-    <button type="button" class="ptab" data-ptab="commissions">Commissions</button>
   </div>
-  <div id="tab-files"></div>
-  <div id="tab-business" hidden></div>
-  <div id="tab-team" hidden></div>
-  <div id="tab-commissions" hidden>
-    <div class="rtx-shell">
+  <div class="rtx-shell">
       <div class="rtx-sidebar">
         <div class="rtx-sidebar-head">
           <div class="rtx-sidebar-brand">Aari.</div>
@@ -1212,6 +1211,12 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
         </div>
         <div class="rtx-group">
           <div class="rtx-item on" data-rtx-panel="home">Home</div>
+        </div>
+        <div class="rtx-group">
+          <div class="rtx-group-label">Workspace</div>
+          <div class="rtx-item" data-rtx-panel="files">My files</div>
+          <div class="rtx-item" data-rtx-panel="business" id="rtx-item-business">Production</div>
+          <div class="rtx-item" data-rtx-panel="team" id="rtx-item-team" hidden>Production</div>
         </div>
         <div class="rtx-group">
           <div class="rtx-group-label">Transactions</div>
@@ -1234,6 +1239,13 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
           </div>
         </div>
         <div id="rtx-toast" class="rtx-toast" hidden></div>
+
+        <!-- ============ LEGACY TABS · Files / Production (business or team) ============
+             Content + gating logic unchanged (setupPortalTabs / loadTeamLead); only the
+             navigation that reveals them moved to the sidebar. -->
+        <div id="tab-files" hidden></div>
+        <div id="tab-business" hidden></div>
+        <div id="tab-team" hidden></div>
 
         <!-- ============ HOME ============ -->
         <div id="rtx-panel-home" class="rtx-panel active">
@@ -1333,7 +1345,6 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
 
       </div>
     </div>
-  </div>
 
   <!-- FIRST-TIME WELCOME · shown only when agent has zero files -->
   <section class="welcome-card" id="welcome-card" style="display:none">
@@ -1944,6 +1955,10 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     bootHide();
     document.getElementById('page-main').style.display = 'block';
     setupPortalTabs();
+    // Sidebar is the primary nav now (Files/Business/Team live inside it too), so it boots
+    // unconditionally on page load instead of waiting for a "Commissions" tab click that no
+    // longer exists. Lands on Home; guarded since this script block loads after this one.
+    if(window.rtxInitCommissions) window.rtxInitCommissions();
     // Hard SA gate · raise it the instant the profile is known, before any dashboard
     // data loads, so an unsigned agent never sees the portal behind it.
     try { renderSaGate(); } catch(_){}
@@ -3423,7 +3438,10 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     ['.kanban-section','.cal-section','.team-refer-row','.closed-collapse'].forEach(function(sel){
       const el = page.querySelector(sel); if(el) tabFiles.appendChild(el);
     });
-    ptabs.hidden = false;
+    // ptabs itself stays hidden always now · the sidebar is the visible nav. The buttons
+    // are still clicked programmatically (by rtxShowPanel's legacy bridge, the team-lead
+    // auto-redirect below, and the ?embed= script) so this handler stays the single source
+    // of truth for which legacy tab is showing.
     ptabs.addEventListener('click', function(e){
       const b = e.target.closest('[data-ptab]'); if(!b) return;
       const which = b.getAttribute('data-ptab');
@@ -3432,8 +3450,10 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
       tabBiz.hidden = (which !== 'business');
       const tabTeam = document.getElementById('tab-team');
       if(tabTeam) tabTeam.hidden = (which !== 'team');
-      const tabComm = document.getElementById('tab-commissions');
-      if(tabComm){ tabComm.hidden = (which !== 'commissions'); if(which === 'commissions' && window.rtxInitCommissions) window.rtxInitCommissions(); }
+      // Keep the sidebar in sync regardless of entry point (proxy click from rtxShowPanel,
+      // or the team-lead auto-redirect firing tabBtn.click() directly).
+      document.querySelectorAll('.rtx-item[data-rtx-panel]').forEach(function(i){ i.classList.toggle('on', i.getAttribute('data-rtx-panel')===which); });
+      document.querySelectorAll('.rtx-panel').forEach(function(p){ p.classList.remove('active'); });
     });
     _portalTabsReady = true;
   }
@@ -4348,10 +4368,13 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
         });
       } catch(_e){ _pendingFiles = []; }
       const tabBtn = document.getElementById('ptab-team'); if(tabBtn) tabBtn.hidden = false;
+      const sideTeamItem = document.getElementById('rtx-item-team'); if(sideTeamItem) sideTeamItem.hidden = false;
       // Broker · show the SkySlope import button next to "Submit a new file".
       if(_profile && String(_profile.role||'').toLowerCase()==='broker'){ var _ib=document.getElementById('btn-import'); if(_ib) _ib.hidden=false; wireImport(); }
-      // Lead view folds "My business" into the Team tab · hide the standalone business tab.
+      // Lead view folds "My business" into the Team tab · hide the standalone business tab
+      // (and its sidebar counterpart) so only one "Production" entry shows.
       const bizTab = document.querySelector('.ptab[data-ptab="business"]'); if(bizTab) bizTab.hidden = true;
+      const sideBizItem = document.getElementById('rtx-item-business'); if(sideBizItem) sideBizItem.hidden = true;
       // A lead/broker manages agents · they are NOT a "new agent." Suppress the
       // zero-own-files "submit your first file" welcome and restore the board.
       const wc = document.getElementById('welcome-card'); if(wc) wc.style.display = 'none';
@@ -5958,6 +5981,15 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
   function rtxShowPanel(name){
     document.querySelectorAll('.rtx-panel').forEach(function(p){ p.classList.remove('active'); });
     document.querySelectorAll('.rtx-item[data-rtx-panel]').forEach(function(i){ i.classList.toggle('on', i.getAttribute('data-rtx-panel')===name); });
+    // Legacy bridge · Files / Production (business or team) still run on the pre-sidebar
+    // #tab-* system. Proxy the click to the hidden ptab button so that logic (setupPortalTabs'
+    // handler, team-lead gating, etc.) stays the single source of truth, untouched.
+    if(name==='files' || name==='business' || name==='team'){
+      const btn = document.querySelector('.ptab[data-ptab="' + name + '"]');
+      if(btn) btn.click();
+      return;
+    }
+    ['tab-files','tab-business','tab-team'].forEach(function(id){ const el = document.getElementById(id); if(el) el.hidden = true; });
     const el = document.getElementById('rtx-panel-' + name); if(el) el.classList.add('active');
     if(name==='home') rtxLoadHome();
     else if(name==='my-tx') rtxLoadMyTx();
