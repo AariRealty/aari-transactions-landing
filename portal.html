@@ -6218,7 +6218,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
       if(badgeEl){ badgeEl.hidden = !txs.length; badgeEl.textContent = String(txs.length); }
       if(!txs.length){ host.innerHTML = '<div class="rtx-empty">Nothing waiting on review.</div>'; return; }
       host.innerHTML = txs.map(function(t){
-        const sub = t.agent_name + '. ' + (t.side||'') + '. ' + (t.doc_pending ? (t.doc_pending + ' pending review') : (t.doc_rejected ? (t.doc_rejected + ' rejected, waiting on re-upload') : 'Waiting'));
+        const sub = (t.agent_name||'Unknown agent') + '. ' + (t.side||'') + '. ' + (t.doc_pending ? (t.doc_pending + ' pending review') : (t.doc_rejected ? (t.doc_rejected + ' rejected, waiting on re-upload') : 'Waiting'));
         return '<div class="rtx-doc-card" data-queue-tx="' + rtxEsc(t.id) + '"><div class="rtx-doc-head" data-doc-toggle><div><div class="rtx-doc-title">' + rtxEsc(t.property_address) + '</div><div class="rtx-tx-meta">' + rtxEsc(sub) + '</div></div><span class="rtx-badge submitted">' + rtxEsc(t.status) + '</span></div><div class="rtx-doc-body" data-queue-body></div></div>';
       }).join('');
       host.querySelectorAll('[data-doc-toggle]').forEach(function(h){
@@ -6253,14 +6253,16 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
       }).join('');
       if(threadOnly.length) html += threadOnly.map(function(m){ return '<div class="rtx-thread-msg"><div class="rtx-thread-who">' + rtxEsc(m.sender_name) + '<span class="rtx-thread-when">' + rtxDate((m.created_at||'').slice(0,10)) + '</span></div><div>' + rtxEsc(m.body) + '</div></div>'; }).join('');
       host.innerHTML = html;
-      host.querySelectorAll('[data-approve]').forEach(function(b){ b.addEventListener('click', function(){ rtxReview(b.getAttribute('data-approve'), 'approve', null, txId, host); }); });
+      host.querySelectorAll('[data-approve]').forEach(function(b){ b.addEventListener('click', function(){ if(b.disabled) return; b.disabled = true; rtxReview(b.getAttribute('data-approve'), 'approve', null, txId, host, b); }); });
       host.querySelectorAll('[data-reject-toggle]').forEach(function(b){ b.addEventListener('click', function(){ const f = host.querySelector('[data-reject-field="' + b.getAttribute('data-reject-toggle') + '"]'); f.style.display = f.style.display==='none' ? 'block' : 'none'; }); });
       host.querySelectorAll('[data-reject-send]').forEach(function(b){
         b.addEventListener('click', function(){
+          if(b.disabled) return;
           const id = b.getAttribute('data-reject-send');
           const note = host.querySelector('[data-reject-note="' + id + '"]').value.trim();
           if(!note){ rtxToast('A note is required to reject.', true); return; }
-          rtxReview(id, 'reject', note, txId, host);
+          b.disabled = true;
+          rtxReview(id, 'reject', note, txId, host, b);
         });
       });
       host.querySelectorAll('[data-goto-mark-paid]').forEach(function(b){
@@ -6268,14 +6270,17 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
       });
     } catch(e){ host.innerHTML = '<div class="rtx-error">' + rtxEsc(e.message) + '</div>'; }
   }
-  async function rtxReview(docId, decision, note, txId, host){
+  async function rtxReview(docId, decision, note, txId, host, btn){
     try {
       const r = await rtx('review_doc', { document_id: docId, decision: decision, note: note || '' });
       rtxToast(decision === 'approve' ? 'Approved.' : 'Rejected, the agent has been notified.');
+      // Success re-renders the whole detail panel with fresh buttons, so no need to
+      // re-enable btn here. On failure nothing re-renders, so it has to be re-enabled
+      // manually or it's stuck disabled forever with no way to retry.
       rtxLoadQueueDetail(txId, host);
       rtxLoadQueue();
       if(r.transaction_status === 'approved') rtxToast('All documents approved, ready for Mark paid.');
-    } catch(e){ rtxToast(e.message, true); }
+    } catch(e){ rtxToast(e.message, true); if(btn) btn.disabled = false; }
   }
 
   // ===== Mark paid (reachable from an approved queue item, via window.rtxOpenMarkPaid) =====
@@ -6327,6 +6332,9 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
       ['rtx-paid-gross','rtx-paid-deductions','rtx-paid-fee'].forEach(function(id){ const el = document.getElementById(id); if(el) el.addEventListener('input', recompute); });
       recompute();
       document.getElementById('rtx-btn-confirm-paid').addEventListener('click', async function(){
+        // Irreversible, real-money action · disabling the button alone only stops a double
+        // click, it doesn't stop a broker firing it by mistake on the wrong figures.
+        if(!window.confirm('Mark this transaction paid? This locks in the commission split and cannot be undone from here.')) return;
         const btn = this; btn.disabled = true; btn.textContent = 'Confirming…';
         try {
           const gross = Number((document.getElementById('rtx-paid-gross').value||'0').replace(/[^0-9.]/g,'')) || 0;
@@ -6501,7 +6509,8 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
       const rows = r.leaderboard || [];
       if(!rows.length){ host.innerHTML = '<div class="rtx-empty">No paid deals yet this year.</div>'; return; }
       host.innerHTML = '<div class="rtx-tx-list-wrap" style="padding:2px 14px">' + rows.map(function(row){
-        return '<div class="rtx-lb-row' + (row.you?' you':'') + '"><div class="rtx-lb-rank">' + row.rank + '</div><div class="rtx-lb-name">' + rtxEsc(row.name) + (row.you?' (you)':'') + '</div><div class="rtx-lb-figures"><div class="rtx-lb-vol">' + rtxMoney(row.volume) + '</div><div class="rtx-lb-units">' + row.units + ' unit' + (row.units===1?'':'s') + '</div></div></div>';
+        const units = row.units||0;
+        return '<div class="rtx-lb-row' + (row.you?' you':'') + '"><div class="rtx-lb-rank">' + (row.rank||'&mdash;') + '</div><div class="rtx-lb-name">' + rtxEsc(row.name) + (row.you?' (you)':'') + '</div><div class="rtx-lb-figures"><div class="rtx-lb-vol">' + rtxMoney(row.volume) + '</div><div class="rtx-lb-units">' + units + ' unit' + (units===1?'':'s') + '</div></div></div>';
       }).join('') + '</div>';
     } catch(e){ host.innerHTML = '<div class="rtx-error">' + rtxEsc(e.message) + '</div>'; }
   }
