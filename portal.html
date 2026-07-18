@@ -1140,6 +1140,8 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
 .rtx-cal-day.selected{background:#F4EFE6;border-color:#161310;}
 .rtx-cal-day.blank{visibility:hidden;cursor:default;}
 .rtx-cal-chip{font-size:8px;background:#e7dcc0;color:#5a4a1e;border-radius:4px;padding:1px 4px;font-weight:700;}
+.rtx-cal-chip.closing{background:#d7ecdf;color:#1f5c3a;}
+.rtx-cal-chip.personal{background:#e4e3f5;color:#3a3a7a;}
 .rtx-cal-right-date{font-size:12px;font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:14px;}
 .rtx-cal-right-badge{background:#161310;color:#fff;font-size:11px;font-weight:700;border-radius:999px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;flex:none;}
 .rtx-cal-right-item{padding:8px 0;border-bottom:1px solid #f3f0ea;font-size:12px;}
@@ -6277,16 +6279,21 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     const host = document.getElementById('rtx-home-body'); if(!host) return;
     host.innerHTML = '<div class="rtx-loading">Loading&hellip;</div>';
     try {
-      const [dashRes, memRes, payRes, txRes] = await Promise.allSettled([
+      const now0 = new Date();
+      const monStart = now0.getFullYear() + '-' + String(now0.getMonth()+1).padStart(2,'0') + '-01';
+      const monEnd = now0.getFullYear() + '-' + String(now0.getMonth()+1).padStart(2,'0') + '-' + String(new Date(now0.getFullYear(), now0.getMonth()+1, 0).getDate()).padStart(2,'0');
+      const [dashRes, memRes, payRes, calRes, gcalRes] = await Promise.allSettled([
         rtx('dashboard', {}),
         _client.from('memberships').select('*').eq('agent_id', _profile.id).order('created_at', {ascending:false}).limit(1).maybeSingle(),
         _client.from('payments').select('*').eq('agent_id', _profile.id).order('paid_at', {ascending:false}).limit(5),
-        rtx('list_mine', {}),
+        _client.functions.invoke('realty-calendar'),
+        _client.functions.invoke('google-calendar-fetch', { body: { start: monStart, end: monEnd } }),
       ]);
       const dash = dashRes.status==='fulfilled' ? dashRes.value : {};
       const mem = (memRes.status==='fulfilled' && memRes.value && memRes.value.data) || null;
       const pays = (payRes.status==='fulfilled' && payRes.value && payRes.value.data) || [];
-      const myTxs = (txRes.status==='fulfilled' && txRes.value && txRes.value.transactions) || [];
+      const calData = (calRes.status==='fulfilled' && calRes.value && calRes.value.data) || { deadlines:[], closings:[] };
+      const gcalData = (gcalRes.status==='fulfilled' && gcalRes.value && gcalRes.value.data) || { connected:false, events:[] };
       const plan = dash.plan, y = dash.ytd || {};
 
       const planCard = plan
@@ -6325,7 +6332,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
         '<div class="rtx-home-card">' +
           '<div class="card-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">' +
             '<div class="rtx-home-card-title" style="margin:0">Your calendar</div>' +
-            '<div class="rtx-cal-toggle"><button type="button" class="rtx-cal-pill on" id="rtx-cal-tgl-tx">Transactions</button><button type="button" class="rtx-cal-pill" id="rtx-cal-tgl-ev">Events</button></div>' +
+            '<div id="rtx-cal-gcal-status" style="font-size:10.5px;color:#9a958c"></div>' +
           '</div>' +
           '<div class="rtx-cal-next" id="rtx-cal-next"><b>Next closings</b> <span id="rtx-cal-next-text">No closings scheduled yet.</span></div>' +
           '<div class="rtx-cal-split">' +
@@ -6335,33 +6342,47 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
         '</div>';
       const ctaBtn = document.getElementById('rtx-home-new-tx');
       if(ctaBtn) ctaBtn.addEventListener('click', function(){ rtxShowPanel('new-tx'); });
-      rtxRenderHomeCalendar(myTxs);
+      const gcalStatus = document.getElementById('rtx-cal-gcal-status');
+      if(gcalStatus) gcalStatus.textContent = gcalData.connected ? ('Synced with ' + (gcalData.email||'your calendar')) : 'Google Calendar not connected';
+      rtxRenderHomeCalendar(calData, gcalData);
     } catch(e){ host.innerHTML = '<div class="rtx-error">' + rtxEsc(e.message) + '</div>'; }
   }
 
-  function rtxRenderHomeCalendar(myTxs){
+  function rtxRenderHomeCalendar(calData, gcalData){
     const now = new Date();
     const year = now.getFullYear(), month = now.getMonth(), today = now.getDate();
     const firstDow = new Date(year, month, 1).getDay();
     const daysInMonth = new Date(year, month+1, 0).getDate();
     const byDay = {};
-    (myTxs||[]).forEach(function(t){
-      if(!t.closing_date) return;
-      const d = new Date(t.closing_date + 'T00:00:00');
-      if(d.getFullYear()===year && d.getMonth()===month){
-        const day = d.getDate();
-        (byDay[day] = byDay[day] || []).push({ t: t.property_address || 'Closing', s: 'Closing' });
-      }
-    });
+    const push = function(dateStr, item){
+      if(!dateStr) return;
+      const d = new Date(String(dateStr).slice(0,10) + 'T00:00:00');
+      if(isNaN(d.getTime()) || d.getFullYear()!==year || d.getMonth()!==month) return;
+      const day = d.getDate();
+      (byDay[day] = byDay[day] || []).push(item);
+    };
+    (calData.closings||[]).forEach(function(c){ push(c.date, { t: c.address || 'Closing', s: 'Closing · $' + (c.income||0) + ' to company', kind:'closing' }); });
+    (calData.deadlines||[]).forEach(function(dl){ push(dl.date, { t: dl.name || dl.key, s: 'Deadline · ' + (dl.address||''), kind:'deadline' }); });
+    (gcalData.events||[]).forEach(function(ev){ push(ev.start, { t: ev.summary || '(No title)', s: ev.all_day ? 'All day' : (ev.start ? new Date(ev.start).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) : ''), kind:'personal' }); });
+
     let selected = today;
     const grid = document.getElementById('rtx-cal-grid');
+    function chipLabel(items){
+      if(items.length > 1) return items.length + ' items';
+      return items[0].t;
+    }
+    function chipClass(items){
+      if(items.some(function(i){ return i.kind==='closing'; })) return 'rtx-cal-chip closing';
+      if(items.some(function(i){ return i.kind==='personal'; })) return 'rtx-cal-chip personal';
+      return 'rtx-cal-chip';
+    }
     function draw(){
       const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
       let html = dow.map(function(d){ return '<div class="rtx-cal-dow">'+d+'</div>'; }).join('');
       for(let i=0;i<firstDow;i++) html += '<div class="rtx-cal-day blank"></div>';
       for(let d=1; d<=daysInMonth; d++){
         const items = byDay[d] || [];
-        const chip = items.length ? '<span class="rtx-cal-chip">' + (items.length>1 ? items.length+' closings' : rtxEsc(items[0].t)) + '</span>' : '';
+        const chip = items.length ? '<span class="' + chipClass(items) + '">' + rtxEsc(chipLabel(items)) + '</span>' : '';
         html += '<div class="rtx-cal-day' + (d===today?' today':'') + (d===selected?' selected':'') + '" data-day="' + d + '">' + d + chip + '</div>';
       }
       grid.innerHTML = html;
@@ -6376,15 +6397,13 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
         : '<div class="rtx-empty-i" style="padding-bottom:14px;border-bottom:1px solid #f3f0ea;margin-bottom:10px">Nothing on this day.</div>';
     }
     draw();
-    const upcoming = Object.keys(byDay).map(Number).filter(function(d){ return d >= today; }).sort(function(a,b){ return a-b; });
+    const upcomingClosings = (calData.closings||[]).filter(function(c){ return c.date >= now.toISOString().slice(0,10); }).sort(function(a,b){ return a.date<b.date?-1:1; });
     const nextText = document.getElementById('rtx-cal-next-text');
-    if(nextText && upcoming.length){
-      const d = upcoming[0], items = byDay[d];
-      nextText.textContent = items[0].t + (items.length>1 ? ' +' + (items.length-1) + ' more' : '') + ', ' + now.toLocaleDateString('en-US',{month:'short'}) + ' ' + d;
+    if(nextText){
+      nextText.textContent = upcomingClosings.length
+        ? (upcomingClosings[0].address + (upcomingClosings.length>1 ? ' +' + (upcomingClosings.length-1) + ' more' : '') + ', ' + new Date(upcomingClosings[0].date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}))
+        : 'No closings scheduled yet.';
     }
-    const tgl1 = document.getElementById('rtx-cal-tgl-tx'), tgl2 = document.getElementById('rtx-cal-tgl-ev');
-    if(tgl1) tgl1.addEventListener('click', function(){ tgl1.classList.add('on'); tgl2.classList.remove('on'); });
-    if(tgl2) tgl2.addEventListener('click', function(){ tgl2.classList.add('on'); tgl1.classList.remove('on'); rtxToast('No events data model yet, only transaction closings.'); });
   }
 
   // ===== My production =====
