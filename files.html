@@ -10155,6 +10155,31 @@ Tell me your planned move-out date and I will set the inspection.`
   let _calViewUser = null;   // which user's saved view is currently applied
   let _calWeekStart = null;  // Sunday of the week shown in Week view
   let _calLoaded = false;
+  // ===== MOBILE · the calendar is a different shape on a phone =====
+  // A 7-column month grid with 100px cells is ~700px of tiny squares at 390px wide, and the
+  // deadline chips ("SURVEY +8") truncate to nothing. On a phone a coordinator wants "what needs
+  // me", not a month wall. So below CAL_MOBILE_BP the calendar leads with a single-column agenda
+  // (Overdue / Today / Coming up), and the month glance moves behind a tap (the Week strip, which
+  // is already horizontally scrollable). DESKTOP IS UNTOUCHED: the wide two-column month grid is
+  // the exact same code, reached whenever the viewport is wider than the breakpoint.
+  const CAL_MOBILE_BP = 720;
+  let _calMobileTab = 'list';   // 'list' (agenda) | 'week' (strip) · mobile only
+  function _calIsMobile(){ try { return window.innerWidth <= CAL_MOBILE_BP; } catch(_){ return false; } }
+  // Re-render on the desktop<->mobile boundary crossing only, debounced, so a resize or a phone
+  // rotation swaps layouts without a reload. Guarded so it binds once.
+  try {
+    if(!window.__aariCalResizeBound){
+      window.__aariCalResizeBound = true;
+      let _wasMobile = _calIsMobile(), _rzT = null;
+      window.addEventListener('resize', function(){
+        clearTimeout(_rzT);
+        _rzT = setTimeout(function(){
+          const now = _calIsMobile();
+          if(now !== _wasMobile){ _wasMobile = now; try { renderCalHeatmap(); } catch(_){} }
+        }, 180);
+      });
+    }
+  } catch(_){}
   async function loadCalDeadlines(){
     try {
       const ids = (_files || []).filter(function(f){ return deriveStage(f) !== 'closed' && f.status !== 'archived' && (f.file_type || 'sale') === 'sale'; }).map(function(f){ return f.id; });
@@ -10903,6 +10928,51 @@ Tell me your planned move-out date and I will set the inspection.`
       html += _calWeekHtml(byDay, t0);
       host.innerHTML = html; _wireCal(host); return;
     }
+    // ---- MOBILE · agenda first, month grid replaced by a single-column list ----
+    // Reached only below CAL_MOBILE_BP. Everything below this block is the untouched desktop
+    // month grid. Content is the SAME deadline data (byDay, overdue); only the shape changes.
+    if(_calIsMobile()){
+      // A big, thumb-sized row. Tap opens the file, same as every other calendar row. No checkbox
+      // here on purpose: wiring a tick to the real completion trail is a separate approved task,
+      // and a checkbox that records nothing is the exact bug we are retiring, not shipping.
+      const mRow = function(d){
+        const days = Math.round((t0 - new Date(d.date).setHours(0,0,0,0)) / 86400000);
+        const late = days > 0;
+        const meta = late ? (days + 'd late') : (d.isChase ? 'follow-up' : '');
+        return '<div data-cal-open="' + esc(d.fileId) + '" style="display:flex;align-items:center;gap:11px;padding:13px 2px;border-top:0.5px solid #f3f0ea;cursor:pointer;min-height:44px">' +
+          '<div style="flex:1;min-width:0"><div style="font-size:13px;color:#0f0f0f;line-height:1.3">' + esc(d.label || 'Deadline') + '</div>' +
+          '<div style="font-size:11px;color:#8a857c;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(String(d.address || '').split(',')[0]) + '</div></div>' +
+          (meta ? '<span style="flex:none;font-size:11px;font-weight:600;color:' + (late ? '#a3402f' : '#8a6d1b') + '">' + esc(meta) + '</span>' : '<span style="flex:none;color:#c9c3b8;font-size:16px">&#8250;</span>') +
+          '</div>';
+      };
+      const seg = function(v, label, n){ const on = _calMobileTab === v;
+        return '<button type="button" data-cal-mtab="' + v + '" style="flex:1;border:0;background:' + (on ? '#0f0f0f' : 'transparent') + ';color:' + (on ? '#fff' : '#6f6a61') + ';font:inherit;font-size:12px;font-weight:600;padding:9px;border-radius:8px;cursor:pointer">' + label + (n ? ' <span style="opacity:.7">' + n + '</span>' : '') + '</button>'; };
+      html += '<div style="display:flex;gap:5px;background:#f4f1ec;border-radius:11px;padding:4px;margin-bottom:12px">' +
+        seg('list', 'List', overdue.length ? overdue.length : '') + seg('week', 'Week', '') + '</div>';
+      if(_calMobileTab === 'week'){
+        if(!_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(t0); base.setHours(0,0,0,0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; }
+        html += _calWeekHtml(byDay, t0);
+        host.innerHTML = html; _wireCal(host); return;
+      }
+      // LIST · Overdue, then Today, then the next days that actually have something.
+      const grpHead = function(label, n, tone){ return '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:' + (tone || '#a39e93') + ';margin:16px 2px 0">' + label + (n != null ? ' &middot; ' + n : '') + '</div>'; };
+      let body = '';
+      if(overdue.length){ body += grpHead('Overdue', overdue.length, '#a3402f') + overdue.map(mRow).join(''); }
+      const todayItems = (byDay[t0] || []);
+      body += grpHead('Today', todayItems.length, '#0f0f0f') + (todayItems.length ? todayItems.map(mRow).join('') : '<div style="font-size:12px;color:#a39e95;padding:11px 2px;border-top:0.5px solid #f3f0ea">Nothing due today. You&rsquo;re ahead.</div>');
+      // Coming up · the next dated items after today, capped so the page stays short.
+      const upKeys = Object.keys(byDay).map(Number).filter(function(k){ return k > t0; }).sort(function(a,b){ return a - b; });
+      let upCount = 0, upHtml = '';
+      for(const k of upKeys){
+        if(upCount >= 12) break;
+        const dd = new Date(k);
+        upHtml += '<div style="font-size:11px;color:#8a857c;margin:12px 2px 0;font-weight:600">' + esc(dd.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' })) + '</div>';
+        (byDay[k] || []).forEach(function(d){ if(upCount < 12){ upHtml += mRow(d); upCount++; } });
+      }
+      if(upHtml) body += grpHead('Coming up', null) + upHtml;
+      html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:6px 15px 15px">' + body + '</div>';
+      host.innerHTML = html; _wireCal(host); return;
+    }
     // ---- two columns: heatmap (left) · today + overdue pinned (right) ----
     html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:15px 16px"><div style="display:grid;grid-template-columns:1.4fr 1fr;gap:22px;align-items:start">';
     // LEFT · month heatmap
@@ -11016,6 +11086,9 @@ Tell me your planned move-out date and I will set the inspection.`
     host.querySelectorAll('[data-cal-group]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-cal-group'); _calOpen[k] = !_calOpen[k]; renderTcCalendar(); }); });
     host.querySelectorAll('[data-cal-view]').forEach(function(b){ b.addEventListener('click', function(){ const v = this.getAttribute('data-cal-view'); if(v === _calView) return; _calView = v; try { localStorage.setItem('aari_cal_view_' + ((_profile && _profile.id) ? _profile.id : 'anon'), v); } catch(_){} if(v === 'week' && !_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(); base.setHours(0, 0, 0, 0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; } renderCalHeatmap(); }); });
     host.querySelectorAll('[data-cal-nav]').forEach(function(b){ b.addEventListener('click', function(){ const dir = this.getAttribute('data-cal-nav') === 'next' ? 1 : -1; if(_calView === 'week'){ const ws = _calWeekStart ? new Date(_calWeekStart) : new Date(); ws.setHours(0, 0, 0, 0); ws.setDate(ws.getDate() + 7 * dir); _calWeekStart = ws; } else { _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() + dir, 1); } renderCalHeatmap(); }); });
+    // Mobile List | Week tab. Separate from the desktop Month/Week toggle on purpose: on a phone
+    // there is no month grid to switch to, so this picks between the agenda and the week strip.
+    host.querySelectorAll('[data-cal-mtab]').forEach(function(b){ b.addEventListener('click', function(){ const v = this.getAttribute('data-cal-mtab'); if(v === _calMobileTab) return; _calMobileTab = v; renderCalHeatmap(); }); });
     host.querySelectorAll('[data-cal-day]').forEach(function(b){ b.addEventListener('click', function(){
       const ts = parseInt(this.getAttribute('data-cal-day'), 10);
       // One deadline on the day → open that file directly (like Week). Several → preview them on the right to pick.
