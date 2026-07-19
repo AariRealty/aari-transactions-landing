@@ -1837,8 +1837,8 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
   // Re-force on resize in case something tries to override
   window.addEventListener('resize', forceKanbanLayout);
 
-  var _client = null;
-  var _profile = null;
+  let _client = null;
+  let _profile = null;
   let _files = [];
   let _verifs = [];
   let _deadlines = [];
@@ -1910,6 +1910,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     forceKanbanLayout();
     if(!window.AariAuth){ return showAuthBlurGate(); }
     _client = await window.AariAuth.ensureClient();
+    window._client = _client; // exposed for the commissions module, which lives in a separate <script> tag and can't see this IIFE's locals
     const session = await window.AariAuth.getCurrentSession();
     if(!session){ try { sessionStorage.removeItem('aari_portal_authed'); } catch(_){} return showAuthBlurGate(); }
     // Mark that this person is signed in · the file-submission flow reads this so
@@ -1951,6 +1952,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
       }catch(e){ console.warn('[portal] membership load failed', e); }
     })();
     _profile = await window.AariAuth.getAgentProfile();
+    window._profile = _profile; // exposed for the commissions module, which lives in a separate <script> tag and can't see this IIFE's locals
     if(!_profile){ return showGate('Profile missing','Contact hello@aaritransactions.com.',null); }
     // Agent deadline calendar · fill the private subscribe link + wire the copy button.
     try {
@@ -6034,7 +6036,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
 
   async function rtx(action, params){
     let token = '';
-    try { const s = (await _client.auth.getSession()).data.session; token = (s && s.access_token) || ''; } catch(_){}
+    try { const s = (await window._client.auth.getSession()).data.session; token = (s && s.access_token) || ''; } catch(_){}
     const res = await fetch(RTX_URL, {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},
@@ -6502,7 +6504,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
   // ===== Home =====
   async function rtxLoadHome(){
     const nameEl = document.getElementById('rtx-home-name');
-    if(nameEl) nameEl.textContent = (_profile && _profile.first_name) || 'there';
+    if(nameEl) nameEl.textContent = (window._profile && window._profile.first_name) || 'there';
     const host = document.getElementById('rtx-home-body'); if(!host) return;
     host.innerHTML = '<div class="rtx-loading">Loading&hellip;</div>';
     try {
@@ -6511,10 +6513,10 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
       const monEnd = now0.getFullYear() + '-' + String(now0.getMonth()+1).padStart(2,'0') + '-' + String(new Date(now0.getFullYear(), now0.getMonth()+1, 0).getDate()).padStart(2,'0');
       const [dashRes, memRes, payRes, calRes, gcalRes] = await Promise.allSettled([
         rtx('dashboard', {}),
-        _client.from('memberships').select('*').eq('agent_id', _profile.id).order('created_at', {ascending:false}).limit(1).maybeSingle(),
-        _client.from('payments').select('*').eq('agent_id', _profile.id).order('paid_at', {ascending:false}).limit(5),
-        _client.functions.invoke('realty-calendar'),
-        _client.functions.invoke('google-calendar-fetch', { body: { start: monStart, end: monEnd } }),
+        window._client.from('memberships').select('*').eq('agent_id', window._profile.id).order('created_at', {ascending:false}).limit(1).maybeSingle(),
+        window._client.from('payments').select('*').eq('agent_id', window._profile.id).order('paid_at', {ascending:false}).limit(5),
+        window._client.functions.invoke('realty-calendar'),
+        window._client.functions.invoke('google-calendar-fetch', { body: { start: monStart, end: monEnd } }),
       ]);
       const dash = dashRes.status==='fulfilled' ? dashRes.value : {};
       const mem = (memRes.status==='fulfilled' && memRes.value && memRes.value.data) || null;
