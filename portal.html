@@ -1346,7 +1346,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
             </div>
           </div>
 
-          <div id="rtx-markpaid-inline" style="display:none">
+          <div id="rtx-markpaid-inline" class="rtx-broker-only" style="display:none">
             <button type="button" class="rtx-btn-ghost" id="rtx-btn-back-to-tx" style="margin-bottom:16px">&larr; Back to transactions</button>
             <div class="rtx-panel-label">Broker</div>
             <div class="rtx-panel-title" style="font-size:22px">Mark paid</div>
@@ -4439,13 +4439,11 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
         });
       } catch(_e){ _pendingFiles = []; }
       const tabBtn = document.getElementById('ptab-team'); if(tabBtn) tabBtn.hidden = false;
-      const sideTeamItem = document.getElementById('rtx-item-team'); if(sideTeamItem) sideTeamItem.hidden = false;
       // Broker · show the SkySlope import button next to "Submit a new file".
       if(_profile && String(_profile.role||'').toLowerCase()==='broker'){ var _ib=document.getElementById('btn-import'); if(_ib) _ib.hidden=false; wireImport(); }
       // Lead view folds "My business" into the Team tab · hide the standalone business tab
       // (and its sidebar counterpart) so only one "Production" entry shows.
       const bizTab = document.querySelector('.ptab[data-ptab="business"]'); if(bizTab) bizTab.hidden = true;
-      const sideBizItem = document.getElementById('rtx-item-business'); if(sideBizItem) sideBizItem.hidden = true;
       // A lead/broker manages agents · they are NOT a "new agent." Suppress the
       // zero-own-files "submit your first file" welcome and restore the board.
       const wc = document.getElementById('welcome-card'); if(wc) wc.style.display = 'none';
@@ -6215,9 +6213,10 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
       });
       // Re-open the doc panel under its row if this refresh happened while it was open
       // (e.g. after submitting or uploading), instead of silently collapsing it on the agent.
-      if(wasOpenId){
+      if(wasOpenId && di){
         const reopenRow = host.querySelector('[data-tx-id="' + wasOpenId + '"]');
-        if(reopenRow && di){ reopenRow.insertAdjacentElement('afterend', di); di.style.display = 'block'; reopenRow.classList.add('rtx-tx-row-open'); }
+        if(reopenRow){ reopenRow.insertAdjacentElement('afterend', di); di.style.display = 'block'; reopenRow.classList.add('rtx-tx-row-open'); }
+        else { di.style.display = 'none'; } // the open deal no longer appears in the fresh list · don't leave a stray panel floating
       }
     } catch(e){ host.innerHTML = '<div class="rtx-error">' + rtxEsc(e.message) + '</div>'; }
   }
@@ -6261,10 +6260,12 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
       form.style.display = 'none';
       await rtxLoadMyTx(); // refresh the list so the new draft shows up before we open it
       const di = document.getElementById('rtx-doc-inline');
-      form.insertAdjacentElement('afterend', di);
-      di.style.display = 'block';
+      // Open it under the actual new row, not under the form · otherwise the row reads as
+      // "open" (highlighted) while the upload panel sits somewhere else on the page.
       const newRow = document.querySelector('[data-tx-id="' + _rtxCurrentTxId + '"]');
-      if(newRow) newRow.classList.add('rtx-tx-row-open');
+      if(newRow){ newRow.insertAdjacentElement('afterend', di); newRow.classList.add('rtx-tx-row-open'); }
+      else { form.insertAdjacentElement('afterend', di); } // list refresh raced/failed · fall back
+      di.style.display = 'block';
       rtxLoadDocuments(_rtxCurrentTxId);
     } catch(e){ err.textContent = e.message; err.hidden = false; }
     finally { btn.disabled = false; btn.textContent = 'Submit transaction'; }
@@ -6280,6 +6281,9 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     host.innerHTML = '<div class="rtx-loading">Loading&hellip;</div>'; submitWrap.hidden = true; lock.hidden = true;
     try {
       const r = await rtx('get', { transaction_id: txId });
+      // The shared panel may have been moved to a different row while this was in flight
+      // (fast double-click between deals) · a stale response must not overwrite it.
+      if(txId !== _rtxCurrentTxId) return;
       const tx = r.transaction, docs = r.documents || [], msgs = r.messages || [];
       sub.textContent = tx.property_address + (tx.client_name ? '. ' + tx.client_name : '') + (r.agent && r.agent.full_name ? '. ' + r.agent.full_name : '');
       const locked = tx.status !== 'draft';
@@ -6346,13 +6350,17 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     host.innerHTML = '<div class="rtx-loading">Loading&hellip;</div>';
     try {
       const r = await rtx('queue', {});
-      const txs = r.transactions || [];
+      // queue() returns everything non-draft — submitted, approved, AND paid. Only the first
+      // two still need broker action; a paid deal has nothing left to do and would otherwise
+      // sit in "Needs your review" forever.
+      const txs = (r.transactions || []).filter(function(t){ return t.status !== 'paid'; });
       const badgeEl = document.getElementById('rtx-queue-badge');
       if(badgeEl){ badgeEl.hidden = !txs.length; badgeEl.textContent = String(txs.length); }
       if(!txs.length){ host.innerHTML = '<div class="rtx-empty">Nothing waiting on review.</div>'; return; }
       host.innerHTML = txs.map(function(t){
-        const sub = (t.agent_name||'Unknown agent') + '. ' + (t.side||'') + '. ' + (t.doc_pending ? (t.doc_pending + ' pending review') : (t.doc_rejected ? (t.doc_rejected + ' rejected, waiting on re-upload') : 'Waiting'));
-        return '<div class="rtx-doc-card" data-queue-tx="' + rtxEsc(t.id) + '"><div class="rtx-doc-head" data-doc-toggle><div><div class="rtx-doc-title">' + rtxEsc(t.property_address) + '</div><div class="rtx-tx-meta">' + rtxEsc(sub) + '</div></div><span class="rtx-badge submitted">' + rtxEsc(t.status) + '</span></div><div class="rtx-doc-body" data-queue-body></div></div>';
+        const sub = (t.agent_name||'Unknown agent') + '. ' + (t.side||'') + '. ' + (t.doc_pending ? (t.doc_pending + ' pending review') : (t.doc_rejected ? (t.doc_rejected + ' rejected, waiting on re-upload') : (t.status==='approved' ? 'Ready for payout' : 'Waiting')));
+        const badgeCls = (t.status==='approved' || t.status==='submitted') ? t.status : 'submitted';
+        return '<div class="rtx-doc-card" data-queue-tx="' + rtxEsc(t.id) + '"><div class="rtx-doc-head" data-doc-toggle><div><div class="rtx-doc-title">' + rtxEsc(t.property_address) + '</div><div class="rtx-tx-meta">' + rtxEsc(sub) + '</div></div><span class="rtx-badge ' + badgeCls + '">' + rtxEsc(t.status) + '</span></div><div class="rtx-doc-body" data-queue-body></div></div>';
       }).join('');
       host.querySelectorAll('[data-doc-toggle]').forEach(function(h){
         h.addEventListener('click', function(){
@@ -6424,6 +6432,7 @@ body.rtx-agent-view .rtx-broker-only{display:none !important;}
     return _rtxRoster;
   }
   async function rtxOpenMarkPaid(txId){
+    if(!_rtxIsBroker){ rtxToast('Only the broker can mark a transaction paid.', true); return; } // defense-in-depth, mirrors the server-side gate
     _rtxCurrentTxId = txId;
     // Local swap within the Transactions panel · Mark paid isn't its own sidebar destination,
     // it's reached by drilling into an approved queue item, same as before, just inline now.
