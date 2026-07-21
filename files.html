@@ -14432,7 +14432,10 @@ Tell me your planned move-out date and I will set the inspection.`
     if(!mb || !_currentFile) return;
     const file = _currentFile;
     const newStage = mb.getAttribute('data-move-anyway');
-    const _gateMsg = (typeof hardStageGate === 'function') ? hardStageGate(file, newStage) : '';
+    // override=true · bypass the PROTECTIVE gates (loan approval, appraisal, conditions, closing
+    // tasks) since that is what Move anyway is for. The ABSOLUTE locks (unsigned SA, unpaid) still
+    // block and still return a message here.
+    const _gateMsg = (typeof hardStageGate === 'function') ? hardStageGate(file, newStage, true) : '';
     if(_gateMsg){ alert(_gateMsg); return; }
     if(!(await appConfirm('Move to ' + (STAGE_LABELS[newStage] || newStage) + ' with tasks still open? A note is logged on the file.', { ok:'Move anyway' }))) return;
     const _from = file.transaction_stage;
@@ -15506,54 +15509,64 @@ Tell me your planned move-out date and I will set the inspection.`
   // Shared HARD stage-move gate (Section 4) — single source of truth for every
   // non-negotiable block, called by BOTH the kanban drag and the Move button so
   // the two paths can never diverge. Returns an alert message if blocked, else ''.
-  function hardStageGate(file, newStage){
+  // hardStageGate(file, newStage[, override])
+  // Two tiers of block:
+  //   ABSOLUTE  — unsigned Service Agreement, payment not confirmed. Legal/payment. Never bypassed,
+  //               even by "Move anyway". These are the only things that can truly trap a file.
+  //   PROTECTIVE — setup confirmations, loan approval, appraisal decision, loan conditions, the
+  //               closing-critical tasks. Block the normal drag/advance, but the broker's
+  //               "Move anyway" (override=true) can push past them, logging an audit note. A live
+  //               deal must always have a path forward when the broker takes responsibility for it.
+  // Before this split, EVERY gate was absolute, including "Move anyway" (it re-checked the full
+  // gate), so a financed file with loan approval not yet ticked had NO way to advance — exactly
+  // what Eileen hit: she was ticking "Loan application" / thinking approval was done, the gate
+  // wanted the separate "Loan approval" task, and nothing, not even Move anyway, would move it.
+  function hardStageGate(file, newStage, override){
     if(!file) return '';
     const cur = deriveStage(file);
     const dt = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
     const tasksFor = (s) => (((STAGE_CHECKLISTS[file.file_type || 'sale'] || {})[s]) || []);
-    // SA gate
+    // ===== ABSOLUTE · never overridable =====
     if(saUnsigned(file)) return 'This file is locked. The agent has not signed the Aari Transactions Service Agreement, so work cannot begin and the file cannot move. Notify Marlenyi to resolve this.';
-    // Payment gate (Item 13)
     if(isPaymentLocked(file)) return 'Payment not confirmed. Do not start work until payment is received.';
+    // ===== PROTECTIVE · "Move anyway" (override) bypasses these with an audit note =====
     // Setup gate — Setup (New / waiting_for_tc) is confirmations only. The file moves to
-    // Under Contract once the contract type, parties, and financing are confirmed; the
-    // outreach tasks (opening email, escrow, intros) live in Under Contract. The old
-    // "complete all New tasks" block is gone — those tasks are hidden during setup.
-    if((file.file_type || 'sale') === 'sale' && (cur === 'new' || cur === 'waiting_for_tc') && newStage !== 'new' && newStage !== 'waiting_for_tc'){
-      // Sale-only gate: contacts/financing/terms confirmations are stamped by the sale
-      // setup bar. Listing, rental, lease and compliance files have their own flows and
-      // never stamp these, so gating them here would trap them permanently at 'new'.
+    // Under Contract once the contract type, parties, and financing are confirmed.
+    if(!override && (file.file_type || 'sale') === 'sale' && (cur === 'new' || cur === 'waiting_for_tc') && newStage !== 'new' && newStage !== 'waiting_for_tc'){
+      // Sale-only gate: listing/rental/lease/compliance files never stamp these, so gating them
+      // here would trap them permanently at 'new'.
       const _lg = file.logistics || {};
       const _termsOk = (typeof termsAttested === 'function') ? termsAttested(file) : true;
       if(!(_termsOk && _lg.contacts_confirmed_at && _lg.financing_confirmed_at)){
         return 'Confirm the contract type, parties, and financing in Setup before moving this file to Under Contract.';
       }
     }
-    // Loan-approval gate (Item 16) — confirmed before Clear to Close (cash exempt)
-    if(newStage === 'ctc' && cur !== 'ctc' && !isCashFile(file) && !dt['uc_loan_approval_acknowledged']){
-      return 'Loan approval must be confirmed before moving to Clear to Close.';
+    // Loan-approval gate (Item 16) — before Clear to Close (cash exempt). EITHER loan-approval
+    // task satisfies it: the lender acknowledgement OR the confirmation to all parties. Both mean
+    // approval is in hand; requiring one specific one is the trap that stuck 3815. The message
+    // names the actual task and the escape hatch, instead of the old "must be confirmed" that
+    // pointed at the wrong task.
+    if(!override && newStage === 'ctc' && cur !== 'ctc' && !isCashFile(file)
+        && !dt['uc_loan_approval_acknowledged'] && !dt['uc_loan_approval_confirmed']){
+      return 'Loan approval is not marked yet on this financed file. Tick the "Loan approval" task (the lender acknowledgement or the confirmation to all parties) before Clear to Close. If the lender is slow, use Move anyway to proceed with a note on the file.';
     }
-    // Below-value appraisal gate (Section 10 · Fix 2) — a below-value file cannot
-    // advance to Clear to Close until the buyer/seller decision is documented.
-    if(newStage === 'ctc' && cur !== 'ctc' && ((file.logistics||{}).appraisal_result) === 'below' && !dt['app_low_decision']){
+    // Below-value appraisal gate — a below-value file documents the buyer/seller decision first.
+    if(!override && newStage === 'ctc' && cur !== 'ctc' && ((file.logistics||{}).appraisal_result) === 'below' && !dt['app_low_decision']){
       return 'Document buyer and seller decision before moving to Clear to Close.';
     }
-    // Conditional-approval gate (Section 10 · Fix 4) — if loan approval is
-    // conditional, every condition must be cleared before Clear to Close.
-    if(newStage === 'ctc' && cur !== 'ctc' && ((file.logistics||{}).loan_approval_type) === 'conditional' && ((file.logistics||{}).loan_conditions_cleared) !== 'yes'){
+    // Conditional-approval gate — if approval is conditional, clear every condition first.
+    if(!override && newStage === 'ctc' && cur !== 'ctc' && ((file.logistics||{}).loan_approval_type) === 'conditional' && ((file.logistics||{}).loan_conditions_cleared) !== 'yes'){
       return 'Clear all outstanding loan approval conditions before moving to Clear to Close.';
     }
-    // Stage-7 gate — the 4 closing-critical tasks before Closed
-    if(newStage === 'closed' && cur === 'ctc'){
-      // ctc_loan_written dropped from CTC (Section 11) — loan approval is enforced
-      // at the Appraisal→CTC gate (uc_loan_approval_acknowledged), not re-asked here.
+    // Stage-7 gate — the closing-critical tasks before Closed. This IS the "tasks still open"
+    // case Move anyway exists for, so override bypasses it.
+    if(!override && newStage === 'closed' && cur === 'ctc'){
       const required = [
         ['ctc_cd_received', 'Closing disclosure confirmed'],
         ['ctc_closing_confirmed', 'Closing confirmed with all parties'],
         ['ctc_walkthrough', 'Walk-through scheduled'],
       ];
       const missing = required.filter(r => !dt[r[0]]).map(r => r[1]);
-      // Title commitment can be received in Appraisal OR CTC — accept either.
       if(!(dt['ctc_title_commitment_received'] || dt['app_title_commitment'])) missing.unshift('Title commitment received');
       if(missing.length) return 'This file cannot move to Closed yet. Still unchecked:\n\n· ' + missing.join('\n· ');
     }
