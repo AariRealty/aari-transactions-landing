@@ -6609,10 +6609,28 @@ Tell me your planned move-out date and I will set the inspection.`
     // → the file's agent record. NOT _drawerAgent alone — that's the submitter,
     // which differs on "submit on behalf" files.
     const _ourAgentKey = isBuyerSide ? 'buyer_agent' : (isSellerSide ? 'listing_agent' : '');
-    const _agentRec = agent ? ((agent.first_name || '') + ' ' + (agent.last_name || '')).trim() : '';
+    // ===== AN EMAIL TO THE AGENT MUST NEVER BE ADDRESSED TO THE COORDINATOR =====
+    // {{agent_name}} / {{agent_email}} resolve through file.agent_id -> the agents row. On files
+    // where agent_id points at the ASSIGNED TC, that row IS the coordinator, so the To: line
+    // rendered her own name and inbox. Eileen reported exactly this: copying a playbook email into
+    // Gmail and finding her own address in To:. Five live files are in that state (four of hers,
+    // one of Marlenyi's) — all email-imported, where no real agent was captured and every earlier
+    // source in the chain (confirmed contacts, pa_agent_email, agent_name text) is empty, so it
+    // fell all the way through to the agent record.
+    //
+    // The agent record is skipped when it IS the assigned TC. The token then renders its visible
+    // placeholder instead. A blank you can see beats a wrong address you cannot: pasting
+    // "[agent email]" into Gmail fails loudly, pasting the coordinator's own address sends the
+    // client's update to the wrong person and looks like it worked.
+    //
+    // This is a GUARD, not a repair. The underlying data (agent_id pointing at the TC) is still
+    // wrong and still classifies those files as self-coordinated for pay ($80 flat instead of the
+    // split). Fixing that is a separate data pass, per file, with the real agent confirmed.
+    const _agentIsTc = !!(agent && agent.id && file && file.assigned_tc_id && String(agent.id) === String(file.assigned_tc_id));
+    const _agentRec = (agent && !_agentIsTc) ? ((agent.first_name || '') + ' ' + (agent.last_name || '')).trim() : '';
     const agentName = (_ourAgentKey && _ccGet(_ourAgentKey,'name')) || _rfd.pa_agent_name || _rfd.agent_name || _agentRec || '[agent name]';
     const agentFirst = (agentName && agentName.indexOf('[') !== 0) ? agentName.split(' ')[0] : '[agent]';
-    const agentEmail = (_ourAgentKey && _ccGet(_ourAgentKey,'email')) || _rfd.pa_agent_email || _rfd.agent_email || (agent ? (agent.email || '') : '') || '[agent email]';
+    const agentEmail = (_ourAgentKey && _ccGet(_ourAgentKey,'email')) || _rfd.pa_agent_email || _rfd.agent_email || ((agent && !_agentIsTc) ? (agent.email || '') : '') || '[agent email]';
     // ===== Structured contacts · pull from raw_form_data first (intake form),
     // then fall back to free-text lender_contact / title_contact columns.
     const raw = file.raw_form_data || {};
