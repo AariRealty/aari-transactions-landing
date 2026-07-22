@@ -1067,6 +1067,7 @@
         <div id="files-menu" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:0.5px solid #ece8e0;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,0.10);padding:6px;z-index:60;min-width:190px">
           <a href="/contract-guide.html" target="_blank" rel="noopener" title="Contract comparison & deadline calculator" style="display:block;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer;text-decoration:none">Contract guide</a>
           <button type="button" class="gml-link" id="rl-open-link" title="Aari Google review link" style="display:none;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Review link</button>
+          <button type="button" class="gml-link" id="svc-open-link" title="Turn services on or off" style="display:none;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Services</button>
           <button type="button" class="gml-link" id="gml-open-link" title="Gmail label setup" style="width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Gmail label setup</button>
           <button type="button" id="kbd-hint-btn" title="Keyboard shortcuts" style="width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Keyboard shortcuts</button>
         </div>
@@ -1205,6 +1206,26 @@
   </div>
   <div class="gml-foot">
     <button type="button" class="gml-dismiss" id="rl-save">Save</button>
+  </div>
+</div>
+
+<!-- Services we are accepting · broker-only global setting (org_settings.paused_services).
+     Pausing a service stops COMMERCE, never the work: it disappears from the public site, cannot
+     be ordered, and stops billing (no client charge, no coordinator pay). Coordinators can still
+     create and track files of that type for deadlines and emails. That is the split Marlenyi
+     needed: File Organization paused for agents while Milennys keeps inputting her own files. -->
+<div class="gml-backdrop" id="svc-backdrop"></div>
+<div class="gml-modal" id="svc-modal" role="dialog" aria-modal="true" aria-labelledby="svc-title">
+  <div class="gml-head">
+    <p class="gml-title" id="svc-title">Services we are accepting</p>
+  </div>
+  <div class="gml-body">
+    <p class="gml-intro">Switch a service off and it disappears from the website, cannot be ordered, and stops billing. <b>Coordinators can still create and track those files</b> for deadlines and emails, so nothing in flight is disturbed.</p>
+    <div id="svc-list"></div>
+    <div id="svc-status" style="font-size:11.5px;margin-top:10px;min-height:14px"></div>
+  </div>
+  <div class="gml-foot">
+    <button type="button" class="gml-dismiss" id="svc-close">Done</button>
   </div>
 </div>
 
@@ -6927,6 +6948,9 @@ Tell me your planned move-out date and I will set the inspection.`
   // Org-level Google review link (single global value · org_settings singleton).
   // Loaded once on init; feeds {{google_review_link_aari}} for every staff user.
   let _orgReviewLink = '';
+  // Service keys the broker has paused (org_settings.paused_services). Empty = everything is on.
+  // Paused = not orderable, not billable; still fully trackable. See svcPaused().
+  let _pausedServices = [];
   // ============== INIT ==============
   async function init(){
     if(!window.AariAuth){ return showGate('Sign in required.', 'Please sign in.', '/login.html'); }
@@ -6969,13 +6993,18 @@ Tell me your planned move-out date and I will set the inspection.`
     document.getElementById('auth-gate').style.display = 'none';
     document.getElementById('page-main').style.display = 'block';
     if(role === 'broker'){ document.getElementById('tc-filter').style.display = 'flex'; }
-    // Load the global Aari Google review link (org_settings singleton).
+    // Load the global Aari Google review link + the broker's paused-service list (org_settings singleton).
     try {
-      const { data: _os } = await _client.from('org_settings').select('google_review_link_aari').eq('id', 1).maybeSingle();
+      const { data: _os } = await _client.from('org_settings').select('google_review_link_aari, paused_services').eq('id', 1).maybeSingle();
       _orgReviewLink = (_os && _os.google_review_link_aari) ? String(_os.google_review_link_aari).trim() : '';
-    } catch(_){ _orgReviewLink = ''; }
+      _pausedServices = (_os && Array.isArray(_os.paused_services)) ? _os.paused_services.map(function(s){ return String(s).toLowerCase(); }) : [];
+    } catch(_){ _orgReviewLink = ''; _pausedServices = []; }
     // The Aari review-link setting is broker-only (org_settings RLS: broker writes).
-    if(role === 'broker'){ const _rl = document.getElementById('rl-open-link'); if(_rl) _rl.style.display = ''; }
+    if(role === 'broker'){
+      const _rl = document.getElementById('rl-open-link'); if(_rl) _rl.style.display = '';
+      // Services on/off is broker-only too (org_settings RLS: broker writes).
+      const _sv = document.getElementById('svc-open-link'); if(_sv) _sv.style.display = '';
+    }
     wireUi();
     await loadAndRender();
     try { await loadInvoices(); renderFileList(); } catch(_){}
@@ -11376,6 +11405,10 @@ Tell me your planned move-out date and I will set the inspection.`
     if(!f || f.invoice_id) return false;
     if(f.status === 'archived' || f.archived_at) return false;
     if((f.raw_form_data || {}).test_pool) return false;
+    // A PAUSED service is tracked, not sold. It never reaches an invoice at all, so it cannot ride
+    // along on the credit-covered branch below either. Without this, a paused file would still
+    // appear as a $0 "covered" line and read as billable work.
+    if(typeof svcPaused === 'function' && svcPaused(f)) return false;
     if(!fileCompleted(f)) return false;
     return fileTcPayCents(f) > 0 || fileIsCovered(f);
   }
@@ -18909,9 +18942,25 @@ Tell me your planned move-out date and I will set the inspection.`
   // A credit-covered file pays nothing at all, so it is never "file org pay" either. That guard is
   // page state (coverage), so it stays here; the classification itself is the engine's.
   function paysFileOrg(f){ return !isCreditCovered(f) && PAY.paysFileOrg(f, _tcNameFor(f)); }
+  // ===== PAUSED SERVICES · the broker can stop selling a service without hiding the work =====
+  // org_settings.paused_services holds the service keys Marlenyi has switched off. A paused service
+  // is NOT orderable on the public site and does NOT bill: no client charge, no coordinator pay.
+  // It is still fully trackable — coordinators create the file, get deadlines, send the emails.
+  // That split is the whole point: File Organization is paused for agents, while Milennys keeps
+  // inputting her own files to track due dates. Pausing commerce must never switch off the work.
+  function svcPaused(f){
+    try {
+      if(!Array.isArray(_pausedServices) || !_pausedServices.length) return false;
+      // Compare on the CANONICAL key so 'file_org' and 'file_organization' are the same service.
+      var k = String(PAY.svcKey(f) || '').toLowerCase();
+      if(!k) return false;
+      return _pausedServices.some(function(p){ return String(PAY.svcKey({ service_type:p }) || p).toLowerCase() === k; });
+    } catch(_){ return false; }
+  }
   // What the coordinating TC earns on a file, regardless of who is viewing.
   function tcPayFor(f){
     if(isCreditCovered(f)) return 0;                                  // membership credit covered it · no TC pay
+    if(svcPaused(f)) return 0;                                        // service paused · tracked, not sold, not paid
     return PAY.tcPayCeiling(f, tcPctFor(f), _tcNameFor(f));           // file-org flat, else the % split
   }
   // Right-side money block for a cockpit list row, by viewer role.
@@ -20519,6 +20568,7 @@ Tell me your planned move-out date and I will set the inspection.`
     wireKeyboardShortcuts();
     wireGmailLabelModal();
     wireReviewLinkModal();
+    wireServicesModal();
 
   // ===== GMAIL LABEL SETUP · first-login onboarding (Section 14) =====
   // A first-login modal showing the exact Gmail label sets each person keeps in
@@ -20592,6 +20642,80 @@ Tell me your planned move-out date and I will set the inspection.`
         console.warn('[review-link] save failed', e);
         if(status){ status.style.color = '#c0392b'; status.textContent = 'Could not save. Check your connection and try again.'; }
       } finally { saveBtn.disabled = false; }
+    });
+  }
+
+  // ===== SERVICES WE ARE ACCEPTING · broker-only (org_settings.paused_services) =====
+  // Every service the business sells, each with a switch. Paused = off the website, not orderable,
+  // not billable; still fully trackable. Saves immediately per toggle so there is no half-saved
+  // state, and reverts the switch on screen if the database refuses (org_settings RLS is
+  // broker-write, so a non-broker flipping it must not appear to succeed).
+  const SVC_TOGGLE_LIST = [
+    { key:'tc_one_side',         label:'Transaction Coordination', sub:'$399 one side · $599 both sides' },
+    { key:'listing_coordinator', label:'Listing Coordinator',      sub:'$249' },
+    { key:'mls_setup',           label:'MLS Setup Only',           sub:'$149' },
+    { key:'listing_docs',        label:'Listing Docs Only',        sub:'$99'  },
+    { key:'offer_prep_basic',    label:'Offer Prep · Basic',       sub:'$79'  },
+    { key:'offer_prep_complete', label:'Offer Prep · Complete',    sub:'$149' },
+    { key:'file_organization',   label:'File Organization',        sub:'$99'  },
+    { key:'standalone_review',   label:'Standalone Review',        sub:'$149' },
+  ];
+  function svcKeyPaused(key){
+    try { return (_pausedServices || []).some(function(p){ return String(p).toLowerCase() === String(key).toLowerCase(); }); }
+    catch(_){ return false; }
+  }
+  function renderSvcToggles(){
+    const host = document.getElementById('svc-list'); if(!host) return;
+    host.innerHTML = SVC_TOGGLE_LIST.map(function(s){
+      const off = svcKeyPaused(s.key);
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:0.5px solid #f0ebe0">' +
+        '<div style="min-width:0"><div style="font-size:13px;font-weight:500;color:#0f0f0f">' + esc(s.label) +
+          (off ? ' <span style="font-size:9.5px;letter-spacing:.06em;background:#fbf3e2;color:#8a6d1b;border-radius:5px;padding:2px 7px;margin-left:4px">PAUSED</span>' : '') +
+        '</div><div style="font-size:11px;color:#8a857c;margin-top:2px">' + esc(s.sub) + (off ? ' · not orderable, not billable' : '') + '</div></div>' +
+        '<button type="button" data-svc-toggle="' + esc(s.key) + '" aria-pressed="' + (off ? 'false' : 'true') + '" ' +
+          'style="flex:none;width:40px;height:22px;border:0;border-radius:999px;position:relative;cursor:pointer;padding:0;background:' + (off ? '#d9d4ca' : '#0f0f0f') + '">' +
+          '<span style="position:absolute;top:3px;left:' + (off ? '3px' : '21px') + ';width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s"></span></button>' +
+      '</div>';
+    }).join('');
+  }
+  function wireServicesModal(){
+    const modal = document.getElementById('svc-modal');
+    const back = document.getElementById('svc-backdrop');
+    const link = document.getElementById('svc-open-link');
+    const closeBtn = document.getElementById('svc-close');
+    const status = document.getElementById('svc-status');
+    if(!modal || !back) return;
+    const open = function(){ if(status) status.textContent = ''; renderSvcToggles(); modal.classList.add('open'); back.classList.add('open'); };
+    const close = function(){ modal.classList.remove('open'); back.classList.remove('open'); };
+    if(link) link.addEventListener('click', open);
+    if(back) back.addEventListener('click', close);
+    if(closeBtn) closeBtn.addEventListener('click', close);
+    modal.addEventListener('click', async function(e){
+      const btn = e.target && e.target.closest && e.target.closest('[data-svc-toggle]');
+      if(!btn) return;
+      const key = btn.getAttribute('data-svc-toggle');
+      const wasPaused = svcKeyPaused(key);
+      const next = wasPaused
+        ? (_pausedServices || []).filter(function(p){ return String(p).toLowerCase() !== String(key).toLowerCase(); })
+        : (_pausedServices || []).concat([key]);
+      const prev = _pausedServices;
+      _pausedServices = next;                 // optimistic, so the switch moves instantly
+      renderSvcToggles();
+      if(status){ status.style.color = '#9a9a9a'; status.textContent = 'Saving…'; }
+      try {
+        const r = await _client.from('org_settings').update({ paused_services: next, updated_at: new Date().toISOString() }).eq('id', 1);
+        if(r && r.error) throw r.error;
+        if(status){ status.style.color = '#2f6b48'; status.textContent = wasPaused ? '✓ Now accepting orders again.' : '✓ Paused. Still trackable, no longer sold.'; }
+        // Money on screen changes with this, so re-render the surfaces that price files.
+        try { renderFileList(); } catch(_){}
+        try { renderTcCalendar(); } catch(_){}
+        try { renderKanban(); } catch(_){}
+      } catch(err){
+        _pausedServices = prev;               // the database said no · put the switch back
+        renderSvcToggles();
+        console.warn('[services] save failed', err);
+        if(status){ status.style.color = '#c0392b'; status.textContent = 'Not saved. Only the broker can change this.'; }
+      }
     });
   }
 
