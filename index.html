@@ -4045,7 +4045,25 @@
     };
     var panel=document.getElementById('pfPanel');
     var SVCMAP={"Offer Prep · Basic":{flow:"offer"},"Offer Prep · Complete":{flow:"offer"},"Listing Docs Only":{flow:"service",svc:"listing_docs"},"MLS Setup Only":{flow:"service",svc:"mls_setup"},"Listing Coordinator":{flow:"service",svc:"listing_coordinator"},"File Organization":{flow:"service",svc:"file_organization"},"Standalone Review":{flow:"service",svc:"standalone_review"}};
+    // ===== PAUSED SERVICES · the broker can stop selling one without a deploy =====
+    // org_settings.paused_services, read through the narrow public accessor rpc('paused_services')
+    // (that function returns ONLY this list; the rest of org_settings stays staff-only). Filled in
+    // asynchronously on load — the default is "nothing paused", so a slow or failed lookup shows
+    // the normal menu rather than silently hiding services you are trying to sell.
+    var PAUSED_SVCS = [];
+    function svcIsPaused(name){
+      var m = SVCMAP[name];
+      if(!m || !m.svc || !PAUSED_SVCS.length) return false;
+      var k = String(m.svc).toLowerCase();
+      // canonical-ish: treat file_org and file_organization as the same service
+      var canon = function(s){ s = String(s||'').toLowerCase(); return s === 'file_org' ? 'file_organization' : s; };
+      return PAUSED_SVCS.some(function(p){ return canon(p) === canon(k); });
+    }
     function actionFor(name,pref,isTeam){
+      // Paused · no way to order it. The card stays visible so the service is not a secret, but it
+      // reads as unavailable and carries no link. Hiding only the button would not be enough on its
+      // own (the submit URL is guessable), so submit.html refuses the service too.
+      if(!isTeam && svcIsPaused(name)) return '<span class="pfc-add" style="opacity:.5;pointer-events:none;cursor:default">Paused</span>';
       if(!isTeam && SVCMAP[name]){ var m=SVCMAP[name]; return '<a class="pfc-add" href="submit.html?flow='+m.flow+(m.svc?("&svc="+m.svc):"")+'">Add</a>'; }
       return '<a class="pfc-add" href="#apply" data-intake-trigger data-prefill-service="'+pref.replace(/"/g,'&quot;')+'">'+(isTeam?'Book a call':'Add')+'</a>';
     }
@@ -4060,11 +4078,26 @@
       }).join('');
     }
     var tabs=document.querySelectorAll('#pfTabs .pricev2-find-tab');
+    var _curTab='offer';
     tabs.forEach(function(b){ b.addEventListener('click',function(){
       tabs.forEach(function(x){x.classList.remove('on');}); b.classList.add('on');
-      render(b.getAttribute('data-c'));
+      _curTab=b.getAttribute('data-c'); render(_curTab);
     }); });
     render('offer');
+    // Fetch the paused list, then re-render so anything switched off stops being orderable.
+    // Fails open on purpose: if this never returns, the menu is exactly what it is today.
+    (function loadPausedServices(){
+      try {
+        var sb = (window.AariAuth && (window.AariAuth.client || window.AariAuth.supabase)) || window.__aariSb || null;
+        if(!sb || !sb.rpc) return;
+        sb.rpc('paused_services').then(function(r){
+          if(r && !r.error && Array.isArray(r.data) && r.data.length){
+            PAUSED_SVCS = r.data.map(function(s){ return String(s).toLowerCase(); });
+            render(_curTab);
+          }
+        }).catch(function(){ /* fail open · show the normal menu */ });
+      } catch(_){ /* fail open */ }
+    })();
   })();
   </script>
 

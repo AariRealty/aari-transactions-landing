@@ -1012,8 +1012,43 @@
     if(_f==="contract") show("step-drop");
     else if(_f==="offer") offerStep();
     else if(_f==="listing") listingStart();
-    else if(_f==="service") serviceStart(_sp.get("svc"));
+    else if(_f==="service") guardPausedThen(_sp.get("svc"), function(){ serviceStart(_sp.get("svc")); });
   }catch(_){} })();
+
+  // ===== A PAUSED SERVICE CANNOT BE ORDERED, EVEN FROM A DIRECT LINK =====
+  // The pricing page stops showing an Add button for a paused service, but that URL is guessable
+  // and shareable, so hiding the button is not a gate. This is the gate. Reads the narrow public
+  // accessor rpc('paused_services') (returns ONLY the paused list; the rest of org_settings stays
+  // staff-only). FAILS OPEN on purpose: if the lookup errors, the order proceeds. Blocking a real
+  // customer because a settings read hiccuped is worse than briefly taking an order for something
+  // that is paused, which the billing side already refuses to pay out on.
+  function guardPausedThen(svc, go){
+    if(!svc) return go();
+    var canon = function(s){ s = String(s||"").toLowerCase(); return s === "file_org" ? "file_organization" : s; };
+    var done = false;
+    var proceed = function(){ if(!done){ done = true; go(); } };
+    var block = function(){
+      if(done) return; done = true;
+      show("step-service");
+      var host = document.getElementById("step-service");
+      if(host) host.innerHTML =
+        '<div style="max-width:520px;margin:0 auto;text-align:center;padding:44px 20px">' +
+        '<h2 style="font-family:Georgia,serif;font-size:26px;margin:0 0 10px">This service is paused</h2>' +
+        '<p style="font-size:14px;line-height:1.6;color:#5f5e5a;margin:0 0 22px">We are not taking new orders for this one right now. Everything else is still open, and your files in progress are unaffected.</p>' +
+        '<a href="/#pricing" style="display:inline-block;background:#0f0f0f;color:#fff;text-decoration:none;font-size:13px;font-weight:600;padding:12px 24px;border-radius:8px">See what we are accepting</a>' +
+        '<p style="font-size:12px;color:#8a857c;margin-top:18px">Questions? <a href="mailto:hello@aaritransactions.com" style="color:#0f0f0f">hello@aaritransactions.com</a></p></div>';
+    };
+    try {
+      var sb = (window.supabase && window.supabase.createClient) ? window.supabase.createClient(SB_URL, SB_KEY) : null;
+      if(!sb || !sb.rpc) return proceed();
+      setTimeout(proceed, 2500);                       // never hang the page on this lookup
+      sb.rpc("paused_services").then(function(r){
+        if(done) return;
+        var list = (r && !r.error && Array.isArray(r.data)) ? r.data : [];
+        if(list.some(function(p){ return canon(p) === canon(svc); })) block(); else proceed();
+      }).catch(proceed);
+    } catch(_){ proceed(); }
+  }
 </script>
 </body>
 </html>
