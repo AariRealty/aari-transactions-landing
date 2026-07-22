@@ -84,8 +84,17 @@ function invoiceEmailHtml(o: any){
     (paid.length?`<div style='font-size:10px;letter-spacing:1px;color:#3e7d57;margin-bottom:2px'>YOU&rsquo;RE OWED</div>${paidRows}`:'')+
     coveredHtml+
     totalRow+
-    `<div style='text-align:center;margin-top:20px'><a href='https://aaritransactions.com/files.html' style='display:inline-block;background:#0f0f0f;color:#ffffff;text-decoration:none;font-size:13px;font-weight:bold;padding:12px 26px;border-radius:8px'>Review and mark paid</a></div>`+
-    `<div style='font-size:10.5px;color:#a39e93;margin-top:16px;line-height:1.5;text-align:center'>${o.items.length} files this week &middot; ${paid.length} paid, ${covered.length} covered by membership credits.</div>`+
+    // ONE invoice design, two audiences. The coordinator used to get a two-line plain note while
+    // the broker got this full invoice. Marlenyi: "make the email send out to Eileen like the one
+    // I get." Same document for both; only the call to action differs, because "Review and mark
+    // paid" is the BROKER's action. A coordinator cannot mark her own invoice paid, so hers points
+    // at her invoice screen and states when payment goes out.
+    (o.audience === 'tc'
+      ? `<div style='text-align:center;margin-top:20px'><a href='https://aaritransactions.com/files.html?view=invoice' style='display:inline-block;background:#0f0f0f;color:#ffffff;text-decoration:none;font-size:13px;font-weight:bold;padding:12px 26px;border-radius:8px'>View my invoice</a></div>`
+      : `<div style='text-align:center;margin-top:20px'><a href='https://aaritransactions.com/files.html' style='display:inline-block;background:#0f0f0f;color:#ffffff;text-decoration:none;font-size:13px;font-weight:bold;padding:12px 26px;border-radius:8px'>Review and mark paid</a></div>`)+
+    (o.audience === 'tc'
+      ? `<div style='font-size:10.5px;color:#a39e93;margin-top:16px;line-height:1.5;text-align:center'>Submitted to Aari Transactions. Payment goes out Friday.<br>${o.items.length} files this week &middot; ${paid.length} paid, ${covered.length} covered by membership credits.</div>`
+      : `<div style='font-size:10.5px;color:#a39e93;margin-top:16px;line-height:1.5;text-align:center'>${o.items.length} files this week &middot; ${paid.length} paid, ${covered.length} covered by membership credits.</div>`)+
     `</td></tr></table></td></tr></table>`;
 }
 
@@ -211,8 +220,11 @@ Deno.serve(async (req) => {
   const period = (body.period_start && body.period_end) ? (body.period_start + " – " + body.period_end) : "";
   const { data: broker } = await admin.from("agents").select("email").eq("role","broker").order("created_at",{ ascending:true }).limit(1).maybeSingle();
   const brokerEmail = (broker && broker.email) || "marlenyi@aaritransactions.com";
-  const html = invoiceEmailHtml({ invoice_number: inv.invoice_number, period, tc_name: tcLabel, items: safeItems, total_cents: total });
-  const tcHtml = `<div style='font-family:Arial,Helvetica,sans-serif;color:#0f0f0f'><p>Hi ${esc(tc.first_name||"there")},</p><p>Your invoice <b>${esc(inv.invoice_number)}</b> for <b>${money(total)}</b> was sent to Aari Transactions. Payment goes out Friday.</p><p style='font-size:12px;color:#8a857c'>Aari Transactions</p></div>`;
+  const html = invoiceEmailHtml({ invoice_number: inv.invoice_number, period, tc_name: tcLabel, items: safeItems, total_cents: total, audience: 'broker' });
+  // The coordinator now gets the SAME invoice document the broker gets (audience:'tc' swaps only
+  // the call to action). It used to be a two-line plain note, which gave her no record of what she
+  // actually billed — she had to take the total on faith.
+  const tcHtml = invoiceEmailHtml({ invoice_number: inv.invoice_number, period, tc_name: tcLabel, items: safeItems, total_cents: total, audience: 'tc' });
   await sendEmail(brokerEmail, `New invoice from ${tcLabel} · ${money(total)}`, html);
   if (tc.email) await sendEmail(tc.email, `Invoice ${inv.invoice_number} sent · ${money(total)}`, tcHtml);
   return j(200,{ ok:true, invoice_id:inv.id, invoice_number:inv.invoice_number, total_cents:total });
