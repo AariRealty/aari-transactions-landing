@@ -1514,8 +1514,14 @@
   // ===== Email content resolvers · versions[] OR static body OR generated fn =====
   function rawEmailBody(e, file){
     const list = emailVersionList(e);
-    if(list) return list[emailVersionIndex(e, file)] || list[0] || '';
-    return (e && e.bodyFn) ? e.bodyFn(file || {}) : ((e && e.body) || '');
+    let body = list ? (list[emailVersionIndex(e, file)] || list[0] || '')
+                    : ((e && e.bodyFn) ? e.bodyFn(file || {}) : ((e && e.body) || ''));
+    // Closing email only · append the agent's "next file" offer token. Resolves per agent_id in
+    // fillEmailVars (Samantha today), so ONLY that agent's closing email carries the pre-applied
+    // discount link. Blank for everyone else. Appended here in ONE place instead of in all six
+    // rotating versions, so they can never drift.
+    if(e && e.id === 'closed_congrats_agent') body += '{{next_file_offer}}';
+    return body;
   }
   // Subject resolves: explicit subjectFn → explicit subject → the THREAD's
   // shared subject (street only). Falling through to the thread means every
@@ -6631,6 +6637,20 @@ Tell me your planned move-out date and I will set the inspection.`
     const agentName = (_ourAgentKey && _ccGet(_ourAgentKey,'name')) || _rfd.pa_agent_name || _rfd.agent_name || _agentRec || '[agent name]';
     const agentFirst = (agentName && agentName.indexOf('[') !== 0) ? agentName.split(' ')[0] : '[agent]';
     const agentEmail = (_ourAgentKey && _ccGet(_ourAgentKey,'email')) || _rfd.pa_agent_email || _rfd.agent_email || ((agent && !_agentIsTc) ? (agent.email || '') : '') || '[agent email]';
+    // ===== Per-agent "next file" offer · pre-applied Stripe discount in the closing email =====
+    // Keyed by agent_id so ONLY that agent's closing email carries the link (control by
+    // distribution, since the SAMANTHA50 code itself is not customer-locked in Stripe). The link
+    // has ?prefilled_promo_code so the $50 is already applied at checkout; the payment link has
+    // "Allow promotion codes" on, verified in Stripe. Blank when the agent is the coordinator
+    // (self-coordinated file · no external agent to offer). Add an agent by dropping their id +
+    // pre-applied URL here.
+    const NEXT_FILE_OFFER = {
+      '2635cd0e-45ee-415e-b0d0-91251b5af6bf': 'https://buy.stripe.com/8x23cn8bZ9uzc0H6EGcAo04?prefilled_promo_code=SAMANTHA50'  // Samantha Haringa · TC One Side $399, $50 off
+    };
+    const _nfoUrl = (file && !_agentIsTc && file.agent_id && NEXT_FILE_OFFER[file.agent_id]) || '';
+    const next_file_offer = _nfoUrl
+      ? ('\n\nWhen your next file is ready, your $50 member rate is already applied. Start it here:\n' + _nfoUrl)
+      : '';
     // ===== Structured contacts · pull from raw_form_data first (intake form),
     // then fall back to free-text lender_contact / title_contact columns.
     const raw = file.raw_form_data || {};
@@ -6688,6 +6708,7 @@ Tell me your planned move-out date and I will set the inspection.`
       tenant_name: tenantName, tenant_first_name: tenantFirst, tenant_email: file.client_email || '[tenant email]',
       agent_name: agentName, agent_first_name: agentFirst, agent_email: agentEmail,
       agent_phone: agentPhone, agent_company: agentCompany,
+      next_file_offer: next_file_offer,
       listing_agent_name: listAgentName, listing_agent_first_name: listAgentFirst, listing_agent_company: listAgentCo, listing_agent_phone: listAgentPhone, listing_agent_email: listAgentEmail,
       other_agent_name: listAgentName, other_agent_first_name: listAgentFirst, other_agent_email: listAgentEmail,
       title_company_name: titleCo,
