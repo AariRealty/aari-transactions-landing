@@ -47,7 +47,10 @@ const outside = { submitted_by_tc: 'true' };
 check('tc_one_side @50% = $200', PAY.tcPayCeiling({ service_type:'tc_one_side', file_type:'sale', raw_form_data:outside }, 50) === 200);
 check('tc_one_side @40% = $160', PAY.tcPayCeiling({ service_type:'tc_one_side', file_type:'sale', raw_form_data:outside }, 40) === 160);
 check('mls_setup  @40% = $40',  PAY.tcPayCeiling({ service_type:'mls_setup', file_type:'listing', raw_form_data:outside }, 40) === 40);   // MLS Setup dropped $149 -> $99 (Jul 2026)
-check('file_org (short id) = $80 flat', PAY.tcPayCeiling({ service_type:'file_org', file_type:'sale', raw_form_data:{ submitted_by_tc:'false' } }, 50) === 80);
+check('file_org SERVICE = 50% of $99 = $49.50', PAY.tcPayCeiling({ service_type:'file_org', file_type:'listing', raw_form_data:{ submitted_by_tc:'false' } }, 50) === 49.5);   // File Org service dropped flat-$80 -> flat 50% (Jul 2026)
+check('file_org via compliance file_type = $49.50', PAY.tcPayCeiling({ service_type:'', file_type:'compliance', raw_form_data:{ submitted_by_tc:'false' } }, 40) === 49.5);
+check('in-house / self-coordinated still = $80 flat', PAY.tcPayCeiling({ service_type:'tc_one_side', file_type:'sale', agent_id:'A', assigned_tc_id:'A', raw_form_data:{ aari_realty:'true' } }, 50) === 80);
+check('fo_override still = $80 flat', PAY.tcPayCeiling({ service_type:'tc_one_side', file_type:'sale', raw_form_data:{ submitted_by_tc:'false', fo_override:'true' } }, 50) === 80);
 check('lc resolves to $249', PAY.svcPrice({ service_type:'lc' }) === 249);
 check('op_basic resolves to $79', PAY.svcPrice({ service_type:'op_basic' }) === 79);
 check('unknown service = $0 (no guessing)', PAY.svcPrice({ service_type:'rental' }) === 0);

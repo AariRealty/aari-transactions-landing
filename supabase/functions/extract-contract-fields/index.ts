@@ -73,11 +73,16 @@ async function pdfToPages(bytes: Uint8Array): Promise<string[]> {
 // Split a bundled upload into its component documents by reading the form title
 // at the top of each page. Returns [{ title, page (1-based start), pages }].
 function detectDocuments(pages: string[]): { title: string; page: number; pages: number }[] {
+  // ORDER MATTERS. Specific document types are tested BEFORE the generic "Contract"
+  // rule, because riders and addenda carry the contract's own name in their title
+  // ("Comprehensive Rider to the Residential Contract For Sale And Purchase", "FHA/VA
+  // Financing Addendum to the Contract ..."). Testing Contract first stamped every such
+  // page as a second Contract (816 Frederick Reid · pages 14-18 came out "Contract").
   const rules = [
-    { re: /AS IS.{0,6}Residential Contract For Sale|Vacant Land Contract|Commercial Contract|Contract For Sale And Purchase/i, title: "Contract" },
-    { re: /Addendum to Contract|Addendum No|Addendum #/i, title: "Addendum" },
-    { re: /Comprehensive Rider/i, title: "Rider" },
-    { re: /Compensation Agreement/i, title: "Compensation" },
+    { re: /Comprehensive Rider|Rider to the .{0,40}Contract|\bRider\b.{0,25}Contract For Sale/i, title: "Rider" },
+    { re: /Financing Addendum|FHA\/?VA|FHA Amendatory|Amendatory Clause|Appraisal Contingency|Inspection Addendum|Permits?\s+Addendum|Open Permit|Association Addendum|Condominium Addendum|HOA Addendum|Escalation Addendum|Seller Financing Addendum|Addendum to (the )?(Sale|Purchase|Contract)|Addendum\s*No\.?|Addendum\s*#/i, title: "Addendum" },
+    { re: /Compensation Agreement|Broker Compensation|Regarding.{0,25}Compensation|Cooperating Broker Compensation/i, title: "Compensation" },
+    { re: /AS[\s-]?IS.{0,8}Residential Contract For Sale|Vacant Land Contract|Commercial Contract|Residential Contract For Sale And Purchase/i, title: "Contract" },
   ];
   const docs: { title: string; page: number; pages: number }[] = [];
   pages.forEach((pg, i) => {

@@ -106,7 +106,7 @@ export const TcNewFileAssigned: React.FC<Props> = ({
         textTransform: "uppercase",
         textDecoration: "none",
       }}>
-        Open file in portal &rarr;
+        Open the file &rarr;
       </a>
     </div>
 

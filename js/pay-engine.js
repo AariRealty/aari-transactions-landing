@@ -37,8 +37,12 @@
   // DEFAULT coordinator share of a service price. A coordinator may carry a
   // per-TC override (tc_pay_rates.pct); this is the fallback when none is set.
   var AT_TC_PCT = 40;
-  // File Organization / in-house coordination pay a FLAT rate, not a % split.
+  // Self-coordinated / in-house coordination pay a FLAT dollar rate, not a % split.
   var FILE_ORG_PAY = 80;
+  // The File Organization SERVICE is different: it is a billed consumer service and
+  // pays the coordinator a flat 50% of its price ($99 -> $49.50), the SAME for every
+  // TC (never the per-TC % override). Distinct from the $80 in-house flat above.
+  var FILE_ORG_SVC_PCT = 50;
   // A member pays $50 off every TC file. It comes out of AARI's share, never the
   // coordinator's pay (atTcCut is computed off the FULL price, deliberately).
   var MEMBER_TC_DISCOUNT = 50;
@@ -136,6 +140,9 @@
   // Coverage can only ever pull this to $0, never raise it, so this doubles as the
   // server's trustworthy CEILING when validating a submitted invoice line.
   function tcPayCeiling(f, pct, tcName){
+    // File Organization service · flat 50% of its price ($49.50), every TC the same.
+    if(isFileOrgFile(f)) return SERVICE_PRICE.file_organization * FILE_ORG_SVC_PCT / 100;
+    // Self-coordinated / in-house / fo_override work · flat $80.
     if(paysFileOrg(f, tcName)) return FILE_ORG_PAY;
     return atTcCut(f, pct);
   }
@@ -148,7 +155,7 @@
   }
 
   root.AariPayEngine = {
-    AT_TC_PCT: AT_TC_PCT, FILE_ORG_PAY: FILE_ORG_PAY, MEMBER_TC_DISCOUNT: MEMBER_TC_DISCOUNT,
+    AT_TC_PCT: AT_TC_PCT, FILE_ORG_PAY: FILE_ORG_PAY, FILE_ORG_SVC_PCT: FILE_ORG_SVC_PCT, MEMBER_TC_DISCOUNT: MEMBER_TC_DISCOUNT,
     SERVICE_PRICE: SERVICE_PRICE, SERVICE_ALIAS: SERVICE_ALIAS,
     TC_SERVICE_TYPES: TC_SERVICE_TYPES, CREDIT_SERVICES: CREDIT_SERVICES, UPFRONT_SERVICES: UPFRONT_SERVICES,
     svcKey: svcKey, isTcService: isTcService, isCreditService: isCreditService,

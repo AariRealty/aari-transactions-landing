@@ -71,7 +71,10 @@ Deno.serve(async (req) => {
     ? `${agent.first_name || ""} ${agent.last_name || ""}`.trim() || "(unnamed agent)"
     : "(unnamed agent)";
   const agentEmail = agent?.email || undefined;
-  const portalUrl = `${SITE_URL}/portal#file-${file.id}`;
+  // The TC works in the file board (files.html), NOT the agent portal. ?open=<id> deep-opens
+  // this exact file on the board (see maybeOpenFromUrl in files.html). Pointing this at
+  // /portal sent coordinators to the agent-facing portal instead of their own workspace.
+  const portalUrl = `${SITE_URL}/files.html?open=${file.id}`;
 
   // ---- 4. Send email (best-effort) ----
   let emailSent = false;

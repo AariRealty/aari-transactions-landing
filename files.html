@@ -1062,6 +1062,7 @@
     <div class="page-head-right">
       <input type="search" id="file-search" class="file-search" placeholder="Search address, client, agent…" autocomplete="off">
       <button type="button" class="btn-newfile" id="btn-newfile">+ New file</button>
+      <button type="button" class="btn-sla" id="btn-offer-email" title="Build an offer email for the listing agent" style="padding:7px 12px">Offer email</button>
       <div style="position:relative;display:inline-block">
         <button type="button" class="btn-sla" id="files-menu-btn" aria-label="More" title="More" style="padding:7px 12px">&#8943;</button>
         <div id="files-menu" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:0.5px solid #ece8e0;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,0.10);padding:6px;z-index:60;min-width:190px">
@@ -1226,6 +1227,30 @@
   </div>
   <div class="gml-foot">
     <button type="button" class="gml-dismiss" id="svc-close">Done</button>
+  </div>
+</div>
+
+<!-- Offer email · standalone pre-file tool -->
+<div class="gml-backdrop" id="offer-backdrop"></div>
+<div class="gml-modal" id="offer-modal" role="dialog" aria-modal="true" aria-labelledby="offer-title">
+  <div class="gml-head">
+    <p class="gml-title" id="offer-title">Offer email</p>
+  </div>
+  <div class="gml-body">
+    <p class="gml-intro">The email you send to the listing agent when you submit an offer, before any file exists. Pick the agent, the property, and the documents going out, then copy and send.</p>
+    <label style="display:block;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a857c;margin:0 0 5px">Listing agent first name</label>
+    <input id="offer-agent" list="offer-agent-list" autocomplete="off" placeholder="Start typing a name" style="width:100%;box-sizing:border-box;border:0.5px solid #d9d4ca;border-radius:8px;padding:9px 11px;font-family:inherit;font-size:13px;color:#0f0f0f;margin:0 0 14px">
+    <datalist id="offer-agent-list"></datalist>
+    <label style="display:block;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a857c;margin:0 0 5px">Property street</label>
+    <input id="offer-street" autocomplete="off" placeholder="816 Frederick Reid St E" style="width:100%;box-sizing:border-box;border:0.5px solid #d9d4ca;border-radius:8px;padding:9px 11px;font-family:inherit;font-size:13px;color:#0f0f0f;margin:0 0 16px">
+    <div style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a857c;margin:0 0 4px">Documents attached</div>
+    <div id="offer-docs"></div>
+    <input id="offer-doc-other" autocomplete="off" placeholder="Add another document" style="width:100%;box-sizing:border-box;border:0.5px solid #d9d4ca;border-radius:8px;padding:8px 11px;font-family:inherit;font-size:12.5px;color:#0f0f0f;margin:10px 0 16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:0 0 6px"><span style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a857c">Preview</span><span><button type="button" id="offer-copy-subject" style="border:0.5px solid #d9d4ca;background:#fff;border-radius:6px;font-family:inherit;font-size:11px;color:#0f0f0f;padding:4px 9px;cursor:pointer;margin-right:6px">Copy subject</button><button type="button" id="offer-copy-body" style="border:0;background:#0f0f0f;color:#fff;border-radius:6px;font-family:inherit;font-size:11px;padding:4px 10px;cursor:pointer">Copy body</button></span></div>
+    <pre id="offer-preview" style="white-space:pre-wrap;font-family:inherit;font-size:12.5px;line-height:1.5;color:#0f0f0f;background:#faf9f6;border:0.5px solid #ece8e0;border-radius:8px;padding:12px 13px;margin:0"></pre>
+  </div>
+  <div class="gml-foot">
+    <button type="button" class="gml-dismiss" id="offer-close">Done</button>
   </div>
 </div>
 
@@ -10775,9 +10800,11 @@ Tell me your planned move-out date and I will set the inspection.`
     });
     var _billItems = _splitItems.filter(function(it){ return chargedPrice(it.f) > 0; }); // covered-by-credit files excluded
     var _coveredCount = _splitItems.length - _billItems.length;
-    // In-house / file-org files · flat $80 TC pay (no AT external revenue).
+    // In-house / self-coordinated / File Org service files (no AT external revenue). Pay is NOT
+    // uniform anymore: File Organization service pays 50% ($49.50), in-house/self-coord pay flat
+    // $80. Sum tcPayFor per item so the total reflects the real mix, not a single flat rate.
     var _foItems = ntc.concat(nyou, ont).filter(function(it){ return paysFileOrg(it.f); });
-    var _foPay = _foItems.length * FILE_ORG_PAY;
+    var _foPay = _foItems.reduce(function(s, it){ return s + tcPayFor(it.f); }, 0);
     // A coordinator's OWN book = files assigned to them (Needs you + On track). The claim pool
     // (ntc) is unassigned work ANY coordinator can grab, so it must never count toward their
     // earnings or their active count. The per-row money already hides the pool; before this the
@@ -10793,8 +10820,9 @@ Tell me your planned move-out date and I will set the inspection.`
     if(_showCoMoney && (_billItems.length || _coveredCount || _foItems.length)){
       var _rev = _billItems.reduce(function(s, it){ return s + chargedPrice(it.f); }, 0); // what clients actually pay (member $50 off applied)
       var _pay = _billItems.reduce(function(s, it){ return s + atTcCut(it.f); }, 0);
-      // File-org / in-house coordinator pay is a REAL cost: Aari Transactions pays the TC $80
-      // and books no external revenue on that file. It must come out of net, same as split TC pay.
+      // File-org / in-house coordinator pay is a REAL cost: Aari Transactions pays the TC (50% =
+      // $49.50 on a File Org service, flat $80 on in-house / self-coordinated) and books no external
+      // revenue on that file. It must come out of net, same as split TC pay.
       var _net = _rev - _pay - _foPay;
       var _covTxt = _coveredCount ? (' <span style="color:#8f8a80">&middot; ' + _coveredCount + ' covered by credits</span>') : '';
       // ===== IT WAS NEVER "NET". IT WAS A FORECAST WEARING THE WORD. =====
@@ -10831,7 +10859,7 @@ Tell me your planned move-out date and I will set the inspection.`
         // the agent IS the assigned coordinator (Eileen's own deals), which the pay engine treats as
         // in-house $80 work. Calling that "file org · 11" invited her to look for eleven File Org
         // files and find one.
-        if(_foItems.length) _detail += _plr('Less in-house &middot; self-coordinated &middot; ' + _foItems.length + ' &times; $' + FILE_ORG_PAY, '- $' + _foPay.toLocaleString(), true);
+        if(_foItems.length) _detail += _plr('Less in-house &middot; self-coordinated &middot; ' + _foItems.length + ' file' + (_foItems.length === 1 ? '' : 's'), '- $' + _payFmt(_foPay), true);
         if(_memCount) _detail += _plr('Plus memberships &middot; ' + _memCount + ' active', '$' + _memMonthly.toLocaleString() + '/mo');
         // BROKER ONLY, and only at Viewing: All TCs (see the _tcFilter gate on the wrapper below).
         // Cream, not black: on this page black is the urgency colour · overdue counts, the Send
@@ -10841,11 +10869,11 @@ Tell me your planned move-out date and I will set the inspection.`
         html += '<div id="earnBox" style="background:#faf8f3;border:0.5px solid #e8e4db;color:#0f0f0f;border-radius:12px;padding:22px 20px;margin-top:4px">' +
           '<div data-pl-toggle="1" style="text-align:center;cursor:pointer">' +
             '<div style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#a39e93;font-weight:700;margin-bottom:6px">Pipeline net &middot; if all ' + _pipeN + ' active file' + (_pipeN === 1 ? '' : 's') + ' close</div>' +
-            '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:46px;line-height:1;font-variant-numeric:tabular-nums">$' + _net.toLocaleString() + '</div>' +
+            '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:46px;line-height:1;font-variant-numeric:tabular-nums">$' + _payFmt(_net) + '</div>' +
             '<div style="display:flex;align-items:baseline;justify-content:center;gap:14px;font-size:11.5px;margin-top:11px;flex-wrap:wrap">' +
               _stat('$' + _rev.toLocaleString(), 'revenue') +
-              _stat('$' + (_pay + _foPay).toLocaleString(), 'coordinator pay') +
-              _stat('$' + _realNet.toLocaleString(), 'realized') +
+              _stat('$' + _payFmt(_pay + _foPay), 'coordinator pay') +
+              _stat('$' + _payFmt(_realNet), 'realized') +
             '</div>' +
             (_detail ? '<div style="font-size:11px;color:#a39e93;margin-top:9px">Show the breakdown &#9662;</div>' : '') +
           '</div>' +
@@ -10858,7 +10886,7 @@ Tell me your planned move-out date and I will set the inspection.`
         html += '<div id="earnBox" style="display:flex;align-items:center;gap:12px;background:#0f0f0f;color:#fff;border-radius:12px;padding:14px 18px;margin-top:4px">' +
           '<span style="flex:1;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#cfcabf">You earn &middot; ' + _mine.length + ' active</span>' +
           '<span style="font-size:11px;color:#a8a39a">' + _myEarning + ' paid' + (_myCovered ? (' &middot; ' + _myCovered + ' covered') : '') + '</span>' +
-          '<span style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums">$' + _tcTotal.toLocaleString() + '</span></div>';
+          '<span style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums">$' + _payFmt(_tcTotal) + '</span></div>';
       }
     }
     host.innerHTML = html; _wireCal(host);
@@ -11646,8 +11674,8 @@ Tell me your planned move-out date and I will set the inspection.`
       var det = '';
       if(_invDetails){
         var rowsHtml = paid.map(function(f){
-          var flat = false; try { flat = !isSplitFile(f); } catch(_){}
-          var basis = flat ? 'flat fee' : (tcPctFor(f) + '%');
+          var flat = false, foSvc = false; try { flat = !isSplitFile(f); foSvc = isFileOrgFile(f); } catch(_){}
+          var basis = foSvc ? '50%' : (flat ? 'flat fee' : (tcPctFor(f) + '%'));
           return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:6px 0;border-top:0.5px solid #f0ebe0">' +
             '<span style="font-size:11px;line-height:1.35;min-width:0">' + esc((f.property_address || 'File').split(',')[0]) +
             '<br><span style="color:#a39e93;font-size:10px">' + esc(_svcLabel(f)) + ' &middot; ' + esc(basis) + '</span></span>' +
@@ -11792,15 +11820,15 @@ Tell me your planned move-out date and I will set the inspection.`
     var total = paidFiles.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
 
     var lineHtml = function(f, muted){
-      // The rate belongs on the line ONLY when a rate actually produced the figure. File org and
-      // in-house work pay a FLAT $80 (see PAY.paysFileOrg) and no percentage is involved, so
-      // "File Organization · 50%" next to $80.00 was simply a lie: it invited the reader to check
-      // 50% of something and find nothing that squares. A split file shows its percent because
-      // the coordinator should be able to verify her own pay against her Compensation Schedule.
-      var isFlat = false;
-      try { isFlat = !isSplitFile(f); } catch(_){}
-      var rateBit = (muted || isFlat || pct == null) ? '' : (' &middot; ' + pct + '%');
-      var flatBit = (!muted && isFlat) ? ' &middot; flat fee' : '';
+      // The rate belongs on the line ONLY when a rate actually produced the figure. The File
+      // Organization SERVICE pays a fixed 50% ($49.50), so it shows "· 50%". In-house / self-
+      // coordinated work pays a flat $80 with no percentage, so it shows "· flat fee". A split
+      // file shows its own percent so the coordinator can verify pay against her Compensation
+      // Schedule.
+      var isFlat = false, foSvc = false;
+      try { isFlat = !isSplitFile(f); foSvc = isFileOrgFile(f); } catch(_){}
+      var rateBit = foSvc ? ' &middot; 50%' : ((muted || isFlat || pct == null) ? '' : (' &middot; ' + pct + '%'));
+      var flatBit = (!muted && isFlat && !foSvc) ? ' &middot; flat fee' : '';
       var sub = esc(_svcLabel(f)) + rateBit + flatBit;
       return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:' + (muted ? '6px' : '11px') + ' 0;border-top:0.5px solid #f0ebe0">' +
         '<div style="min-width:0"><div style="font-size:' + (muted ? '12.5px' : '13.5px') + ';font-weight:' + (muted ? '400' : '500') + ';color:' + (muted ? '#5f5e5a' : '#0f0f0f') + '">' + esc((f.property_address || 'File').split(',')[0]) + '</div>' +
@@ -18961,8 +18989,11 @@ Tell me your planned move-out date and I will set the inspection.`
   function tcPayFor(f){
     if(isCreditCovered(f)) return 0;                                  // membership credit covered it · no TC pay
     if(svcPaused(f)) return 0;                                        // service paused · tracked, not sold, not paid
-    return PAY.tcPayCeiling(f, tcPctFor(f), _tcNameFor(f));           // file-org flat, else the % split
+    return PAY.tcPayCeiling(f, tcPctFor(f), _tcNameFor(f));           // file-org 50%, in-house flat, else the % split
   }
+  // The File Organization service pays 50% of $99 = $49.50, so any SUM of TC pay can land on a
+  // half-dollar. Show cents ONLY when the figure is fractional; whole-dollar totals stay clean.
+  function _payFmt(n){ n = Number(n) || 0; return n.toLocaleString('en-US', (n % 1) ? { minimumFractionDigits:2, maximumFractionDigits:2 } : { maximumFractionDigits:0 }); }
   // Right-side money block for a cockpit list row, by viewer role.
   function atRowMoneyHtml(f){
     var role = (typeof _profile === 'object' && _profile) ? String(_profile.role || '').toLowerCase() : '';
@@ -18975,11 +19006,13 @@ Tell me your planned move-out date and I will set the inspection.`
       if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">Covered</span><span style="' + sub + '">membership credit</span></div>';
       return '<span style="' + faint + '">covered &middot; membership</span>';
     }
-    // File Organization · flat $80 coordinator pay (explicit file-org OR in-house Aari Realty work).
+    // File Organization SERVICE pays 50% ($49.50). In-house / self-coordinated work pays flat $80.
     if(paysFileOrg(f)){
-      var foLbl = (isAariRealtyFile(f) && !isFileOrgFile(f)) ? 'in-house &middot; file org' : 'file org';
-      if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">$80</span><span style="' + sub + '">TC pay &middot; ' + foLbl + '</span></div>';
-      return '<div style="' + col + '"><span style="' + big + '">$80</span><span style="' + sub + '">' + foLbl + '</span></div>';
+      var _foSvc = isFileOrgFile(f);
+      var foAmt = _foSvc ? '$49.50' : '$80';
+      var foLbl = _foSvc ? 'file org &middot; 50%' : 'in-house &middot; self-coordinated';
+      if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">' + foAmt + '</span><span style="' + sub + '">TC pay &middot; ' + foLbl + '</span></div>';
+      return '<div style="' + col + '"><span style="' + big + '">' + foAmt + '</span><span style="' + sub + '">' + foLbl + '</span></div>';
     }
     if(isSplitFile(f)){
       var p = svcPrice(f);
@@ -19008,8 +19041,11 @@ Tell me your planned move-out date and I will set the inspection.`
         detail: 'Covered by membership credit' + (used ? ' &middot; <b>' + used + '</b> credits used this month' : '') + reset + (role === 'broker' ? ' &middot; no charge, no TC pay' : ' &middot; no pay on this file') };
     }
     if(paysFileOrg(f)){
-      var inHouse = (isAariRealtyFile(f) && !isFileOrgFile(f));
-      var d = (inHouse ? 'In-house file organization' : 'File organization') + ' &middot; flat <b>$80</b> to the TC' + (role === 'broker' ? ' &middot; no Aari Transactions charge' : '');
+      if(isFileOrgFile(f)){
+        var dSvc = 'File organization &middot; flat <b>50%</b> ($49.50) to the TC' + (role === 'broker' ? ' &middot; Aari keeps $49.50' : '');
+        return { fig: '<span style="' + fFo + '">$49.50</span>', detail: dSvc };
+      }
+      var d = 'In-house &middot; self-coordinated &middot; flat <b>$80</b> to the TC' + (role === 'broker' ? ' &middot; no Aari Transactions charge' : '');
       return { fig: '<span style="' + fFo + '">$80</span>', detail: d };
     }
     if(isSplitFile(f)){
@@ -19083,7 +19119,7 @@ Tell me your planned move-out date and I will set the inspection.`
         '<div style="padding:15px 18px 18px">' + memHtml +
           '<div style="display:flex;gap:10px;margin:0 0 14px">' +
             '<div style="flex:1;text-align:center;background:#fbfaf7;border:0.5px solid #ece8e0;border-radius:10px;padding:9px 6px"><div style="font-size:10px;letter-spacing:.4px;text-transform:uppercase;color:#9a958c;font-weight:700">Billed</div><div style="font-size:16px;font-weight:700;color:#0f0f0f;margin-top:3px">$' + billed.toLocaleString() + '</div></div>' +
-            '<div style="flex:1;text-align:center;background:#fbfaf7;border:0.5px solid #ece8e0;border-radius:10px;padding:9px 6px"><div style="font-size:10px;letter-spacing:.4px;text-transform:uppercase;color:#9a958c;font-weight:700">TC pay</div><div style="font-size:16px;font-weight:700;color:#0f0f0f;margin-top:3px">$' + tcPay.toLocaleString() + '</div></div>' +
+            '<div style="flex:1;text-align:center;background:#fbfaf7;border:0.5px solid #ece8e0;border-radius:10px;padding:9px 6px"><div style="font-size:10px;letter-spacing:.4px;text-transform:uppercase;color:#9a958c;font-weight:700">TC pay</div><div style="font-size:16px;font-weight:700;color:#0f0f0f;margin-top:3px">$' + _payFmt(tcPay) + '</div></div>' +
             '<div style="flex:1;text-align:center;background:#fbfaf7;border:0.5px solid #ece8e0;border-radius:10px;padding:9px 6px"><div style="font-size:10px;letter-spacing:.4px;text-transform:uppercase;color:#9a958c;font-weight:700">Covered</div><div style="font-size:16px;font-weight:700;color:#0f0f0f;margin-top:3px">' + covered + '</div></div>' +
           '</div>' +
           '<p style="font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:#9a958c;margin:0 0 2px">Transactions</p>' +
@@ -19128,10 +19164,12 @@ Tell me your planned move-out date and I will set the inspection.`
       if(role === 'broker') parts.push('<span>Covered by membership credit <span style="color:#a8a39a">&middot; no per-file charge, no TC pay</span></span>');
       else parts.push('<span style="color:#a8a39a">Covered by the client&rsquo;s membership credit &middot; no pay on this file</span>');
     } else if(paysFileOrg(file)){
-      // File Organization pay = flat $80 to the coordinator (explicit file-org OR in-house work).
-      var foCtx = (isAariRealtyFile(file) && !isFileOrgFile(file)) ? 'in-house file organization' : 'file organization';
-      if(role === 'broker') parts.push('<span>TC pay <b style="color:#0f0f0f;font-weight:600">$80</b> <span style="color:#a8a39a">&middot; ' + foCtx + '</span></span>');
-      else parts.push('<span>You earn <b style="color:#0f0f0f;font-weight:600">$80</b> <span style="color:#a8a39a">&middot; ' + foCtx + '</span></span>');
+      // File Organization SERVICE pays a flat 50% ($49.50). In-house / self-coordinated pays flat $80.
+      var _foSvc2 = isFileOrgFile(file);
+      var foAmt2 = _foSvc2 ? '$49.50' : '$80';
+      var foCtx = _foSvc2 ? 'file organization &middot; 50%' : 'in-house &middot; self-coordinated';
+      if(role === 'broker') parts.push('<span>TC pay <b style="color:#0f0f0f;font-weight:600">' + foAmt2 + '</b> <span style="color:#a8a39a">&middot; ' + foCtx + '</span></span>');
+      else parts.push('<span>You earn <b style="color:#0f0f0f;font-weight:600">' + foAmt2 + '</b> <span style="color:#a8a39a">&middot; ' + foCtx + '</span></span>');
     } else if(isSplitFile(file)){
       var p = svcPrice(file);
       var disc = memberTcDiscount(file);
@@ -20569,6 +20607,7 @@ Tell me your planned move-out date and I will set the inspection.`
     wireGmailLabelModal();
     wireReviewLinkModal();
     wireServicesModal();
+    wireOfferEmailModal();
 
   // ===== GMAIL LABEL SETUP · first-login onboarding (Section 14) =====
   // A first-login modal showing the exact Gmail label sets each person keeps in
@@ -20717,6 +20756,82 @@ Tell me your planned move-out date and I will set the inspection.`
         if(status){ status.style.color = '#c0392b'; status.textContent = 'Not saved. Only the broker can change this.'; }
       }
     });
+  }
+
+  // ===== Offer email · standalone pre-file tool =====
+  // Sent to the listing agent when an offer goes out, BEFORE any file exists (a sale file
+  // starts only once the executed contract is uploaded). Pick the agent + property +
+  // documents; it builds the approved copy; you copy and send. No file, nothing saved.
+  var OFFER_DOCS = [
+    { k:'contract', label:'Executed Purchase Contract', on:true },
+    { k:'gg', label:'GG', on:true },
+    { k:'comp', label:'Compensation Agreement', on:true },
+    { k:'fha', label:'FHA Addendum', on:false },
+    { k:'permit', label:'Permit Addendum', on:false, note:'which the buyer will sign once we receive it signed by the seller' },
+    { k:'preapproval', label:'Preapproval', on:false },
+    { k:'pof', label:'Proof of Funds', on:false },
+    { k:'hoa', label:'HOA Addendum', on:false },
+    { k:'condo', label:'Condominium Rider', on:false },
+    { k:'lead', label:'Lead Based Paint Disclosure', on:false }
+  ];
+  function renderOfferDocs(){
+    var host = document.getElementById('offer-docs'); if(!host) return;
+    host.innerHTML = OFFER_DOCS.map(function(d){
+      return '<label style="display:flex;align-items:flex-start;gap:9px;padding:6px 0;cursor:pointer;font-size:13px;color:#0f0f0f">' +
+        '<input type="checkbox" data-offer-doc="' + d.k + '"' + (d.on ? ' checked' : '') + ' style="width:16px;height:16px;margin-top:1px;accent-color:#0f0f0f">' +
+        '<span>' + esc(d.label) + (d.note ? ' <span style="color:#8a857c;font-size:11px">(' + esc(d.note) + ')</span>' : '') + '</span></label>';
+    }).join('');
+  }
+  function buildOfferEmail(){
+    var nameRaw = (document.getElementById('offer-agent') || {}).value || '';
+    var first = (String(nameRaw).trim().split(/\s+/)[0]) || '[First Name]';
+    var streetRaw = (document.getElementById('offer-street') || {}).value || '';
+    var street = String(streetRaw).trim() || '[property address]';
+    var bullets = [];
+    OFFER_DOCS.forEach(function(d){
+      var cb = document.querySelector('[data-offer-doc="' + d.k + '"]');
+      if(cb && cb.checked) bullets.push('• ' + d.label + (d.note ? (', ' + d.note) : ''));
+    });
+    var other = (document.getElementById('offer-doc-other') || {}).value || '';
+    String(other).split(',').forEach(function(o){ o = o.trim(); if(o) bullets.push('• ' + o); });
+    var subject = 'Offer · ' + street;
+    var body = 'Hi ' + first + ',\n\n' +
+      'Great connecting earlier. Our offer is attached:\n\n' +
+      (bullets.length ? bullets.join('\n') : '• [documents]') + '\n\n' +
+      'Please send over the seller’s property disclosure and the flood disclosure.\n\n' +
+      'Feel free to call or text me anytime.\n\n' +
+      'Looking forward to working together.';
+    return { subject: subject, body: body };
+  }
+  function offerRefresh(){ var o = buildOfferEmail(); var pv = document.getElementById('offer-preview'); if(pv) pv.textContent = 'Subject: ' + o.subject + '\n\n' + o.body; }
+  function _offerFallbackCopy(text){ try { var ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); } catch(_){} }
+  function _offerCopy(text, btn){
+    var done = function(){ if(btn){ var t = btn.getAttribute('data-lbl') || btn.textContent; btn.setAttribute('data-lbl', t); btn.textContent = 'Copied'; setTimeout(function(){ btn.textContent = t; }, 1200); } };
+    try { if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(done, function(){ _offerFallbackCopy(text); done(); }); return; } } catch(_){}
+    _offerFallbackCopy(text); done();
+  }
+  function wireOfferEmailModal(){
+    var modal = document.getElementById('offer-modal');
+    var back = document.getElementById('offer-backdrop');
+    var openBtn = document.getElementById('btn-offer-email');
+    var closeBtn = document.getElementById('offer-close');
+    if(!modal || !back) return;
+    var open = function(){
+      try {
+        var dl = document.getElementById('offer-agent-list');
+        if(dl){ var seen = {}, opts = ''; (_files || []).forEach(function(f){ var r = (f && f.raw_form_data) || {}; var n = String(r.listing_agent_name || r.pa_listing_agent_name || '').trim(); if(n && !seen[n.toLowerCase()]){ seen[n.toLowerCase()] = 1; opts += '<option value="' + esc(n) + '"></option>'; } }); dl.innerHTML = opts; }
+      } catch(_){}
+      renderOfferDocs(); offerRefresh(); modal.classList.add('open'); back.classList.add('open');
+    };
+    var close = function(){ modal.classList.remove('open'); back.classList.remove('open'); };
+    if(openBtn) openBtn.addEventListener('click', open);
+    if(back) back.addEventListener('click', close);
+    if(closeBtn) closeBtn.addEventListener('click', close);
+    modal.addEventListener('input', offerRefresh);
+    modal.addEventListener('change', offerRefresh);
+    var cs = document.getElementById('offer-copy-subject'), cb = document.getElementById('offer-copy-body');
+    if(cs) cs.addEventListener('click', function(){ _offerCopy(buildOfferEmail().subject, cs); });
+    if(cb) cb.addEventListener('click', function(){ _offerCopy(buildOfferEmail().body, cb); });
   }
 
   // ===== KEYBOARD SHORTCUTS · TC speed mode =====
