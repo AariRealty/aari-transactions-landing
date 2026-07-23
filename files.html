@@ -11031,7 +11031,13 @@ Tell me your planned move-out date and I will set the inspection.`
     if(_calSelDay == null) _calSelDay = t0;
     const dayOf = function(d){ const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); return x.getTime(); };
     const byDay = {}, overdue = [];
-    all.forEach(function(d){ const x = dayOf(d); (byDay[x] = byDay[x] || []).push(d); if(x < t0) overdue.push(d); });
+    // A deadline that was ALREADY past on the day the file entered the system is historical noise,
+    // not something anyone can action now (a late import, a back-dated contract). Desktop hides
+    // these from "Needs you"; the mobile Overdue list was piling the whole history in. Exclude the
+    // same set: a past deadline dated before its own file's intake never counts as overdue.
+    const _fileIntakeMs = {};
+    try { (_files || []).forEach(function(f){ if(f && f.id && f.created_at){ const c = new Date(f.created_at); if(!isNaN(c)){ c.setHours(0,0,0,0); _fileIntakeMs[f.id] = c.getTime(); } } }); } catch(_){}
+    all.forEach(function(d){ const x = dayOf(d); (byDay[x] = byDay[x] || []).push(d); if(x < t0){ const ik = _fileIntakeMs[d.fileId]; if(ik != null && x < ik) return; overdue.push(d); } });
     overdue.sort(function(a, b){ return a.date - b.date; });
     if(!all.length){ host.innerHTML = ''; return; }   // agenda already shows the empty message
     // header · title · Month/Week toggle · prev/next
