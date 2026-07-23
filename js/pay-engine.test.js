@@ -46,7 +46,7 @@ console.log('\n3. pay branches still return the known-good figures');
 const outside = { submitted_by_tc: 'true' };
 check('tc_one_side @50% = $200', PAY.tcPayCeiling({ service_type:'tc_one_side', file_type:'sale', raw_form_data:outside }, 50) === 200);
 check('tc_one_side @40% = $160', PAY.tcPayCeiling({ service_type:'tc_one_side', file_type:'sale', raw_form_data:outside }, 40) === 160);
-check('mls_setup  @40% = $60',  PAY.tcPayCeiling({ service_type:'mls_setup', file_type:'listing', raw_form_data:outside }, 40) === 60);
+check('mls_setup  @40% = $40',  PAY.tcPayCeiling({ service_type:'mls_setup', file_type:'listing', raw_form_data:outside }, 40) === 40);   // MLS Setup dropped $149 -> $99 (Jul 2026)
 check('file_org (short id) = $80 flat', PAY.tcPayCeiling({ service_type:'file_org', file_type:'sale', raw_form_data:{ submitted_by_tc:'false' } }, 50) === 80);
 check('lc resolves to $249', PAY.svcPrice({ service_type:'lc' }) === 249);
 check('op_basic resolves to $79', PAY.svcPrice({ service_type:'op_basic' }) === 79);
