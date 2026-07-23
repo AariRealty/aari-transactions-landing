@@ -9555,7 +9555,7 @@ Tell me your planned move-out date and I will set the inspection.`
     let _met = 0, _lateN = 0, _openOver = 0;
     const _tNow = new Date(); _tNow.setHours(0,0,0,0);
     rows.forEach(function(it){
-      const rc = status[it.key];
+      const rc = _dlRecFor(status, it.key);
       const dd = new Date(it.date.getTime()); dd.setHours(0,0,0,0);
       if(rc && rc.completed_at){
         const c = new Date(rc.completed_at); c.setHours(0,0,0,0);
@@ -9576,7 +9576,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // the calc rationale, day-count edit, citation, Confirm and mark-received all
     // live in the tap-to-expand panel so nine rows stop shouting at once. ----
     const rowHtml = function(it){
-      const rec = status[it.key];
+      const rec = _dlRecFor(status, it.key);
       const done = rec && rec.completed_at;
       const confirmedRow = isConfirmed(it);
       const cd = dlCountdown(it.date);
@@ -9687,8 +9687,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // due/overdue and not yet received; everything else = Coming up.
     const _g = { needs: [], coming: [], done: [] };
     rows.forEach(function(it){
-      const rec = status[it.key];
-      if(rec && rec.completed_at){ _g.done.push(it); return; }
+      if(_dlDoneFor(status, it.key)){ _g.done.push(it); return; }
       if(it.key === 'cd_earliest'){
         // TRID earliest-closing is informational · only a problem when it lands after closing.
         const _clo = file.closing_date ? new Date(file.closing_date + 'T12:00:00') : null;
@@ -10363,6 +10362,40 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){}
     return out;
   }
+  // Is this deadline DONE, resolving key aliases the same way markDeadlineDone does when it WRITES?
+  // A completion can sit under an equivalent key (title_evidence vs title_commitment, init_deposit
+  // vs emd_initial, legacy data from before the write-side alias fix). Reading status[d.key] raw
+  // missed those, so a checked-off task kept showing overdue. Check the whole alias group.
+  function _dlAliasGroups(){
+    const a = (window.AariDeadlineEngine && window.AariDeadlineEngine.LEGACY_ALIAS) || {
+      emd_initial:['init_deposit'], emd_additional:['additional_deposit'],
+      title_commitment:['title_evidence','title_policy','buyer_title_rev','title_commitment'],
+      estoppel:['estoppel','estoppels_due'], survey:['survey_seller','survey_existing','survey'],
+      compensation:['compensation_agreement'], loan_approval:['loan_approval','finance_cont'],
+      tenant_lease:['leases_provided','lease_terminate','tenant_lease'],
+      inspection_end:['inspection_end','feasibility_end','due_diligence_end']
+    };
+    const groups = [];
+    Object.keys(a).forEach(function(c){ const g = [c]; (a[c] || []).forEach(function(v){ if(g.indexOf(v) === -1) g.push(v); }); groups.push(g); });
+    return groups;
+  }
+  // Returns the completion record for a deadline, resolving key aliases; falls back to the raw
+  // record (for due_date / override) when nothing is completed under any equivalent key.
+  function _dlRecFor(status, key){
+    if(!status) return null;
+    if(status[key] && status[key].completed_at) return status[key];
+    try {
+      const groups = _dlAliasGroups();
+      for(let i = 0; i < groups.length; i++){
+        if(groups[i].indexOf(key) !== -1){
+          for(let j = 0; j < groups[i].length; j++){ const r = status[groups[i][j]]; if(r && r.completed_at) return r; }
+          break;
+        }
+      }
+    } catch(_){}
+    return status[key] || null;
+  }
+  function _dlDoneFor(status, key){ const r = _dlRecFor(status, key); return !!(r && r.completed_at); }
   function _tcCalDeadlines(){
     const out = [];
     const _t0c = (function(){ const t = new Date(); t.setHours(0, 0, 0, 0); return t.getTime(); })();
@@ -10373,8 +10406,7 @@ Tell me your planned move-out date and I will set the inspection.`
         const status = _deadlinesByFile[f.id] || {};
         fileContractDeadlines(f).forEach(function(d){
           if(!(d && d.date instanceof Date) || isNaN(d.date.getTime())) return;
-          const rec = status[d.key];
-          if(rec && rec.completed_at) return; // done · no longer a live deadline
+          if(_dlDoneFor(status, d.key)) return; // done (alias-resolved) · no longer a live deadline
           out.push({ date:d.date, key:d.key, label:d.name || 'Deadline', address:f.property_address || '', fileId:f.id });
           // EVERY deadline gets an early-warning entry 3 business days before the due
           // date (weekend and holiday safe), so nothing is flagged only on the due date.
