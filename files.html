@@ -11067,9 +11067,23 @@ Tell me your planned move-out date and I will set the inspection.`
     // not something anyone can action now (a late import, a back-dated contract). Desktop hides
     // these from "Needs you"; the mobile Overdue list was piling the whole history in. Exclude the
     // same set: a past deadline dated before its own file's intake never counts as overdue.
-    const _fileIntakeMs = {};
-    try { (_files || []).forEach(function(f){ if(f && f.id && f.created_at){ const c = new Date(f.created_at); if(!isNaN(c)){ c.setHours(0,0,0,0); _fileIntakeMs[f.id] = c.getTime(); } } }); } catch(_){}
-    all.forEach(function(d){ const x = dayOf(d); (byDay[x] = byDay[x] || []).push(d); if(x < t0){ const ik = _fileIntakeMs[d.fileId]; if(ik != null && x < ik) return; overdue.push(d); } });
+    // A deadline only counts as OVERDUE when it's genuinely live. Two exclusions:
+    //   · past at intake (dated before the file even entered the system) · a late import, historical.
+    //   · its file's CLOSING date has already gone by · that deal is done/stale (closed but not
+    //     marked, or a closing that got pushed without updating the date), and its whole deadline
+    //     set is naturally in the past. This is what was inflating the count to the high 30s.
+    const _fileIntakeMs = {}, _fileClosingMs = {};
+    try { (_files || []).forEach(function(f){ if(!f || !f.id) return;
+      if(f.created_at){ const c = new Date(f.created_at); if(!isNaN(c)){ c.setHours(0,0,0,0); _fileIntakeMs[f.id] = c.getTime(); } }
+      if(f.closing_date){ const cl = new Date(String(f.closing_date).slice(0,10) + 'T12:00:00'); if(!isNaN(cl)){ cl.setHours(0,0,0,0); _fileClosingMs[f.id] = cl.getTime(); } }
+    }); } catch(_){}
+    all.forEach(function(d){ const x = dayOf(d); (byDay[x] = byDay[x] || []).push(d);
+      if(x < t0){
+        const ik = _fileIntakeMs[d.fileId]; if(ik != null && x < ik) return;
+        const cm = _fileClosingMs[d.fileId]; if(cm != null && cm < t0) return;
+        overdue.push(d);
+      }
+    });
     overdue.sort(function(a, b){ return a.date - b.date; });
     if(!all.length){ host.innerHTML = ''; return; }   // agenda already shows the empty message
     // header · title · Month/Week toggle · prev/next
