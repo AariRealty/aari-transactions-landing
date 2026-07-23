@@ -236,10 +236,30 @@ function parseContract(T: string): Record<string, string> {
   }
   out.title_name = nm;
   if (!out.title_name) { const en = findLine(/Escrow Agent'?s? Name:/i); if (en) out.title_name = clean((en.split(/Name:\s*/i)[1] || "")).replace(/_+/g, "").trim(); }
-  const em = T.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/); if (em) out.title_email = em[0];
-  const ph = T.match(/\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/); if (ph) out.title_phone = ph[0];
-  const adL = findLine(/Address:.*Phone:/i);
+  // Title / closing agent email + phone must come from the ESCROW block, never the first
+  // match in the whole document. The first phone (and often the first email) in a contract
+  // is a party's or an agent's, not the closing agent's — 816 Frederick Reid pulled the
+  // wrong title phone exactly that way.
+  const adIdx = findIdx(/Address:.*Phone:/i);
+  const adL = adIdx >= 0 ? lines[adIdx] : "";
   if (adL) { const m = adL.match(/Address:\s*([^_].*?)\s*Phone:/i); if (m) out.title_address = clean(m[1]).replace(/_+/g, "").trim(); }
+  // The escrow block spans from the Escrow Agent Name line to just past the Address/Phone line.
+  const _anchors = [ei, adIdx].filter((x) => x >= 0);
+  const _bs = _anchors.length ? Math.min(..._anchors) : -1;
+  const _be = _anchors.length ? Math.max(..._anchors) + 3 : -1;
+  const block = _bs >= 0 ? lines.slice(_bs, _be + 1).join("\n") : "";
+  // Phone · prefer the value LABELED "Phone:" on the closing agent's line, else any phone
+  // inside the escrow block. Never the whole document.
+  let tph = "";
+  if (adL) { const pm = adL.match(/Phone:\s*(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/i); if (pm) tph = clean(pm[1]); }
+  if (!tph && block) { const pm2 = block.match(/\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/); if (pm2) tph = pm2[0]; }
+  if (tph) out.title_phone = tph;
+  // Email · scoped to the escrow block; fall back to the first document email ONLY when the
+  // block has none (some layouts place it just outside, and a contract usually has one email).
+  let tem = "";
+  if (block) { const bm = block.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/); if (bm) tem = bm[0]; }
+  if (!tem) { const em = T.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/); if (em) tem = em[0]; }
+  if (tem) out.title_email = tem;
 
   // Paragraph 19 BROKER block · Cooperating = buyer side, Listing = seller side.
   const cols = (line: string) => line.split(/_{3,}/).map((s) => clean(s))

@@ -17196,6 +17196,40 @@ Tell me your planned move-out date and I will set the inspection.`
   // Tab chips for a bundled upload split into its component documents (Contract,
   // Addendum, Rider, Compensation). Tapping a chip jumps the PDF iframe to that
   // document's first page. Empty when the upload is a single document.
+  // Add a document to a STARTED file (Option A). Called by a missing-doc chip or the
+  // "+ Add" menu with a canonical title. Uploads to the same split/ path the extractor
+  // uses so it slots straight into the doc tabs, appends it to extracted_contract.documents,
+  // saves, and re-renders. Mirrors attachContract's upload + persist + refresh pattern.
+  function addFileDocument(file, title){
+    if(!file || !title) return;
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.pdf,application/pdf,image/*';
+    inp.addEventListener('change', async function(){
+      const f = inp.files && inp.files[0]; if(!f) return;
+      try {
+        const safe = title.toLowerCase().replace(/[^a-z0-9]+/g, '-') + '-added-' + Date.now();
+        const path = file.id + '/split/' + safe + '.pdf';
+        const up = await _client.storage.from('transaction-files').upload(path, f, { upsert:false, contentType: f.type || 'application/pdf' });
+        if(up.error) throw up.error;
+        const raw = Object.assign({}, file.raw_form_data || {});
+        const ec = Object.assign({}, raw.extracted_contract || {});
+        const docs = Array.isArray(ec.documents) ? ec.documents.slice() : [];
+        docs.push({ title: title, page: null, pages: null, path: path, added: true, filename: f.name });
+        ec.documents = docs; raw.extracted_contract = ec;
+        const upd = await _client.from('files').update({ raw_form_data: raw }).eq('id', file.id).select('id');
+        if(upd.error) throw upd.error;
+        if(!upd.data || !upd.data.length){ alert('Uploaded, but could not link it to the file. You may not have permission (RLS).'); return; }
+        file.raw_form_data = raw;
+        if(_currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = raw;
+        const ff = (_files || []).find(function(x){ return x.id === file.id; }); if(ff) ff.raw_form_data = raw;
+        try { renderPlaybook(file); } catch(_){}
+      } catch(err){
+        console.warn('[files] add document failed', err);
+        alert('Could not upload that document. ' + ((err && err.message) || ''));
+      }
+    });
+    inp.click();
+  }
   function docTabsHtml(file){
     const docs = (((file.raw_form_data || {}).extracted_contract || {}).documents) || [];
     if(!Array.isArray(docs) || !docs.length) return '';
@@ -17227,10 +17261,19 @@ Tell me your planned move-out date and I will set the inspection.`
       const mark = (d.title === 'Compensation' && _compFlagged) ? ' &#9888;' : '';
       return '<button type="button" data-doc-page="' + d.page + '"' + pathAttr + ' data-doc-title="' + esc(d.title) + '" class="ct-doc-tab" style="flex:none;border:0;border-radius:20px;font-family:inherit;font-size:11px;padding:5px 11px;cursor:pointer;white-space:nowrap;' + (on ? 'background:#0f0f0f;color:#fff' : 'background:#f1ede6;color:#5f5e5a') + '">' + esc(text) + mark + '</button>';
     }).join('');
+    // A missing core doc is now a live UPLOAD button (Option A): click the gap, drop the
+    // file, and the chip turns into a real tab. Dashed border + "add" signals it is clickable.
     const flagHtml = missing.map(function(t){
-      return '<span title="Not found in the uploaded package" style="flex:none;border:1px solid #e6c4ba;background:#fbf1ee;color:#a3402f;border-radius:20px;font-size:11px;font-weight:600;padding:5px 11px;white-space:nowrap">&#9888; ' + esc(lbl[t]) + ' missing</span>';
+      return '<button type="button" data-doc-add="' + esc(t) + '" title="Upload the ' + esc(lbl[t]) + '" style="flex:none;border:1px dashed #b06a55;background:#fbf1ee;color:#a3402f;border-radius:20px;font-size:11px;font-weight:600;padding:5px 11px;white-space:nowrap;cursor:pointer;font-family:inherit">&#9888; ' + esc(lbl[t]) + ' &middot; add</button>';
     }).join('');
-    return '<div id="ct-doc-tabs" style="display:flex;gap:6px;align-items:center;overflow-x:auto;padding:1px 0 9px">' + tabsHtml + flagHtml + '</div>';
+    // "+ Add" opens a small type menu for anything that is not a flagged core doc.
+    const addPill = '<button type="button" data-doc-add-menu="1" title="Add another document" style="flex:none;border:0.5px solid #d9d4ca;background:#fff;color:#5f5e5a;border-radius:20px;font-size:11px;padding:5px 10px;white-space:nowrap;cursor:pointer;font-family:inherit">+ Add</button>';
+    const _addTypes = [['Compensation','Compensation Agreement'],['Addendum','Addendum'],['Rider','Comprehensive Rider'],['Disclosure','Disclosure'],['Proof of Funds','Proof of Funds'],['Document','Other document']];
+    const menuPills = _addTypes.map(function(p){ return '<button type="button" data-doc-add="' + esc(p[0]) + '" style="flex:none;border:0.5px solid #d9d4ca;background:#faf9f6;color:#0f0f0f;border-radius:20px;font-size:11px;padding:5px 11px;cursor:pointer;font-family:inherit">' + esc(p[1]) + '</button>'; }).join('');
+    return '<div id="ct-doc-wrap">' +
+      '<div id="ct-doc-tabs" style="display:flex;gap:6px;align-items:center;overflow-x:auto;padding:1px 0 9px">' + tabsHtml + flagHtml + addPill + '</div>' +
+      '<div id="ct-doc-add-menu" style="display:none;flex-wrap:wrap;gap:6px;padding:0 0 9px"><span style="font-size:11px;color:#8a857c;align-self:center;margin-right:2px">Add as</span>' + menuPills + '</div>' +
+    '</div>';
   }
   // Signer checklist for the Compensation Agreement (Option F). Renders below the
   // document, hidden until the Compensation tab is opened. Each required signer
@@ -19693,6 +19736,11 @@ Tell me your planned move-out date and I will set the inspection.`
     if(pa){ const side = pa.getAttribute('data-party-add'); addParty(_currentFile, side).then(function(ni){ if(ni < 0) return; const P2 = partiesOf(_currentFile); _partyStep = (side === 'buyers') ? (P2.buyers.length - 1) : (P2.buyers.length + 1 + (P2.sellers.length - 1)); _partyEdit = true; rerenderContactsHost(); }); return; }
     const prm = e.target.closest && e.target.closest('[data-party-remove]');
     if(prm){ const a = prm.getAttribute('data-party-remove').split('__'); removePartyAt(_currentFile, a[0], +a[1]).then(function(){ _partyEdit = false; _partyStep = Math.max(0, (_partyStep || 0) - 1); rerenderContactsHost(); }); return; }
+    // Add-document (Option A) · a missing-doc chip or a "+ Add" menu pill uploads a file.
+    const dadd = e.target.closest && e.target.closest('[data-doc-add]');
+    if(dadd && _currentFile){ addFileDocument(_currentFile, dadd.getAttribute('data-doc-add')); return; }
+    const dmenu = e.target.closest && e.target.closest('[data-doc-add-menu]');
+    if(dmenu){ const mn = document.getElementById('ct-doc-add-menu'); if(mn) mn.style.display = (mn.style.display === 'none' || !mn.style.display) ? 'flex' : 'none'; return; }
     // Document tab chips · TRUE SPLIT. Each tab has its own split PDF (one document
     // only), so load that file. Older drafts without a split path fall back to
     // jumping the bundled PDF to the document's first page.
