@@ -14565,7 +14565,26 @@ Tell me your planned move-out date and I will set the inspection.`
     const file = _currentFile;
     const newStage = mb.getAttribute('data-move-next-stage');
     const _gateMsg2 = hardStageGate(file, newStage);
-    if(_gateMsg2){ alert(_gateMsg2); return; }
+    if(_gateMsg2){
+      // ABSOLUTE locks (unsigned SA, unpaid) still return a message with override=true and can
+      // NEVER be bypassed. A PROTECTIVE gate (loan approval, appraisal, open tasks) returns '' when
+      // overridden, so it IS meant to be bypassable. The button used to just alert the loan-approval
+      // message and return with no escape, so a closed deal could not advance at all — the exact
+      // "there's no button to move it" bug. Offer Move anyway right here for protective gates.
+      const _absolute = hardStageGate(file, newStage, true);
+      if(_absolute){ alert(_absolute); return; }
+      if(!(await appConfirm(_gateMsg2 + '<br><br>Move anyway? A note is logged on the file.', { ok:'Move anyway' }))) return;
+      const _from2 = file.transaction_stage;
+      file.transaction_stage = newStage;
+      try { renderKanban(); } catch(_){}
+      try {
+        const r2 = await _client.from('files').update({ transaction_stage: newStage }).eq('id', file.id);
+        if(r2 && r2.error){ file.transaction_stage = _from2; alert('Not saved — the database rejected the move. You may not have edit permission on this file (RLS).'); return; }
+      } catch(_){}
+      try { writeAuditLog('stage_moved_early', file.id, { from:_from2, to:newStage }); } catch(_){}
+      try { renderPlaybook(file); } catch(_){}
+      return;
+    }
     // Opening-sequence gate now enforced by hardStageGate (Item 15).
     // Soft warnings (EMD / inspection) · surfaced in the confirm, never a hard block.
     const _soft = (typeof softStageWarn === 'function') ? softStageWarn(file, newStage) : [];
