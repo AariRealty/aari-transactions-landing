@@ -21093,17 +21093,12 @@ Tell me your planned move-out date and I will set the inspection.`
     // for her to get it right.
     var _nfAgentId = null;
     function nfAgentPickHtml(){
-      var opts = '<option value="">Select the agent…</option>';
-      try {
-        var list = Object.keys(_agentNameById || {}).map(function(id){ return { id:id, name:_agentNameById[id] }; })
-          .filter(function(a){ return a.name; })
-          .sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
-        list.forEach(function(a){
-          opts += '<option value="' + esc(a.id) + '"' + (_nfAgentId === a.id ? ' selected' : '') + '>' + esc(a.name) + (a.id === (_profile && _profile.id) ? ' (me)' : '') + '</option>';
-        });
-      } catch(_){}
+      var val = (_nfAgentId && _agentNameById && _agentNameById[_nfAgentId]) || '';
       return '<p class="nf-bigsub" style="text-align:left;margin:0 0 8px;font-weight:600;color:#0f0f0f;font-size:13px">Whose file is this?</p>' +
-        '<select id="nf-agent" style="width:100%;font-family:inherit;font-size:14.5px;padding:11px 12px;border:1px solid rgba(15,15,15,0.18);border-radius:8px;background:#fff;color:#0f0f0f">' + opts + '</select>' +
+        '<div style="position:relative">' +
+          '<input id="nf-agent-input" type="text" autocomplete="off" placeholder="Start typing the agent’s name" value="' + esc(val) + '" style="width:100%;box-sizing:border-box;font-family:inherit;font-size:14.5px;padding:11px 12px;border:1px solid rgba(15,15,15,0.18);border-radius:8px;background:#fff;color:#0f0f0f">' +
+          '<div id="nf-agent-results" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);background:#fff;border:0.5px solid #ece8e0;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.10);max-height:220px;overflow:auto;z-index:40"></div>' +
+        '</div>' +
         '<p class="nf-note" style="text-align:left;margin:6px 0 18px">The agent this file belongs to. Their membership credits pay for it, so this has to be right.</p>';
     }
     // The Start-intake button needs a file, a side, and (for a listing) a chosen service.
@@ -21179,8 +21174,23 @@ Tell me your planned move-out date and I will set the inspection.`
       host.querySelectorAll('[data-go]').forEach(function(b){ b.onclick = function(){ _nfPath = b.getAttribute('data-go'); _nfStep = 2; _nfSide = (_nfPath === 'listing') ? 'listing' : null; _nfLstSvc = null; _nfFile = null; _nfSkip = false; nfRenderStep(); }; });
       host.querySelectorAll('[data-lsvc]').forEach(function(b){ b.onclick = function(){ _nfLstSvc = b.getAttribute('data-lsvc'); _nfFile = null; _nfSkip = false; nfRenderStep(); }; });
       host.querySelectorAll('[data-side]').forEach(function(b){ b.onclick = function(){ _nfSide = b.getAttribute('data-side'); nfRenderStep(); }; });
-      var _ap = document.getElementById('nf-agent');
-      if(_ap) _ap.onchange = function(){ _nfAgentId = _ap.value || null; nfRenderStep(); };
+      var _ai = document.getElementById('nf-agent-input');
+      var _ar = document.getElementById('nf-agent-results');
+      if(_ai && _ar){
+        var _aglist = Object.keys(_agentNameById || {}).map(function(id){ return { id:id, name:_agentNameById[id] }; }).filter(function(a){ return a.name; }).sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
+        var _syncGo = function(){ var g = document.getElementById('nf-go'); if(g) g.disabled = !(_nfSide && _nfFile && _nfAgentId); };
+        var _renderRes = function(){
+          var q = (_ai.value || '').trim().toLowerCase();
+          var m = q ? _aglist.filter(function(a){ return String(a.name).toLowerCase().indexOf(q) !== -1; }) : _aglist;
+          var rows = m.slice(0, 8).map(function(a){ return '<div data-nf-pick="' + esc(a.id) + '" style="padding:9px 11px;cursor:pointer;font-size:13.5px;color:#0f0f0f;border-bottom:0.5px solid #f4f1ea">' + esc(a.name) + (a.id === (_profile && _profile.id) ? ' (me)' : '') + '</div>'; }).join('');
+          if(!m.length) rows = '<div style="padding:9px 11px;font-size:12.5px;color:#9a958c">No match in your agents</div>';
+          _ar.innerHTML = rows; _ar.style.display = 'block';
+        };
+        _ai.addEventListener('input', function(){ _nfAgentId = null; _syncGo(); _renderRes(); });
+        _ai.addEventListener('focus', _renderRes);
+        _ai.addEventListener('blur', function(){ setTimeout(function(){ if(_ar) _ar.style.display = 'none'; }, 160); });
+        _ar.addEventListener('mousedown', function(e){ var p = e.target.closest && e.target.closest('[data-nf-pick]'); if(!p) return; e.preventDefault(); _nfAgentId = p.getAttribute('data-nf-pick'); _ai.value = _agentNameById[_nfAgentId] || ''; _ar.style.display = 'none'; _syncGo(); });
+      }
       nfWireDrop();
       var go = document.getElementById('nf-go'); if(go) go.onclick = function(){ if(go.disabled) return; _nfSkip = !_nfFile; nfScan(); };
       var rm = document.getElementById('nf-rmv'); if(rm) rm.onclick = function(e){ e.stopPropagation(); _nfFile = null; nfRenderStep(); };
