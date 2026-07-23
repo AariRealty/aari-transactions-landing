@@ -101,7 +101,9 @@ Deno.serve(async (req) => {
 
   // ---- 5. Send TC notification email ----
   try {
-    const portalUrl = `${SITE_URL}/portal#file-${fileId}`;
+    // Recipient is the TC (TC_INBOX), who works the file board, not the agent portal.
+    // ?open=<id> deep-opens this file on files.html (see maybeOpenFromUrl).
+    const portalUrl = `${SITE_URL}/files.html?open=${fileId}`;
     const result = await sendEmail({
       to: TC_INBOX,
       toUserId: null,

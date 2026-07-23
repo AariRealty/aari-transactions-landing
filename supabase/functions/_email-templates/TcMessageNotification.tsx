@@ -35,10 +35,10 @@ export const TcMessageNotification: React.FC<Props> = ({
     </div>
     <Text style={pSmall}>
       Reply directly to this email and the response goes back to {agentName}.
-      Or open the file in the admin portal.
+      Or open the file on your board.
     </Text>
     <div style={{ marginTop: 18 }}>
-      <Button href={portalUrl}>View file in portal &rarr;</Button>
+      <Button href={portalUrl}>Open the file &rarr;</Button>
     </div>
   </Layout>
 );
