@@ -10895,7 +10895,6 @@ Tell me your planned move-out date and I will set the inspection.`
   // Next closings · always-on card pinned at the top of the calendar so a deal's
   // closing date never hides a month ahead (or under a long deadline list). One
   // unit per active sale file with a closing date, soonest first, tap to open.
-  let _ncShowPast = false; // "Next closings" · reveal the past-dated (not-yet-closed) ones
   function nextClosingsHtml(){
     try {
       const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -10909,32 +10908,27 @@ Tell me your planned move-out date and I will set the inspection.`
         return { f:f, date:c, days: Math.round((c - today) / 86400000), addr: String(f.property_address || '').split(',')[0] };
       }).filter(function(x){ return !isNaN(x.date.getTime()); });
       if(!all.length) return '';
-      // The whole point: forward-looking rows lead. A closing date that has already passed on a
-      // still-open file used to sort FIRST and fill all 5 slots, hiding the real next closings.
-      // Upcoming (today onward) shows; past-dated ones move behind a "show" toggle.
-      const upcoming = all.filter(function(x){ return x.days >= 0; }).sort(function(a, b){ return a.date - b.date; });
-      const past = all.filter(function(x){ return x.days < 0; }).sort(function(a, b){ return b.date - a.date; });
+      // Layout B · one chronological filmstrip. Oldest on the LEFT (dimmed, already closed date),
+      // upcoming on the RIGHT. renderCalHeatmap scrolls it to the first upcoming after paint, so it
+      // OPENS on what is next and you scroll left to walk back through the closings that passed.
+      all.sort(function(a, b){ return a.date - b.date; });
       const fmt = function(d){ try { return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } };
-      const unit = function(x, dim){
+      let firstUp = false;
+      const unit = function(x){
         const cd = x.days < 0 ? (Math.abs(x.days) + 'd ago') : (x.days === 0 ? 'today' : x.days + ' days');
         const col = x.days < 0 ? '#a3402f' : (x.days <= 3 ? '#a3402f' : '#7a756c');
-        return '<div data-cal-open="' + esc(x.f.id) + '" style="cursor:pointer' + (dim ? ';opacity:.55' : '') + '">' +
+        const up = x.days >= 0;
+        let mark = ''; if(up && !firstUp){ mark = ' data-nc-up="1"'; firstUp = true; }
+        return '<div data-cal-open="' + esc(x.f.id) + '"' + mark + ' style="flex:none;cursor:pointer' + (up ? '' : ';opacity:.5') + '">' +
           '<div style="font-size:17px;font-weight:700;color:#0f0f0f">' + fmt(x.date) + '</div>' +
-          '<div style="font-size:11.5px;color:#7a756c;margin-top:1px">' + esc(x.addr) + '</div>' +
+          '<div style="font-size:11.5px;color:#7a756c;margin-top:1px;white-space:nowrap">' + esc(x.addr) + '</div>' +
           '<div style="font-size:11px;color:' + col + ';font-weight:700">' + cd + '</div></div>';
       };
-      const body = upcoming.length
-        ? upcoming.slice(0, 5).map(function(x){ return unit(x, false); }).join('')
-        : '<span style="font-size:12.5px;color:#9a958c">No upcoming closings</span>';
-      let toggle = '';
-      if(past.length){
-        toggle = '<button type="button" data-nc-toggle="1" style="border:0;background:none;font-family:inherit;font-size:11px;font-weight:700;letter-spacing:.02em;color:#9a958c;cursor:pointer;white-space:nowrap;align-self:center">' +
-          (_ncShowPast ? 'Hide past' : (past.length + ' past &middot; show')) + '</button>';
-      }
-      const pastUnits = _ncShowPast ? past.slice(0, 8).map(function(x){ return unit(x, true); }).join('') : '';
-      return '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px;margin-bottom:14px;display:flex;gap:26px;flex-wrap:wrap;align-items:center">' +
-        '<span style="font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:#9a958c">Next closings</span>' +
-        body + toggle + pastUnits + '</div>';
+      return '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:13px 16px;margin-bottom:14px;display:flex;gap:14px;align-items:center">' +
+        '<span style="flex:none;font-size:10px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:#9a958c">Next closings</span>' +
+        '<div id="ncScroll" style="flex:1;min-width:0;overflow-x:auto;display:flex;gap:26px;align-items:center;scroll-behavior:smooth;padding-bottom:2px">' +
+          all.map(unit).join('') +
+        '</div></div>';
     } catch(_){ return ''; }
   }
   // ---- Month HEATMAP calendar (replaces the kanban) · #calHeatmap ----
@@ -11216,7 +11210,7 @@ Tell me your planned move-out date and I will set the inspection.`
       _calSelDay = ts; renderCalHeatmap();
     }); });
     host.querySelectorAll('[data-cal-open]').forEach(function(r){ r.addEventListener('click', function(){ const id = this.getAttribute('data-cal-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f){ openPlaybook(f); } }); });
-    host.querySelectorAll('[data-nc-toggle]').forEach(function(b){ b.addEventListener('click', function(e){ e.stopPropagation(); _ncShowPast = !_ncShowPast; try { renderCalHeatmap(); } catch(_){} }); });
+    (function(){ const ncs = host.querySelector('#ncScroll'); if(!ncs) return; const up = ncs.querySelector('[data-nc-up]'); if(!up) return; try { ncs.scrollLeft += up.getBoundingClientRect().left - ncs.getBoundingClientRect().left; } catch(_){} })();
     host.querySelectorAll('[data-file-open]').forEach(function(r){ r.addEventListener('click', function(e){ if(e.target.closest && e.target.closest('[data-claim-file]')) return; const id = this.getAttribute('data-file-open'); const f = (_files || []).find(function(x){ return x.id === id; }); const nm = e.target.closest && e.target.closest('[data-cp-name]'); if(nm){ if(typeof openClientProfile === 'function') openClientProfile(nm.getAttribute('data-cp-name'), f); return; } const mt = e.target.closest && e.target.closest('[data-money-toggle]'); if(mt){ const wrap = this.closest('.cal-file-wrap'); const d = wrap && wrap.querySelector('[data-money-detail]'); if(d) d.classList.toggle('cal-open'); return; } if(f) openPlaybook(f); }); });
   }
   document.addEventListener('click', (e) => {
