@@ -1842,8 +1842,52 @@ const TXN_STAGE_LABELS = {
 
 let dragId = null;
 
+const TXN_PROGRESS = {'under contract':15,'inspection':30,'appraisal':50,'financing':70,'closing':90,'closed':100};
+
+function renderTxnsList(){
+  const body = document.getElementById('txns-body');
+  if(!body) return;
+  if(!transactions.length){
+    body.innerHTML = '<tr class="empty-row"><td colspan="8">No transactions yet.</td></tr>';
+    return;
+  }
+  body.innerHTML = transactions.map(t => {
+    const stageOpts = TXN_STAGES.map(s => '<option value="'+s+'"'+(t.stage===s?' selected':'')+'>'+TXN_STAGE_LABELS[s]+'</option>').join('');
+    const priceNum = parseFloat(t.price)||0;
+    const commNum = parseFloat(t.commission)||0;
+    const dateStr = t.closeDate ? new Date(t.closeDate).toLocaleDateString('en-US') : '—';
+    return '<tr>'
+      +'<td>'+(t.property||'')+'</td>'
+      +'<td>'+(t.side||'')+'</td>'
+      +'<td>$'+priceNum.toLocaleString()+'</td>'
+      +'<td>$'+commNum.toLocaleString()+'</td>'
+      +'<td>'+dateStr+'</td>'
+      +'<td><select class="status-select" onchange="updateTxnField(\'' + t.id + '\',\'stage\',this.value)">'+stageOpts+'</select></td>'
+      +'<td>'+progressBar(TXN_PROGRESS[t.stage]||0, TXN_STAGE_LABELS[t.stage]||t.stage)+'</td>'
+      +'<td><button onclick="deleteTxnRow(\'' + t.id + '\')" style="padding:5px 10px;background:#fff;color:#000;border:1px solid var(--line);border-radius:4px;font-size:10px;font-weight:600;cursor:pointer;font-family:\'Inter\',sans-serif;">Delete</button></td>'
+      +'</tr>';
+  }).join('');
+}
+
+async function updateTxnField(id, field, val){
+  const t = transactions.find(x => x.id === id);
+  if(!t) return;
+  t[field] = val;
+  await sbUpdateTxn(id, {[field]: val});
+  renderTxns();
+}
+
+async function deleteTxnRow(id){
+  if(!confirm('Delete this transaction? This cannot be undone.')) return;
+  await sbDeleteTxn(id);
+  const idx = transactions.findIndex(x => x.id === id);
+  if(idx > -1) transactions.splice(idx, 1);
+  renderTxns();
+}
+
 function renderTxns(){
   renderKanban();
+  renderTxnsList();
   // Update stats
   document.getElementById('txns-count').textContent=transactions.filter(t=>t.stage!=='closed').length+' active';
   const pv=transactions.filter(t=>t.stage!=='closed').reduce((a,t)=>a+(parseFloat(t.price)||0),0);
