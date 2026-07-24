@@ -15937,6 +15937,9 @@ Tell me your planned move-out date and I will set the inspection.`
     { id:'lst_mls_input', label:'Enter MLS · photos + documents',
       showIf:(f)=>lstMls(f),
       sub:'Input the listing in the MLS, upload the photos, and attach the required documents.' },
+    { id:'lst_mls_report', label:'Upload the MLS Realtor report printout',
+      showIf:(f)=>lstMls(f),
+      sub:'Once the listing is live, print the full MLS Realtor report (the agent-facing listing report) and upload it here as the file record.' },
     { id:'lst_showings', label:'Set showing instructions + syndication',
       showIf:(f)=>lstMls(f),
       emailGate:{ requiresFn:(f,d)=> lstMlsOnly(f) ? !!d['lst_collect_docs'] : !!d['lst_package_executed'], note:'Send the live announcement once the signed listing package is in.' },
@@ -15977,7 +15980,7 @@ Tell me your planned move-out date and I will set the inspection.`
       g.push({ key:'package', label:'Listing package', ids:['lst_agreement','lst_disclosures','lst_brokerage_docs','lst_package_executed'] });
       g.push({ key:'compliance', label:'Compliance review', ids:['lst_compliance'] });
     }
-    if(lstMls(file)) g.push({ key:'mls', label:'MLS &amp; marketing', ids:['lst_hoa','lst_mls_input','lst_showings'] });
+    if(lstMls(file)) g.push({ key:'mls', label:'MLS &amp; marketing', ids:['lst_hoa','lst_mls_input','lst_mls_report','lst_showings'] });
     if(lstFull(file)) g.push({ key:'active', label:'Active on market', ids:['lst_status','lst_changes'] });
     return g;
   }
@@ -17156,6 +17159,9 @@ Tell me your planned move-out date and I will set the inspection.`
     insp_cancel_confirmed: [
       { key:'cancellation_release', label:'Executed cancellation + release', type:'file' },
     ],
+    lst_mls_report: [
+      { key:'mls_report', label:'MLS Realtor report printout', type:'file' },
+    ],
     app_loan_approved: [
       { key:'loan_approval_type', label:'Approval type', type:'select',
         options:[['','— not logged —'],['full','Full approval'],['conditional','Conditional approval']] },
@@ -18038,6 +18044,43 @@ Tell me your planned move-out date and I will set the inspection.`
   // Undated tasks the deal wants done up front (Fix 5) · they have no contract date
   // so they live in Coming up; a quiet "Start early" tag keeps them from going invisible.
   const EARLY_TASK_IDS = { uc_lien_search:1, uc_comp_agreement:1, uc_add_lender_contact:1, uc_emd_wiring:1 };
+  // Confidential remarks the agent approved at listing intake · stored in raw_form_data by the
+  // intake form (hidden field 'confidential_remarks'). Shown at the Enter-MLS task with a Copy
+  // button so the TC pastes exactly what the agent chose. If none was captured, point the TC at
+  // the Aari standard rather than leaving them guessing.
+  function lstConfidentialRemarksHtml(file){
+    var rf = (file && file.raw_form_data) || {};
+    var txt = (rf.confidential_remarks || rf.confidentialRemarks || (file.logistics || {}).confidential_remarks || '');
+    txt = String(txt).trim();
+    if(!txt){
+      return '<div class="ck-sub" style="margin-left:28px;color:#a08a5a">No confidential remarks were captured on this file. Use Aari&rsquo;s standard block for the MLS.</div>';
+    }
+    return '<div style="margin:6px 0 8px 28px;border:0.5px solid #e6ddc9;background:#faf7f1;border-radius:9px;padding:11px 13px">' +
+      '<div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;color:#8a6d1b;margin-bottom:6px">Confidential remarks &middot; agent approved</div>' +
+      '<div style="font-size:12.5px;line-height:1.6;color:#3a352c;white-space:pre-wrap">' + esc(txt) + '</div>' +
+      '<button type="button" class="ck-send" data-copy-remarks="' + esc(encodeURIComponent(txt)) + '" style="margin-top:9px">Copy for MLS &rarr;</button>' +
+    '</div>';
+  }
+  // Supplementary documents that can be attached to the MLS listing. A reminder list, not
+  // tracked tasks — the TC attaches whichever exist on the file. Not every listing has all four.
+  function lstMlsSupplementaryHtml(){
+    var docs = ['Flood disclosure', 'Property (seller’s) disclosure', 'Floor plan', 'Home warranty'];
+    return '<div style="margin:6px 0 8px 28px;border:0.5px solid #ece8e0;background:#fff;border-radius:9px;padding:11px 13px">' +
+      '<div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;color:#8a857c;margin-bottom:7px">Supplementary documents to attach</div>' +
+      '<div style="display:flex;flex-direction:column;gap:6px">' +
+        docs.map(function(d){ return '<div style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#0f0f0f"><span style="width:14px;height:14px;border:1.4px solid #cfc8ba;border-radius:4px;flex:none"></span>' + esc(d) + '</div>'; }).join('') +
+      '</div>' +
+      '<div style="font-size:11px;color:#8a857c;margin-top:8px;line-height:1.5">Attach whichever exist for this listing. Not every listing has all four.</div>' +
+    '</div>';
+  }
+  // AI-photo disclosure reminder. Virtually staged / AI-generated / digitally altered images
+  // must be disclosed, and each such image flagged individually when uploaded to the MLS.
+  function lstAiPhotoNoteHtml(){
+    return '<div style="margin:6px 0 8px 28px;border:0.5px solid #ecdcb8;background:#faf3e3;border-radius:9px;padding:11px 13px">' +
+      '<div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:700;color:#8a6d1b;margin-bottom:5px">Photos &middot; AI disclosure</div>' +
+      '<div style="font-size:12.5px;line-height:1.6;color:#3a352c">If any photo is AI generated, virtually staged, or digitally altered, it must be disclosed. Mark <b>each</b> AI-generated image individually when uploading it to the MLS.</div>' +
+    '</div>';
+  }
   function ckRow(file, t, dls, done, tagHtml, muteDl){
     let rec = done[t.id];
     tagHtml = tagHtml || '';
@@ -18167,6 +18210,12 @@ Tell me your planned move-out date and I will set the inspection.`
       // EMD folded into this row — the "add additional deposit" affordance that used
       // to live on the standalone card now sits in this task's detail.
       customCtl = '<div class="emd-addl-link"><button type="button" data-emd-amt="additional" class="emd-quiet-add">+ Additional deposit applies? Tap to add</button></div>';
+    } else if(t.id === 'lst_mls_input'){
+      // Everything the TC needs at the MLS-input step, in order:
+      //  1. the confidential remarks the agent approved (copy verbatim into the MLS),
+      //  2. the supplementary documents to attach (flood/property disclosure, floor plan, warranty),
+      //  3. the AI-photo disclosure reminder (each AI image must be flagged individually).
+      customCtl = lstConfidentialRemarksHtml(file) + lstMlsSupplementaryHtml() + lstAiPhotoNoteHtml();
     }
     // Collapsible detail (Option A) · the sub, scope, deadlines, logistics fields and
     // email all fold behind a chevron so each task reads as one clean line. The active
@@ -19825,6 +19874,18 @@ Tell me your planned move-out date and I will set the inspection.`
         setTimeout(function(){ btn.textContent = orig; }, 1500);
       });
     } catch(_){ window.prompt('Copy this payment link:', link); }
+  });
+  // Copy the agent-approved confidential remarks so the TC pastes them straight into the MLS.
+  document.addEventListener('click', function(e){
+    const btn = e.target.closest && e.target.closest('[data-copy-remarks]');
+    if(!btn) return;
+    let txt = ''; try { txt = decodeURIComponent(btn.getAttribute('data-copy-remarks') || ''); } catch(_){ txt = btn.getAttribute('data-copy-remarks') || ''; }
+    try {
+      navigator.clipboard.writeText(txt).then(function(){
+        const orig = btn.textContent; btn.textContent = 'Copied ✓';
+        setTimeout(function(){ btn.textContent = orig; }, 1500);
+      });
+    } catch(_){ window.prompt('Copy these confidential remarks:', txt); }
   });
   // Soft-complete handler (Section 4 · Items 4 & 5) — "Mark as not applicable" /
   // "Mark as received". Marks the task done with rec.soft set, which collapses

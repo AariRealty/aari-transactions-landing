@@ -109,7 +109,18 @@
       '.lcr-save-row{display:flex;align-items:center;gap:8px;margin-top:12px;padding:10px 12px;background:#f9f2dc;border-radius:8px;border-left:3px solid #967a4a}' +
       '.lcr-save-row input{margin:0;cursor:pointer}' +
       '.lcr-save-row label{font-size:12.5px;color:#0f0f0f;cursor:pointer;line-height:1.4}' +
-      '.lcr-save-status{font-size:11px;color:#3b6d11;font-weight:600;letter-spacing:.02em;margin-left:auto}'
+      '.lcr-save-status{font-size:11px;color:#3b6d11;font-weight:600;letter-spacing:.02em;margin-left:auto}' +
+      // Option A · Review card · Keep this / Change it
+      '.lcr-btnrow{display:flex;gap:9px;margin-top:14px}' +
+      '.lcr-btn{flex:1;text-align:center;font-size:13px;font-weight:600;padding:11px;border-radius:10px;cursor:pointer;border:1px solid #d8cdb9;background:#fff;color:#0f0f0f;font-family:inherit;transition:all 120ms ease}' +
+      '.lcr-btn:hover{border-color:#b89866}' +
+      '.lcr-btn-pri{background:#0f0f0f;border-color:#0f0f0f;color:#fff}' +
+      '.lcr-btn-pri[data-kept="1"]{background:#3b6d11;border-color:#3b6d11}' +
+      '.lcr-back{background:none;border:0;color:#7a6238;font-size:12px;font-weight:600;cursor:pointer;padding:8px 0;margin-top:4px;font-family:inherit}' +
+      '.lcr-save-choice-label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#7a6238;font-weight:700;margin:14px 0 6px}' +
+      '.lcr-save-choice{display:flex;gap:8px}' +
+      '.lcr-chip{font-size:11.5px;font-weight:600;padding:7px 13px;border-radius:20px;border:1px solid #d8cdb9;background:#fff;color:#0f0f0f;cursor:pointer;font-family:inherit}' +
+      '.lcr-chip[aria-pressed="true"]{background:#0f0f0f;border-color:#0f0f0f;color:#fff}'
     );
     document.head.appendChild(css);
   }
@@ -126,40 +137,36 @@
 
     injectStyles();
 
-    /* Initial render — saved-template chip is added later if the profile
-       has one. We do an async fetch to decide; the picker stays usable in
-       the meantime with the two default options. */
+    /* Option A · Review card. Spell out the ACTIVE default (the agent's saved
+       template if they have one, otherwise the Aari standard), then Keep this
+       or Change it. Change opens an editable copy with two save choices:
+       use for this listing only, or save as the new profile default. The
+       submit contract is unchanged — hidden confidential_remarks /
+       _source / _save_to_profile stay in sync. */
+    let activeText = STANDARD;
+    let activeSource = 'aari_standard';
+
     rootEl.innerHTML = (
       '<div class="lcr-wrap">' +
-        '<div class="lcr-picker" role="radiogroup" aria-label="How to provide the confidential remarks">' +
-          '<button type="button" class="lcr-pick" data-mode="aari_standard" aria-pressed="true">' +
-            '<span class="lcr-pick-name">Use Aari\'s standard</span>' +
-            '<span class="lcr-pick-sub">Boilerplate with response, contract, and due-diligence terms</span>' +
-          '</button>' +
-          '<button type="button" class="lcr-pick" data-mode="agent_custom" aria-pressed="false">' +
-            '<span class="lcr-pick-name">Write my own</span>' +
-            '<span class="lcr-pick-sub">Custom remarks for this listing</span>' +
-          '</button>' +
-        '</div>' +
-        // PANE · Aari standard (read-only display)
-        '<div class="lcr-pane" data-pane="aari_standard">' +
-          '<div class="lcr-readonly-block-label">Goes into MLS Confidential Remarks</div>' +
-          '<div class="lcr-readonly-block" data-standard-display></div>' +
-        '</div>' +
-        // PANE · Agent custom (textarea + save toggle)
-        '<div class="lcr-pane" data-pane="agent_custom" hidden>' +
-          '<textarea class="lcr-textarea" data-custom-input rows="7" maxlength="' + MAX_CHARS + '" placeholder="Your remarks · only other agents in the MLS see this."></textarea>' +
-          '<div class="lcr-meta"><span data-custom-count>0 / ' + MAX_CHARS + '</span></div>' +
-          '<div class="lcr-save-row">' +
-            '<input type="checkbox" id="lcrSaveToProfile" data-save-toggle>' +
-            '<label for="lcrSaveToProfile">Save this as my default for future listings</label>' +
-            '<span class="lcr-save-status" data-save-status></span>' +
+        // REVIEW pane · the default spelled out + Keep / Change
+        '<div class="lcr-pane" data-pane="review">' +
+          '<div class="lcr-readonly-block-label" data-active-label>Goes into MLS Confidential Remarks &middot; Aari standard</div>' +
+          '<div class="lcr-readonly-block" data-active-display></div>' +
+          '<div class="lcr-btnrow">' +
+            '<button type="button" class="lcr-btn lcr-btn-pri" data-keep>Keep this</button>' +
+            '<button type="button" class="lcr-btn" data-change>Change it</button>' +
           '</div>' +
         '</div>' +
-        // PANE · Agent saved (read-only, mode added only if profile has one)
-        '<div class="lcr-pane" data-pane="agent_saved" hidden>' +
-          '<div class="lcr-readonly-block-label">Your saved default · loaded from profile</div>' +
-          '<div class="lcr-readonly-block" data-saved-display></div>' +
+        // EDIT pane · editable copy + one-time vs new-default choice
+        '<div class="lcr-pane" data-pane="edit" hidden>' +
+          '<textarea class="lcr-textarea" data-custom-input rows="7" maxlength="' + MAX_CHARS + '" placeholder="Your remarks &middot; only other agents in the MLS see this."></textarea>' +
+          '<div class="lcr-meta"><span data-custom-count>0 / ' + MAX_CHARS + '</span><span class="lcr-save-status" data-save-status></span></div>' +
+          '<div class="lcr-save-choice-label">For this edit</div>' +
+          '<div class="lcr-save-choice" role="radiogroup" aria-label="Save this edit">' +
+            '<button type="button" class="lcr-chip" data-save-mode="once" aria-pressed="true">Use for this listing only</button>' +
+            '<button type="button" class="lcr-chip" data-save-mode="default" aria-pressed="false">Save as my new default</button>' +
+          '</div>' +
+          '<button type="button" class="lcr-back" data-back>&lsaquo; Back to my default</button>' +
         '</div>' +
         // Hidden inputs the submit handler reads
         '<input type="hidden" name="' + textName + '" data-hidden-text>' +
@@ -168,77 +175,86 @@
       '</div>'
     );
 
-    rootEl.querySelector('[data-standard-display]').textContent = STANDARD;
-    rootEl.querySelector('[data-hidden-text]').value = STANDARD;
-
-    const picker     = rootEl.querySelector('.lcr-picker');
-    const picks      = () => Array.from(rootEl.querySelectorAll('.lcr-pick'));
+    const activeDisplay = rootEl.querySelector('[data-active-display]');
+    const activeLabel   = rootEl.querySelector('[data-active-label]');
+    const panes      = () => Array.from(rootEl.querySelectorAll('.lcr-pane'));
     const customInput= rootEl.querySelector('[data-custom-input]');
     const customCount= rootEl.querySelector('[data-custom-count]');
-    const saveToggle = rootEl.querySelector('[data-save-toggle]');
     const saveStatus = rootEl.querySelector('[data-save-status]');
-    const savedDisp  = rootEl.querySelector('[data-saved-display]');
     const hText      = rootEl.querySelector('[data-hidden-text]');
     const hSource    = rootEl.querySelector('[data-hidden-source]');
     const hSaveFlag  = rootEl.querySelector('[data-hidden-save-flag]');
+    const keepBtn    = rootEl.querySelector('[data-keep]');
 
-    function selectMode(mode){
-      picks().forEach(b => {
-        const isSel = (b.dataset.mode === mode);
-        b.setAttribute('aria-pressed', isSel ? 'true' : 'false');
-      });
-      rootEl.querySelectorAll('.lcr-pane').forEach(p => {
-        p.hidden = (p.dataset.pane !== mode);
-      });
-      hSource.value = mode;
-      if(mode === 'aari_standard')      hText.value = STANDARD;
-      else if(mode === 'agent_custom')  hText.value = customInput.value || '';
-      else if(mode === 'agent_saved')   hText.value = savedDisp.textContent || '';
+    function showPane(which){ panes().forEach(p => { p.hidden = (p.dataset.pane !== which); }); }
+    function renderActive(){
+      activeDisplay.textContent = activeText;
+      activeLabel.innerHTML = (activeSource === 'agent_saved')
+        ? 'Goes into MLS Confidential Remarks &middot; your saved default'
+        : 'Goes into MLS Confidential Remarks &middot; Aari standard';
     }
+    function keepActive(){ hText.value = activeText; hSource.value = activeSource; hSaveFlag.value = '0'; }
 
-    picker.addEventListener('click', e => {
-      const btn = e.target.closest && e.target.closest('.lcr-pick');
-      if(!btn) return;
-      selectMode(btn.dataset.mode);
+    // Default state · review pane, active default loaded and kept.
+    renderActive();
+    keepActive();
+    showPane('review');
+
+    keepBtn.addEventListener('click', () => {
+      keepActive();
+      keepBtn.setAttribute('data-kept', '1');
+      keepBtn.textContent = '✓ Keeping these';
+      setTimeout(() => { keepBtn.removeAttribute('data-kept'); keepBtn.textContent = 'Keep this'; }, 1600);
     });
 
+    rootEl.querySelector('[data-change]').addEventListener('click', () => {
+      customInput.value = activeText;
+      customCount.textContent = customInput.value.length + ' / ' + MAX_CHARS;
+      hText.value = customInput.value;
+      hSource.value = 'agent_custom';
+      hSaveFlag.value = '0';
+      rootEl.querySelectorAll('[data-save-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.saveMode === 'once' ? 'true' : 'false'));
+      saveStatus.textContent = '';
+      showPane('edit');
+      try { customInput.focus(); } catch(_){}
+    });
+
+    rootEl.querySelector('[data-back]').addEventListener('click', () => { keepActive(); showPane('review'); });
+
     customInput.addEventListener('input', () => {
-      const len = customInput.value.length;
-      customCount.textContent = len + ' / ' + MAX_CHARS;
+      customCount.textContent = customInput.value.length + ' / ' + MAX_CHARS;
       hText.value = customInput.value;
     });
 
-    saveToggle.addEventListener('change', async () => {
-      hSaveFlag.value = saveToggle.checked ? '1' : '0';
-      // If they tick it, attempt to persist now so the toggle gives instant feedback.
-      if(saveToggle.checked && customInput.value.trim().length > 0){
-        saveStatus.textContent = 'Saving…';
-        const ok = await saveAgentTemplate(customInput.value.trim());
-        saveStatus.textContent = ok ? 'Saved' : 'Will retry on submit';
-      } else {
-        saveStatus.textContent = '';
-      }
+    rootEl.querySelectorAll('[data-save-mode]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const mode = btn.dataset.saveMode;
+        rootEl.querySelectorAll('[data-save-mode]').forEach(b => b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'));
+        if(mode === 'default'){
+          hSaveFlag.value = '1';
+          const txt = customInput.value.trim();
+          if(txt.length > 0){
+            saveStatus.textContent = 'Saving…';
+            const ok = await saveAgentTemplate(txt);
+            saveStatus.textContent = ok ? 'Saved as default' : 'Will save on submit';
+            if(ok){ activeText = txt; activeSource = 'agent_saved'; renderActive(); }
+          }
+        } else {
+          hSaveFlag.value = '0';
+          saveStatus.textContent = '';
+        }
+      });
     });
 
-    // Async · pull the agent's saved template (if any) and reveal the third
-    // pick chip when it exists.
+    // Async · if the agent already has a saved default, IT becomes the active
+    // default shown in the review pane instead of the Aari standard.
     getAgentSavedTemplate().then(saved => {
       if(!saved) return;
-      savedDisp.textContent = saved;
-      // Insert the third chip
-      const thirdChip = document.createElement('button');
-      thirdChip.type = 'button';
-      thirdChip.className = 'lcr-pick';
-      thirdChip.dataset.mode = 'agent_saved';
-      thirdChip.setAttribute('aria-pressed', 'false');
-      thirdChip.innerHTML = (
-        '<span class="lcr-pick-name">Use my saved default</span>' +
-        '<span class="lcr-pick-sub">From your last saved template</span>'
-      );
-      picker.appendChild(thirdChip);
-      picker.classList.add('lcr-has-saved');
-      // Default to the saved one if they have it — that's what they last chose
-      selectMode('agent_saved');
+      activeText = saved;
+      activeSource = 'agent_saved';
+      renderActive();
+      const editPane = rootEl.querySelector('[data-pane="edit"]');
+      if(!editPane || editPane.hidden){ keepActive(); }  // don't clobber an in-progress edit
     }).catch(()=>{});
   }
 
