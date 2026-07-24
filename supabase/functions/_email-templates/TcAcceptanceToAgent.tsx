@@ -16,11 +16,12 @@ interface Props {
   tcPhone?: string;
   expectedStartAtFormatted: string; // e.g. "3:00 PM today" or "9:00 AM tomorrow"
   portalUrl: string;
+  showProfileInvite?: boolean; // true when the agent hasn't finished their profile yet
 }
 
 export const TcAcceptanceToAgent: React.FC<Props> = ({
   firstName, fileId, propertyAddress, tcName, tcEmail, tcPhone,
-  expectedStartAtFormatted, portalUrl,
+  expectedStartAtFormatted, portalUrl, showProfileInvite,
 }) => (
   <Layout
     preview={`${tcName} has accepted your file and will start at ${expectedStartAtFormatted}.`}
@@ -45,8 +46,18 @@ export const TcAcceptanceToAgent: React.FC<Props> = ({
       ) : null}
     </Text>
     <div style={{ marginTop: 22, marginBottom: 6 }}>
-      <Button href={portalUrl}>Open the file</Button>
+      <Button href={portalUrl}>See my transaction</Button>
     </div>
+    {showProfileInvite ? (
+      <div style={inviteBox}>
+        <Text style={inviteHd}>One optional thing.</Text>
+        <Text style={inviteP}>
+          Finish your profile once and your standing terms fill in on every future file for you.
+          It is recommended, not required. Your transaction moves either way, and the portal shows
+          you every step as it happens.
+        </Text>
+      </div>
+    ) : null}
     <Text style={pSmall}>
       If something has changed and you need a different TC, open the file in the portal — you can
       request a swap up to 3 times per file before the timing locks in.
@@ -58,5 +69,8 @@ const h1 = { fontSize: 26, fontFamily: "'Cormorant Garamond', Georgia, serif", f
 const p  = { fontSize: 15, lineHeight: 1.6, color: "#0f0f0f", margin: "0 0 14px", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" };
 const pSmall = { fontSize: 12.5, lineHeight: 1.55, color: "#7a6238", margin: "22px 0 0", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" };
 const link = { color: "#967a4a", textDecoration: "underline" };
+const inviteBox = { background: "#faf7f1", border: "0.5px solid #e6ddc9", borderRadius: 8, padding: "14px 16px", margin: "22px 0 0" };
+const inviteHd = { fontSize: 13.5, fontWeight: 600, color: "#0f0f0f", margin: "0 0 5px", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" };
+const inviteP = { fontSize: 12.5, lineHeight: 1.55, color: "#7a6238", margin: 0, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" };
 
 export default TcAcceptanceToAgent;

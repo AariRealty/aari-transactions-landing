@@ -1131,6 +1131,7 @@
        NOTE THE IDS LIE, and renaming them is a bigger change than it looks. #calHeatmap is the
        CALENDAR. #fileCalendar is the "Active files" HEADER (title, Board/List/Invoice toggle,
        earnings box, and the agenda rows in List view). Do not reorder these by name alone. -->
+  <div id="dupBanner"></div>
   <div id="calHeatmap"></div>
   <div id="fileCalendar" style="margin-top:22px"></div>
   <!-- Board · part of the Active files section, shown when its Board/List toggle is on Board.
@@ -10235,7 +10236,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // renderers don't error.
     const c = document.getElementById('fileCalendar');
     if(c) c.style.display = '';
-    try { renderTcCalendar(); renderCalHeatmap(); if(!_calLoaded) loadCalDeadlines(); } catch(_){}
+    try { renderTcCalendar(); renderCalHeatmap(); renderDupBanner(); if(!_calLoaded) loadCalDeadlines(); } catch(_){}
   }
   // "More" menu (Review link · Gmail label setup · Keyboard shortcuts) · toggle + outside-close.
   document.addEventListener('click', function(e){
@@ -10291,7 +10292,7 @@ Tell me your planned move-out date and I will set the inspection.`
       }
     } catch(_){}
     _calLoaded = true;
-    try { renderTcCalendar(); renderCalHeatmap(); renderKpis(); } catch(_){}
+    try { renderTcCalendar(); renderCalHeatmap(); renderKpis(); renderDupBanner(); } catch(_){}
   }
   // TC chase rule · for the deadlines a coordinator actually chases someone on, the
   // task surfaces 3 BUSINESS days before the due date (so weekends are skipped going
@@ -11051,6 +11052,80 @@ Tell me your planned move-out date and I will set the inspection.`
       '<div style="overflow-x:auto"><div style="display:flex;min-width:640px;position:relative">' +
       '<div style="position:absolute;left:12px;right:12px;top:22px;height:2px;background:#f3f0ea"></div>' + stops + '</div></div></div>';
   }
+  // Possible-duplicates banner (Option A). Active files that share a normalized address are
+  // grouped; the most COMPLETE one (has a contract / closing / real stage) is marked "keep" with
+  // no button, so the real file can't be archived by accident, and each other copy gets an
+  // Archive button. Only renders when a real duplicate exists.
+  function _dupScore(f){ const r = f.raw_form_data || {}; let s = 0; if(f.contract_type || r.contract_path || r.contract_url) s += 2; if(f.closing_date) s += 1; if(f.transaction_stage && f.transaction_stage !== 'new') s += 1; return s; }
+  function renderDupBanner(){
+    const host = document.getElementById('dupBanner'); if(!host) return;
+    try {
+      const active = (_files || []).filter(function(f){
+        if(!f || !f.property_address) return false;
+        if(f.status === 'archived') return false;
+        if(typeof deriveStage === 'function' && deriveStage(f) === 'closed') return false;
+        return true;
+      });
+      const byAddr = {};
+      active.forEach(function(f){
+        let a = f.property_address; try { if(typeof normalizeAddress === 'function') a = normalizeAddress(a) || a; } catch(_){}
+        a = String(a).trim().toLowerCase(); if(!a) return;
+        (byAddr[a] = byAddr[a] || []).push(f);
+      });
+      const groups = Object.keys(byAddr).map(function(k){ return byAddr[k]; }).filter(function(g){ return g.length > 1; });
+      if(!groups.length){ host.innerHTML = ''; return; }
+      const nDup = groups.reduce(function(n, g){ return n + (g.length - 1); }, 0);
+      const fmtInfo = function(f){
+        const stg = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[f.transaction_stage]) || (f.transaction_stage || 'no stage');
+        const cls = f.closing_date ? ('closes ' + new Date(f.closing_date + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' })) : 'no closing date';
+        return stg + ' · ' + cls;
+      };
+      let inner = '';
+      groups.forEach(function(g){
+        const sorted = g.slice().sort(function(a, b){ return _dupScore(b) - _dupScore(a); });
+        const keepId = sorted[0].id;
+        inner += '<div style="padding:11px 14px;border-top:0.5px solid #f0ebe0">' +
+          '<div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#8a857c;margin-bottom:4px">' + esc(String(sorted[0].property_address).split(',').slice(0, 2).join(',')) + '</div>' +
+          sorted.map(function(f){
+            const keep = f.id === keepId;
+            const hasK = !!(f.contract_type || (f.raw_form_data && (f.raw_form_data.contract_path || f.raw_form_data.contract_url)));
+            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;border-top:0.5px solid #f6f3ee">' +
+              '<div style="min-width:0"><div data-dup-open="' + esc(f.id) + '" style="font-size:12.5px;color:#0f0f0f;cursor:pointer">' + esc(fmtInfo(f)) + '</div>' +
+              '<div style="font-size:11px;color:#a39e95">' + (hasK ? 'has a contract' : 'empty · likely the duplicate') + '</div></div>' +
+              (keep
+                ? '<span style="flex:none;font-size:11px;color:#8a857c">keep</span>'
+                : '<button type="button" data-dup-archive="' + esc(f.id) + '" style="flex:none;font-size:12px;border:0.5px solid #d9d4ca;background:#fff;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit">Archive</button>') +
+            '</div>';
+          }).join('') +
+        '</div>';
+      });
+      host.innerHTML = '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;margin-bottom:14px;overflow:hidden">' +
+        '<div style="display:flex;align-items:center;gap:8px;padding:11px 14px;background:#fbf3e2"><span style="font-size:12.5px;font-weight:600;color:#8a6d1b">' + nDup + ' possible duplicate' + (nDup === 1 ? '' : 's') + '</span></div>' +
+        inner + '</div>';
+    } catch(_){ host.innerHTML = ''; }
+  }
+  document.addEventListener('click', async function(e){
+    const op = e.target && e.target.closest && e.target.closest('[data-dup-open]');
+    if(op){ const f = (_files || []).find(function(x){ return x.id === op.getAttribute('data-dup-open'); }); if(f){ try { openPlaybook(f); } catch(_){} } return; }
+    const b = e.target && e.target.closest && e.target.closest('[data-dup-archive]');
+    if(!b) return;
+    const fid = b.getAttribute('data-dup-archive');
+    const f = (_files || []).find(function(x){ return x.id === fid; }); if(!f) return;
+    if(!confirm('Archive this duplicate? It moves off your active board. Nothing is deleted, and the broker can bring it back if needed.')) return;
+    b.disabled = true;
+    const lg = f.logistics || (f.logistics = {});
+    lg.archived = { by: (_profile && _profile.id) || null, by_name: (((_profile && _profile.first_name) || '') + ' ' + ((_profile && _profile.last_name) || '')).trim(), reason:'duplicate', prev_status: f.status || null, at: new Date().toISOString() };
+    try {
+      const r = await _client.from('files').update({ status:'archived', logistics: lg }).eq('id', fid);
+      if(r && r.error){ b.disabled = false; alert('Could not archive — the database rejected the change. You may not have edit permission on this file (RLS).'); return; }
+    } catch(_){ b.disabled = false; alert('Could not archive — please try again.'); return; }
+    f.status = 'archived';
+    try { writeAuditLog('file_archived_by_tc', fid, { reason:'duplicate', property_address: f.property_address || null }); } catch(_){}
+    try { renderDupBanner(); } catch(_){}
+    try { renderKanban(); } catch(_){}
+    try { renderCalHeatmap(); } catch(_){}
+    try { renderTcCalendar(); } catch(_){}
+  });
   function renderCalHeatmap(){
     const host = document.getElementById('calHeatmap'); if(!host) return;
     // Per-user view preference · Marlenyi and Eileen each keep their own last
@@ -11106,45 +11181,63 @@ Tell me your planned move-out date and I will set the inspection.`
     // Reached only below CAL_MOBILE_BP. Everything below this block is the untouched desktop
     // month grid. Content is the SAME deadline data (byDay, overdue); only the shape changes.
     if(_calIsMobile()){
-      // A big, thumb-sized row. Tap opens the file, same as every other calendar row. No checkbox
-      // here on purpose: wiring a tick to the real completion trail is a separate approved task,
-      // and a checkbox that records nothing is the exact bug we are retiring, not shipping.
-      const mRow = function(d){
-        const days = Math.round((t0 - new Date(d.date).setHours(0,0,0,0)) / 86400000);
-        const late = days > 0;
-        const meta = late ? (days + 'd late') : (d.isChase ? 'follow-up' : '');
-        return '<div data-cal-open="' + esc(d.fileId) + '" style="display:flex;align-items:center;gap:11px;padding:13px 2px;border-top:0.5px solid #f3f0ea;cursor:pointer;min-height:44px">' +
-          '<div style="flex:1;min-width:0"><div style="font-size:13px;color:#0f0f0f;line-height:1.3">' + esc(d.label || 'Deadline') + '</div>' +
+      // ===== MOBILE · Option C · week strip + tap-a-day agenda with REAL checkboxes =====
+      // One view, no tabs. A week strip sits on top; tapping a day loads that day's deadlines
+      // below. Every row carries a real checkbox wired to markDeadlineDone, so Eileen clears a
+      // deadline straight from the calendar and it drops off everywhere at once. Overdue is
+      // pinned above the day so the backlog is always one tap from clearing. Items landing
+      // within 3 business days carry a "soon" flag so nothing slides into overdue unseen.
+      if(!_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(t0); base.setHours(0,0,0,0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; }
+      const wk0 = new Date(_calWeekStart); wk0.setHours(0,0,0,0);
+      // 3-business-day early flag · true when the due day is 1-3 business days out from today.
+      const _soon = function(ms){ if(ms <= t0) return false; let n = 0; const cur = new Date(t0); while(cur.getTime() < ms){ cur.setDate(cur.getDate() + 1); const dow = cur.getDay(); if(dow !== 0 && dow !== 6) n++; if(n > 3) return false; } return n >= 1 && n <= 3; };
+      // --- week strip · 7 tappable day chips + week paging ---
+      const wkEnd = new Date(wk0); wkEnd.setDate(wkEnd.getDate() + 6);
+      const _md = function(dt){ return dt.toLocaleDateString('en-US', { month:'short', day:'numeric' }); };
+      let strip = '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">' +
+        '<button type="button" data-cal-wknav="-1" aria-label="Previous week" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:30px;height:30px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8249;</button>' +
+        '<span style="flex:1;text-align:center;font-size:12px;font-weight:600;color:#0f0f0f">' + esc(_md(wk0)) + ' &ndash; ' + esc(_md(wkEnd)) + '</span>' +
+        '<button type="button" data-cal-wknav="1" aria-label="Next week" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:30px;height:30px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8250;</button></div>';
+      strip += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:14px">';
+      for(let i = 0; i < 7; i++){
+        const cd = new Date(wk0); cd.setDate(cd.getDate() + i); cd.setHours(0,0,0,0); const cts = cd.getTime();
+        const items = byDay[cts] || [];
+        const realN = items.filter(function(x){ return !x.isChase; }).length;
+        const isToday = cts === t0, isSel = cts === _calSelDay, isOver = cts < t0 && realN > 0;
+        let cs = 'display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 0 6px;border-radius:10px;cursor:pointer;min-height:52px;';
+        if(isSel) cs += 'background:#0f0f0f;color:#fff;';
+        else { cs += 'color:#0f0f0f;'; if(isToday) cs += 'box-shadow:inset 0 0 0 1.5px #0f0f0f;'; }
+        const dot = items.length
+          ? '<span style="width:16px;height:16px;border-radius:9px;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;background:' + (isSel ? '#fff' : (isOver ? '#a3402f' : '#0f0f0f')) + ';color:' + (isSel ? '#0f0f0f' : '#fff') + '">' + items.length + '</span>'
+          : '<span style="width:16px;height:16px"></span>';
+        strip += '<button type="button" data-cal-selday="' + cts + '" style="border:0;font-family:inherit;' + cs + '">' +
+          '<span style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;opacity:.7">' + ['S','M','T','W','T','F','S'][i] + '</span>' +
+          '<span style="font-size:15px;font-weight:600;line-height:1">' + cd.getDate() + '</span>' + dot + '</button>';
+      }
+      strip += '</div>';
+      html += strip;
+      // --- a tickable deadline row · checkbox clears it, the rest of the row opens the file ---
+      const cRow = function(d, meta, mc){
+        const box = '<input type="checkbox" data-cal-check data-fid="' + esc(d.fileId) + '" data-dkey="' + esc(d.key || '') + '" aria-label="Mark done" style="flex:none;width:22px;height:22px;accent-color:#0f0f0f;cursor:pointer;margin:0">';
+        return '<div style="display:flex;align-items:center;gap:12px;padding:12px 2px;border-top:0.5px solid #f3f0ea;min-height:44px">' + box +
+          '<div data-cal-open="' + esc(d.fileId) + '" style="flex:1;min-width:0;cursor:pointer"><div style="font-size:13px;color:#0f0f0f;line-height:1.3">' + esc(d.label || 'Deadline') + '</div>' +
           '<div style="font-size:11px;color:#8a857c;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(String(d.address || '').split(',')[0]) + '</div></div>' +
-          (meta ? '<span style="flex:none;font-size:11px;font-weight:600;color:' + (late ? '#a3402f' : '#8a6d1b') + '">' + esc(meta) + '</span>' : '<span style="flex:none;color:#c9c3b8;font-size:16px">&#8250;</span>') +
-          '</div>';
+          (meta ? '<span style="flex:none;font-size:11px;font-weight:600;color:' + (mc || '#8a857c') + '">' + esc(meta) + '</span>' : '') + '</div>';
       };
-      const seg = function(v, label, n){ const on = _calMobileTab === v;
-        return '<button type="button" data-cal-mtab="' + v + '" style="flex:1;border:0;background:' + (on ? '#0f0f0f' : 'transparent') + ';color:' + (on ? '#fff' : '#6f6a61') + ';font:inherit;font-size:12px;font-weight:600;padding:9px;border-radius:8px;cursor:pointer">' + label + (n ? ' <span style="opacity:.7">' + n + '</span>' : '') + '</button>'; };
-      html += '<div style="display:flex;gap:5px;background:#f4f1ec;border-radius:11px;padding:4px;margin-bottom:12px">' +
-        seg('list', 'List', overdue.length ? overdue.length : '') + seg('week', 'Week', '') + '</div>';
-      if(_calMobileTab === 'week'){
-        if(!_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(t0); base.setHours(0,0,0,0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; }
-        html += _calWeekHtml(byDay, t0);
-        host.innerHTML = html; _wireCal(host); return;
+      let mbody = '';
+      // Overdue · pinned on top, tickable, so the backlog clears from right here.
+      if(overdue.length){
+        mbody += '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:#a3402f;margin:4px 2px 0">Overdue &middot; ' + overdue.length + '</div>';
+        mbody += overdue.map(function(d){ const days = Math.round((t0 - new Date(d.date).setHours(0,0,0,0)) / 86400000); return cRow(d, days + 'd late', '#a3402f'); }).join('');
       }
-      // LIST · Overdue, then Today, then the next days that actually have something.
-      const grpHead = function(label, n, tone){ return '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:' + (tone || '#a39e93') + ';margin:16px 2px 0">' + label + (n != null ? ' &middot; ' + n : '') + '</div>'; };
-      let body = '';
-      if(overdue.length){ body += grpHead('Overdue', overdue.length, '#a3402f') + overdue.map(mRow).join(''); }
-      const todayItems = (byDay[t0] || []);
-      body += grpHead('Today', todayItems.length, '#0f0f0f') + (todayItems.length ? todayItems.map(mRow).join('') : '<div style="font-size:12px;color:#a39e95;padding:11px 2px;border-top:0.5px solid #f3f0ea">Nothing due today. You&rsquo;re ahead.</div>');
-      // Coming up · the next dated items after today, capped so the page stays short.
-      const upKeys = Object.keys(byDay).map(Number).filter(function(k){ return k > t0; }).sort(function(a,b){ return a - b; });
-      let upCount = 0, upHtml = '';
-      for(const k of upKeys){
-        if(upCount >= 12) break;
-        const dd = new Date(k);
-        upHtml += '<div style="font-size:11px;color:#8a857c;margin:12px 2px 0;font-weight:600">' + esc(dd.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' })) + '</div>';
-        (byDay[k] || []).forEach(function(d){ if(upCount < 12){ upHtml += mRow(d); upCount++; } });
-      }
-      if(upHtml) body += grpHead('Coming up', null) + upHtml;
-      html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:6px 15px 15px">' + body + '</div>';
+      // Selected day · defaults to today; tap any chip to change it.
+      const selD = new Date(_calSelDay), selItems = byDay[_calSelDay] || [];
+      const selLab = (_calSelDay === t0 ? 'Today &middot; ' : '') + selD.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+      mbody += '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:#0f0f0f;margin:16px 2px 0">' + selLab + ' &middot; ' + selItems.length + '</div>';
+      mbody += selItems.length
+        ? selItems.map(function(d){ const dm = new Date(d.date).setHours(0,0,0,0); const meta = d.isChase ? 'follow-up' : (_soon(dm) ? 'soon' : ''); return cRow(d, meta, '#8a6d1b'); }).join('')
+        : '<div style="font-size:12px;color:#a39e95;padding:11px 2px;border-top:0.5px solid #f3f0ea">Nothing due this day. You&rsquo;re ahead.</div>';
+      html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:6px 15px 15px">' + mbody + '</div>';
       host.innerHTML = html; _wireCal(host); return;
     }
     // ---- two columns: heatmap (left) · today + overdue pinned (right) ----
@@ -11272,6 +11365,27 @@ Tell me your planned move-out date and I will set the inspection.`
     }); });
     host.querySelectorAll('[data-cal-open]').forEach(function(r){ r.addEventListener('click', function(){ const id = this.getAttribute('data-cal-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f){ openPlaybook(f); } }); });
     host.querySelectorAll('[data-nc-step]').forEach(function(b){ b.addEventListener('click', function(){ _ncStep += (parseInt(b.getAttribute('data-nc-step'), 10) || 0); try { renderCalHeatmap(); } catch(_){} }); });
+    // Mobile Option C · week strip. A day chip only SELECTS the day (loads its agenda below);
+    // it never opens a file, so tapping around the week stays cheap.
+    host.querySelectorAll('[data-cal-selday]').forEach(function(b){ b.addEventListener('click', function(){ _calSelDay = parseInt(this.getAttribute('data-cal-selday'), 10); renderCalHeatmap(); }); });
+    // Mobile Option C · page the week strip left/right one week at a time.
+    host.querySelectorAll('[data-cal-wknav]').forEach(function(b){ b.addEventListener('click', function(){ const dir = parseInt(this.getAttribute('data-cal-wknav'), 10) || 0; const base = _calWeekStart ? new Date(_calWeekStart) : new Date(); base.setHours(0, 0, 0, 0); base.setDate(base.getDate() + 7 * dir); _calWeekStart = base; renderCalHeatmap(); }); });
+    // Mobile Option C · a REAL checkbox. Ticking it records the completion through the same
+    // markDeadlineDone path the file view uses (audit log + gcal drop + overdue clears), then
+    // re-renders so the row leaves the calendar. Clicking the box never opens the file.
+    host.querySelectorAll('[data-cal-check]').forEach(function(cb){
+      cb.addEventListener('click', function(e){ e.stopPropagation(); });
+      cb.addEventListener('change', async function(){
+        const fid = this.getAttribute('data-fid'), key = this.getAttribute('data-dkey');
+        const f = (_files || []).find(function(x){ return x.id === fid; });
+        if(!f){ this.checked = false; return; }
+        this.disabled = true;
+        const iso = new Date().toISOString().slice(0, 10);
+        try { await markDeadlineDone(f, key, iso); } catch(_){ }
+        try { renderCalHeatmap(); } catch(_){ }
+        try { renderKanban(); } catch(_){ }
+      });
+    });
     host.querySelectorAll('[data-file-open]').forEach(function(r){ r.addEventListener('click', function(e){ if(e.target.closest && e.target.closest('[data-claim-file]')) return; const id = this.getAttribute('data-file-open'); const f = (_files || []).find(function(x){ return x.id === id; }); const nm = e.target.closest && e.target.closest('[data-cp-name]'); if(nm){ if(typeof openClientProfile === 'function') openClientProfile(nm.getAttribute('data-cp-name'), f); return; } const mt = e.target.closest && e.target.closest('[data-money-toggle]'); if(mt){ const wrap = this.closest('.cal-file-wrap'); const d = wrap && wrap.querySelector('[data-money-detail]'); if(d) d.classList.toggle('cal-open'); return; } if(f) openPlaybook(f); }); });
   }
   document.addEventListener('click', (e) => {
@@ -19594,8 +19708,11 @@ Tell me your planned move-out date and I will set the inspection.`
                   ? buildUcTracksHtml(file, tasks, dls, done)
                   : tasks.map(t => ckRow(file, t, dls, done)).join('')))
       : '<p class="ck-empty">Checklist for the ' + esc(STAGE_LABELS[stage] || stage) + ' stage ships next.</p>';
-    // Move-to-next-stage button · same guards as the kanban drag. Closed is
-    // excluded on purpose — its 5-task protective gate stays on the board drag.
+    // Move-to-next-stage button · same guards as the kanban drag. Closed IS offered
+    // here (it used to be excluded, which left Clear to Close with no button to close
+    // the file — the exact bug). The 5-task closing gate still runs: hardStageGate
+    // blocks 'closed' until CD / closing / walk-through / title are checked, and only
+    // Move anyway (override) bypasses it, so nothing closes unguarded.
     const _stO = STAGES_BY_TYPE[file.file_type || 'sale'] || STAGES_BY_TYPE.sale, _stI = _stO.indexOf(stage);
     let _stNext = (_stI >= 0) ? _stO[_stI + 1] : null;
     // Inspection + appraisal now live INSIDE Under contract as tracks, so the next
@@ -19614,7 +19731,7 @@ Tell me your planned move-out date and I will set the inspection.`
       return !done[t.id] && !/_weekly_update$/.test(t.id) && !/_followup$|_lender$|_status$/.test(t.id);
     }).length : 0;
     let moveBtn = '';
-    if(_stNext && _stNext !== 'closed' && file.status !== 'archived' && !anyLock && !_setupSale){
+    if(_stNext && file.status !== 'archived' && !anyLock && !_setupSale){
       const _nextLbl = esc(STAGE_LABELS[_stNext] || _stNext);
       if(_gateOpen === 0){
         moveBtn = '<div style="padding:14px 0 4px;border-top:0.5px solid #f1ede6;margin-top:14px;text-align:right">' +

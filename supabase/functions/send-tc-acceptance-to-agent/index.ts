@@ -10,7 +10,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import * as React from "npm:react@18";
-import { render } from "npm:@react-email/render@0.0.16";
 import { TcAcceptanceToAgent } from "../_email-templates/TcAcceptanceToAgent.tsx";
 import { sendEmail } from "../_shared/send-email.ts";
 
@@ -45,7 +44,7 @@ Deno.serve(async (req) => {
   if (!f) return j(404, { ok: false, error: "File not found · id=" + body.file_id });
 
   const { data: agent } = await admin
-    .from("agents").select("id, first_name, email")
+    .from("agents").select("id, first_name, email, onboarding_complete")
     .eq("id", f.agent_id).maybeSingle();
   if (!agent?.email) return j(422, { ok: false, error: "Agent missing email" });
 
@@ -62,28 +61,35 @@ Deno.serve(async (req) => {
   const startFormatted = formatStartTime(f.tc_expected_start_at);
   const fileShortId = String(f.id).slice(0, 8).toUpperCase();
 
-  const html = render(
-    React.createElement(TcAcceptanceToAgent, {
-      firstName: agent.first_name ?? "there",
-      fileId: fileShortId,
-      propertyAddress: f.property_address ?? "(property)",
-      tcName,
-      tcEmail: tc.email ?? "",
-      tcPhone: tc.phone ?? undefined,
-      expectedStartAtFormatted: startFormatted,
-      portalUrl: PORTAL_URL,
-    })
-  );
-
+  // Send through the shared helper with a reactElement (the signature every working
+  // email uses, e.g. send-tc-message). The old code rendered `html` and passed it to
+  // sendEmail, which only reads `reactElement` — so this email had been sending empty.
   try {
-    await sendEmail({
+    const result = await sendEmail({
       to: agent.email,
-      subject: `${tcName} accepted your file · starts ${startFormatted}`,
-      html,
+      toUserId: agent.id,
+      relatedFileId: f.id,
       category: "transactional",
-      relatedTable: "files",
-      relatedId: f.id,
+      subject: `${tcName} accepted your file · starts ${startFormatted}`,
+      templateName: "tc_acceptance_to_agent",
+      reactElement: React.createElement(TcAcceptanceToAgent, {
+        firstName: agent.first_name ?? "there",
+        fileId: fileShortId,
+        propertyAddress: f.property_address ?? "(property)",
+        tcName,
+        tcEmail: tc.email ?? "",
+        tcPhone: tc.phone ?? undefined,
+        expectedStartAtFormatted: startFormatted,
+        portalUrl: PORTAL_URL,
+        // Option B invite · nudge the profile only for agents who haven't finished it.
+        showProfileInvite: agent.onboarding_complete === false,
+      }),
+      payload: { file_id: f.id },
     });
+    if (!result.sent) {
+      console.error("[send-tc-acceptance-to-agent] not sent:", result.reason);
+      return j(500, { ok: false, error: result.reason ?? "send_failed" });
+    }
   } catch (e) {
     console.error("[send-tc-acceptance-to-agent] send failed:", e);
     return j(500, { ok: false, error: "Email send failed" });
