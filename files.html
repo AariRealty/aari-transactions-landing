@@ -11070,7 +11070,11 @@ Tell me your planned move-out date and I will set the inspection.`
       active.forEach(function(f){
         let a = f.property_address; try { if(typeof normalizeAddress === 'function') a = normalizeAddress(a) || a; } catch(_){}
         a = String(a).trim().toLowerCase(); if(!a) return;
-        (byAddr[a] = byAddr[a] || []).push(f);
+        // Group by address AND file type. A listing and a sale at the same property are a normal
+        // lifecycle (listed, then went under contract), NOT duplicates — only same-type files
+        // at one address are real duplicates.
+        const _k = a + '|' + String(f.file_type || 'sale').toLowerCase();
+        (byAddr[_k] = byAddr[_k] || []).push(f);
       });
       const groups = Object.keys(byAddr).map(function(k){ return byAddr[k]; }).filter(function(g){ return g.length > 1; });
       if(!groups.length){ host.innerHTML = ''; return; }
@@ -19584,6 +19588,43 @@ Tell me your planned move-out date and I will set the inspection.`
       '<div style="font-size:11.5px;color:#8a6d3b;line-height:1.5">The agent supplies and approves every term in writing. Aari prepares the documents only, no advice on price or terms.</div></div>';
     host.innerHTML = (typeof fileMoneyHtml === 'function' ? fileMoneyHtml(file) : '') + body;
   }
+  // ===== Board auto-advance (approved July 24) =====
+  // The file moves to the next column on its own as the coordinator checks off tasks — but ONLY
+  // for TC-driven transitions. Market-event stages (a listing going Pending = an accepted offer,
+  // a file Closing) are NEVER auto-fired: those depend on real events, not a checklist, and
+  // auto-moving them would make the board lie. Every hardStageGate lock (SA, payment, loan
+  // approval, etc.) is still honored, and closing keeps its explicit confirm.
+  //   · listing  new → active   when the listing is live on the MLS (lst_mls_input done)
+  //   · sale     under_contract → ctc   when every on-you UC task is done and the gate is clear
+  const AUTO_ADVANCE_RULES = [
+    { ft:'listing', from:'new', to:'active', when:function(file, done){ return !!done['lst_mls_input']; } },
+    { ft:'sale', from:'under_contract', to:'ctc', when:function(file, done){
+        var ts = (ckTasksFor(file, 'under_contract') || []).filter(function(t){ return !t.showIf || t.showIf(file); });
+        return ts.filter(function(t){ return !done[t.id] && !/_weekly_update$/.test(t.id) && !/_followup$|_lender$|_status$/.test(t.id); }).length === 0;
+    } },
+  ];
+  async function maybeAutoAdvanceStage(file){
+    try {
+      if(!file || file.status === 'archived') return;
+      var ft = file.file_type || 'sale';
+      var stage = deriveStage(file);
+      var done = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+      var rule = AUTO_ADVANCE_RULES.find(function(r){ return r.ft === ft && r.from === stage; });
+      if(!rule || !rule.when(file, done)) return;
+      // A live gate blocks the move (e.g. financed file without loan approval). Leave it for the
+      // manual Move / Move anyway path so the coordinator takes responsibility with a note.
+      if(typeof hardStageGate === 'function' && hardStageGate(file, rule.to) !== '') return;
+      var from = file.transaction_stage;
+      if(from === rule.to) return;
+      file.transaction_stage = rule.to;
+      var r = await _client.from('files').update({ transaction_stage: rule.to }).eq('id', file.id);
+      if(r && r.error){ file.transaction_stage = from; return; }
+      try { var lf = (_files || []).find(function(x){ return x.id === file.id; }); if(lf) lf.transaction_stage = rule.to; } catch(_){}
+      try { writeAuditLog('stage_auto_advanced', file.id, { from:from, to:rule.to, reason:'tasks_complete' }); } catch(_){}
+      try { renderKanban(); } catch(_){}
+      try { renderStageChecklist(file); } catch(_){}
+    } catch(_){}
+  }
   function renderStageChecklist(file){
     const host = document.getElementById('tpb-checklist');
     const head = document.getElementById('tpb-ck-meta');
@@ -20017,10 +20058,15 @@ Tell me your planned move-out date and I will set the inspection.`
       _currentFile.stage_tasks = prev; // revert
       renderStageChecklist(_currentFile);
       alert('Could not save that checkbox — check your connection and try again.');
-    } else if(TASK_CLEARS_DL[taskId]){
-      // This task means the deadline is actually met · mark the linked deadline received
-      // (or un-receive it on uncheck) so the overdue count reflects the work done.
-      try { await markDeadlineDone(_currentFile, TASK_CLEARS_DL[taskId], (cb.checked ? new Date().toISOString().slice(0,10) : ''), ''); } catch(_){}
+    } else {
+      if(TASK_CLEARS_DL[taskId]){
+        // This task means the deadline is actually met · mark the linked deadline received
+        // (or un-receive it on uncheck) so the overdue count reflects the work done.
+        try { await markDeadlineDone(_currentFile, TASK_CLEARS_DL[taskId], (cb.checked ? new Date().toISOString().slice(0,10) : ''), ''); } catch(_){}
+      }
+      // Board auto-advance · only on CHECK (never on uncheck), only for the approved TC-driven
+      // transitions, and only past the gates. Listing goes live → Active; sale finishes UC → CTC.
+      if(cb.checked){ try { await maybeAutoAdvanceStage(_currentFile); } catch(_){} }
     }
   });
 
