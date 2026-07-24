@@ -21756,10 +21756,45 @@ Tell me your planned move-out date and I will set the inspection.`
         var fresh = await _client.from('files').select('*').eq('id', id).single();
         var f = (fresh && fresh.data) ? fresh.data : row;
         if(f && f.client_type) f.client_type = String(f.client_type).toLowerCase();
+        // ---- Duplicate + claim ----------------------------------------------------------
+        // The address only exists after extraction, so we check here. The check runs server-side
+        // (effective-date-confirm · op=dupcheck) with the service role, because a TC's RLS can't
+        // see a file that belongs to another TC or the broker, which is exactly how a "duplicate"
+        // slips in. If one already exists, offer to CLAIM it (assign this TC) instead of keeping
+        // the copy: assign the existing file, archive this upload, fire the "TC is on your file"
+        // email to the agent, and open the real one.
+        try {
+          if(f && f.property_address){
+            var _dc = await _client.functions.invoke('effective-date-confirm', { body:{ op:'dupcheck', address:f.property_address, exclude_id:f.id, file_type:f.file_type } });
+            var _dup = _dc && _dc.data && _dc.data.duplicate;
+            if(_dup && _dup.id && _dup.id !== f.id){
+              var _when = _dup.created_at ? (' on ' + new Date(_dup.created_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : '';
+              var _claimMsg = 'This transaction already exists. <b>' + esc(_dup.agent_name) + '</b> already has a file for <b>' + esc(String(_dup.property_address || '').split(',')[0]) + '</b>' + _when + '.<br><br>Assign yourself as the TC on that file instead? This upload will be removed as a duplicate.';
+              var _doClaim = await appConfirm(_claimMsg, { ok:'Assign me as TC' });
+              if(_doClaim){
+                try { await _client.from('files').update({ assigned_tc_id: uid, tc_accepted_at: new Date().toISOString() }).eq('id', _dup.id); } catch(_){}
+                try { var _algx = Object.assign({}, f.logistics || {}, { archived:true, archived_reason:'duplicate_claimed', archived_at:new Date().toISOString() }); await _client.from('files').update({ status:'archived', logistics:_algx }).eq('id', f.id); } catch(_){}
+                try { writeAuditLog('tc_claimed_existing_file', _dup.id, { from_duplicate:f.id, tc:(_profile && _profile.id) || null }); } catch(_){}
+                var _tcNm = (((_profile && _profile.first_name) || '') + ' ' + ((_profile && _profile.last_name) || '')).trim();
+                try { await _client.functions.invoke('effective-date-confirm', { body:{ file_id:_dup.id, claimed_by:_tcNm } }); } catch(_){}
+                _nfBusy = false;
+                try {
+                  var _ef = await _client.from('files').select('*').eq('id', _dup.id).single();
+                  if(_ef && _ef.data){ if(_ef.data.client_type) _ef.data.client_type = String(_ef.data.client_type).toLowerCase(); _files.unshift(_ef.data); openPlaybook(_ef.data); try { loadAndRender(); } catch(_){} return; }
+                } catch(_){}
+                return;
+              }
+            }
+          }
+        } catch(_){}
         _files.unshift(f);
         _nfBusy = false;
         // Straight to the real extracted list — no separate reveal step.
         openPlaybook(f); try{ loadAndRender(); }catch(_){}
+        // Email 1 · the effective-date confirmation goes to the agent the moment a sale file opens
+        // with a date read from the contract. Fire-and-forget; the function no-ops if the date is
+        // already confirmed. Listings have no purchase-contract effective date, so they're exempt.
+        try { if(_nfSide !== 'listing' && f && f.agent_id && f.effective_date){ _client.functions.invoke('effective-date-confirm', { body:{ file_id:f.id } }); } } catch(_){}
         // Image / DocuSign contract · no text layer to read, so start the OCR scan
         // automatically with visible page-by-page progress instead of leaving her to
         // hunt for a button and wonder why nothing filled in.

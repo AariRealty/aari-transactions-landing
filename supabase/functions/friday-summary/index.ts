@@ -208,7 +208,7 @@ Deno.serve(async (req) => {
     try {
       const { data: files } = await supabaseAdmin
         .from("files")
-        .select("id, property_address, transaction_stage, status, tc_accepted_at, assigned_tc_id, closing_date, effective_date, deadline_overrides, stage_tasks, friday_summary_sent_at, created_at")
+        .select("id, property_address, transaction_stage, status, tc_accepted_at, assigned_tc_id, closing_date, effective_date, effective_date_confirmed_at, deadline_overrides, stage_tasks, friday_summary_sent_at, created_at")
         .eq("agent_id", agent.id)
         .not("status", "in", '("closed","cancelled","archived")');
       const active = (files ?? []).filter(f =>
@@ -242,7 +242,11 @@ Deno.serve(async (req) => {
         const doneHtml = done.length
           ? '<ul style="margin:6px 0 0;padding-left:18px">' + done.map(l => '<li style="margin:2px 0">' + esc(l) + "</li>").join("") + "</ul>"
           : '<p style="margin:6px 0 0;color:#6b6b6b">Your TC is working behind the scenes on your file.</p>';
-        const upcoming = fileDeadlines(f)
+        // GATE · no dated content until the agent has confirmed the effective date. Every
+        // deadline is computed from it, so surfacing dates before confirmation is how a wrong
+        // date (or a phantom estoppel on a no-HOA file) goes out. Unconfirmed → no "Coming up".
+        const effConfirmed = !!f.effective_date_confirmed_at;
+        const upcoming = !effConfirmed ? "" : fileDeadlines(f)
           .filter(d => d.date.getTime() >= today.getTime())
           .sort((a, b) => a.date.getTime() - b.date.getTime())
           .slice(0, 2)
@@ -259,7 +263,11 @@ Deno.serve(async (req) => {
           '<div style="padding:12px 16px;font-size:13px;color:#0f0f0f">' +
           '<div style="font-size:11px;letter-spacing:0.5px;color:#888;text-transform:uppercase">Completed this week</div>' +
           doneHtml +
-          (upcoming ? '<div style="font-size:11px;letter-spacing:0.5px;color:#888;text-transform:uppercase;margin-top:12px">Coming up</div><ul style="margin:6px 0 0;padding-left:18px">' + upcoming + "</ul>" : "") +
+          (upcoming
+            ? '<div style="font-size:11px;letter-spacing:0.5px;color:#888;text-transform:uppercase;margin-top:12px">Coming up</div><ul style="margin:6px 0 0;padding-left:18px">' + upcoming + "</ul>"
+            : (!effConfirmed
+              ? '<div style="font-size:11px;letter-spacing:0.5px;color:#888;text-transform:uppercase;margin-top:12px">Coming up</div><p style="margin:6px 0 0;color:#6b6b6b">Confirm your effective date and your full deadline schedule appears here.</p>'
+              : "")) +
           "</div></div>";
       }).join("");
 
