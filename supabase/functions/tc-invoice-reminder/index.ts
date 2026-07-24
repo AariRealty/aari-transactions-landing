@@ -30,7 +30,7 @@ function esc(s: string){ return String(s ?? "").replace(/&/g,"&amp;").replace(/<
 // Voice: Alex Cattoni. Short sentences, one idea each, benefit first, no filler, no hype.
 // House rule: NO DASHES anywhere in customer or coordinator copy. Commas and full stops only.
 function bodyHtml(first: string){
-  return `<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background:#f5f5f3'><tr><td align='center' style='padding:26px 12px'>`+
+  return `<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background:#ffffff'><tr><td align='center' style='padding:26px 12px'>`+
     `<table role='presentation' width='440' cellpadding='0' cellspacing='0' style='max-width:440px;width:100%;background:#ffffff;border:0.5px solid #e8e6e0;border-radius:14px'><tr><td style='padding:30px 28px;font-family:Arial,Helvetica,sans-serif;color:#0f0f0f;font-size:14px;line-height:1.6'>`+
     `<p style='margin:0 0 13px'>Hi ${esc(first)},</p>`+
     `<p style='margin:0 0 13px'>It&rsquo;s Thursday. You know what that means.</p>`+

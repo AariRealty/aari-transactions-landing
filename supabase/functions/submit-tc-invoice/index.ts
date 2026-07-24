@@ -76,7 +76,7 @@ function invoiceEmailHtml(o: any){
   }
   const fromTo = `<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='margin-bottom:20px'><tr><td valign='top'><div style='font-size:9.5px;letter-spacing:1px;color:#a39e93;margin-bottom:4px'>FROM</div><div style='font-size:13px;font-weight:500;color:#0f0f0f'>${esc(o.tc_name||'Coordinator')}</div><div style='font-size:11.5px;color:#5f5e5a'>Coordinator</div></td><td valign='top' align='right'><div style='font-size:9.5px;letter-spacing:1px;color:#a39e93;margin-bottom:4px'>BILL TO</div><div style='font-size:13px;font-weight:500;color:#0f0f0f'>Aari Transactions LLC</div><div style='font-size:11.5px;color:#5f5e5a'>Marlenyi Paredes</div></td></tr></table>`;
   const totalRow = `<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='border-top:1.5px solid #0f0f0f;margin-top:18px'><tr><td style='padding-top:14px;font-size:13px;font-weight:bold;color:#0f0f0f'>Total due</td><td align='right' style='padding-top:14px;font-family:Georgia,serif;font-size:24px;color:#0f0f0f'>${money(total)}</td></tr></table>`;
-  return `<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background:#f5f5f3'><tr><td align='center' style='padding:26px 12px'>`+
+  return `<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background:#ffffff'><tr><td align='center' style='padding:26px 12px'>`+
     `<table role='presentation' width='440' cellpadding='0' cellspacing='0' style='max-width:440px;width:100%;background:#ffffff;border:0.5px solid #e8e6e0;border-radius:14px'><tr><td style='padding:30px 26px;font-family:Arial,Helvetica,sans-serif;color:#0f0f0f'>`+
     `<div style='text-align:center;padding-bottom:20px;border-bottom:0.5px solid #ece8e0;margin-bottom:20px'><div style='font-family:Georgia,serif;font-size:22px'>Aari Transactions</div><div style='font-size:9.5px;letter-spacing:2px;color:#8a857c;margin-top:7px'>COORDINATOR INVOICE &middot; ${esc(o.invoice_number||'')}</div><div style='font-size:11px;color:#a39e93;margin-top:4px'>${esc(o.period||'')}</div></div>`+
     fromTo+
@@ -192,7 +192,7 @@ Deno.serve(async (req) => {
       address: f.property_address || "File",
       service: it.service || f.service_type || "Service",
       closed_date: it.closed_date || "",
-      amount_cents: amount * 100,
+      amount_cents: Math.round(amount * 100),
       ...(covered ? { covered:true, covered_source: serverCovered ? "membership_credit_uses" : "client", client: it.client, credit_no: it.credit_no } : {}),
       ...(it.over ? { over:true } : {}),
     };
