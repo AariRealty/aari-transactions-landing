@@ -1,31 +1,30 @@
 /* ============================================================================
-   Aari Workspace Banner · ADHD-approved · homepage-style top + tiles
+   Aari Workspace Banner · Mark 03 "Daily brief" · Marlenyi's pick July 25
    ============================================================================
    Self-mounting component. Drop the <script> on any logged-in workspace page
    and the banner injects itself at the top of <body>.
 
-   Design (July 25 · Marlenyi feedback: "I need the same banner where the logo
-   is on the homepage in this inner page. I don't feel like I have a homepage
-   inside of the portal — it feels like a whole bunch of inner pages"):
-
-     · Top nav matches aaritransactions.com homepage · cream sticky bar with
-       the real Aari logo image + "Aari Transactions · Florida TC" wordmark
-       on the left, avatar (initial) on the right.
-     · A warm welcome hero below the nav · time-of-day greeting + first name.
-       This is the piece that makes it FEEL like a home base, not chrome.
-     · Two large tap tiles · Move the files + Agent Portal · her daily two.
-     · Single "More" toggle · everything else collapses behind it.
+   Design (July 25 · she picked Mark 03 from /home-mocks.html):
+     · Homepage-style nav · logo image + Aari Transactions wordmark + avatar
+     · Personal daily brief · date on right, HOME eyebrow, serif greeting
+       with first name
+     · Aari pulse card · cream card with sage dot + status line + two stat
+       blocks (files needing you / closing this week) — feels like a home
+       dashboard, not chrome
+     · Compact tile row · Move the files + Agent Portal side by side
+     · More toggle · everything else (Submit, Team, Prospecting, Quality,
+       Compliance, Pipeline, Contacts, Reviews) collapses behind "MORE ↓"
 
    Rules locked in with Marlenyi:
      · Mostly white / cream / black. Thin line icons. No color.
-     · Serif for greeting + logo wordmark. Inter for everything else.
+     · Serif for headings + wordmark. Inter for everything else.
    ============================================================================ */
 (function aariBanner(){
   'use strict';
 
   const PRIMARY = [
-    { id:'files', label:'Move the files', href:'/files.html',         icon:iconFolder(), match:['/files.html','/tc-cockpit'], roles:['tc','broker'] },
-    { id:'agent', label:'Agent Portal',   href:'/aari-agent-crm.html',icon:iconUsers(),  match:['/aari-agent-crm'],            roles:['broker','agent'] },
+    { id:'files', label:'Move the files', sub:'Kanban · playbook', href:'/files.html',         icon:iconFolder(), match:['/files.html','/tc-cockpit'], roles:['tc','broker'] },
+    { id:'agent', label:'Agent Portal',   sub:'Leads · CRM',       href:'/aari-agent-crm.html',icon:iconUsers(),  match:['/aari-agent-crm'],            roles:['broker','agent'] },
   ];
   const MORE = [
     { id:'submit',     label:'Submit a file',     href:'/index.html?modal-only=1#apply', icon:iconUpload(), match:['/agent-submit'],       roles:['broker','agent'], intake:true },
@@ -49,18 +48,16 @@
   function iconChevron(){return svg('<polyline points="6 9 12 15 18 9"/>');}
   function svg(inner){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+inner+'</svg>';}
 
-  // ----- CSS · mirrors the homepage .nav treatment (sticky cream bar,
-  // backdrop blur, logo image + Aari Transactions wordmark)
   const CSS = `
     :root{
       --awb-paper:#ffffff;
       --awb-cream:#faf7ef;
-      --awb-cream-2:#fbf9f4;
       --awb-ink:#0a0a0a;
       --awb-ink-2:#3d3a34;
       --awb-muted:#7a756c;
       --awb-muted-2:#a9a49a;
       --awb-line:#eae5d6;
+      --awb-sage:#a4b8a6;
       --awb-serif:'Cormorant Garamond',Georgia,'Times New Roman',serif;
     }
     #aari-banner{
@@ -70,7 +67,6 @@
       position:relative;
       z-index:1;
     }
-    .awb-shell{max-width:720px;margin:0 auto;padding:0}
 
     /* ============ HOMEPAGE-STYLE TOP NAV ============ */
     .awb-nav{
@@ -103,69 +99,97 @@
       text-decoration:none;flex:none;
     }
 
-    /* ============ HOME HERO (welcome + first name) ============ */
-    .awb-hero-welcome{
-      padding:26px 20px 20px;
-      background:linear-gradient(180deg, var(--awb-cream) 0%, transparent 100%);
+    /* ============ DAILY BRIEF HERO ============ */
+    .awb-brief{max-width:720px;margin:0 auto;padding:32px 20px 8px}
+    .awb-brief-row{
+      display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-bottom:14px;
     }
-    .awb-hero-eb{
-      font-family:'Inter',sans-serif;font-size:10px;font-weight:700;
-      letter-spacing:2px;text-transform:uppercase;color:var(--awb-muted);
-      display:block;margin-bottom:8px;
+    .awb-brief-eb{
+      font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--awb-muted);
     }
-    .awb-hero-h{
-      font-family:var(--awb-serif);font-weight:600;
-      font-size:34px;line-height:1.05;letter-spacing:-0.4px;color:var(--awb-ink);
+    .awb-brief-date{font-size:11px;color:var(--awb-muted);font-weight:500}
+    .awb-brief-greet{
+      font-family:var(--awb-serif);font-weight:500;font-size:34px;
+      line-height:1.1;letter-spacing:-0.4px;color:var(--awb-ink);
     }
-    .awb-hero-h em{font-style:italic;font-weight:500;color:var(--awb-ink-2)}
+    .awb-brief-greet em{font-style:italic;color:var(--awb-ink-2)}
 
-    /* ============ TWO PRIMARY TILES ============ */
-    .awb-tiles{
-      display:grid;grid-template-columns:1fr 1fr;gap:14px;
-      padding:8px 20px 8px;
+    /* ============ AARI PULSE CARD ============ */
+    .awb-pulse{
+      margin:22px 20px 0;max-width:calc(720px - 40px);margin-left:auto;margin-right:auto;
+      background:var(--awb-cream);border:1px solid var(--awb-line);border-radius:18px;
+      padding:22px 22px;
     }
-    .awb-tiles a{
-      display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;
-      gap:26px;
-      padding:22px 20px;
-      background:var(--awb-cream);
-      border:1px solid var(--awb-line);
-      border-radius:18px;
-      text-decoration:none;color:var(--awb-ink);
-      min-height:150px;
+    .awb-pulse-eb{
+      display:flex;align-items:center;gap:8px;
+      font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--awb-muted);
+      margin-bottom:12px;
+    }
+    .awb-pulse-dot{width:8px;height:8px;border-radius:50%;background:var(--awb-sage)}
+    .awb-pulse-h{
+      font-family:var(--awb-serif);font-size:22px;font-weight:600;
+      letter-spacing:-0.3px;line-height:1.25;color:var(--awb-ink);
+    }
+    .awb-pulse-h em{font-style:italic;color:var(--awb-ink-2)}
+    .awb-pulse-stat{
+      display:flex;gap:24px;margin-top:16px;padding-top:14px;border-top:1px solid var(--awb-line);
+    }
+    .awb-stat{flex:1}
+    .awb-stat .num{
+      font-family:var(--awb-serif);font-size:28px;font-weight:600;letter-spacing:-0.5px;line-height:1;
+    }
+    .awb-stat .lbl{
+      font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;
+      color:var(--awb-muted);margin-top:6px;display:block;
+    }
+
+    /* ============ COMPACT TILE ROW ============ */
+    .awb-tiles{
+      display:grid;grid-template-columns:1fr 1fr;gap:12px;
+      padding:24px 20px 8px;max-width:720px;margin:0 auto;
+    }
+    .awb-tile{
+      display:flex;justify-content:space-between;align-items:center;gap:10px;
+      padding:20px 18px;background:var(--awb-paper);border:1px solid var(--awb-line);
+      border-radius:16px;text-decoration:none;color:var(--awb-ink);min-height:96px;
       -webkit-tap-highlight-color:transparent;
       transition:transform .12s ease, background .12s ease;
     }
-    .awb-tiles a:active{transform:scale(0.98);background:#f3ecd8}
-    .awb-tiles a.active{background:var(--awb-ink);color:#fff;border-color:var(--awb-ink)}
-    .awb-tiles a.active .awb-tile-arr{color:#fff}
-    .awb-tiles .ic{width:36px;height:36px;color:var(--awb-ink)}
-    .awb-tiles a.active .ic{color:#fff}
-    .awb-tiles .ic svg{width:36px;height:36px}
-    .awb-tile-foot{display:flex;align-items:flex-end;justify-content:space-between;width:100%;gap:8px}
-    .awb-tiles .n{
-      font-family:var(--awb-serif);
-      font-size:22px;font-weight:600;letter-spacing:-0.4px;line-height:1.1;
+    .awb-tile:active{transform:scale(.98);background:var(--awb-cream)}
+    .awb-tile.active{background:var(--awb-ink);color:#fff;border-color:var(--awb-ink)}
+    .awb-tile.active .awb-tile-arr,
+    .awb-tile.active .n small{color:rgba(255,255,255,0.65)}
+    .awb-tile .ic{width:24px;height:24px;color:var(--awb-ink);flex:none}
+    .awb-tile.active .ic{color:#fff}
+    .awb-tile .ic svg{width:24px;height:24px}
+    .awb-tile .n{
+      flex:1;font-family:'Inter',sans-serif;font-size:14px;font-weight:700;
+      letter-spacing:-0.1px;line-height:1.2;
     }
-    .awb-tile-arr{font-size:22px;color:var(--awb-muted);line-height:1;font-family:'Inter',sans-serif}
+    .awb-tile .n small{
+      display:block;font-size:11px;font-weight:500;color:var(--awb-muted);
+      margin-top:3px;letter-spacing:0;
+    }
+    .awb-tile-arr{color:var(--awb-muted);font-size:18px;line-height:1;font-family:'Inter',sans-serif;flex:none}
 
     /* ============ MORE TOGGLE ============ */
-    .awb-more{padding:14px 20px 24px}
+    .awb-more{max-width:720px;margin:0 auto;padding:8px 20px 32px}
     .awb-more-btn{
-      display:flex;align-items:center;justify-content:space-between;
-      width:100%;background:transparent;border:0;border-top:1px solid var(--awb-line);
-      padding:16px 0 4px;cursor:pointer;
-      font-family:'Inter',sans-serif;font-size:11px;font-weight:700;
-      letter-spacing:2px;text-transform:uppercase;color:var(--awb-muted);
+      display:flex;align-items:center;justify-content:center;gap:8px;
+      width:100%;background:transparent;border:0;
+      padding:22px 0 6px;cursor:pointer;
+      font-family:'Inter',sans-serif;font-size:12px;font-weight:700;
+      letter-spacing:1.4px;text-transform:uppercase;color:var(--awb-muted);
       -webkit-tap-highlight-color:transparent;
     }
-    .awb-more-btn .awb-chev{width:14px;height:14px;transition:transform .18s ease}
+    .awb-more-btn:hover{color:var(--awb-ink)}
+    .awb-more-btn .awb-chev{width:12px;height:12px;transition:transform .18s ease;color:currentColor}
     .awb-more-btn[aria-expanded="true"] .awb-chev{transform:rotate(180deg)}
-    .awb-more-btn .awb-chev svg{width:14px;height:14px;stroke-width:2}
+    .awb-more-btn .awb-chev svg{width:12px;height:12px;stroke-width:2}
 
     .awb-more-panel{max-height:0;overflow:hidden;transition:max-height .25s ease}
     .awb-more-panel.open{max-height:900px}
-    .awb-more-list{padding:6px 0 0}
+    .awb-more-list{padding:14px 0 0}
     .awb-more-list a{
       display:flex;align-items:center;gap:14px;
       padding:14px 0;border-bottom:1px solid var(--awb-line);
@@ -183,18 +207,18 @@
     }
     .awb-more-list .arr{color:var(--awb-muted-2);font-size:16px;flex:none;line-height:1;font-family:'Inter',sans-serif}
 
-    /* Desktop tweaks · slightly wider, still calm */
+    /* Desktop tweaks */
     @media (min-width:900px){
-      .awb-shell{max-width:820px}
       .awb-nav-wrap{max-width:820px;padding:0 24px}
       .awb-brand-logo{height:44px}
       .awb-brand-name{font-size:15px}
-      .awb-hero-welcome{padding:34px 24px 24px}
-      .awb-hero-h{font-size:44px}
-      .awb-tiles{padding:8px 24px;gap:18px}
-      .awb-tiles a{min-height:170px;padding:26px 24px}
-      .awb-tiles .n{font-size:24px}
-      .awb-more{padding:16px 24px 28px}
+      .awb-brief{max-width:820px;padding:40px 24px 8px}
+      .awb-brief-greet{font-size:42px}
+      .awb-pulse{max-width:calc(820px - 48px);padding:26px 26px}
+      .awb-pulse-h{font-size:24px}
+      .awb-tiles{max-width:820px;padding:24px 24px 8px;gap:14px}
+      .awb-tile{padding:22px 20px}
+      .awb-more{max-width:820px;padding:8px 24px 40px}
     }
   `;
 
@@ -208,14 +232,13 @@
 
     const tileHtml = primary.map(c => {
       const isActive = c.match.some(m => url.indexOf(m) >= 0);
-      const cls = isActive ? 'active' : '';
+      const cls = isActive ? 'awb-tile active' : 'awb-tile';
       const intakeAttr = c.intake ? ' data-aw-intake="true"' : '';
-      return '<a href="' + c.href + '" class="' + cls + '"' + intakeAttr + '>' +
+      const sub = c.sub ? '<small>' + c.sub + '</small>' : '';
+      return '<a class="' + cls + '" href="' + c.href + '"' + intakeAttr + '>' +
         '<span class="ic">' + c.icon + '</span>' +
-        '<span class="awb-tile-foot">' +
-          '<span class="n">' + c.label + '</span>' +
-          '<span class="awb-tile-arr">›</span>' +
-        '</span>' +
+        '<span class="n">' + c.label + sub + '</span>' +
+        '<span class="awb-tile-arr">›</span>' +
       '</a>';
     }).join('');
 
@@ -233,7 +256,7 @@
     const moreHtml = more.length ? (
       '<div class="awb-more">' +
         '<button type="button" class="awb-more-btn" data-awb-more-toggle aria-expanded="false" aria-controls="awb-more-panel">' +
-          '<span>More</span>' +
+          '<span>More options</span>' +
           '<span class="awb-chev">' + iconChevron() + '</span>' +
         '</button>' +
         '<div class="awb-more-panel" id="awb-more-panel">' +
@@ -242,10 +265,17 @@
       '</div>'
     ) : '';
 
-    // Greeting · time-of-day + first name
-    const hour = new Date().getHours();
+    // Greeting + short date
+    const now = new Date();
+    const hour = now.getHours();
     const salut = hour < 12 ? 'Good morning' : (hour < 18 ? 'Good afternoon' : 'Good evening');
-    const name  = firstName ? (', ' + firstName) : '';
+    const displayName = firstName || 'friend';
+    const dayShort = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][now.getDay()];
+    const monShort = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][now.getMonth()];
+    const hh = now.getHours() % 12 || 12;
+    const mm = String(now.getMinutes()).padStart(2,'0');
+    const ampm = now.getHours() < 12 ? 'AM' : 'PM';
+    const dateStr = dayShort + ' · ' + monShort + ' ' + now.getDate() + ' · ' + hh + ':' + mm + ' ' + ampm;
 
     return '' +
       // Homepage-style top nav
@@ -258,15 +288,26 @@
           '<a class="awb-av" href="/portal" aria-label="Portal home" data-awb-av>M</a>' +
         '</div>' +
       '</div>' +
-      // Home content shell (welcome + tiles + more)
-      '<div class="awb-shell">' +
-        '<div class="awb-hero-welcome">' +
-          '<span class="awb-hero-eb">Home</span>' +
-          '<h1 class="awb-hero-h">' + salut + '<em>' + name + '</em>.</h1>' +
+      // Daily brief
+      '<section class="awb-brief">' +
+        '<div class="awb-brief-row">' +
+          '<span class="awb-brief-eb">Home</span>' +
+          '<span class="awb-brief-date">' + dateStr + '</span>' +
         '</div>' +
-        '<div class="awb-tiles">' + tileHtml + '</div>' +
-        moreHtml +
-      '</div>';
+        '<h1 class="awb-brief-greet">' + salut + ',<br><em>' + displayName + '.</em></h1>' +
+      '</section>' +
+      // Pulse card
+      '<div class="awb-pulse">' +
+        '<div class="awb-pulse-eb"><span class="awb-pulse-dot"></span>The Aari pulse</div>' +
+        '<div class="awb-pulse-h">Nothing urgent flagged. <em>The team is on it.</em></div>' +
+        '<div class="awb-pulse-stat">' +
+          '<div class="awb-stat"><div class="num">0</div><span class="lbl">Files needing you</span></div>' +
+          '<div class="awb-stat"><div class="num">0</div><span class="lbl">Closing this week</span></div>' +
+        '</div>' +
+      '</div>' +
+      // Tile row
+      '<div class="awb-tiles">' + tileHtml + '</div>' +
+      moreHtml;
   }
 
   // ----- Determine current role · session override > actual profile role -----
@@ -335,7 +376,6 @@
       document.body.insertBefore(wrapper, document.body.firstChild);
     }
 
-    // Fill the avatar initial
     var av = wrapper.querySelector('[data-awb-av]');
     if (av) av.textContent = profile.initial;
 
