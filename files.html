@@ -352,6 +352,13 @@
      phone instead of squashing into three unreadable slivers. Matches the 720px calendar
      breakpoint. !important overrides the inline grid-template-columns; desktop is untouched. */
   @media (max-width:720px){ [data-invoice-board]{grid-template-columns:1fr!important} }
+  /* Mobile bottom nav (Direction A) · thumb-reachable view switch. Desktop hidden. */
+  #mnav{display:none;position:fixed;left:0;right:0;bottom:0;z-index:9985;background:#fff;border-top:1px solid #ece8e0;padding-bottom:env(safe-area-inset-bottom)}
+  #mnav .mn{flex:1;background:none;border:0;font-family:inherit;font-size:9.5px;font-weight:600;color:#8a857c;padding:8px 0 9px;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer}
+  #mnav .mn .ic{font-size:16px;line-height:1}
+  #mnav .mn.on{color:#0f0f0f}
+  #mnav .mn .bdg{display:inline-block;min-width:15px;font-size:9px;font-weight:700;color:#fff;background:#9a3a2c;border-radius:999px;padding:0 4px;margin-left:3px}
+  @media(max-width:600px){ #mnav{display:flex} body.has-mnav{padding-bottom:60px} }
 
   /* ===== Mobile playbook drawer · full-screen on phones ===== */
   @media(max-width:680px){
@@ -974,8 +981,11 @@
     .tpb-popmodal.rail .rail-grid{grid-template-columns:1fr}
     .tpb-popmodal.rail .rail-pdf{display:none;position:static;padding:14px 16px 0 16px}
     .tpb-popmodal.rail.show-pdf .rail-pdf{display:block}
-    .tpb-popmodal.rail.show-pdf .rail-pdf iframe{height:50vh!important}
-    .tpb-popmodal.rail .rail-pdf-toggle{display:inline-block}
+    /* Direction A · one pane at a time. Showing the contract hides the work rail so the
+       document fills the screen; the toggle (Hide contract) brings the work back. */
+    .tpb-popmodal.rail.show-pdf .rail-right{display:none}
+    .tpb-popmodal.rail.show-pdf .rail-pdf iframe{height:72vh!important}
+    .tpb-popmodal.rail .rail-pdf-toggle{display:inline-block;font-weight:600}
     .tpb-popmodal.rail .rail-right{padding:4px 16px 20px 16px}
   }
   .ct-verify-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:16px;align-items:start}
@@ -10822,7 +10832,59 @@ Tell me your planned move-out date and I will set the inspection.`
       if(earn) earn.style.display = (_activeView === 'invoice') ? 'none' : '';
       if(_activeView === 'invoice') renderInvoiceScreen();
     } catch(_){}
+    try { ensureMobileNav(); } catch(_){}
   }
+
+  // ===== Mobile bottom nav (Direction A · Phase 1) =====
+  // Thumb-reachable view switch, phone only (#mnav is display:none until <=600px).
+  // Today / Board / Calendar all live on the one Overview page, so those tabs set
+  // _activeView='board' and scroll to the section; Invoices flips to the invoice view.
+  var _mnavDest = 'today';
+  function _mnavSaveView(v){ try { localStorage.setItem('aari_active_view_' + ((_profile && _profile.id) ? _profile.id : 'anon'), v); } catch(_){} }
+  function ensureMobileNav(){
+    var nav = document.getElementById('mnav');
+    if(!nav){
+      nav = document.createElement('nav');
+      nav.id = 'mnav';
+      nav.innerHTML =
+        '<button type="button" class="mn" data-mnav="today"><span class="ic">&#9673;</span>Today</button>' +
+        '<button type="button" class="mn" data-mnav="board"><span class="ic">&#9638;</span>Board</button>' +
+        '<button type="button" class="mn" data-mnav="calendar"><span class="ic">&#9636;</span>Calendar</button>' +
+        '<button type="button" class="mn" data-mnav="invoice"><span class="ic">$</span><span class="lbl">Invoices</span></button>';
+      document.body.appendChild(nav);
+      document.body.classList.add('has-mnav');
+      nav.addEventListener('click', function(e){
+        var b = e.target.closest && e.target.closest('[data-mnav]');
+        if(b) mobileNav(b.getAttribute('data-mnav'));
+      });
+    }
+    var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
+    var showInv = (role === 'tc' || role === 'broker');
+    var invBtn = nav.querySelector('[data-mnav="invoice"]');
+    if(invBtn){
+      invBtn.style.display = showInv ? '' : 'none';
+      var n = 0; try { n = showInv ? _invoiceBadgeCount() : 0; } catch(_){}
+      var lbl = invBtn.querySelector('.lbl');
+      if(lbl) lbl.innerHTML = 'Invoices' + (n ? ' <span class="bdg">' + n + '</span>' : '');
+    }
+    var active = (_activeView === 'invoice') ? 'invoice' : _mnavDest;
+    nav.querySelectorAll('.mn').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-mnav') === active); });
+  }
+  function mobileNav(dest){
+    if(dest === 'invoice'){
+      if(_activeView !== 'invoice'){ _activeView = 'invoice'; _mnavSaveView('invoice'); try { renderTcCalendar(); } catch(_){} _syncBoardVisibility(); }
+      window.scrollTo({ top:0, behavior:'smooth' });
+      ensureMobileNav();
+      return;
+    }
+    if(_activeView !== 'board'){ _activeView = 'board'; _mnavSaveView('board'); try { renderTcCalendar(); } catch(_){} _syncBoardVisibility(); }
+    _mnavDest = dest;
+    var anchorId = dest === 'board' ? 'boardWrap' : (dest === 'calendar' ? 'calHeatmap' : 'fileCalendar');
+    var el = document.getElementById(anchorId);
+    if(el){ setTimeout(function(){ try { el.scrollIntoView({ behavior:'smooth', block:'start' }); } catch(_){} }, 70); }
+    ensureMobileNav();
+  }
+
   function renderTcCalendar(){
     // renderNeedsAttention() removed July 2026, see note above.
     const host = document.getElementById('fileCalendar'); if(!host) return;
