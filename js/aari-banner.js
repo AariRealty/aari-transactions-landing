@@ -24,9 +24,12 @@
   'use strict';
 
   // ---- Two primary tiles Marlenyi taps every day + a collapsed "More" pool ----
+  // July 25: swapped TC Portal → Move the files. She barely uses TC Portal;
+  // her daily reality is "moving files inside of the portal" so the file
+  // kanban itself is what should occupy tile #1.
   const PRIMARY = [
-    { id:'tc',    label:'TC Portal',    href:'/tc-cockpit.html',    icon:iconFolder(), match:['/tc-cockpit'],       roles:['tc','broker'] },
-    { id:'agent', label:'Agent Portal', href:'/aari-agent-crm.html',icon:iconUsers(),  match:['/aari-agent-crm'],   roles:['broker','agent'] },
+    { id:'files', label:'Move the files', href:'/files.html',         icon:iconFolder(), match:['/files.html','/tc-cockpit'], roles:['tc','broker'] },
+    { id:'agent', label:'Agent Portal',   href:'/aari-agent-crm.html',icon:iconUsers(),  match:['/aari-agent-crm'],            roles:['broker','agent'] },
   ];
   const MORE = [
     { id:'submit',     label:'Submit a file',     href:'/index.html?modal-only=1#apply', icon:iconUpload(), match:['/agent-submit'],       roles:['broker','agent'], intake:true },
