@@ -67,6 +67,12 @@
       position:relative;
       z-index:1;
     }
+    /* Mobile · the aari-banner nav REPLACES the legacy #aari-header "Where to?"
+       bar wherever the banner mounts. Kill it globally so we never stack two
+       navs on top of each other. Desktop keeps aari-header untouched. */
+    @media (max-width: 899px){
+      #aari-header { display: none !important; }
+    }
 
     /* ============ HOMEPAGE-STYLE TOP NAV ============ */
     .awb-nav{
@@ -223,7 +229,7 @@
   `;
 
   // ----- Build banner HTML -----
-  function buildHTML(role, firstName){
+  function buildHTML(role, firstName, isHome){
     const url = window.location.pathname || '';
     const visible = (list) => list.filter(c => !c.roles || c.roles.indexOf(role) >= 0);
 
@@ -277,8 +283,9 @@
     const ampm = now.getHours() < 12 ? 'AM' : 'PM';
     const dateStr = dayShort + ' · ' + monShort + ' ' + now.getDate() + ' · ' + hh + ':' + mm + ' ' + ampm;
 
-    return '' +
-      // Homepage-style top nav
+    // Top nav mounts on EVERY logged-in page — replaces the legacy
+    // "Where to?" bar, gives every page one consistent header.
+    const navHtml =
       '<div class="awb-nav">' +
         '<div class="awb-nav-wrap">' +
           '<a class="awb-brand" href="/portal" aria-label="Aari Transactions home">' +
@@ -287,8 +294,15 @@
           '</a>' +
           '<a class="awb-av" href="/portal" aria-label="Portal home" data-awb-av>M</a>' +
         '</div>' +
-      '</div>' +
-      // Daily brief
+      '</div>';
+
+    // Inner pages get JUST the nav — their own content is the reason she
+    // visited (files list, agent CRM, pipeline, etc.). Only /portal renders
+    // the full Mark 03 hub below.
+    if (!isHome) return navHtml;
+
+    // /portal home · full Mark 03 experience
+    return navHtml +
       '<section class="awb-brief">' +
         '<div class="awb-brief-row">' +
           '<span class="awb-brief-eb">Home</span>' +
@@ -296,7 +310,6 @@
         '</div>' +
         '<h1 class="awb-brief-greet">' + salut + ',<br><em>' + displayName + '.</em></h1>' +
       '</section>' +
-      // Pulse card
       '<div class="awb-pulse">' +
         '<div class="awb-pulse-eb"><span class="awb-pulse-dot"></span>The Aari pulse</div>' +
         '<div class="awb-pulse-h">Nothing urgent flagged. <em>The team is on it.</em></div>' +
@@ -305,7 +318,6 @@
           '<div class="awb-stat"><div class="num">0</div><span class="lbl">Closing this week</span></div>' +
         '</div>' +
       '</div>' +
-      // Tile row
       '<div class="awb-tiles">' + tileHtml + '</div>' +
       moreHtml;
   }
@@ -365,9 +377,13 @@
 
     const profile = await getProfileBits();
 
+    // /portal (and only /portal) gets the full Mark 03 hub. Inner pages get
+    // just the top nav so their own content is the star.
+    const isPortalHome = /^\/portal(?:\/|$|[?#])/.test(url);
+
     const wrapper = document.createElement('div');
     wrapper.id = 'aari-banner';
-    wrapper.innerHTML = buildHTML(viewing, profile.firstName);
+    wrapper.innerHTML = buildHTML(viewing, profile.firstName, isPortalHome);
 
     var headerEl = document.getElementById('aari-header');
     if (headerEl && headerEl.parentNode) {
