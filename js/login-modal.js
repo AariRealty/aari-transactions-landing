@@ -151,14 +151,21 @@
           window.location.href = next;
           return;
         }
-        // Role-based routing · Eileen → BD cockpit, staff → CRM, agents → portal.
+        // Role-based routing · Eileen → BD cockpit, brokers → calm briefing hub,
+        // TCs → CRM (they need the file queue immediately), agents → portal.
+        // Marlenyi (July 25) confirmed: post-login, brokers must land on the
+        // Direction 3 hub, not the heavy CRM dashboard.
         try {
           const profile = await global.AariAuth.getAgentProfile();
           if (profile && profile.role === 'tc' && String(profile.first_name || '').toLowerCase() === 'eileen') {
             window.location.href = '/eileen.html';
             return;
           }
-          if (profile && (profile.role === 'tc' || profile.role === 'broker')) {
+          if (profile && profile.role === 'broker') {
+            window.location.href = '/briefing.html';
+            return;
+          }
+          if (profile && profile.role === 'tc') {
             window.location.href = '/aari-crm';
             return;
           }
