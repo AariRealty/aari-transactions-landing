@@ -24,17 +24,27 @@
   'use strict';
 
   // ----- Card destinations, now grouped by section for the list layout -----
+  // Marlenyi (July 25): as broker/owner/TC/agent, she wants to see EVERY tab
+  // available in aari-transactions from her landing hub. Roles overlap for her
+  // (she wears all hats), so brokers get access to every card here. Briefing
+  // deliberately removed — she didn't use it.
   const CARDS = [
-    // ---------- Broker ----------
-    { id:'briefing',   section:'Daily',  label:'Morning briefing', sub:'Your day at a glance',       href:'/briefing.html',            icon:iconSun(),      match:['/briefing'],                        roles:['broker'] },
-    { id:'files',      section:'Daily',  label:'Move the files',   sub:'Kanban · playbook',           href:'/files.html',               icon:iconFolder(),   match:['/files.html','/tc-cockpit','/pipeline'], roles:['tc','broker'] },
-    { id:'team',       section:'Manage', label:'Run the team',     sub:'Roster · payroll',            href:'/broker-cockpit.html',      icon:iconUsers(),    match:['/broker-cockpit','/tc-cockpit'],   roles:['broker'] },
+    // ---------- DAILY · the two she uses every day ----------
+    { id:'tc',         section:'Daily',  label:'TC Portal',        sub:'Files, kanban, playbook',     href:'/tc-cockpit.html',          icon:iconFolder(),   match:['/tc-cockpit'],                     roles:['tc','broker'] },
+    { id:'agent',      section:'Daily',  label:'Agent Portal',     sub:'Leads, pipeline, CRM',        href:'/aari-agent-crm.html',      icon:iconUsers(),    match:['/aari-agent-crm'],                 roles:['broker','agent'] },
+    { id:'submit',     section:'Daily',  label:'Submit a file',    sub:'Send us the contract',       href:'/index.html?modal-only=1#apply', icon:iconUpload(), match:['/agent-submit','/index.html#services'], roles:['broker','agent'], primary:true },
+
+    // ---------- MANAGE · the broker/owner backend ----------
+    { id:'files',      section:'Manage', label:'Move the files',   sub:'Kanban · playbook',           href:'/files.html',               icon:iconFolder(),   match:['/files.html','/pipeline'],         roles:['tc','broker'] },
+    { id:'team',       section:'Manage', label:'Run the team',     sub:'Roster · payroll',            href:'/broker-cockpit.html',      icon:iconUsers(),    match:['/broker-cockpit'],                 roles:['broker'] },
     { id:'prospecting',section:'Manage', label:'Fill the pipeline',sub:'BD · leads · outreach',       href:'/prospecting.html',         icon:iconBook(),     match:['/prospecting','/bd'],              roles:['broker'] },
     { id:'quality',    section:'Manage', label:'Service quality',  sub:'SLA + response time',         href:'/files-sla.html',           icon:iconChart(),    match:['/files-sla'],                      roles:['tc','broker'] },
     { id:'compliance', section:'Manage', label:'Defend the audit', sub:'Compliance risk · DBPR',      href:'/files-compliance.html',    icon:iconShield(),   match:['/files-compliance'],               roles:['broker'] },
-    // ---------- Agent ----------
-    { id:'submit',     section:'Daily',  label:'Submit a file',    sub:'Send us the contract',        href:'/index.html?modal-only=1#apply', icon:iconUpload(), match:['/agent-submit','/index.html#services'], roles:['agent'], primary:true },
-    { id:'contacts',   section:'Daily',  label:'My contacts',      sub:'Buyer &amp; seller roster',   href:'/my-contacts.html',         icon:iconBook(),     match:['/my-contacts'],                    roles:['agent'] },
+    { id:'pipeline',   section:'Manage', label:'Pipeline',         sub:'All active deals',            href:'/pipeline.html',            icon:iconChart(),    match:['/pipeline'],                       roles:['broker'] },
+
+    // ---------- TOOLS · contacts, reviews, secondary utilities ----------
+    { id:'contacts',   section:'Tools',  label:'My contacts',      sub:'Buyer &amp; seller roster',   href:'/my-contacts.html',         icon:iconBook(),     match:['/my-contacts'],                    roles:['broker','agent'] },
+    { id:'reviews',    section:'Tools',  label:'Reviews',          sub:'Client feedback',             href:'/aari-reviews.html',        icon:iconStar(),     match:['/aari-reviews'],                   roles:['broker','agent'] },
   ];
 
   // ----- Inline SVG icons -----
@@ -45,6 +55,7 @@
   function iconUpload(){return svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>');}
   function iconChart(){return svg('<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>');}
   function iconShield(){return svg('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>');}
+  function iconStar(){return svg('<polygon points="12 2 15 9 22 9.5 17 14.5 18.5 22 12 18 5.5 22 7 14.5 2 9.5 9 9 12 2"/>');}
   function svg(inner){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+inner+'</svg>';}
 
   // ----- CSS injected once -----
@@ -260,8 +271,11 @@
     if(existing) existing.remove();
 
     let { actual, viewing } = await resolveRole();
-    // The agent portal (/portal) is the AGENT product · always shows agent rib
-    if((window.location.pathname || '').indexOf('/portal') >= 0){ viewing = 'agent'; }
+    // /portal used to force agent-view because it was the AGENT product only.
+    // Now that /portal is also the broker/owner landing (July 25), the broker
+    // sees their full hub here. Agents still see the agent rib naturally
+    // because they resolveRole() to 'agent'. Only force agent-view if the
+    // viewer is genuinely an agent — otherwise honour their actual role.
 
     // Self-reference check · if the only visible destination for this role IS the current page,
     // the banner is dead weight. Skip mounting.

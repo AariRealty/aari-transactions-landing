@@ -162,7 +162,7 @@
             return;
           }
           if (profile && profile.role === 'broker') {
-            window.location.href = '/briefing.html';
+            window.location.href = '/portal';
             return;
           }
           if (profile && profile.role === 'tc') {
@@ -253,7 +253,7 @@
     try {
       const profile = await global.AariAuth.getAgentProfile();
       if (profile && profile.role === 'tc' && String(profile.first_name || '').toLowerCase() === 'eileen') return '/eileen.html';
-      if (profile && profile.role === 'broker') return '/briefing.html';
+      if (profile && profile.role === 'broker') return '/portal';
       if (profile && profile.role === 'tc') return '/aari-crm';
     } catch (_) {}
     return '/portal';
