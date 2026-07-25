@@ -244,15 +244,11 @@
 
   // ----- Mount -----
   async function mount(){
-    // The banner is the hub content · it should only render on the hub page itself
-    // (briefing.html), which is where the aari-header topbar's "← Where to?" link
-    // takes users. Everywhere else, the topbar alone provides navigation and the
-    // banner would be duplicative chrome. Marlenyi flagged this on July 25 as
-    // "way too much" when it was mounting on every workspace page. If a new hub
-    // page is added later, extend the isHubPage check.
+    // Banner mounts on every workspace page — Marlenyi confirmed (July 25) that
+    // the calm Direction 3 list IS the mobile view she wants at the top of
+    // every screen. The heavy per-page dashboard content sits below and is
+    // hidden on mobile via each page's own CSS (see aari-crm.html mobile block).
     const url = window.location.pathname || '';
-    const isHubPage = url.indexOf('/briefing') >= 0;
-    if (!isHubPage) return;
 
     if(!document.getElementById('aari-banner-css')){
       const style = document.createElement('style');
