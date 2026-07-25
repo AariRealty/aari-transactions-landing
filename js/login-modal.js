@@ -245,12 +245,16 @@
     return wrap;
   }
 
-  // Shared role-based destination · mirrors the post-login routing below.
+  // Shared role-based destination · mirrors the post-login routing above.
+  // Marlenyi (July 25): brokers must land on the calm briefing hub, not the
+  // heavy CRM dashboard — both in the fresh sign-in path and when an already-
+  // signed-in user clicks "Go to my portal" from the signed-in modal.
   async function portalDestination() {
     try {
       const profile = await global.AariAuth.getAgentProfile();
       if (profile && profile.role === 'tc' && String(profile.first_name || '').toLowerCase() === 'eileen') return '/eileen.html';
-      if (profile && (profile.role === 'tc' || profile.role === 'broker')) return '/aari-crm';
+      if (profile && profile.role === 'broker') return '/briefing.html';
+      if (profile && profile.role === 'tc') return '/aari-crm';
     } catch (_) {}
     return '/portal';
   }
