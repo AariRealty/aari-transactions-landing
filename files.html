@@ -81,6 +81,12 @@
   .ft-pill:hover{background:#f3f3f3}
   .ft-pill.active{background:#0f0f0f;color:#fff;border-color:#0f0f0f}
   .ft-pill .count{margin-left:6px;opacity:0.7;font-weight:400}
+  /* Service sub-tabs · lighter, sits under the file-type row */
+  .svc-subrow{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 0}
+  .svc-pill{padding:5px 11px;border-radius:999px;border:0.5px solid rgba(15,15,15,0.16);background:#faf9f5;color:#5f5e5a;font-size:11px;font-weight:500;cursor:pointer;font-family:inherit}
+  .svc-pill:hover{background:#f0eee8}
+  .svc-pill.active{background:#0f0f0f;color:#fff;border-color:#0f0f0f}
+  .svc-pill .count{margin-left:6px;opacity:0.7;font-weight:400}
 
   /* KPIs */
   .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
@@ -271,6 +277,10 @@
   .cardv2-action.amber{color:#9a7c3a}
   .cardv2-action.rose{color:#c96b6b}
   .card-tag-cash{display:inline-block;font-size:8.5px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;color:#5a4a1f;background:#f3e9c8;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle}
+  /* Attention chip (Mock B) · the one "needs you" tag. Black so it wins the scan over the
+     amber micro-badges. On a phone the address wraps so the chip never squeezes the name. */
+  .card-attn{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:#fff;background:#0f0f0f;border-radius:5px;padding:1px 7px;margin-left:6px;vertical-align:middle;white-space:nowrap}
+  @media(max-width:600px){ .cardv2-addr{white-space:normal} }
   .card-tag-pay{display:inline-block;margin-left:6px;font-size:10px;font-weight:600;letter-spacing:.04em;color:#9a7c3a;background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:999px;padding:2px 7px;vertical-align:1px}
   .lane[data-stage="appraisal"] .card.cash{opacity:0.55;border-left:3px dashed #999}
   .card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:3px}
@@ -328,6 +338,16 @@
     .btn-sla,.btn-newfile{width:100%;text-align:center;display:block}
   }
   @media(max-width:480px){.kanban{grid-template-columns:1fr}}
+  /* Phone · both the pipeline board and the service board become a horizontal swipe
+     instead of squashed columns. !important beats the inline grid the render sets;
+     each column is ~85% wide and snaps, so you thumb across one lane at a time. The
+     service sub-tab row scrolls sideways too rather than wrapping into tall stacks. */
+  @media(max-width:600px){
+    #kanban{display:flex !important;grid-template-columns:none !important;overflow-x:auto;gap:10px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;padding-bottom:6px}
+    #kanban .lane{flex:0 0 85%;scroll-snap-align:start}
+    .svc-subrow{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+    .svc-pill{white-space:nowrap;flex:0 0 auto}
+  }
   /* Broker invoice board · the three state columns (Not sent / Sent unpaid / Paid) stack on a
      phone instead of squashing into three unreadable slivers. Matches the 720px calendar
      breakpoint. !important overrides the inline grid-template-columns; desktop is untouched. */
@@ -1453,6 +1473,32 @@
   }
   // Back-compat: legacy code references STAGES. Map to dynamic accessor.
   let STAGES = STAGES_BY_TYPE.sale; // will be reassigned when filter changes
+
+  // ============== SERVICE SUB-TABS (additive · July 2026) ==============
+  // The file-type board (above) is unchanged. Some file types bundle several
+  // SERVICES whose real workflow the file-type columns cannot express — e.g.
+  // Listings holds Listing Coordinator, MLS Setup and Listing Docs, each with
+  // its own ladder in TC_SVC_TRACKS. When one of those services is picked, the
+  // board keeps the SAME container but swaps its columns to that service ladder
+  // and buckets by service_stage. Lanes use data-svc-stage (NOT data-stage) so
+  // the transaction_stage drag handler can never fire on them — service files
+  // advance via the drawer's Service stage dropdown, which already writes
+  // service_stage. _serviceFilter=null = the ordinary file-type board.
+  let _serviceFilter = null;
+  const SERVICE_SUBTABS_BY_TYPE = {
+    sale: [
+      { id:'offer_prep_basic',    label:'Offer Prep · Basic' },
+      { id:'offer_prep_complete', label:'Offer Prep · Complete' },
+      { id:'file_organization',   label:'File Organization' },
+      { id:'standalone_review',   label:'Standalone Review' },
+    ],
+    listing: [
+      { id:'listing_coordinator', label:'Listing Coordinator' },
+      { id:'mls_setup',           label:'MLS Setup' },
+      { id:'listing_docs',        label:'Listing Docs' },
+    ],
+  };
+  function serviceSubtabsFor(ft){ return SERVICE_SUBTABS_BY_TYPE[ft] || null; }
 
   // ============== EMAIL THREAD STRATEGY ==============
   // 5 threads per sale file. 6 if HOA. Mixing them is the #1 reason TC
@@ -10176,11 +10222,60 @@ Tell me your planned move-out date and I will set the inspection.`
     }).join('');
     el.querySelectorAll('[data-ft]').forEach(btn => btn.addEventListener('click', () => {
       _fileTypeFilter = btn.getAttribute('data-ft');
+      _serviceFilter = null; // leaving a file type drops any service sub-filter
       try { localStorage.setItem('aari_files_type', _fileTypeFilter); } catch(_){}
       STAGES = STAGES_BY_TYPE[_fileTypeFilter] || STAGES_BY_TYPE.sale;
       renderFileTypeFilter();
       renderKanbanShell();
       renderKpis();
+      renderKanban();
+    }));
+    renderServiceSubtabs();
+  }
+
+  // Second, lighter pill row shown only for file types that bundle multiple
+  // services (Listings today). Injected as a sibling right after #ft-filter so
+  // the static markup is untouched. "All" returns to the ordinary file-type board.
+  function renderServiceSubtabs(){
+    const ftEl = document.getElementById('ft-filter');
+    if(!ftEl) return;
+    let row = document.getElementById('svc-subfilter');
+    const subs = serviceSubtabsFor(_fileTypeFilter);
+    const removeRow = () => { const r = document.getElementById('svc-subfilter'); if(r) r.remove(); };
+    if(!subs){ removeRow(); _serviceFilter = null; return; }
+    // Active counts per service (exclude archived / closed / test files).
+    const counts = {};
+    subs.forEach(s => { counts[s.id] = 0; });
+    (_files || []).forEach(f => {
+      if((f.file_type || 'sale') !== _fileTypeFilter) return;
+      if(f.status === 'archived' || f.status === 'closed') return;
+      if((f.raw_form_data || {}).test_pool) return;
+      const key = (typeof svcKey === 'function') ? svcKey(f) : String(f.service_type || '').toLowerCase();
+      if(counts[key] != null) counts[key] += 1;
+    });
+    // Only surface a service that has live work in it (or the one currently selected,
+    // so the board never strands you on a tab that just emptied). Same rule the
+    // file-type tabs use. If nothing qualifies, the whole row stays hidden.
+    const visible = subs.filter(s => counts[s.id] > 0 || s.id === _serviceFilter);
+    if(!visible.length){ removeRow(); _serviceFilter = null; return; }
+    if(!row){
+      row = document.createElement('div');
+      row.id = 'svc-subfilter';
+      row.className = 'svc-subrow';
+      if(ftEl.parentNode) ftEl.parentNode.insertBefore(row, ftEl.nextSibling);
+    }
+    const allCls = _serviceFilter ? 'svc-pill' : 'svc-pill active';
+    let html = '<button type="button" class="'+allCls+'" data-svc="__all">All</button>';
+    html += visible.map(s => {
+      const cls = s.id === _serviceFilter ? 'svc-pill active' : 'svc-pill';
+      return '<button type="button" class="'+cls+'" data-svc="'+s.id+'">'+esc(s.label)+'<span class="count">'+counts[s.id]+'</span></button>';
+    }).join('');
+    row.innerHTML = html;
+    row.querySelectorAll('[data-svc]').forEach(btn => btn.addEventListener('click', () => {
+      const v = btn.getAttribute('data-svc');
+      _serviceFilter = (v === '__all') ? null : v;
+      renderServiceSubtabs();
+      renderKanbanShell();
       renderKanban();
     }));
   }
@@ -12219,6 +12314,7 @@ Tell me your planned move-out date and I will set the inspection.`
   }
 
   function renderKanbanShell(){
+    if(_serviceFilter && TC_SVC_TRACKS[_serviceFilter]){ return renderServiceKanbanShell(TC_SVC_TRACKS[_serviceFilter]); }
     const stages = getStages();
     STAGES = stages;
     const titleEl = document.getElementById('kanban-title');
@@ -12264,6 +12360,7 @@ Tell me your planned move-out date and I will set the inspection.`
   }
 
   function renderKanban(){
+    if(_serviceFilter && TC_SVC_TRACKS[_serviceFilter]){ return renderServiceKanban(TC_SVC_TRACKS[_serviceFilter]); }
     const stages = getStages();
     // Whole-kanban empty state · TC has zero files across ALL file_types.
     // Shows a single CTA instead of 7 "Empty" placeholders.
@@ -12325,6 +12422,61 @@ Tell me your planned move-out date and I will set the inspection.`
     });
     wireKanbanDelegation();
     // List view mirrors every kanban refresh · honors the saved toggle.
+    try { applyView(); } catch(_){}
+  }
+
+  // ---- Service board (additive) · same #kanban container, columns = service ladder ----
+  // Lanes carry data-svc-stage, never data-stage, so the pipeline drag/drop handler
+  // treats a drop here as a no-op. Stage moves happen in the drawer's Service stage
+  // dropdown (renderServiceStage), which writes service_stage. Read-first by design.
+  function serviceLabel(id){
+    const subs = serviceSubtabsFor(_fileTypeFilter) || [];
+    const hit = subs.find(function(s){ return s.id === id; });
+    return hit ? hit.label : id;
+  }
+  function renderServiceKanbanShell(track){
+    const titleEl = document.getElementById('kanban-title');
+    if(titleEl) titleEl.textContent = serviceLabel(_serviceFilter) + ' · service pipeline';
+    const k = document.getElementById('kanban');
+    if(!k) return;
+    k.style.gridTemplateColumns = 'repeat(' + track.length + ',1fr)';
+    k.innerHTML = track.map(function(s, i){
+      return '<div class="lane" data-svc-stage="'+esc(s)+'">' +
+        '<div class="lane-head">' +
+          '<div class="lane-head-top">' +
+            '<p class="lane-name">'+esc(String(s).toUpperCase())+'</p>' +
+            '<span class="lane-count" id="svccount-'+i+'">0</span>' +
+          '</div>' +
+          '<p class="lane-sub"></p>' +
+        '</div>' +
+        '<div class="lane-body" id="svclane-'+i+'"></div>' +
+      '</div>';
+    }).join('');
+  }
+  function renderServiceKanban(track){
+    const k0 = document.getElementById('kanban');
+    if(k0 && !k0.querySelector('.lane[data-svc-stage]')){ renderServiceKanbanShell(track); }
+    if(k0) k0.style.gridTemplateColumns = 'repeat(' + track.length + ',1fr)';
+    const svc = _serviceFilter;
+    const filtered = (_files || [])
+      .filter(function(f){ return (typeof svcKey === 'function' ? svcKey(f) : String(f.service_type||'').toLowerCase()) === svc; })
+      .filter(function(f){ return f.status !== 'archived' || _searchQuery; })
+      .filter(function(f){ return f.status !== 'closed' || _searchQuery; })
+      .filter(matchesSearch);
+    const buckets = track.map(function(){ return []; });
+    filtered.forEach(function(f){
+      let idx = track.indexOf(f.service_stage);
+      if(idx < 0) idx = 0; // null / unknown service_stage lands in the first rung
+      buckets[idx].push(f);
+    });
+    track.forEach(function(s, i){
+      const laneEl = document.getElementById('svclane-'+i);
+      const countEl = document.getElementById('svccount-'+i);
+      if(countEl) countEl.textContent = buckets[i].length;
+      if(!laneEl) return;
+      laneEl.innerHTML = buckets[i].length ? buckets[i].map(cardHtml).join('') : '<div class="lane-empty">—</div>';
+    });
+    wireKanbanDelegation();
     try { applyView(); } catch(_){}
   }
 
@@ -14043,6 +14195,15 @@ Tell me your planned move-out date and I will set the inspection.`
     var payBadge = f.payment_pending ? '<span class="card-tag-pay">Awaiting payment</span>' : '';
     var saBadge = saUnsigned(f) ? '<span style="display:inline-block;font-size:9px;font-weight:700;color:#c96b6b;background:#fdecea;border:0.5px solid #f2a9a9;border-radius:999px;padding:2px 7px;margin-left:6px;letter-spacing:0.3px">SA missing</span>' : '';
     var testBadge = ((f.raw_form_data || {}).test_pool) ? '<span style="display:inline-block;font-size:8.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:#6f6a61;background:#efece6;border:0.5px solid #ddd6c8;border-radius:3px;padding:1px 5px;margin-left:6px;vertical-align:middle">Test</span>' : '';
+    // Attention chip (Mock B · July 2026) · one scannable black tag when a card needs a
+    // person. Highest-priority state wins. reply_review + broker_review are set by the
+    // reply system + the listing review; awaiting_broker_review is the escalation state.
+    var _lgc = f.logistics || {};
+    var _attn = '';
+    if(_lgc.reply_review) _attn = 'Reply';
+    else if(_lgc.broker_review && _lgc.broker_review.status === 'needs_docs') _attn = 'Needs docs';
+    else if(f.status === 'awaiting_broker_review') _attn = 'Review';
+    var attnBadge = _attn ? '<span class="card-attn" title="This card needs you. Open it to act.">' + esc(_attn) + '</span>' : '';
     // Closing-certainty score retired from the card face (June 24) · the action line
     // carries urgency. cert is still computed because it drives the action tier/tone.
     var scoreBadge = '';
@@ -14063,7 +14224,7 @@ Tell me your planned move-out date and I will set the inspection.`
     return '<div class="card' + (cash ? ' cash' : '') + '" draggable="true" data-file-id="' + esc(f.id) + '">' +
       '<div class="cardv2-face">' +
         '<div class="cardv2-top">' +
-          '<p class="cardv2-addr" title="' + esc(addr) + '">' + esc(addr.split(',')[0]) + cashBadge + payBadge + saBadge + dupeBadge + mismatchBadge + pastBadge + testBadge + ucBoardTag(f) + '</p>' +
+          '<p class="cardv2-addr" title="' + esc(addr) + '">' + esc(addr.split(',')[0]) + attnBadge + cashBadge + payBadge + saBadge + dupeBadge + mismatchBadge + pastBadge + testBadge + ucBoardTag(f) + '</p>' +
           scoreBadge +
         '</div>' +
         nameLine +
