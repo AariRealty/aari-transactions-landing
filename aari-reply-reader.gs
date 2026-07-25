@@ -21,9 +21,10 @@
  * INSTALL (once):
  *   1. In the Gmail account that RECEIVES the replies (marlenyi@aarirealty.com),
  *      go to script.google.com, open this project, paste this in, Save.
- *   2. Run processAariReplies once and approve the permission prompt.
- *   3. Triggers (clock icon) -> Add Trigger -> processAariReplies,
- *      Time-driven, Minutes timer, every 5 minutes -> Save.
+ *   2. In the function dropdown at the top, pick installTrigger and click Run.
+ *      Approve the permission prompt. That is it.
+ *   installTrigger sets the every-5-minutes schedule for you, so there is no need
+ *   to touch the Triggers screen by hand.
  */
 
 var EDC_URL  = 'https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/effective-date-confirm';
@@ -141,4 +142,15 @@ function saveProcessed_(map) {
 
 function getOrCreateLabel_(name) {
   return GmailApp.getUserLabelByName(name) || GmailApp.createLabel(name);
+}
+
+// Run this ONCE to schedule the reader. Removes any old copy of the schedule first so
+// re-running never stacks duplicates, then creates the every-5-minutes trigger.
+function installTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'processAariReplies') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('processAariReplies').timeBased().everyMinutes(5).create();
+  processAariReplies(); // run once now so the first heartbeat lands immediately
+  Logger.log('Aari reply reader installed: running every 5 minutes.');
 }

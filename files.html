@@ -354,6 +354,18 @@
      phone instead of squashing into three unreadable slivers. Matches the 720px calendar
      breakpoint. !important overrides the inline grid-template-columns; desktop is untouched. */
   @media (max-width:720px){ [data-invoice-board]{grid-template-columns:1fr!important} }
+  /* Invoice screen · Mock B segmented state tabs on a phone. Desktop keeps the 3-column board;
+     the segment is hidden there. On a phone the segment shows and only the active state renders. */
+  .inv-seg{display:none}
+  @media(max-width:600px){
+    .inv-seg{display:flex;border:1px solid #0f0f0f;border-radius:8px;overflow:hidden;margin:0 0 12px}
+    .inv-seg-btn{flex:1;border:0;background:#fff;color:#0f0f0f;font-family:inherit;font-size:11px;font-weight:600;padding:8px 2px;cursor:pointer;min-height:36px}
+    .inv-seg-btn.on{background:#0f0f0f;color:#fff}
+    [data-invoice-board]{display:block!important}
+    [data-invoice-board][data-inv-active="notsent"] [data-inv-col]:not([data-inv-col="notsent"]){display:none}
+    [data-invoice-board][data-inv-active="sent"] [data-inv-col]:not([data-inv-col="sent"]){display:none}
+    [data-invoice-board][data-inv-active="paid"] [data-inv-col]:not([data-inv-col="paid"]){display:none}
+  }
   /* Mobile bottom nav (Direction A) · thumb-reachable view switch. Desktop hidden. */
   #mnav{display:none;position:fixed;left:0;right:0;bottom:0;z-index:9985;background:#fff;border-top:1px solid #ece8e0;padding-bottom:env(safe-area-inset-bottom)}
   #mnav .mn{flex:1;background:none;border:0;font-family:inherit;font-size:9.5px;font-weight:600;color:#8a857c;padding:8px 0 9px;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer}
@@ -1007,7 +1019,9 @@
     .tpb-popmodal.rail #rail-pdf-toggle{display:none}
     .tpb-popmodal.rail .rail-seg{display:flex;order:99;flex:1 1 100%;border:1px solid #0f0f0f;border-radius:8px;overflow:hidden;margin-top:2px}
     .tpb-popmodal.rail .rail-seg-btn{flex:1;min-height:36px}
-    .tpb-popmodal.rail #rail-request-agent{min-height:34px}
+    .tpb-popmodal.rail #rail-request-agent{display:none}
+    .tpb-popmodal.rail #tpb-del-head{display:none}
+    .rail-menu-mobile{display:block!important}
   }
   .ct-verify-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:16px;align-items:start}
   .ct-verify-terms{min-width:0}
@@ -11997,6 +12011,10 @@ Tell me your planned move-out date and I will set the inspection.`
   // card carries Send, and it routes through the same submitMyInvoice() the coordinators use.
   var _invDetails = false;
   try { _invDetails = localStorage.getItem('aari_invoice_details') === '1'; } catch(_){}
+  // Mobile invoice segment (Mock B) · which state fills the screen on a phone. Defaults to
+  // "sent" because the only person on this 3-state board is the broker, whose job is to pay.
+  var _invMobTab = 'sent';
+  try { _invMobTab = localStorage.getItem('aari_invoice_tab') || 'sent'; } catch(_){}
   function _tcDisplayName(id){
     var t = (typeof _tcsById === 'object' && _tcsById) ? _tcsById[id] : null;
     var n = t ? ((t.first_name || '') + ' ' + (t.last_name || '')).trim() : '';
@@ -12023,7 +12041,8 @@ Tell me your planned move-out date and I will set the inspection.`
     });
   }
   function _invColHtml(label, amountText, inner){
-    return '<div><div style="display:flex;align-items:baseline;justify-content:space-between;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#a39e93;font-weight:700;padding:0 2px 8px">' +
+    var key = /not/i.test(label) ? 'notsent' : (/paid/i.test(label) ? 'paid' : 'sent');
+    return '<div data-inv-col="' + key + '"><div style="display:flex;align-items:baseline;justify-content:space-between;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#a39e93;font-weight:700;padding:0 2px 8px">' +
       '<span>' + label + '</span><span>' + amountText + '</span></div>' + inner + '</div>';
   }
   function _invEmptyColHtml(text){
@@ -12124,10 +12143,15 @@ Tell me your planned move-out date and I will set the inspection.`
       '<span style="position:absolute;top:2px;left:' + (_invDetails ? '17px' : '2px') + ';width:15px;height:15px;border-radius:50%;background:#fff;transition:left .18s;box-shadow:0 1px 2px rgba(0,0,0,.2)"></span></span>' +
       '<button type="button" data-invoice-details="1" style="position:absolute;opacity:0;width:0;height:0;padding:0;border:0"></button></label>';
 
+    var _seg = '<div class="inv-seg" data-inv-seg="1">' +
+        '<button type="button" class="inv-seg-btn' + (_invMobTab === 'notsent' ? ' on' : '') + '" data-inv-tab="notsent">Not sent</button>' +
+        '<button type="button" class="inv-seg-btn' + (_invMobTab === 'sent' ? ' on' : '') + '" data-inv-tab="sent">Sent</button>' +
+        '<button type="button" class="inv-seg-btn' + (_invMobTab === 'paid' ? ' on' : '') + '" data-inv-tab="paid">Paid</button>' +
+      '</div>';
     return '<div style="display:flex;align-items:center;gap:10px;margin:0 0 12px;position:relative">' +
         '<span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Where each invoice stands</span>' +
-        '<span style="font-size:11.5px;color:#a39e93">' + esc(_invoicePeriod()) + '</span>' + toggle + '</div>' +
-      '<div style="background:#faf8f3;border-radius:12px;padding:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:start" data-invoice-board="1">' +
+        '<span style="font-size:11.5px;color:#a39e93">' + esc(_invoicePeriod()) + '</span>' + toggle + '</div>' + _seg +
+      '<div style="background:#faf8f3;border-radius:12px;padding:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:start" data-invoice-board="1" data-inv-active="' + _invMobTab + '">' +
         _invColHtml('Not sent', _money(notSentTotal), cards || _invEmptyColHtml('Nothing billable this week<br>across any coordinator.')) +
         _invColHtml('Sent &middot; unpaid', _money(subs.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0)),
           subs.length ? subs.map(function(i){ return invCardHtml(i, true); }).join('') : _invEmptyColHtml('Nothing waiting on you.<br>Invoices land here Thursday.')) +
@@ -12300,6 +12324,14 @@ Tell me your planned move-out date and I will set the inspection.`
     if(d){
       _invDetails = !_invDetails;
       try { localStorage.setItem('aari_invoice_details', _invDetails ? '1' : '0'); } catch(_){}
+      try { renderInvoiceScreen(); } catch(_){}
+      return;
+    }
+    // Mobile invoice segment (Mock B) · switch which state fills the phone screen.
+    var it = e.target && e.target.closest && e.target.closest('[data-inv-tab]');
+    if(it){
+      _invMobTab = it.getAttribute('data-inv-tab');
+      try { localStorage.setItem('aari_invoice_tab', _invMobTab); } catch(_){}
       try { renderInvoiceScreen(); } catch(_){}
       return;
     }
@@ -20972,6 +21004,10 @@ Tell me your planned move-out date and I will set the inspection.`
             '<button type="button" data-open-pop="fd" style="display:block;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:12.5px;color:#0f0f0f;padding:8px 12px;cursor:pointer;border-radius:6px">File details</button>' +
             '<button type="button" data-open-pop="next" style="display:block;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:12.5px;color:#0f0f0f;padding:8px 12px;cursor:pointer;border-radius:6px">Coming up</button>' +
             '<button type="button" data-client-profile="1" style="display:block;width:100%;text-align:left;border:0;border-top:0.5px solid #f1eee7;background:none;font-family:inherit;font-size:12.5px;color:#0f0f0f;padding:8px 12px;cursor:pointer;border-radius:6px">Client profile</button>' +
+            // Mobile only (Mock C) · Request + Delete move off the bar into this menu. Hidden on
+            // desktop via .rail-menu-mobile; they forward to the real bar controls.
+            '<button type="button" data-proxy-request="1" class="rail-menu-mobile" style="display:none;width:100%;text-align:left;border:0;border-top:0.5px solid #f1eee7;background:none;font-family:inherit;font-size:12.5px;color:#0f0f0f;padding:8px 12px;cursor:pointer;border-radius:6px">Request from agent</button>' +
+            '<button type="button" data-proxy-delete="1" class="rail-menu-mobile" style="display:none;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:12.5px;color:#a3402f;padding:8px 12px;cursor:pointer;border-radius:6px">Delete file</button>' +
           '</div>' +
         '</div>';
     }
@@ -21075,6 +21111,8 @@ Tell me your planned move-out date and I will set the inspection.`
       // Toggle the overflow menu.
       if(e.target.closest('#rail-more-btn')){ if(mm) mm.style.display = (mm.style.display === 'none' || !mm.style.display) ? 'block' : 'none'; return; }
       if(e.target.closest('[data-client-profile]')){ if(mm) mm.style.display = 'none'; if(_currentFile) openClientProfile(_currentFile.agent_id, _currentFile); return; }
+      if(e.target.closest('[data-proxy-request]')){ if(mm) mm.style.display = 'none'; var _rq = document.getElementById('rail-request-agent'); if(_rq) _rq.click(); return; }
+      if(e.target.closest('[data-proxy-delete]')){ if(mm) mm.style.display = 'none'; var _dl = document.querySelector('#tpb-del-head [data-del-link]') || document.querySelector('#tpb-delete [data-del-link]'); if(_dl) _dl.click(); return; }
       if(e.target.closest('[data-reextract]')){ if(_currentFile) _reExtractContract(_currentFile); return; }
       const b = e.target.closest('[data-open-pop]');
       if(b && pv0.contains(b)){ openSectionPop(b.getAttribute('data-open-pop')); if(mm) mm.style.display = 'none'; return; }
