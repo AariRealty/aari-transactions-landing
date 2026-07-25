@@ -244,6 +244,16 @@
 
   // ----- Mount -----
   async function mount(){
+    // The banner is the hub content · it should only render on the hub page itself
+    // (briefing.html), which is where the aari-header topbar's "← Where to?" link
+    // takes users. Everywhere else, the topbar alone provides navigation and the
+    // banner would be duplicative chrome. Marlenyi flagged this on July 25 as
+    // "way too much" when it was mounting on every workspace page. If a new hub
+    // page is added later, extend the isHubPage check.
+    const url = window.location.pathname || '';
+    const isHubPage = url.indexOf('/briefing') >= 0;
+    if (!isHubPage) return;
+
     if(!document.getElementById('aari-banner-css')){
       const style = document.createElement('style');
       style.id = 'aari-banner-css';
@@ -259,7 +269,6 @@
 
     // Self-reference check · if the only visible destination for this role IS the current page,
     // the banner is dead weight. Skip mounting.
-    const url = window.location.pathname || '';
     const visibleCards = CARDS.filter(c => !c.roles || c.roles.indexOf(viewing) >= 0);
     const isSelfReference = visibleCards.length === 1 &&
       visibleCards[0].match.some(m => url.indexOf(m) >= 0);
