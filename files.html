@@ -347,6 +347,8 @@
     #kanban .lane{flex:0 0 85%;scroll-snap-align:start}
     .svc-subrow{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
     .svc-pill{white-space:nowrap;flex:0 0 auto}
+    #ft-filter{display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
+    #ft-filter .ft-pill{white-space:nowrap;flex:0 0 auto}
   }
   /* Broker invoice board · the three state columns (Not sent / Sent unpaid / Paid) stack on a
      phone instead of squashing into three unreadable slivers. Matches the 720px calendar
@@ -800,6 +802,11 @@
   .rail-bar-score{position:static!important;top:auto;right:auto;flex:none;font-size:12px;padding:2px 10px}
   .tpb-popmodal.rail .tpb-heads{margin:10px 0 2px}
   .tpb-popmodal.rail .tpb-popbar{flex-wrap:wrap;row-gap:6px}
+  /* Mock C · segmented Work/Document control. Hidden on desktop, shown on phone below.
+     The bar's existing overflow menu (File details / Coming up / Client profile) is untouched. */
+  .rail-seg{display:none}
+  .rail-seg-btn{border:0;background:#fff;color:#0f0f0f;font:inherit;font-size:12px;font-weight:600;padding:8px 0;cursor:pointer}
+  .rail-seg-btn.on{background:#0f0f0f;color:#fff}
   .tpb-popmodal.rail .tpb-footlinks{display:flex;gap:6px;padding:0;margin:0;flex:none}
   .tpb-popmodal.rail .tpb-footlinks button{border:0.5px solid rgba(15,15,15,0.28);background:#fff;border-radius:6px;color:#0f0f0f;font-size:11px;padding:3px 10px;cursor:pointer;font-family:inherit;text-decoration:none}
   .tpb-popmodal.rail .tpb-footlinks button:hover{background:#f5f0e8}
@@ -987,6 +994,20 @@
     .tpb-popmodal.rail.show-pdf .rail-pdf iframe{height:72vh!important}
     .tpb-popmodal.rail .rail-pdf-toggle{display:inline-block;font-weight:600}
     .tpb-popmodal.rail .rail-right{padding:4px 16px 20px 16px}
+  }
+  /* Phone · drawer top bar, Mock C. Row 1 = back, address, the bar's existing overflow menu,
+     close. Row 2 = a full-width Work / Document segment (the hero move). The text "View
+     contract" button is hidden since the segment replaces it. */
+  @media (max-width:600px){
+    .tpb-popmodal.rail .tpb-popbar{padding:9px 12px;gap:8px}
+    .tpb-popmodal.rail .rail-bar-addr{flex:1;min-width:0;font-size:14px}
+    .tpb-popmodal.rail .tpb-poptitle{display:none}
+    .tpb-popmodal.rail .tpb-popback{min-width:34px;min-height:34px;font-size:12px}
+    .tpb-popmodal.rail .rail-close{min-width:34px;min-height:34px;font-size:16px}
+    .tpb-popmodal.rail #rail-pdf-toggle{display:none}
+    .tpb-popmodal.rail .rail-seg{display:flex;order:99;flex:1 1 100%;border:1px solid #0f0f0f;border-radius:8px;overflow:hidden;margin-top:2px}
+    .tpb-popmodal.rail .rail-seg-btn{flex:1;min-height:36px}
+    .tpb-popmodal.rail #rail-request-agent{min-height:34px}
   }
   .ct-verify-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:16px;align-items:start}
   .ct-verify-terms{min-width:0}
@@ -1317,6 +1338,7 @@
       <div class="tpb-footlinks" id="tpb-reflinks"></div>
       <span class="tpb-headscore rail-bar-score" id="rail-bar-score" hidden></span>
       <button type="button" class="rail-pdf-toggle" id="rail-pdf-toggle">View contract</button>
+      <div class="rail-seg" id="rail-seg"><button type="button" class="rail-seg-btn on" data-seg="work">Work</button><button type="button" class="rail-seg-btn" data-seg="doc">Document</button></div>
       <button type="button" class="rail-pdf-toggle" id="rail-request-agent">Request from agent</button>
       <span id="tpb-del-head" style="display:inline-flex;align-items:center"></span>
       <button type="button" class="rail-close" id="rail-close" aria-label="Close">&times;</button>
@@ -21071,8 +21093,27 @@ Tell me your planned move-out date and I will set the inspection.`
     const pt = document.getElementById('rail-pdf-toggle');
     if(pt) pt.addEventListener('click', function(){
       const pv = document.getElementById('tpb-popview');
-      if(pv){ pv.classList.toggle('show-pdf'); pt.textContent = pv.classList.contains('show-pdf') ? 'Hide contract' : 'View contract'; }
+      if(pv){ pv.classList.toggle('show-pdf'); pt.textContent = pv.classList.contains('show-pdf') ? 'Hide contract' : 'View contract'; try { if(window.__railSyncSeg) window.__railSyncSeg(); } catch(_){} }
     });
+    // Mock C · mobile segmented Work/Document control + overflow menu. Wired once; the static
+    // bar elements persist, so a guard stops duplicate listeners across rail opens.
+    if(!window.__railMobileWired){
+      window.__railMobileWired = true;
+      var _pvEl = function(){ return document.getElementById('tpb-popview'); };
+      var _segEl = document.getElementById('rail-seg');
+      window.__railSyncSeg = function(){
+        var pv = _pvEl(); var on = pv && pv.classList.contains('show-pdf');
+        if(_segEl){ _segEl.querySelectorAll('[data-seg]').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-seg') === (on ? 'doc' : 'work')); }); }
+      };
+      if(_segEl) _segEl.addEventListener('click', function(e){
+        var b = e.target.closest && e.target.closest('[data-seg]'); var pv = _pvEl();
+        if(!b || !pv) return;
+        if(b.getAttribute('data-seg') === 'doc') pv.classList.add('show-pdf'); else pv.classList.remove('show-pdf');
+        var t = document.getElementById('rail-pdf-toggle'); if(t) t.textContent = pv.classList.contains('show-pdf') ? 'Hide contract' : 'View contract';
+        window.__railSyncSeg();
+      });
+    }
+    try { if(window.__railSyncSeg) window.__railSyncSeg(); } catch(_){}
     const cx = document.getElementById('rail-close');
     if(cx) cx.addEventListener('click', closePlaybook);
   }
