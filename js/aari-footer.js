@@ -90,13 +90,21 @@
     '  .aari-foot-h{font-size:36px;letter-spacing:-0.8px}',
     '  .aari-foot-cols{grid-template-columns:1fr;gap:0;padding:0 20px}',
     '  .aari-foot-col{border-bottom:1px solid #2a2a2a}',
-    '  .aari-foot-col h5{margin:0;padding:18px 0;cursor:pointer;display:flex;justify-content:space-between;align-items:center;color:#fff;user-select:none}',
+    '  .aari-foot-col h5{margin:0;padding:18px 0;cursor:pointer;display:flex;justify-content:space-between;align-items:center;color:#fff;user-select:none;min-height:44px}',
     '  .aari-foot-col h5::after{content:"+";flex:0 0 auto;height:auto;width:auto;background:transparent;color:#888;font-size:20px;font-weight:300;line-height:1}',
     '  .aari-foot-col.expanded h5::after{content:"\\2212"}',
     '  .aari-foot-col a{max-height:0;overflow:hidden;opacity:0;padding:0;line-height:0;transition:max-height 0.25s ease,opacity 0.2s ease,padding 0.2s ease,line-height 0.2s ease}',
     '  .aari-foot-col.expanded a{max-height:42px;opacity:1;line-height:1.85;padding:6px 0}',
     '  .aari-foot-col.expanded{padding-bottom:14px}',
-    '  .aari-foot-bottom{padding:18px 20px 22px;flex-direction:column;align-items:flex-start;gap:10px}',
+    '  .aari-foot-bottom{padding:18px 20px 22px;flex-direction:column;align-items:flex-start;gap:10px;text-align:left}',
+    '}',
+    '@media (max-width:560px){',
+    '  .aari-foot-h{font-size:32px;letter-spacing:-0.6px}',
+    '  .aari-foot-form{flex-direction:column;gap:10px}',
+    '  .aari-foot-input{min-width:0;width:100%}',
+    '  .aari-foot-btn{width:100%}',
+    '  .aari-foot-contact-row a[href^="tel"]{font-size:24px !important}',
+    '  .aari-foot-contact-row a[href^="mailto"]{font-size:16px !important;word-break:break-all}',
     '}'
   ].join('');
 
@@ -174,9 +182,17 @@
 
   // ── Mobile accordion ──────────────────────────────────────────────────
   document.querySelectorAll('.aari-foot-col h5').forEach(function (h) {
-    h.addEventListener('click', function () {
+    h.setAttribute('role', 'button');
+    h.setAttribute('tabindex', '0');
+    h.setAttribute('aria-expanded', 'false');
+    function toggle() {
       if (window.innerWidth >= 900) return;
-      h.parentElement.classList.toggle('expanded');
+      var expanded = h.parentElement.classList.toggle('expanded');
+      h.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    }
+    h.addEventListener('click', toggle);
+    h.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
     });
   });
 
