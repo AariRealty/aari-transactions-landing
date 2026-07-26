@@ -1201,8 +1201,17 @@
 
     /* [fab-wire] · July 25 · hide the stacked page-head-right buttons on
        mobile. Search stays. + New file and 🔔 notifications become FABs
-       pinned bottom-right (see #mobile-fabs). */
-    .btn-newfile, #btn-offer-email, .files-menu-wrap { display: none !important; }
+       pinned bottom-right (see #mobile-fabs). Marlenyi (July 25 evening)
+       reported the ⋯ button was still visible — belt-and-suspenders now
+       targets the button + wrapper + parent div with multiple selectors. */
+    html body .page-head-right .btn-newfile,
+    html body .page-head-right #btn-newfile,
+    html body .page-head-right #btn-offer-email,
+    html body .page-head-right .files-menu-wrap,
+    html body .page-head-right #files-menu-btn,
+    html body .page-head-right #files-menu,
+    html body .page-head-right > button,
+    html body .page-head-right > div:not(:first-child) { display: none !important; }
   }
 
   /* Floating action buttons · files.html mobile · July 25.
@@ -1278,8 +1287,8 @@
 
 <!-- Shared chrome -->
 <div id="aari-header" data-aari-view="files" data-aari-show-submit="no"></div>
-<script src="/js/aari-header.js" defer></script>
-<script src="/js/aari-banner.js?v=12" defer></script>
+<script src="/js/aari-header.js?v=2" defer></script>
+<script src="/js/aari-banner.js?v=14" defer></script>
 
 <main class="page" id="page-main" style="display:none">
 
@@ -7240,7 +7249,7 @@ Tell me your planned move-out date and I will set the inspection.`
     if(!_profile){ return showGate('Profile missing.', 'Contact hello@aaritransactions.com.', null); }
 
     // ===== PREVIEW MODE · make the banner tell the truth =====
-    // aari-header.js writes sessionStorage['aari-view-as'] and paints a bar reading "You're seeing
+    // aari-header.js?v=2 writes sessionStorage['aari-view-as'] and paints a bar reading "You're seeing
     // what a Transaction Coordinator sees." Nothing else ever read that key. files.html branches
     // on _profile.role in 21 places and none of them knew preview existed, so the page kept
     // rendering as broker underneath the banner. Marlenyi opened the TC preview, saw AARI
@@ -11059,13 +11068,15 @@ Tell me your planned move-out date and I will set the inspection.`
       if(b) b.click();
     });
     wrap.querySelector('[data-fab-bell]').addEventListener('click', function(){
-      // Placeholder · until wired to the real feed
+      // Wired to the real in-portal notifications feed (see openNotifPanel).
+      try { if (typeof openNotifPanel === 'function') { openNotifPanel(); return; } } catch(_){}
+      // Fallback if the notif module hasn't loaded yet
       var msg = document.createElement('div');
       msg.className = 'undo-toast visible';
       msg.style.background = '#0f0f0f';
-      msg.innerHTML = '<span class="undo-msg">Notifications coming soon</span>';
+      msg.innerHTML = '<span class="undo-msg">Notifications loading…</span>';
       document.body.appendChild(msg);
-      setTimeout(function(){ msg.remove(); }, 1800);
+      setTimeout(function(){ msg.remove(); }, 1500);
     });
   }
 
@@ -11172,7 +11183,24 @@ Tell me your planned move-out date and I will set the inspection.`
     renderNotifBell();
   }
   function renderNotifBell(){
+    // Marlenyi (July 25) · on mobile, the FAB bell in the bottom-right is
+    // the ONLY notifications entry. Don't render the fixed top-right bell
+    // (was overlapping her avatar). Desktop keeps the top bell for now.
+    var isMobile = false;
+    try { isMobile = window.matchMedia && window.matchMedia('(max-width: 899px)').matches; } catch(_){}
     var bell = document.getElementById('aariNotifBell');
+    if (isMobile) {
+      if (bell && bell.parentNode) bell.parentNode.removeChild(bell);
+      // Mirror the count onto the FAB bell instead
+      var n = _notifs.length;
+      var fabBadge = document.querySelector('[data-fab-badge]');
+      if (fabBadge){
+        fabBadge.textContent = n > 9 ? '9+' : String(n);
+        if (n){ fabBadge.hidden = false; fabBadge.style.display = ''; }
+        else   { fabBadge.hidden = true;  fabBadge.style.display = 'none'; }
+      }
+      return;
+    }
     if(!bell){
       bell = document.createElement('button');
       bell.id = 'aariNotifBell';
@@ -11479,17 +11507,27 @@ Tell me your planned move-out date and I will set the inspection.`
         const cd = x.days < 0 ? (Math.abs(x.days) + 'd ago') : (x.days === 0 ? 'today' : x.days + ' days');
         const col = x.days < 0 ? '#a3402f' : (x.days <= 3 ? '#a3402f' : '#7a756c');
         return '<div data-cal-open="' + esc(x.f.id) + '" style="flex:0 0 auto;cursor:pointer;background:transparent;border:0.5px solid rgba(15,15,15,0.10);border-radius:7px;padding:6px 9px' + (x.days < 0 ? ';opacity:.5' : '') + '">' +
-          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:14px;font-weight:600;letter-spacing:-0.2px;color:#0f0f0f;line-height:1">' + fmt(x.date) + '</div>' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f;line-height:1">' + fmt(x.date) + '</div>' +
           '<div style="font-size:11px;color:#3d3a34;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.addr) + '</div>' +
-          '<div style="font-size:9.5px;color:' + col + ';font-weight:600;margin-top:1px;letter-spacing:0.3px">' + cd + '</div></div>';
+          '<div style="font-size:9.5px;color:' + col + ';font-weight:600;margin-top:1px;letter-spacing:0.2px">' + cd + '</div></div>';
       };
+      // ADHD-friendly · Marlenyi July 25 · the "NEXT CLOSINGS" all-caps
+      // label was competing with the tiles for space. Move it above the row
+      // as a lowercase serif heading with a small "next →" affordance, and
+      // give the tiles the full width. Arrows live at the ends of the row
+      // so the tiles can breathe.
       const arw = function(dir, lbl, on){ return '<button type="button"' + (on ? (' data-nc-step="' + dir + '"') : ' disabled') + ' aria-label="' + lbl + '" style="flex:none;border:0;background:none;color:' + (on ? '#5f5e5a' : '#e2ddd3') + ';font-size:18px;line-height:1;cursor:' + (on ? 'pointer' : 'default') + ';padding:2px 4px">' + (dir < 0 ? '&#8249;' : '&#8250;') + '</button>'; };
-      return '<div style="background:transparent;padding:0 0 12px;margin-bottom:6px;display:flex;gap:6px;align-items:center">' +
-        '<span style="flex:none;font-size:9.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;margin-right:2px">Next closings</span>' +
-        arw(-1, 'Previous closings', canLeft) +
-        '<div style="flex:1;min-width:0;display:flex;gap:8px;align-items:stretch;overflow-x:auto;-webkit-overflow-scrolling:touch">' + win.map(unit).join('') + '</div>' +
-        arw(1, 'Later closings', canRight) +
-        '</div>';
+      return '<div style="background:transparent;padding:0 0 12px;margin-bottom:4px">' +
+        '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;padding:0 2px">' +
+          '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f">Next closings</span>' +
+          '<span style="font-size:10px;font-weight:600;letter-spacing:0.4px;color:#a09a8f">' + all.length + ' upcoming</span>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;align-items:stretch">' +
+          arw(-1, 'Previous closings', canLeft) +
+          '<div style="flex:1;min-width:0;display:flex;gap:8px;align-items:stretch;overflow-x:auto;-webkit-overflow-scrolling:touch">' + win.map(unit).join('') + '</div>' +
+          arw(1, 'Later closings', canRight) +
+        '</div>' +
+      '</div>';
     } catch(_){ return ''; }
   }
   // ---- Month HEATMAP calendar (replaces the kanban) · #calHeatmap ----
@@ -11693,13 +11731,18 @@ Tell me your planned move-out date and I will set the inspection.`
     overdue.sort(function(a, b){ return a.date - b.date; });
     if(!all.length){ host.innerHTML = ''; return; }   // agenda already shows the empty message
     // header · title · Month/Week toggle · prev/next
-    const _segBtn = function(v, label){ const on = _calView === v; return '<button type="button" data-cal-view="' + v + '" style="border:0;background:' + (on ? '#fff' : 'transparent') + ';' + (on ? 'box-shadow:0 1px 2px rgba(0,0,0,.06);color:#0f0f0f;' : 'color:#6f6a61;') + 'font:inherit;font-size:12px;font-weight:600;padding:5px 13px;border-radius:18px;cursor:pointer">' + label + '</button>'; };
-    let html = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">' +
-      '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:17px;font-weight:600;color:#0f0f0f">Calendar</span>' +
-      '<button type="button" id="cal-sync" style="font-size:12px;color:#0f0f0f;border:0.5px solid #ece8e0;border-radius:8px;padding:7px 12px;background:#fff;cursor:pointer;font-family:inherit;margin-right:4px">&#128197; Sync</button>' +
-      '<span style="display:inline-flex;background:#f4f1ec;border-radius:20px;padding:3px;margin-right:2px">' + _segBtn('month', 'Month') + _segBtn('week', 'Week') + '</span>' +
-      '<button type="button" data-cal-nav="prev" style="width:30px;height:30px;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;cursor:pointer;font-size:15px;color:#0f0f0f;font-family:inherit">&#8249;</button>' +
-      '<button type="button" data-cal-nav="next" style="width:30px;height:30px;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;cursor:pointer;font-size:15px;color:#0f0f0f;font-family:inherit">&#8250;</button></div>';
+    const _segBtn = function(v, label){ const on = _calView === v; return '<button type="button" data-cal-view="' + v + '" style="border:0;background:' + (on ? '#fff' : 'transparent') + ';' + (on ? 'box-shadow:0 1px 2px rgba(0,0,0,.06);color:#0f0f0f;' : 'color:#7a756c;') + 'font:inherit;font-size:10.5px;font-weight:600;padding:5px 11px;border-radius:18px;cursor:pointer">' + label + '</button>'; };
+    // Cal Mock 3 · Marlenyi (July 25). Header is minimal: Calendar title on
+    // the left, Month/Week toggle on the right. Sync button + prev/next
+    // arrows removed from the header. Sync now lives in a footer row at
+    // the bottom of the calendar card so the top reads clean; auto-sync
+    // still fires on file changes, deadline updates, and view-open (see
+    // gcalSyncDeadlines() call sites) so nothing depends on the manual
+    // button in normal use.
+    let html = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px">' +
+      '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:18px;font-weight:600;color:#0f0f0f;letter-spacing:-0.2px;line-height:1.1">Calendar</span>' +
+      '<span style="display:inline-flex;background:#f4f1ec;border-radius:20px;padding:2px">' + _segBtn('month', 'Month') + _segBtn('week', 'Week') + '</span>' +
+    '</div>';
     // Next closings · pinned at the very top of the calendar, above the grid.
     html += nextClosingsHtml();
     // ---- WEEK view · full-width timeline, no right agenda column ----
@@ -11790,6 +11833,15 @@ Tell me your planned move-out date and I will set the inspection.`
       // so the whole calendar section reads as ONE unified card wrapped by
       // #calHeatmap (see the [cal-04-wire] CSS block near the top of the file).
       html += '<div data-cal-inner style="background:transparent;padding:8px 0 0;border-top:1px solid #f3ede0;margin-top:2px">' + mbody + '</div>';
+      // Cal Mock 3 · footer sync row · replaces the header Sync button.
+      // Reassures TCs their Google Calendar is current without asking them
+      // to click; the "Sync now" link is a fallback if the auto-sync ever
+      // hiccups. #cal-sync id is preserved so the existing click handler
+      // keeps working (see line ~11930).
+      html += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #f3ede0;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#7a756c">' +
+        '<span style="font-style:italic">Auto-synced &middot; connect once, stays current</span>' +
+        '<a href="#" id="cal-sync" style="color:#0f0f0f;text-decoration:none;font-weight:600;letter-spacing:0.3px">Sync now &rarr;</a>' +
+      '</div>';
       host.innerHTML = html; _wireCal(host); return;
     }
     // ---- two columns: heatmap (left) · today + overdue pinned (right) ----
@@ -11909,7 +11961,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const sync = host.querySelector('#cal-sync');
     if(sync) sync.addEventListener('click', async function(){
       sync.disabled = true;
-      const _back = function(label){ sync.innerHTML = label; setTimeout(function(){ sync.innerHTML = '&#128197; Sync'; sync.disabled = false; }, 2600); };
+      const _back = function(label){ sync.innerHTML = label; setTimeout(function(){ sync.innerHTML = 'Sync now &rarr;'; sync.disabled = false; }, 2600); };
       sync.innerHTML = 'Syncing&hellip;';
       const res = await gcalSyncDeadlines();
       if(res && res.ok) _back('&#10003; Synced ' + (res.count || 0));

@@ -69,11 +69,20 @@
       z-index:1;
     }
     /* Mobile · the aari-banner nav REPLACES the legacy #aari-header "Where to?"
-       bar wherever the banner mounts. Kill it globally so we never stack two
-       navs on top of each other. Desktop keeps aari-header untouched. */
-    @media (max-width: 899px){
-      #aari-header { display: none !important; }
-    }
+       bar AND its bell / avatar rendering wherever the banner mounts. Kill it
+       globally at ALL viewport widths so it can never bleed over my avatar.
+       Marlenyi (July 25) was still seeing the aari-hdr bell overlapping her
+       photo · this stops that at every specificity + also targets any bell
+       elements that leak outside of #aari-header. */
+    #aari-header,
+    #aari-header *,
+    .aari-hdr,
+    .aari-hdr-bell,
+    .aari-hdr-avatar,
+    #aari-hdr-bell,
+    #aari-avatar-btn,
+    #aari-hdr-menu,
+    .aari-hdr-menu { display: none !important; visibility: hidden !important; }
 
     /* ============ HOMEPAGE-STYLE TOP NAV ============ */
     .awb-nav{
@@ -428,6 +437,25 @@
       style.textContent = CSS;
       document.head.appendChild(style);
     }
+
+    // JS-level DOM removal · Marlenyi (July 25) kept seeing the aari-header
+    // bell overlap her avatar even with CSS !important hides. Something is
+    // re-adding it (or CSS specificity is losing a race). Just yank the
+    // element from the DOM after we mount. Also set up a MutationObserver
+    // so it stays gone if aari-header.js tries to re-inject.
+    var killHdr = function(){
+      var h = document.getElementById('aari-header');
+      if (h && h.parentNode) h.parentNode.removeChild(h);
+      document.querySelectorAll('.aari-hdr, .aari-hdr-bell, .aari-hdr-avatar, .aari-hdr-menu, #aari-hdr-bell, #aari-avatar-btn, #aari-hdr-menu, #aari-hdr-bell-wrap').forEach(function(el){ el.remove(); });
+    };
+    killHdr();
+    if (!window.__awbHdrObserver){
+      try {
+        window.__awbHdrObserver = new MutationObserver(function(){ killHdr(); });
+        window.__awbHdrObserver.observe(document.documentElement, { childList: true, subtree: true });
+      } catch(_){}
+    }
+
     const existing = document.getElementById('aari-banner');
     if(existing) existing.remove();
 
