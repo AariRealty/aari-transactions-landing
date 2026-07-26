@@ -47,6 +47,7 @@
   function iconStar(){return svg('<polygon points="12 2 15 9 22 9.5 17 14.5 18.5 22 12 18 5.5 22 7 14.5 2 9.5 9 9 12 2"/>');}
   function iconChevron(){return svg('<polyline points="6 9 12 15 18 9"/>');}
   function svg(inner){return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+inner+'</svg>';}
+  function esc(s){return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];});}
 
   const CSS = `
     :root{
@@ -97,12 +98,46 @@
       display:block;font-weight:500;font-size:10px;color:var(--awb-muted);
       letter-spacing:0.5px;margin-top:2px;
     }
+    /* Avatar button · shows headshot when profile.headshot_url exists,
+       else falls back to the initial. Same treatment as the old
+       aari-header so it feels continuous with the rest of the app. */
+    .awb-av-wrap{position:relative;flex:none}
     .awb-av{
       width:38px;height:38px;border-radius:50%;
       background:var(--awb-ink);color:#fff;
       display:flex;align-items:center;justify-content:center;
       font-family:'Inter',sans-serif;font-size:14px;font-weight:700;
-      text-decoration:none;flex:none;
+      text-decoration:none;border:0;padding:0;cursor:pointer;
+      overflow:hidden;transition:transform .15s ease, box-shadow .15s ease;
+    }
+    .awb-av:hover{transform:scale(1.05);box-shadow:0 2px 8px rgba(0,0,0,.15)}
+    .awb-av:focus-visible{outline:2px solid var(--awb-ink);outline-offset:3px}
+    .awb-av img{width:100%;height:100%;object-fit:cover;display:block}
+
+    /* Dropdown menu · pinned under the avatar */
+    .awb-menu{
+      position:absolute;top:calc(100% + 10px);right:0;
+      background:#fff;border:1px solid #e8e8e6;border-radius:12px;
+      padding:6px;width:260px;
+      box-shadow:0 12px 32px rgba(0,0,0,.14);
+      display:none;z-index:100;
+      font-family:'Inter',sans-serif;
+    }
+    .awb-menu.open{display:block}
+    .awb-menu .who{padding:12px 12px 10px;border-bottom:1px solid #f0ede2;margin-bottom:6px}
+    .awb-menu .who-name{font-size:14px;font-weight:700;letter-spacing:-0.1px;color:var(--awb-ink)}
+    .awb-menu .who-role{font-size:11.5px;color:var(--awb-muted);margin-top:2px;font-weight:500}
+    .awb-menu a{
+      display:flex;align-items:center;justify-content:space-between;gap:10px;
+      padding:11px 12px;border-radius:8px;text-decoration:none;
+      font-size:13.5px;font-weight:500;color:var(--awb-ink);
+    }
+    .awb-menu a:hover{background:var(--awb-cream)}
+    .awb-menu .sep{height:1px;background:#f0ede2;margin:6px 4px}
+    .awb-menu .signout{color:#a32d2d}
+    .awb-menu .signout:hover{background:#faeaea}
+    @media (max-width:600px){
+      .awb-menu{right:-4px;left:auto;width:240px}
     }
 
     /* ============ DAILY BRIEF HERO ============ */
@@ -229,9 +264,10 @@
   `;
 
   // ----- Build banner HTML -----
-  function buildHTML(role, firstName, isHome){
+  function buildHTML(role, profile, isHome){
     const url = window.location.pathname || '';
     const visible = (list) => list.filter(c => !c.roles || c.roles.indexOf(role) >= 0);
+    const firstName = profile.firstName;
 
     const primary = visible(PRIMARY);
     const more    = visible(MORE);
@@ -284,7 +320,11 @@
     const dateStr = dayShort + ' · ' + monShort + ' ' + now.getDate() + ' · ' + hh + ':' + mm + ' ' + ampm;
 
     // Top nav mounts on EVERY logged-in page — replaces the legacy
-    // "Where to?" bar, gives every page one consistent header.
+    // "Where to?" bar. Avatar is a real photo when profile.headshot_url is
+    // present, else initial. Dropdown menu mirrors the old aari-header.
+    const brokerLine = profile.role === 'broker'
+      ? '<a href="/portal.html#agent-agreements" role="menuitem">Agent agreements</a>'
+      : '';
     const navHtml =
       '<div class="awb-nav">' +
         '<div class="awb-nav-wrap">' +
@@ -292,7 +332,24 @@
             '<img class="awb-brand-logo" src="/images/aari-logo.png" alt="Aari Transactions">' +
             '<span class="awb-brand-name">Aari Transactions<small>Florida TC</small></span>' +
           '</a>' +
-          '<a class="awb-av" href="/portal" aria-label="Portal home" data-awb-av>M</a>' +
+          '<div class="awb-av-wrap">' +
+            '<button type="button" class="awb-av" data-awb-av aria-haspopup="true" aria-expanded="false" aria-label="Open account menu">' +
+              '<span data-awb-av-initial>' + esc(profile.initial) + '</span>' +
+            '</button>' +
+            '<div class="awb-menu" data-awb-menu role="menu">' +
+              '<div class="who">' +
+                '<div class="who-name">' + esc(profile.fullName) + '</div>' +
+                '<div class="who-role">' + esc(profile.roleWord) + '</div>' +
+              '</div>' +
+              '<a href="/portal.html#recent-activity" role="menuitem">Recent activity</a>' +
+              '<a href="/portal.html#membership" role="menuitem">Membership</a>' +
+              '<a href="/portal.html#billing-documents" role="menuitem">Billing &amp; Documents</a>' +
+              brokerLine +
+              '<a href="/portal.html#profile" role="menuitem">Settings</a>' +
+              '<div class="sep"></div>' +
+              '<a href="#" class="signout" role="menuitem" data-awb-signout>Sign out</a>' +
+            '</div>' +
+          '</div>' +
         '</div>' +
       '</div>';
 
@@ -350,10 +407,15 @@
         const first = String(raw).trim().split(/\s+/)[0].split('@')[0] || '';
         const initial = (first[0] || 'M').toUpperCase();
         const nameCased = first ? first.charAt(0).toUpperCase() + first.slice(1) : '';
-        return { firstName: nameCased, initial };
+        const fullName = (((p && p.first_name) || '') + ' ' + ((p && p.last_name) || '')).trim()
+                          || (p && p.email) || nameCased || 'Account';
+        const role = (p && p.role) ? String(p.role).toLowerCase() : 'agent';
+        const roleWord = { broker:'Broker', tc:'Transaction Coordinator', agent:'Agent' }[role] || 'Agent';
+        const headshot = (p && (p.headshot_url || p.avatar_url || p.photo_url)) || '';
+        return { firstName: nameCased, initial, fullName, roleWord, role, headshot };
       }
     } catch(_){}
-    return { firstName: '', initial: 'M' };
+    return { firstName: '', initial: 'M', fullName: 'Account', roleWord: 'Agent', role: 'agent', headshot: '' };
   }
 
   // ----- Mount -----
@@ -383,7 +445,7 @@
 
     const wrapper = document.createElement('div');
     wrapper.id = 'aari-banner';
-    wrapper.innerHTML = buildHTML(viewing, profile.firstName, isPortalHome);
+    wrapper.innerHTML = buildHTML(viewing, profile, isPortalHome);
 
     var headerEl = document.getElementById('aari-header');
     if (headerEl && headerEl.parentNode) {
@@ -392,11 +454,64 @@
       document.body.insertBefore(wrapper, document.body.firstChild);
     }
 
-    var av = wrapper.querySelector('[data-awb-av]');
-    if (av) av.textContent = profile.initial;
-
+    populateAvatar(wrapper, profile);
+    bindAvatarMenu(wrapper);
     bindMoreToggle(wrapper);
     bindIntake(wrapper);
+  }
+
+  function populateAvatar(wrapper, profile){
+    var btn = wrapper.querySelector('[data-awb-av]');
+    if (!btn) return;
+    var initial = profile.initial || 'M';
+    if (profile.headshot){
+      var img = document.createElement('img');
+      img.alt = profile.fullName || 'Account';
+      img.onerror = function(){ btn.innerHTML = '<span data-awb-av-initial>' + esc(initial) + '</span>'; };
+      img.src = profile.headshot;
+      btn.innerHTML = '';
+      btn.appendChild(img);
+    } else {
+      btn.innerHTML = '<span data-awb-av-initial>' + esc(initial) + '</span>';
+    }
+  }
+
+  function bindAvatarMenu(wrapper){
+    var btn  = wrapper.querySelector('[data-awb-av]');
+    var menu = wrapper.querySelector('[data-awb-menu]');
+    if (!btn || !menu) return;
+
+    btn.addEventListener('click', function(e){
+      e.stopPropagation();
+      var open = menu.classList.toggle('open');
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    document.addEventListener('click', function(e){
+      if (!menu.contains(e.target) && !btn.contains(e.target)){
+        menu.classList.remove('open');
+        btn.setAttribute('aria-expanded', 'false');
+      }
+    });
+    document.addEventListener('keydown', function(e){
+      if (e.key === 'Escape'){
+        menu.classList.remove('open');
+        btn.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    var so = menu.querySelector('[data-awb-signout]');
+    if (so){
+      so.addEventListener('click', function(e){
+        e.preventDefault();
+        try {
+          if (window.AariAuth && typeof window.AariAuth.signOut === 'function'){
+            Promise.resolve(window.AariAuth.signOut()).then(function(){ window.location.href = '/'; });
+            return;
+          }
+        } catch(_){}
+        window.location.href = '/';
+      });
+    }
   }
 
   function bindMoreToggle(wrapper){
