@@ -12841,18 +12841,28 @@ Tell me your planned move-out date and I will set the inspection.`
   //   Previous weeks accordion · paid invoices grouped by ISO week
   var _bfInvSelectedTc = null; // tap a TC card to filter history
   function _brokerInvoiceMobileHtml(){
-    var submitted = (_invoices || []).filter(function(i){ return i.status === 'submitted'; });
-    var paid = (_invoices || []).filter(function(i){ return i.status === 'paid'; });
+    var mine = (_profile && _profile.id) || '';
+    // Unfiltered sources (per-TC ledger cards need to see EVERYONE regardless
+    // of the current TC filter · they're the switcher, not filtered results).
+    var submittedAll = (_invoices || []).filter(function(i){ return i.status === 'submitted'; });
+    var paidAll = (_invoices || []).filter(function(i){ return i.status === 'paid'; });
+    // TC filter · applied to pay run, projected, and history. Empty ⇒ everyone.
+    var _matchTc = function(i){ return !_bfInvSelectedTc || String(i.tc_id) === String(_bfInvSelectedTc); };
+    var submitted = submittedAll.filter(_matchTc);
+    var paid = paidAll.filter(_matchTc);
     var owedNow = submitted.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
     var totalInFlight = owedNow + paid.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
-    var mine = (_profile && _profile.id) || '';
-    // Year + month boundaries for YTD / MTD
+    // Year + month boundaries for YTD / MTD (always computed off ALL invoices)
     var _now = new Date();
     var _y0 = new Date(_now.getFullYear(), 0, 1).getTime();
     var _m0 = new Date(_now.getFullYear(), _now.getMonth(), 1).getTime();
     // "Not yet sent" · per-TC billable that hasn't been submitted this week
     var groups = _brokerInvoiceGroups();
     var pending = groups.filter(function(g){ return g.billable.length; });
+    // Apply TC filter to pending too — pay run + projected show only that TC.
+    if(_bfInvSelectedTc){
+      pending = pending.filter(function(g){ return String(g.id) === String(_bfInvSelectedTc); });
+    }
     var pendingTotal = pending.reduce(function(s, g){
       return s + g.billable.reduce(function(t, f){ return t + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
     }, 0);
@@ -12880,10 +12890,18 @@ Tell me your planned move-out date and I will set the inspection.`
 
     var _cardBase = 'background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:12px';
 
-    // ---- Header ----
+    // ---- Header + "Viewing" banner when a TC is selected ----
     var head = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:14px">' +
       '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;letter-spacing:-0.3px;color:#0f0f0f">Invoices</span>' +
-      '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c">' + _money(totalInFlight) + ' in flight</span></div>';
+      '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c">' + _money(totalInFlight) + (_bfInvSelectedTc ? '' : ' in flight') + '</span></div>';
+    if(_bfInvSelectedTc){
+      var _selNm = (String(_bfInvSelectedTc) === String(mine)) ? 'You' : _tcDisplayName(_bfInvSelectedTc).split(' ')[0];
+      head += '<div style="display:flex;align-items:center;gap:10px;background:#0f0f0f;color:#fff;border-radius:12px;padding:11px 14px;margin-bottom:14px">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:9.5px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#a9a49a">Viewing</div>' +
+        '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:16px;font-weight:600;letter-spacing:-0.2px;margin-top:1px">' + esc(_selNm) + '</div></div>' +
+        '<button type="button" data-bf-inv-tc-clear="1" style="flex:none;background:rgba(255,255,255,0.14);color:#fff;border:0;border-radius:8px;padding:0 14px;min-height:36px;font:700 11px \'Inter\',sans-serif;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer;font-family:inherit">All TCs</button>' +
+      '</div>';
+    }
 
     // ---- Pay run card · submitted invoices awaiting payment ----
     var payRun = '';
@@ -12939,7 +12957,9 @@ Tell me your planned move-out date and I will set the inspection.`
         '</div>' + nsRows + '</div>';
     }
 
-    // ---- Per-TC ledger · YTD / MTD / owed-now, tap to filter history ----
+    // ---- Per-TC ledger · YTD / MTD / owed-now, tap to switch view to that TC ----
+    // Built off UNFILTERED invoices — this section IS the switcher, so every
+    // TC always needs to appear regardless of the current filter.
     var byTc = {};
     (_invoices || []).forEach(function(i){
       if(!i || !i.tc_id) return;
@@ -12956,13 +12976,7 @@ Tell me your planned move-out date and I will set the inspection.`
       .sort(function(a, b){ return (b.owed + b.mtd) - (a.owed + a.mtd); });
     var ledger = '';
     if(tcList.length){
-      ledger = '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:6px">Per coordinator</div>';
-      if(_bfInvSelectedTc){
-        ledger += '<div style="display:flex;align-items:center;gap:8px;background:#faf7ef;border:0.5px solid #eae5d6;border-radius:8px;padding:8px 12px;margin:0 0 10px;font-size:11.5px;color:#5f5c56">' +
-          '<span>Showing only <b style="color:#0f0f0f">' + esc(_tcDisplayName(_bfInvSelectedTc).split(' ')[0]) + '</b>\'s history</span>' +
-          '<button type="button" data-bf-inv-tc-clear="1" style="margin-left:auto;background:transparent;border:0;color:#a3402f;font:700 11px \'Inter\',sans-serif;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer;font-family:inherit;padding:4px 8px;min-height:32px">Clear</button>' +
-        '</div>';
-      }
+      ledger = '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:6px">Per coordinator &middot; tap to switch</div>';
       tcList.forEach(function(g){
         var isMe = String(g.tcId) === String(mine);
         var nm = isMe ? 'You' : _tcDisplayName(g.tcId).split(' ')[0];
