@@ -69,11 +69,20 @@
       z-index:1;
     }
     /* Mobile · the aari-banner nav REPLACES the legacy #aari-header "Where to?"
-       bar wherever the banner mounts. Kill it globally so we never stack two
-       navs on top of each other. Desktop keeps aari-header untouched. */
-    @media (max-width: 899px){
-      #aari-header { display: none !important; }
-    }
+       bar AND its bell / avatar rendering wherever the banner mounts. Kill it
+       globally at ALL viewport widths so it can never bleed over my avatar.
+       Marlenyi (July 25) was still seeing the aari-hdr bell overlapping her
+       photo · this stops that at every specificity + also targets any bell
+       elements that leak outside of #aari-header. */
+    #aari-header,
+    #aari-header *,
+    .aari-hdr,
+    .aari-hdr-bell,
+    .aari-hdr-avatar,
+    #aari-hdr-bell,
+    #aari-avatar-btn,
+    #aari-hdr-menu,
+    .aari-hdr-menu { display: none !important; visibility: hidden !important; }
 
     /* ============ HOMEPAGE-STYLE TOP NAV ============ */
     .awb-nav{
