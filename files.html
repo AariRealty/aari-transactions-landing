@@ -12161,6 +12161,48 @@ Tell me your planned move-out date and I will set the inspection.`
         }, 3000);
       }
     } catch(_){}
+    // One-shot cleanup · auto-check every deadline that is currently overdue.
+    // Marlenyi (July 26): "check it all for me as if it was completed" · scoped
+    // to CURRENTLY PAST-DUE only, never touches future tasks. Uses the engine's
+    // own _tcCalDeadlines() output (which already excludes closed/archived
+    // files, completed deadlines via _dlDoneFor, and now walk-through) and
+    // calls markDeadlineDone() so the audit log records each completion
+    // properly. Guarded per-user in localStorage so it runs exactly once.
+    // Chase reminders and the derived insp_checkin item are excluded — they're
+    // not real deadlines, so nothing to mark complete on them.
+    try {
+      var OD_KEY = 'aari_overdue_autocleared_v1_' + ((_profile && _profile.id) ? _profile.id : 'anon');
+      if(_profile && _profile.id && !localStorage.getItem(OD_KEY)){
+        setTimeout(async function(){
+          try {
+            var todayD = new Date(); todayD.setHours(0, 0, 0, 0);
+            var todayIso = todayD.toISOString().slice(0, 10);
+            var fileById = {}; (_files || []).forEach(function(f){ if(f) fileById[f.id] = f; });
+            var overdue = (_tcCalDeadlines() || []).filter(function(d){
+              if(!d || !(d.date instanceof Date) || isNaN(d.date.getTime())) return false;
+              if(d.isChase) return false;
+              if(d.key === 'insp_checkin') return false;
+              if(typeof d.key === 'string' && d.key.slice(-7) === '__chase') return false;
+              var f = fileById[d.fileId];
+              if(!f || f.assigned_tc_id !== _profile.id) return false;
+              var dd = new Date(d.date.getTime()); dd.setHours(0, 0, 0, 0);
+              return dd.getTime() < todayD.getTime();
+            });
+            if(!overdue.length){ try { localStorage.setItem(OD_KEY, new Date().toISOString()); } catch(_){} return; }
+            console.log('[overdue-autoclear] marking', overdue.length, 'past-due deadlines as done');
+            for(var i = 0; i < overdue.length; i++){
+              var item = overdue[i];
+              var f = fileById[item.fileId];
+              if(!f) continue;
+              try { await markDeadlineDone(f, item.key, todayIso, 'Auto-cleared past due'); } catch(_){}
+            }
+            try { localStorage.setItem(OD_KEY, new Date().toISOString()); } catch(_){}
+            console.log('[overdue-autoclear] done · re-rendering');
+            try { renderCalHeatmap(); } catch(_){}
+          } catch(_){}
+        }, 4500);
+      }
+    } catch(_){}
     const ss = host.querySelector('#cal-search');
     if(ss) ss.addEventListener('input', function(){ _calSearch = this.value; const pos = this.selectionStart; renderTcCalendar(); const e = document.querySelector('#fileCalendar #cal-search'); if(e){ e.focus(); try { e.setSelectionRange(pos, pos); } catch(_){} } });
     const sync = host.querySelector('#cal-sync');
