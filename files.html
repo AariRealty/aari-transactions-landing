@@ -12136,6 +12136,31 @@ Tell me your planned move-out date and I will set the inspection.`
     // Self-heal · once per session, when the calendar opens, quietly re-push every
     // deadline so nothing on the coordinator's calendar can drift stale.
     try { if(!window.__aariGcalSelfHealed){ window.__aariGcalSelfHealed = true; setTimeout(function(){ try { gcalSyncDeadlines(); } catch(_){} }, 1500); } } catch(_){}
+    // One-shot cleanup · walk-through removed from the engine (July 26). Sync
+    // never deletes stale events on its own, so any walk-through the engine
+    // previously pushed lingers on the TC's Google Calendar. Iterate every
+    // file assigned to the signed-in coordinator once and delete the
+    // walk-through event on each. Guarded per-user in localStorage so it
+    // runs exactly once, then never again.
+    try {
+      var CLEAN_KEY = 'aari_gcal_walkthrough_cleaned_v1_' + ((_profile && _profile.id) ? _profile.id : 'anon');
+      if(_profile && _profile.id && !localStorage.getItem(CLEAN_KEY)){
+        setTimeout(async function(){
+          try {
+            var mine = (_files || []).filter(function(f){
+              return f && f.assigned_tc_id === _profile.id && f.status !== 'archived';
+            });
+            if(!mine.length){ try { localStorage.setItem(CLEAN_KEY, new Date().toISOString()); } catch(_){} return; }
+            console.log('[walkthrough-cleanup] scrubbing walk-through events on', mine.length, 'files');
+            for(var i = 0; i < mine.length; i++){
+              try { await gcalDeleteDeadline(mine[i].id, 'walk_through'); } catch(_){}
+            }
+            try { localStorage.setItem(CLEAN_KEY, new Date().toISOString()); } catch(_){}
+            console.log('[walkthrough-cleanup] done');
+          } catch(_){}
+        }, 3000);
+      }
+    } catch(_){}
     const ss = host.querySelector('#cal-search');
     if(ss) ss.addEventListener('input', function(){ _calSearch = this.value; const pos = this.selectionStart; renderTcCalendar(); const e = document.querySelector('#fileCalendar #cal-search'); if(e){ e.focus(); try { e.setSelectionRange(pos, pos); } catch(_){} } });
     const sync = host.querySelector('#cal-sync');
