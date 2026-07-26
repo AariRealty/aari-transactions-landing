@@ -377,9 +377,15 @@
     body[data-mnav-view="today"] #fileCalendar,
     body[data-mnav-view="today"] #boardWrap { display: none !important; }
 
-    /* Board · kanban only. Kill the calendar heatmap + Active files header. */
+    /* Board · funnel view (Mock 3). Kill kanban swipe + chip strip so
+       the funnel + drill list stands alone. Also kill calendar heatmap
+       and Active files header (owned by other tabs). */
     body[data-mnav-view="board"] #calHeatmap,
-    body[data-mnav-view="board"] #fileCalendar { display: none !important; }
+    body[data-mnav-view="board"] #fileCalendar,
+    body[data-mnav-view="board"] #kanban,
+    body[data-mnav-view="board"] #kanban-chips,
+    body[data-mnav-view="board"] #kanban-title,
+    body[data-mnav-view="board"] #ft-filter { display: none !important; }
 
     /* Calendar · same as Today for now (calendar heatmap on its own).
        If Marlenyi wants a differentiated Calendar view later — e.g., a
@@ -13299,6 +13305,133 @@ Tell me your planned move-out date and I will set the inspection.`
     // List view mirrors every kanban refresh · honors the saved toggle.
     try { applyView(); } catch(_){}
     try { _renderKanbanChips(); } catch(_){}
+    try { _renderBoardFunnelMobile(); } catch(_){}
+  }
+
+  // Board mobile · funnel view (Mock 3, Marlenyi picked July 26).
+  // Replaces the swipe-column kanban on mobile Board tab with a horizontal
+  // bar chart of stage distribution + a drill-in list for the selected stage.
+  // Kanban itself stays intact and is used verbatim on desktop; a scoped CSS
+  // rule hides #kanban + #kanban-chips only on mobile Board (see [board-mobile]
+  // CSS block). Fires from renderKanban() so it stays in sync with the same
+  // data source; no separate loader.
+  var _bfSelectedStage = null;
+  function _renderBoardFunnelMobile(){
+    var wrap = document.getElementById('boardWrap');
+    if(!wrap) return;
+    // Ensure the host exists and sits before the kanban
+    var host = document.getElementById('boardFunnel');
+    if(!host){
+      host = document.createElement('div');
+      host.id = 'boardFunnel';
+      var k = document.getElementById('kanban');
+      if(k && k.parentNode){ k.parentNode.insertBefore(host, k); }
+      else { wrap.appendChild(host); }
+    }
+    // Only render on mobile; desktop keeps kanban visible via CSS
+    if(typeof window === 'undefined' || !window.matchMedia || !window.matchMedia('(max-width: 600px)').matches){
+      host.innerHTML = '';
+      return;
+    }
+    // Same filtering renderKanban uses
+    var stages = (typeof getStages === 'function') ? getStages() : [];
+    if(!stages.length){ host.innerHTML = ''; return; }
+    var filtered = (_files || [])
+      .filter(function(f){ return (f.file_type || 'sale') === _fileTypeFilter; })
+      .filter(function(f){ return f.status !== 'archived' && !f.archived_at; })
+      .filter(function(f){ return !((f.raw_form_data || {}).test_pool); });
+    var buckets = {}; stages.forEach(function(s){ buckets[s] = []; });
+    filtered.forEach(function(f){
+      var s = deriveStage(f);
+      if(buckets[s]) buckets[s].push(f);
+      else buckets[stages[0]].push(f);
+    });
+    var maxC = 1;
+    stages.forEach(function(s){ if(buckets[s].length > maxC) maxC = buckets[s].length; });
+    // Default selection · first non-empty stage
+    if(!_bfSelectedStage || !buckets[_bfSelectedStage]){
+      _bfSelectedStage = null;
+      for(var i = 0; i < stages.length; i++){ if(buckets[stages[i]].length){ _bfSelectedStage = stages[i]; break; } }
+      if(!_bfSelectedStage) _bfSelectedStage = stages[0];
+    }
+    // Header · counts
+    var totalActive = filtered.length;
+    var _needN = 0;
+    filtered.forEach(function(f){
+      var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+      if(d != null && d <= 0) _needN++;
+    });
+    var head = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px">' +
+      '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;letter-spacing:-0.3px;color:#0f0f0f">Board</span>' +
+      '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c">' + totalActive + ' active</span></div>' +
+      '<div style="font-size:11.5px;color:#7a756c;margin-bottom:14px;line-height:1.4">' +
+        (_needN ? '<b style="color:#a3402f;font-weight:700">' + _needN + ' need you</b> · ' : '') +
+        (buckets['under_contract'] ? buckets['under_contract'].length + ' under contract' : '') +
+      '</div>';
+    // Funnel bars
+    var funnel = '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:14px;padding:14px 14px 10px;margin-bottom:16px">' +
+      '<div style="font-size:9.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#a9a49a;margin-bottom:12px">Distribution &middot; tap a bar to drill in</div>';
+    stages.forEach(function(s, idx){
+      var c = buckets[s].length;
+      var pct = Math.round((c / maxC) * 100);
+      var name = ((typeof STAGE_LABELS === 'object' && STAGE_LABELS[s]) || s).toUpperCase();
+      var isSel = (s === _bfSelectedStage);
+      var isUrgent = (s === 'inspection' || s === 'ctc') && buckets[s].some(function(f){ var d = daysToClose(f); return d != null && d <= 2; });
+      var fillColor = isUrgent ? '#a3402f' : (isSel ? '#0f0f0f' : '#3d3a34');
+      var nColor = isUrgent ? '#a3402f' : '#0f0f0f';
+      funnel += '<div data-funnel-stage="' + esc(s) + '" style="display:grid;grid-template-columns:110px 1fr auto;align-items:center;gap:10px;padding:8px 0;cursor:pointer' + (idx > 0 ? ';border-top:0.5px solid #f3ede0' : '') + (isSel ? ';background:linear-gradient(90deg,rgba(15,15,15,0.03) 0%,transparent 100%);margin:0 -14px;padding-left:14px;padding-right:14px' : '') + '">' +
+        '<span style="font-size:11px;font-weight:600;color:#0f0f0f;text-transform:uppercase;letter-spacing:0.4px;line-height:1.2">' + esc(name) + '</span>' +
+        '<div style="height:12px;background:#f4f1ec;border-radius:6px;overflow:hidden"><div style="height:100%;background:' + fillColor + ';border-radius:6px;width:' + pct + '%;transition:width .3s ease"></div></div>' +
+        '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;color:' + nColor + ';letter-spacing:-0.3px;min-width:20px;text-align:right">' + c + '</span>' +
+      '</div>';
+    });
+    funnel += '</div>';
+    // Drill list · selected stage
+    var selFiles = buckets[_bfSelectedStage] || [];
+    var selName = ((typeof STAGE_LABELS === 'object' && STAGE_LABELS[_bfSelectedStage]) || _bfSelectedStage).toUpperCase();
+    var drill = '<div style="display:flex;align-items:baseline;gap:8px;padding:0 4px 8px">' +
+      '<span style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c">' + esc(selName) + '</span>' +
+      '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#0f0f0f">' + selFiles.length + '</span></div>';
+    if(!selFiles.length){
+      drill += '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:12px;padding:18px;text-align:center;font-size:12px;color:#a9a49a;font-style:italic">No files in this stage.</div>';
+    } else {
+      drill += '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:12px;overflow:hidden">';
+      selFiles.forEach(function(f, i){
+        var addr = String(f.property_address || 'Untitled file').split(',')[0];
+        var _agentName = (f.raw_form_data && f.raw_form_data.agent_name) ? String(f.raw_form_data.agent_name).trim() : '';
+        var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+        var meta = _agentName ? esc(_agentName) : '';
+        if(d != null){
+          if(d < 0) meta += (meta ? ' · ' : '') + 'closed ' + Math.abs(d) + 'd ago';
+          else if(d === 0) meta += (meta ? ' · ' : '') + 'closes today';
+          else meta += (meta ? ' · ' : '') + 'closes in ' + d + 'd';
+        }
+        var right = '';
+        if(d != null && d <= 0) right = '<span style="font-size:10.5px;color:#a3402f;font-weight:600;letter-spacing:0.2px">today</span>';
+        else if(d != null && d <= 5) right = '<span style="font-size:10.5px;color:#a3402f;font-weight:600;letter-spacing:0.2px">' + d + 'd</span>';
+        else if(d != null) right = '<span style="font-size:10.5px;color:#7a756c;font-weight:600;letter-spacing:0.2px">' + d + 'd</span>';
+        drill += '<div data-file-open="' + esc(f.id) + '" style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;min-height:56px' + (i > 0 ? ';border-top:0.5px solid #f3ede0' : '') + '">' +
+          '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2">' + esc(addr) + '</div>' +
+          (meta ? '<div style="font-size:11px;color:#7a756c;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + meta + '</div>' : '') +
+          '</div>' + right + '</div>';
+      });
+      drill += '</div>';
+    }
+    host.innerHTML = head + funnel + drill;
+    // Wire clicks
+    host.querySelectorAll('[data-funnel-stage]').forEach(function(b){
+      b.addEventListener('click', function(){
+        _bfSelectedStage = this.getAttribute('data-funnel-stage');
+        _renderBoardFunnelMobile();
+      });
+    });
+    host.querySelectorAll('[data-file-open]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var fid = this.getAttribute('data-file-open');
+        var f = (_files || []).find(function(x){ return x.id === fid; });
+        if(f && typeof openPlaybook === 'function') openPlaybook(f);
+      });
+    });
   }
 
   // Lane jumper chip strip · mobile-only quick-nav above the kanban swipe track.
