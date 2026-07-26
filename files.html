@@ -16413,12 +16413,32 @@ Tell me your planned move-out date and I will set the inspection.`
     if(cellSave && _currentFile){ try { nfSaveGroup(); } catch(_){} return; }
     const cellCancel = e.target.closest('[data-cell-cancel]');
     if(cellCancel){ _setupCellEdit = null; try { renderContractTerms(_currentFile); } catch(_){} return; }
+    // Loan-type select save handler · exposed globally so the inline `onchange`
+    // on the sub-selector (rendered inside the Financing group) can call it. Kept
+    // right next to data-fin-set below so both financing writes live together.
+    if(!window.__aariSaveFinType){
+      window.__aariSaveFinType = function(v){
+        if(!_currentFile) return;
+        var _f = _currentFile;
+        var _lg = Object.assign({}, _f.logistics || {});
+        _lg.financing_type = String(v || '').toLowerCase();
+        (async function(){
+          try { var r = await _client.from('files').update({ logistics: _lg }).eq('id', _f.id); if(r && r.error) throw r.error; }
+          catch(err){ alert('Could not save loan type: ' + ((err && err.message) || 'unknown') + '.'); return; }
+          _f.logistics = _lg;
+          try { renderContractTerms(_f); } catch(_){ try { openPlaybook(_f); } catch(__){} }
+        })();
+      };
+    }
     const finSet = e.target.closest('[data-fin-set]');
     if(finSet && _currentFile){
       const _v = finSet.getAttribute('data-fin-set');
       const _f = _currentFile;
       const _lg = Object.assign({}, _f.logistics || {});
       _lg.financing_confirmed = _v;   // isCashFile reads this first, so it overrides the contract's loan amount
+      // Flipping to Cash clears any prior loan-type pick so it doesn't stick around
+      // in downstream views (line 7348 label map, invoices, etc.).
+      if(_v === 'cash') _lg.financing_type = 'cash';
       (async function(){
         try { const r = await _client.from('files').update({ logistics: _lg }).eq('id', _f.id); if(r && r.error) throw r.error; }
         catch(err){ alert('Could not save financing type: ' + ((err && err.message) || 'unknown') + '.'); return; }
@@ -18151,9 +18171,9 @@ Tell me your planned move-out date and I will set the inspection.`
         { id:'uc_lender_followup',   label:'Loan in process · lender',
           showIf:(f)=>!isCashFile(f),
           sub:'Template in &ldquo;What to send next&rdquo;.' },
-        { id:'uc_flood_insurance',   label:'Confirm flood insurance requirement with lender &middot; verify flood zone and NFIP eligibility per &sect;10(d)',
+        { id:'uc_flood_insurance',   label:'Flood insurance · lender',
           showIf:(f)=>!isCashFile(f),
-          sub:'Template in &ldquo;What to send next&rdquo;. Financed deals only &mdash; the cash equivalent is the title flood-zone check in Inspection.' },
+          sub:'Confirm flood insurance requirement with the lender · verify flood zone and NFIP eligibility per &sect;10(d). Template in &ldquo;What to send next&rdquo;. Financed deals only &mdash; the cash equivalent is the title flood-zone check in Inspection.' },
         { id:'uc_title_commitment_reminder', label:'Remind title · commitment due', dl:'title_commitment',
           softComplete:{ flag:'received', label:'Mark as received', chip:'Received' },
           sub:'Template in &ldquo;What to send next&rdquo; — based on the contract deadline.' },
@@ -18161,8 +18181,8 @@ Tell me your planned move-out date and I will set the inspection.`
           sub:'Template in &ldquo;What to send next&rdquo; — confirm both brokers signed and it is on file. Comprehensive Rider GG.' },
         { id:'uc_lien_search',       label:'Order lien search',
           sub:'Template in &ldquo;What to send next&rdquo; — order early so it clears before closing.' },
-        { id:'uc_elevation_cert',    label:'Request Elevation Certificate &middot; required per contract &sect;10(d)',
-          sub:'Template in &ldquo;What to send next&rdquo; — ask the listing agent whether the seller already has one before ordering.' },
+        { id:'uc_elevation_cert',    label:'Elevation certificate · request',
+          sub:'Required per contract &sect;10(d). Template in &ldquo;What to send next&rdquo; — ask the listing agent whether the seller already has one before ordering.' },
         { id:'uc_tenant_lease',      label:'Confirm lease info · tenant', dl:'tenant_lease',
           showIf:(f)=>(((f.logistics||{}).ctc_tenant_occupied)==='yes'),
           sub:'Due within 5 days of Effective Date when the property is tenant occupied.' },
@@ -18219,9 +18239,9 @@ Tell me your planned move-out date and I will set the inspection.`
         { id:'insp_lender_update',  label:'Loan status · lender',
           showIf:(f)=>!isCashFile(f),
           sub:'Template in &ldquo;What to send next&rdquo;.' },
-        { id:'insp_flood_zone',     label:'Verify flood zone with title &middot; confirm zone and NFIP eligibility per &sect;10(d)',
+        { id:'insp_flood_zone',     label:'Flood zone · title',
           showIf:(f)=>isCashFile(f),
-          sub:'Cash file &mdash; no lender is ordering a flood determination, so title confirms it. Get the answer before the inspection period ends, while the buyer can still walk. Deliberately NOT wired to clear the inspection deadline: this is a watch task, and checking it must never hide a live deadline.' },
+          sub:'Confirm zone and NFIP eligibility per &sect;10(d). Cash file &mdash; no lender is ordering a flood determination, so title confirms it. Get the answer before the inspection period ends, while the buyer can still walk. Deliberately NOT wired to clear the inspection deadline: this is a watch task, and checking it must never hide a live deadline.' },
         { id:'insp_weekly_update',  label:'Weekly update',
           sub:'Template in &ldquo;What to send next&rdquo;.' },
       ],
@@ -18280,9 +18300,9 @@ Tell me your planned move-out date and I will set the inspection.`
           sub:'Verify title closer, lender, both agents, buyer, and seller contact information has not changed. Update anything that has.' },
         { id:'app_insurance_binder', label:'Confirm insurance binder', showIf:(f)=>!isCashFile(f),
           sub:'Financed deals · the lender needs the hazard insurance binder, named as mortgagee, before Clear to Close. Confirm it is bound and sent to the lender and title.' },
-        { id:'app_missing_info',     label:'Flag any missing information to agent',
-          showIf:(f)=>{ try { const mf = (typeof missingFieldsFor === 'function') ? missingFieldsFor({}, f) : []; return !!(mf && mf.length); } catch(_){ return false; } },
-          sub:'If the system flags missing items on this file, send the agent a request for what is still needed.' },
+        { id:'app_missing_info',     label:'Missing info · re-flag if still open',
+          showIf:(f)=>{ try { const mf = (typeof missingFieldsFor === 'function') ? missingFieldsFor({}, f) : []; return !!(mf && mf.length) && !((f.stage_tasks||{}).uc_missing_info); } catch(_){ return false; } },
+          sub:'Only shows if UC didn&rsquo;t clear the missing-info ask · re-flag the agent so nothing stalls the file at appraisal.' },
         { id:'app_title_commitment', label:'Title commitment · on track', dl:'title_commitment',
           softComplete:{ flag:'received', label:'Mark as received', chip:'Received' },
           showIf:(f)=>!((f.stage_tasks||{}).uc_title_commitment_reminder),
@@ -20256,6 +20276,18 @@ Tell me your planned move-out date and I will set the inspection.`
           '<button type="button" data-fin-set="financed" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'financed' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Financed</button>' +
           '<button type="button" data-fin-set="cash" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'cash' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Cash</button>' +
           '</span></div>';
+        // Loan-type sub-selector · only rendered when Financed. Writes into
+        // logistics.financing_type. Options match the label map at line 7348
+        // (Cash/Conventional/FHA/VA/USDA) plus Other for anything not in that set.
+        if(fd.finType !== undefined){
+          var _lts = [['','—'],['conventional','Conventional'],['fha','FHA'],['va','VA'],['usda','USDA'],['other','Other']];
+          var _cur = String(fd.finType || '').toLowerCase();
+          var _opts = _lts.map(function(p){ return '<option value="' + p[0] + '"' + (p[0] === _cur ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('');
+          // Inline onchange · calls the global helper defined below at page load.
+          return '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(fd.label) + '</span>' +
+            '<select data-fin-type-set onchange="window.__aariSaveFinType && window.__aariSaveFinType(this.value)" style="font:inherit;font-size:13px;font-weight:600;padding:6px 10px;border:1px solid #d9d4ca;border-radius:7px;background:#fff;color:#0f0f0f">' + _opts + '</select>' +
+          '</div>';
+        }
         if(fd.ro) return dispRow(fd.label, fd.val);
         if(_setupEditAll) return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5"><div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div><input data-nf-field="' + fd.f + '" value="' + esc(fd.val).replace(/"/g, '&quot;') + '" placeholder="Type it in" style="width:100%;font:inherit;font-size:13px;font-weight:600;padding:8px 10px;border:1px solid #d9d4ca;border-radius:8px;background:#fff;color:#0f0f0f"></div>';
         if(_setupCellEdit === fd.f){
@@ -20293,7 +20325,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const _defs = {
       contract:   ['Contract', 'contract', [{f:'__type',label:'Type',sel:_typeSelect},{f:'address',label:'Property',val:(ex.address||file.property_address||'')},{f:'county',label:'County',val:(ex.county||'')},{f:'legal',label:'Legal description',val:(ex.legal||'')}]],
       parties:    ['Parties', 'parties', _pf],
-      financing:  ['Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),fin:(_financed?'financed':'cash')}].concat(_financed ? [{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}] : [])],
+      financing:  ['Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),fin:(_financed?'financed':'cash')}].concat(_financed ? [{f:'__finType',label:'Loan type',finType:(((file.logistics||{}).financing_type)||'')},{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}] : [])],
       pricedates: ['Price', 'pricedates', [{f:'price',label:'Purchase price',val:_price},{f:'emd',label:'Initial deposit',val:_money(ex.emd)},{f:'balance_to_close',label:'Balance to close',val:_money(ex.balance_to_close)}]],
       contacts:   ['Lender contact', 'contacts', [{f:'lender_name',label:'Lender / loan officer',val:(ex.lender_name||'')},{f:'lender_email',label:'Lender email',val:(ex.lender_email||'')},{f:'lender_phone',label:'Lender phone',val:(ex.lender_phone||'')}]],
     };
@@ -20381,6 +20413,18 @@ Tell me your planned move-out date and I will set the inspection.`
           '<button type="button" data-fin-set="financed" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'financed' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Financed</button>' +
           '<button type="button" data-fin-set="cash" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'cash' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Cash</button>' +
           '</span></div>';
+        // Loan-type sub-selector · only rendered when Financed. Writes into
+        // logistics.financing_type. Options match the label map at line 7348
+        // (Cash/Conventional/FHA/VA/USDA) plus Other for anything not in that set.
+        if(fd.finType !== undefined){
+          var _lts = [['','—'],['conventional','Conventional'],['fha','FHA'],['va','VA'],['usda','USDA'],['other','Other']];
+          var _cur = String(fd.finType || '').toLowerCase();
+          var _opts = _lts.map(function(p){ return '<option value="' + p[0] + '"' + (p[0] === _cur ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('');
+          // Inline onchange · calls the global helper defined below at page load.
+          return '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(fd.label) + '</span>' +
+            '<select data-fin-type-set onchange="window.__aariSaveFinType && window.__aariSaveFinType(this.value)" style="font:inherit;font-size:13px;font-weight:600;padding:6px 10px;border:1px solid #d9d4ca;border-radius:7px;background:#fff;color:#0f0f0f">' + _opts + '</select>' +
+          '</div>';
+        }
         if(fd.ro) return dispRow(fd.label, fd.val);
         if(_setupEditAll) return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5"><div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div><input data-nf-field="' + fd.f + '" value="' + esc(fd.val).replace(/"/g, '&quot;') + '" placeholder="Type it in" style="width:100%;font:inherit;font-size:13px;font-weight:600;padding:8px 10px;border:1px solid #d9d4ca;border-radius:8px;background:#fff;color:#0f0f0f"></div>';
         if(_setupCellEdit === fd.f){
