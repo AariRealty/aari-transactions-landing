@@ -90,6 +90,15 @@
   }
   function parseDate(s){ if(!s) return null; const d = new Date(s + 'T12:00:00'); return isNaN(d) ? null : d; }
 
+  // Deadlines that live in the schedules for legal completeness but never
+  // reach the TC's daily list, calendar sync, or overdue pane. Marlenyi
+  // (July 26): "as a TC I don't need to know when the final walk-through is,
+  // that's irrelevant." Walk-through is an agent/client checkpoint.
+  // Filter is applied at contractDeadlines() output and DEADLINE_DEFS below,
+  // so every UI consumer inherits it without changes. Downstream data exports
+  // that read byKey['walk_through'] just get undefined — no cascading break.
+  const HIDDEN_KEYS = new Set(['walk_through', 'walkthrough']);
+
   const DEADLINE_DEFS = [
     { key:'emd_initial',      label:'Initial deposit due',        from:'effective', offset:3 },
     { key:'loan_app',         label:'Loan application due',       from:'effective', offset:5 },
@@ -100,7 +109,7 @@
     { key:'title_commitment', label:'Title commitment deadline',  from:'closing',   offset:-15 },
     { key:'estoppel',         label:'Estoppel letter deadline',   from:'closing',   offset:-10 },
     { key:'survey',           label:'Survey deadline',            from:'effective', offset:5 },
-    { key:'walkthrough',      label:'Walk-through',               from:'closing',   offset:-1 },
+    // walkthrough entry removed · see HIDDEN_KEYS note above.
   ];
   // Legacy → contract key aliases, so the flat keys this function returns get
   // their dates from the contract-aware engine (single source of truth).
@@ -747,6 +756,8 @@
     }
     const rows = [];
     for(const it of defs){
+      // Global TC-side hide list · never emit walk-through, etc. See HIDDEN_KEYS.
+      if(HIDDEN_KEYS.has(it.key)) continue;
       let computed;
       try { computed = it.compute(E, C, cfg); } catch(_){ computed = null; }
       if(!computed || isNaN(computed.getTime())) continue;
