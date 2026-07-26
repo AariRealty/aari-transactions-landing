@@ -377,20 +377,17 @@
     body[data-mnav-view="today"] #fileCalendar,
     body[data-mnav-view="today"] #boardWrap { display: none !important; }
 
-    /* Board · always kill calendar heatmap and Active files header
-       (owned by other tabs). Kanban vs Funnel scoped further below. */
+    /* Board · per-service pipelines only on mobile · kanban swipe + chip
+       strip stay for desktop. Marlenyi (July 26): kanban isn't the best
+       fit on mobile; killed the toggle and going all-in on per-service
+       mini-pipelines. Also kill calendar heatmap and Active files header
+       (owned by other tabs). */
     body[data-mnav-view="board"] #calHeatmap,
     body[data-mnav-view="board"] #fileCalendar,
+    body[data-mnav-view="board"] #kanban,
+    body[data-mnav-view="board"] #kanban-chips,
     body[data-mnav-view="board"] #kanban-title,
     body[data-mnav-view="board"] #ft-filter { display: none !important; }
-
-    /* Board · Funnel view (Mock 3). Kill kanban swipe + chip strip. */
-    body[data-mnav-view="board"][data-board-view="funnel"] #kanban,
-    body[data-mnav-view="board"][data-board-view="funnel"] #kanban-chips { display: none !important; }
-
-    /* Board · Kanban view (Mock 1 refined). Kanban and its chip strip
-       are visible; funnel body inside #boardFunnel is empty (JS returns
-       just the header + toggle). No hides needed here. */
 
     /* Calendar · same as Today for now (calendar heatmap on its own).
        If Marlenyi wants a differentiated Calendar view later — e.g., a
@@ -13318,25 +13315,27 @@ Tell me your planned move-out date and I will set the inspection.`
     try { _renderBoardFunnelMobile(); } catch(_){}
   }
 
-  // Board mobile · funnel view (Mock 3, Marlenyi picked July 26).
-  // Replaces the swipe-column kanban on mobile Board tab with a horizontal
-  // bar chart of stage distribution + a drill-in list for the selected stage.
-  // Kanban itself stays intact and is used verbatim on desktop; a scoped CSS
-  // rule hides #kanban + #kanban-chips only on mobile Board (see [board-mobile]
-  // CSS block). Fires from renderKanban() so it stays in sync with the same
-  // data source; no separate loader.
-  var _bfSelectedStage = null;
-  var _bfBoardView = null; // 'funnel' | 'kanban' · persisted per-user
-  function _bfLoadBoardView(){
-    if(_bfBoardView) return _bfBoardView;
-    try { _bfBoardView = localStorage.getItem('aari_board_mobile_view_' + ((_profile && _profile.id) ? _profile.id : 'anon')) || 'funnel'; } catch(_){ _bfBoardView = 'funnel'; }
-    if(_bfBoardView !== 'kanban' && _bfBoardView !== 'funnel') _bfBoardView = 'funnel';
-    return _bfBoardView;
+  // Board mobile · per-service pipelines (Marlenyi picked July 26 · Mock 3
+  // then refined into the combined final layout).
+  // Every active service (Sales / Listings / Buyer rep / Lease) gets its own
+  // card with its OWN stage ladder (Sales runs Setup → Under contract → CTC
+  // → Closed; Listings is New → MLS Setup → Active; etc.). Tap any stage
+  // chip to open its file list inline inside that service card. The All
+  // pill shows every service at once; each specific pill filters to one.
+  // Kanban swipe + chip strip are killed on mobile Board (see the
+  // body[data-mnav-view="board"] CSS block) — the full swipe kanban is
+  // desktop-only now. Fires from renderKanban() so it stays in sync with
+  // the same _files data; no separate loader.
+  var _bfSelectedStage = null; // 'svc::stage' or null
+  var _bfFilter = null; // 'all' | 'sale' | 'listing' | 'lease' | 'buyer_rep'
+  function _bfLoadFilter(){
+    if(_bfFilter) return _bfFilter;
+    try { _bfFilter = localStorage.getItem('aari_bf_filter_' + ((_profile && _profile.id) ? _profile.id : 'anon')) || 'all'; } catch(_){ _bfFilter = 'all'; }
+    return _bfFilter;
   }
-  function _bfSaveBoardView(v){
-    _bfBoardView = v;
-    try { localStorage.setItem('aari_board_mobile_view_' + ((_profile && _profile.id) ? _profile.id : 'anon'), v); } catch(_){}
-    try { document.body.dataset.boardView = v; } catch(_){}
+  function _bfSaveFilter(v){
+    _bfFilter = v;
+    try { localStorage.setItem('aari_bf_filter_' + ((_profile && _profile.id) ? _profile.id : 'anon'), v); } catch(_){}
   }
   function _renderBoardFunnelMobile(){
     var wrap = document.getElementById('boardWrap');
@@ -13355,202 +13354,189 @@ Tell me your planned move-out date and I will set the inspection.`
       host.innerHTML = '';
       return;
     }
-    // Count active files across ALL file types (so the pills know if they exist).
+    // ---- Data prep ----
+    var _allActive = (_files || []).filter(function(f){
+      if(f.status === 'archived' || f.archived_at) return false;
+      if((f.raw_form_data || {}).test_pool) return false;
+      return true;
+    });
     var _typeCounts = { sale:0, listing:0, lease:0, buyer_rep:0 };
-    (_files || []).forEach(function(f){
-      if(f.status === 'archived' || f.archived_at) return;
-      if((f.raw_form_data || {}).test_pool) return;
+    _allActive.forEach(function(f){
       var t = f.file_type || 'sale';
       if(_typeCounts[t] != null) _typeCounts[t]++;
     });
-    var stages = (typeof getStages === 'function') ? getStages() : [];
-    if(!stages.length){ host.innerHTML = ''; return; }
-    // Filter by file type + status + search
-    var filtered = (_files || [])
-      .filter(function(f){ return (f.file_type || 'sale') === _fileTypeFilter; })
-      .filter(function(f){ return f.status !== 'archived' && !f.archived_at; })
-      .filter(function(f){ return !((f.raw_form_data || {}).test_pool); })
-      .filter(function(f){ return (typeof matchesSearch === 'function') ? matchesSearch(f) : true; });
-    // Bucket by stage AND compute the "Needs you" bucket (files with a real overdue,
-    // via file_deadlines pending rows or daysToClose past due).
-    var buckets = {}; stages.forEach(function(s){ buckets[s] = []; });
-    var needYou = [];
-    filtered.forEach(function(f){
-      var s = deriveStage(f);
-      if(buckets[s]) buckets[s].push(f);
-      else buckets[stages[0]].push(f);
-      // "Needs you" = closing today or overdue past-close
-      var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
-      if(d != null && d <= 0) needYou.push(f);
+    var _searchFn = (typeof matchesSearch === 'function') ? matchesSearch : function(){ return true; };
+    var _filteredAll = _allActive.filter(_searchFn);
+    var _filter = _bfLoadFilter();
+    // Service catalog (only include types that have files)
+    var _svcCatalog = [
+      { id:'sale',      label:'Sales' },
+      { id:'listing',   label:'Listings' },
+      { id:'buyer_rep', label:'Buyer rep' },
+      { id:'lease',     label:'Lease' }
+    ].filter(function(s){ return _typeCounts[s.id] > 0; });
+    var _shownSvcs = (_filter === 'all') ? _svcCatalog : _svcCatalog.filter(function(s){ return s.id === _filter; });
+    // Displayed totals · sum across shown services after search
+    var _displayCount = 0, _needYouCount = 0;
+    _shownSvcs.forEach(function(s){
+      var svcFiles = _filteredAll.filter(function(f){ return (f.file_type || 'sale') === s.id; });
+      _displayCount += svcFiles.length;
+      svcFiles.forEach(function(f){
+        var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+        if(d != null && d <= 0) _needYouCount++;
+      });
     });
-    // Compute max ignoring empty stages; needYou is a special first bar
-    var maxC = Math.max(1, needYou.length);
-    stages.forEach(function(s){ if(buckets[s].length > maxC) maxC = buckets[s].length; });
-    // Default selection · needYou if any, else first non-empty stage
-    if(!_bfSelectedStage || (_bfSelectedStage !== '__needyou' && !buckets[_bfSelectedStage])){
-      if(needYou.length) _bfSelectedStage = '__needyou';
-      else {
-        _bfSelectedStage = null;
-        for(var i = 0; i < stages.length; i++){ if(buckets[stages[i]].length){ _bfSelectedStage = stages[i]; break; } }
-        if(!_bfSelectedStage) _bfSelectedStage = stages[0];
-      }
-    }
-    // Header + counts + view toggle
-    var totalActive = filtered.length;
-    var _view = _bfLoadBoardView();
-    try { document.body.dataset.boardView = _view; } catch(_){}
-    var _segBtn = function(v, label){
-      var on = (_view === v);
-      return '<button type="button" data-board-view-set="' + v + '" style="border:0;background:' + (on ? '#fff' : 'transparent') + ';' + (on ? 'box-shadow:0 1px 2px rgba(0,0,0,.06);color:#0f0f0f;font-weight:700;' : 'color:#7a756c;font-weight:600;') + 'font-family:inherit;font-size:11px;padding:6px 14px;border-radius:18px;cursor:pointer;min-height:32px">' + label + '</button>';
+    // ---- Header + counts ----
+    var head = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px">' +
+      '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;letter-spacing:-0.3px;color:#0f0f0f">Board</span>' +
+      '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c">' + _displayCount + ' active</span></div>' +
+      '<div style="font-size:11.5px;color:#7a756c;margin-bottom:12px;line-height:1.4">' +
+        (_needYouCount ? '<b style="color:#a3402f;font-weight:700">' + _needYouCount + ' need you</b>' : 'Nothing needs you right now') +
+      '</div>';
+    // ---- Pills · All + service types ----
+    var _pill = function(id, label, count){
+      var on = (_filter === id);
+      return '<button type="button" data-bf-filter="' + id + '" style="border:0.5px solid ' + (on ? '#0f0f0f' : 'rgba(15,15,15,0.14)') + ';background:' + (on ? '#0f0f0f' : '#fff') + ';color:' + (on ? '#fff' : '#0f0f0f') + ';font:600 12px \'Inter\',-apple-system,sans-serif;padding:7px 13px;border-radius:999px;cursor:pointer;font-family:inherit;min-height:34px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;-webkit-tap-highlight-color:transparent">' + label + ' <span style="font-family:\'Playfair Display\',Georgia,serif;font-size:13px;font-weight:500;color:' + (on ? '#d6d1c6' : '#a9a49a') + '">' + count + '</span></button>';
     };
-    // File-type pill (Sales / Listings / etc.) · restore what was hidden earlier
-    var _ftPill = function(id, label){
-      var on = (_fileTypeFilter === id);
-      var n = _typeCounts[id] || 0;
-      return '<button type="button" data-bf-ft="' + id + '" style="border:0.5px solid ' + (on ? '#0f0f0f' : 'rgba(15,15,15,0.14)') + ';background:' + (on ? '#0f0f0f' : '#fff') + ';color:' + (on ? '#fff' : '#0f0f0f') + ';font:600 12px \'Inter\',-apple-system,sans-serif;padding:7px 13px;border-radius:999px;cursor:pointer;font-family:inherit;min-height:34px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;-webkit-tap-highlight-color:transparent">' + label + ' <span style="font-family:\'Playfair Display\',Georgia,serif;font-size:13px;font-weight:500;color:' + (on ? '#d6d1c6' : '#a9a49a') + '">' + n + '</span></button>';
-    };
-    var ftPills = '<div style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:0 0 12px;margin:0 -2px 0;-ms-overflow-style:none;scrollbar-width:none" data-bf-pills>';
-    if(_typeCounts.sale)      ftPills += _ftPill('sale',      'Sales');
-    if(_typeCounts.listing)   ftPills += _ftPill('listing',   'Listings');
-    if(_typeCounts.lease)     ftPills += _ftPill('lease',     'Leases');
-    if(_typeCounts.buyer_rep) ftPills += _ftPill('buyer_rep', 'Buyer rep');
-    ftPills += '</div>';
-    // Search input · reuses global _searchQuery so kanban + funnel stay in sync
-    var searchHtml = '<div style="position:relative;margin-bottom:12px">' +
+    var _totalAll = _typeCounts.sale + _typeCounts.listing + _typeCounts.lease + _typeCounts.buyer_rep;
+    var pills = '<div style="display:flex;gap:6px;overflow-x:auto;padding:0 0 12px;-webkit-overflow-scrolling:touch;-ms-overflow-style:none;scrollbar-width:none">' +
+      _pill('all', 'All', _totalAll);
+    _svcCatalog.forEach(function(s){ pills += _pill(s.id, s.label, _typeCounts[s.id]); });
+    pills += '</div>';
+    // ---- Search input · reuses global _searchQuery ----
+    var searchHtml = '<div style="position:relative;margin-bottom:16px">' +
       '<span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#a9a49a;font-size:13px;pointer-events:none">🔍</span>' +
       '<input id="bf-search" value="' + esc(_searchQuery || '') + '" placeholder="Search address, client, agent…" style="width:100%;background:#fff;border:0.5px solid rgba(15,15,15,0.16);border-radius:10px;padding:10px 12px 10px 36px;font-size:16px;font-family:inherit;outline:none;-webkit-appearance:none;min-height:42px">' +
     '</div>';
-    var head = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px">' +
-      '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;letter-spacing:-0.3px;color:#0f0f0f">Board</span>' +
-      '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c">' + totalActive + ' active</span></div>' +
-      '<div style="font-size:11.5px;color:#7a756c;margin-bottom:12px;line-height:1.4">' +
-        (needYou.length ? '<b style="color:#a3402f;font-weight:700">' + needYou.length + ' need you</b>' : 'Nothing needs you right now') +
-      '</div>' +
-      ftPills + searchHtml +
-      '<div style="display:inline-flex;background:#f4f1ec;border-radius:20px;padding:2px;margin-bottom:14px">' +
-        _segBtn('funnel', 'Funnel') + _segBtn('kanban', 'Kanban') +
-      '</div>';
-    // ---- Funnel bars · Needs you first, then non-empty stages only ----
-    var funnel = '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:14px;padding:14px 14px 10px;margin-bottom:16px">' +
-      '<div style="font-size:9.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#a9a49a;margin-bottom:12px">Distribution &middot; tap a bar to drill in</div>';
-    // rowFn writes one bar
-    var _fbar = function(key, label, count, isSel, urgent){
-      var pct = Math.round((count / maxC) * 100);
-      var fillColor = urgent ? '#a3402f' : (isSel ? '#0f0f0f' : '#3d3a34');
-      var nColor = urgent ? '#a3402f' : '#0f0f0f';
-      var isFirst = funnel.slice(-8).indexOf('mbottom') > -1;
-      return '<div data-funnel-stage="' + esc(key) + '" style="display:grid;grid-template-columns:100px 1fr auto;align-items:center;gap:10px;padding:9px 0;cursor:pointer' + (isFirst ? '' : ';border-top:0.5px solid #f3ede0') + (isSel ? ';background:linear-gradient(90deg,rgba(15,15,15,0.04) 0%,transparent 100%);margin:0 -14px;padding-left:14px;padding-right:14px' : '') + '">' +
-        '<span style="font-size:10.5px;font-weight:700;color:' + (urgent ? '#a3402f' : '#0f0f0f') + ';text-transform:uppercase;letter-spacing:0.4px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(label) + '</span>' +
-        '<div style="height:11px;background:#f4f1ec;border-radius:6px;overflow:hidden"><div style="height:100%;background:' + fillColor + ';border-radius:6px;width:' + pct + '%;transition:width .3s ease"></div></div>' +
-        '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;color:' + nColor + ';letter-spacing:-0.3px;min-width:20px;text-align:right">' + count + '</span>' +
-      '</div>';
-    };
-    if(needYou.length){
-      funnel += _fbar('__needyou', 'Needs you', needYou.length, _bfSelectedStage === '__needyou', true);
-    }
-    // Only non-empty stages · empty ones just add noise
-    var _visibleStages = stages.filter(function(s){ return buckets[s].length > 0; });
-    var _emptyCount = stages.length - _visibleStages.length;
-    _visibleStages.forEach(function(s){
-      var c = buckets[s].length;
-      var label = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[s]) || s;
-      var isSel = (s === _bfSelectedStage);
-      var urgent = (s === 'inspection' || s === 'ctc') && buckets[s].some(function(f){ var d = daysToClose(f); return d != null && d <= 2; });
-      funnel += _fbar(s, label, c, isSel, urgent);
-    });
-    if(_emptyCount){
-      funnel += '<div style="font-size:10px;color:#a9a49a;text-align:center;padding:9px 0 4px;border-top:0.5px solid #f3ede0;font-style:italic">' + _emptyCount + ' empty stage' + (_emptyCount === 1 ? '' : 's') + ' hidden</div>';
-    }
-    funnel += '</div>';
-    // ---- Drill list · selected stage (or Needs you) ----
-    var selFiles, selName;
-    if(_bfSelectedStage === '__needyou'){
-      selFiles = needYou;
-      selName = 'Needs you';
-    } else {
-      selFiles = buckets[_bfSelectedStage] || [];
-      selName = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[_bfSelectedStage]) || _bfSelectedStage;
-    }
-    var drill = '<div style="display:flex;align-items:baseline;gap:8px;padding:0 4px 8px">' +
-      '<span style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:' + (_bfSelectedStage === '__needyou' ? '#a3402f' : '#7a756c') + '">' + esc(String(selName).toUpperCase()) + '</span>' +
-      '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#0f0f0f">' + selFiles.length + '</span></div>';
-    if(!selFiles.length){
-      drill += '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:12px;padding:18px;text-align:center;font-size:12px;color:#a9a49a;font-style:italic">No files here.</div>';
-    } else {
-      drill += '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:12px;overflow:hidden">';
-      selFiles.forEach(function(f, i){
-        var addr = String(f.property_address || 'Untitled file').split(',')[0];
-        var _agentName = (f.raw_form_data && f.raw_form_data.agent_name) ? String(f.raw_form_data.agent_name).trim() : '';
-        var _tc = f.assigned_tc_id ? (typeof _tcsById !== 'undefined' && _tcsById[f.assigned_tc_id]) : null;
-        var _tcName = _tc ? ((_tc.first_name || '') + ' ' + (_tc.last_name || '')).trim() : '';
-        var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
-        var metaBits = [];
-        if(_agentName) metaBits.push(esc(_agentName));
-        if(_tcName) metaBits.push('TC: ' + esc(_tcName));
-        var meta = metaBits.join(' · ');
-        // Urgency badge · left edge color + right-side days label
-        var edge = '#e6e2d5', rightColor = '#7a756c', rightText = '';
-        if(d != null){
-          if(d < 0){ edge = '#a3402f'; rightColor = '#a3402f'; rightText = Math.abs(d) + 'd late'; }
-          else if(d === 0){ edge = '#a3402f'; rightColor = '#a3402f'; rightText = 'today'; }
-          else if(d <= 5){ edge = '#c69a3a'; rightColor = '#8a6a1f'; rightText = d + 'd'; }
-          else { rightText = d + 'd'; }
+    // ---- Per-service pipeline cards ----
+    var svcCards = '';
+    _shownSvcs.forEach(function(s){
+      var svcStages = (typeof STAGES_BY_TYPE === 'object' && STAGES_BY_TYPE[s.id]) || [];
+      var svcFiles = _filteredAll.filter(function(f){ return (f.file_type || 'sale') === s.id; });
+      var buckets = {}; svcStages.forEach(function(st){ buckets[st] = []; });
+      svcFiles.forEach(function(f){
+        var st = deriveStage(f);
+        if(buckets[st]) buckets[st].push(f);
+        else if(svcStages.length) buckets[svcStages[0]].push(f);
+      });
+      svcCards += '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:14px;padding:14px;margin-bottom:12px">' +
+        '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px">' +
+          '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:16px;font-weight:600;letter-spacing:-0.2px">' + esc(s.label) + '</span>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c">' + svcFiles.length + '</span>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch">';
+      svcStages.forEach(function(st){
+        var count = buckets[st].length;
+        var stKey = s.id + '::' + st;
+        var isSel = (_bfSelectedStage === stKey);
+        var isZero = count === 0;
+        var isUrgent = (st === 'inspection' || st === 'ctc') && buckets[st].some(function(f){ var d = daysToClose(f); return d != null && d <= 2; });
+        var label = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[st]) || st;
+        var bg = isSel ? (isUrgent ? '#a3402f' : '#0f0f0f') : '#faf7ef';
+        var border = isSel ? (isUrgent ? '#a3402f' : '#0f0f0f') : (isUrgent ? '#e7bcb0' : '#ece8e0');
+        var textColor = isSel ? '#fff' : (isUrgent ? '#a3402f' : '#0f0f0f');
+        var opacity = (isZero && !isSel) ? '.5' : '1';
+        svcCards += '<button type="button" data-bf-stage-svc="' + s.id + '" data-bf-stage-key="' + esc(st) + '" style="flex:0 0 auto;background:' + bg + ';border:0.5px solid ' + border + ';border-radius:10px;padding:8px 12px;cursor:pointer;display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:78px;-webkit-tap-highlight-color:transparent;font-family:inherit;color:' + textColor + ';opacity:' + opacity + '">' +
+          '<span style="font-size:8.5px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;opacity:.7;line-height:1.2">' + esc(String(label).toUpperCase()) + '</span>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:20px;font-weight:500;letter-spacing:-0.5px;line-height:1">' + count + '</span>' +
+        '</button>';
+      });
+      svcCards += '</div>'; // close stages row
+      // Inline drill list if this service has the currently selected stage
+      if(_bfSelectedStage && _bfSelectedStage.indexOf(s.id + '::') === 0){
+        var selStage = _bfSelectedStage.substring(s.id.length + 2);
+        var selFiles = buckets[selStage] || [];
+        var selLabel = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[selStage]) || selStage;
+        svcCards += '<div style="margin-top:12px;padding-top:12px;border-top:0.5px solid #f3ede0">' +
+          '<div style="display:flex;align-items:baseline;gap:8px;padding:0 4px 6px">' +
+            '<span style="font-size:9.5px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#7a756c">' + esc(String(selLabel).toUpperCase()) + '</span>' +
+            '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:14px;font-weight:500;color:#0f0f0f">' + selFiles.length + '</span>' +
+          '</div>';
+        if(!selFiles.length){
+          svcCards += '<div style="padding:14px;text-align:center;font-size:11.5px;color:#a9a49a;font-style:italic">No files in this stage.</div>';
+        } else {
+          selFiles.forEach(function(f, i){
+            var addr = String(f.property_address || 'Untitled file').split(',')[0];
+            var _agentName = (f.raw_form_data && f.raw_form_data.agent_name) ? String(f.raw_form_data.agent_name).trim() : '';
+            var _tc = f.assigned_tc_id ? (typeof _tcsById !== 'undefined' && _tcsById[f.assigned_tc_id]) : null;
+            var _tcName = _tc ? ((_tc.first_name || '') + ' ' + (_tc.last_name || '')).trim() : '';
+            var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+            var metaBits = [];
+            if(_agentName) metaBits.push(esc(_agentName));
+            if(_tcName) metaBits.push('TC: ' + esc(_tcName));
+            var meta = metaBits.join(' · ');
+            var edge = '#e6e2d5', rightColor = '#7a756c', rightText = '';
+            if(d != null){
+              if(d < 0){ edge = '#a3402f'; rightColor = '#a3402f'; rightText = Math.abs(d) + 'd late'; }
+              else if(d === 0){ edge = '#a3402f'; rightColor = '#a3402f'; rightText = 'today'; }
+              else if(d <= 5){ edge = '#c69a3a'; rightColor = '#8a6a1f'; rightText = d + 'd'; }
+              else { rightText = d + 'd'; }
+            }
+            svcCards += '<div data-file-open="' + esc(f.id) + '" style="position:relative;display:flex;align-items:center;gap:12px;padding:11px 4px 11px 13px;cursor:pointer;min-height:52px' + (i > 0 ? ';border-top:0.5px solid #f3ede0' : '') + '">' +
+              '<span style="position:absolute;left:0;top:8px;bottom:8px;width:3px;background:' + edge + ';border-radius:0 2px 2px 0"></span>' +
+              '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(addr) + '</div>' +
+              (meta ? '<div style="font-size:10.5px;color:#7a756c;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + meta + '</div>' : '') +
+              '</div>' +
+              (rightText ? '<span style="flex:none;font-size:10px;font-weight:700;letter-spacing:0.2px;color:' + rightColor + ';text-transform:uppercase">' + esc(rightText) + '</span>' : '') +
+            '</div>';
+          });
         }
-        drill += '<div data-file-open="' + esc(f.id) + '" style="position:relative;display:flex;align-items:center;gap:12px;padding:12px 14px 12px 17px;cursor:pointer;min-height:56px' + (i > 0 ? ';border-top:0.5px solid #f3ede0' : '') + '">' +
-          '<span style="position:absolute;left:0;top:8px;bottom:8px;width:3px;background:' + edge + ';border-radius:0 2px 2px 0"></span>' +
-          '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2">' + esc(addr) + '</div>' +
-          (meta ? '<div style="font-size:11px;color:#7a756c;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + meta + '</div>' : '') +
-          '</div>' +
-          (rightText ? '<span style="flex:none;font-size:10.5px;color:' + rightColor + ';font-weight:700;letter-spacing:0.2px;text-transform:uppercase">' + esc(rightText) + '</span>' : '') +
-        '</div>';
-      });
-      drill += '</div>';
+        svcCards += '</div>'; // close drill
+      }
+      svcCards += '</div>'; // close service card
+    });
+    // Empty state · nothing matched search
+    if(!_shownSvcs.length || _displayCount === 0){
+      svcCards += '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:12px;padding:24px;text-align:center;font-size:12px;color:#a9a49a;font-style:italic">' +
+        (_searchQuery ? 'No files match &ldquo;' + esc(_searchQuery) + '&rdquo;.' : 'No active files.') +
+      '</div>';
     }
-    // When Kanban view is picked, only render header + filters + toggle here.
-    // The kanban itself (#kanban + #kanban-chips) shows via the [board-mobile]
-    // CSS block scoped to body[data-board-view="kanban"].
-    var body = (_view === 'funnel') ? (funnel + drill) : '';
-    host.innerHTML = head + body;
-    // Wire file-type pill clicks · flip _fileTypeFilter and re-render
-    host.querySelectorAll('[data-bf-ft]').forEach(function(b){
+    // Foot note · desktop kanban
+    var foot = '<div style="text-align:center;color:#a9a49a;font-size:10.5px;padding:14px 4px 4px;font-style:italic;margin-top:6px">Full swipe kanban lives on desktop</div>';
+    host.innerHTML = head + pills + searchHtml + svcCards + foot;
+    // ---- Wire clicks ----
+    // Pills · switch filter, sync _fileTypeFilter when picking a specific service
+    host.querySelectorAll('[data-bf-filter]').forEach(function(b){
       b.addEventListener('click', function(){
-        var ft = this.getAttribute('data-bf-ft');
-        if(ft === _fileTypeFilter) return;
-        _fileTypeFilter = ft;
-        try { localStorage.setItem('aari_files_type', ft); } catch(_){}
-        try { STAGES = STAGES_BY_TYPE[_fileTypeFilter] || STAGES_BY_TYPE.sale; } catch(_){}
-        try { renderFileTypeFilter(); } catch(_){}
-        try { renderKanbanShell(); } catch(_){}
-        try { renderKpis(); } catch(_){}
-        _bfSelectedStage = null; // reset selection so first stage of new type highlights
-        renderKanban(); // re-fires _renderBoardFunnelMobile at the end
+        var v = this.getAttribute('data-bf-filter');
+        if(v === _filter) return;
+        _bfSaveFilter(v);
+        _bfSelectedStage = null;
+        if(v !== 'all' && v !== _fileTypeFilter){
+          _fileTypeFilter = v;
+          try { localStorage.setItem('aari_files_type', v); } catch(_){}
+          try { STAGES = STAGES_BY_TYPE[_fileTypeFilter] || STAGES_BY_TYPE.sale; } catch(_){}
+          try { renderFileTypeFilter(); } catch(_){}
+          try { renderKanbanShell(); } catch(_){}
+          try { renderKpis(); } catch(_){}
+          renderKanban(); // re-fires _renderBoardFunnelMobile at end
+        } else {
+          _renderBoardFunnelMobile();
+        }
       });
     });
-    // Wire search input · live filter, preserve focus + cursor position
+    // Search input · live filter, preserve focus + cursor
     var searchEl = host.querySelector('#bf-search');
     if(searchEl){
       searchEl.addEventListener('input', function(){
         _searchQuery = (this.value || '').trim().toLowerCase();
         var pos = this.selectionStart;
-        renderKanban(); // re-fires funnel render
+        _renderBoardFunnelMobile();
         var again = document.getElementById('bf-search');
         if(again){ again.focus(); try { again.setSelectionRange(pos, pos); } catch(_){} }
       });
     }
-    // Wire view-toggle clicks
-    host.querySelectorAll('[data-board-view-set]').forEach(function(b){
+    // Stage chips · toggle selection
+    host.querySelectorAll('[data-bf-stage-key]').forEach(function(b){
       b.addEventListener('click', function(){
-        _bfSaveBoardView(this.getAttribute('data-board-view-set'));
+        var svc = this.getAttribute('data-bf-stage-svc');
+        var stage = this.getAttribute('data-bf-stage-key');
+        var newKey = svc + '::' + stage;
+        _bfSelectedStage = (_bfSelectedStage === newKey) ? null : newKey; // tap-again to close
         _renderBoardFunnelMobile();
       });
     });
-    if(_view !== 'funnel') return;
-    host.querySelectorAll('[data-funnel-stage]').forEach(function(b){
-      b.addEventListener('click', function(){
-        _bfSelectedStage = this.getAttribute('data-funnel-stage');
-        _renderBoardFunnelMobile();
-      });
-    });
+    // File rows · open the playbook drawer
     host.querySelectorAll('[data-file-open]').forEach(function(b){
       b.addEventListener('click', function(){
         var fid = this.getAttribute('data-file-open');
