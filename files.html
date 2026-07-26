@@ -7320,6 +7320,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // Each render is isolated so one throwing panel can't abort the rest (the
     // deep-link handoff below used to die behind a renderPriorityQueue crash).
     try{ renderPriorityQueue(); }catch(e){ console.warn('renderPriorityQueue failed', e); }
+    try{ loadNotifications(); }catch(e){ console.warn('loadNotifications failed', e); }
     try{ maybeOpenFromUrl(); }catch(e){ console.warn('maybeOpenFromUrl failed', e); }
   }
 
@@ -10919,6 +10920,89 @@ Tell me your planned move-out date and I will set the inspection.`
     var el = document.getElementById(anchorId);
     if(el){ setTimeout(function(){ try { el.scrollIntoView({ behavior:'smooth', block:'start' }); } catch(_){} }, 70); }
     ensureMobileNav();
+  }
+
+  // ===== In-portal notifications (Phase 1) · TC + broker bell =====
+  // Reads tc_notifications: durable rows the reply system writes when an agent flags a
+  // date. The AI never edits a date or sends downstream — this is the record a human acts
+  // on. Refreshed on every board load. This same table seeds Phase 2 (phone push).
+  var _notifs = [];
+  async function loadNotifications(){
+    if(!_client || !_profile) return;
+    try {
+      var role = (_profile.role || '').toLowerCase();
+      var q = _client.from('tc_notifications').select('*').is('read_at', null).order('created_at', { ascending:false }).limit(50);
+      if(role === 'tc') q = q.eq('recipient_id', _profile.id);
+      var r = await q;
+      _notifs = (r && r.data) ? r.data : [];
+    } catch(e){ console.error('notif load failed', e); _notifs = []; }
+    renderNotifBell();
+  }
+  function renderNotifBell(){
+    var bell = document.getElementById('aariNotifBell');
+    if(!bell){
+      bell = document.createElement('button');
+      bell.id = 'aariNotifBell';
+      bell.type = 'button';
+      bell.setAttribute('aria-label', 'Notifications');
+      bell.style.cssText = 'position:fixed;top:12px;right:14px;z-index:9986;width:40px;height:40px;border-radius:50%;background:#fff;border:1px solid #ece8e0;box-shadow:0 4px 14px rgba(0,0,0,.10);cursor:pointer;font-size:17px;line-height:38px;text-align:center;padding:0';
+      bell.innerHTML = '<span aria-hidden="true">&#128276;</span><span id="aariNotifBadge" style="display:none;position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;background:#9a3a2c;color:#fff;border-radius:999px;font-size:10px;font-weight:700;line-height:18px;text-align:center;padding:0 4px"></span>';
+      document.body.appendChild(bell);
+      bell.addEventListener('click', openNotifPanel);
+    }
+    var n = _notifs.length;
+    var badge = document.getElementById('aariNotifBadge');
+    if(badge){ badge.textContent = n > 9 ? '9+' : String(n); badge.style.display = n ? 'block' : 'none'; }
+  }
+  function _notifTime(iso){ try { var d = new Date(iso); return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); } catch(_){ return ''; } }
+  function openNotifPanel(){
+    var old = document.getElementById('aariNotifOverlay'); if(old){ old.remove(); return; }
+    var ov = document.createElement('div');
+    ov.id = 'aariNotifOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9992;background:rgba(15,15,15,.28);display:flex;justify-content:flex-end;align-items:flex-start';
+    var rows;
+    if(!_notifs.length){
+      rows = '<div style="padding:26px 18px;text-align:center;color:#8a857c;font-size:13px">You are all caught up.</div>';
+    } else {
+      rows = _notifs.map(function(nt){
+        return '<button type="button" data-notif="' + esc(nt.id) + '" data-file="' + esc(nt.file_id || '') + '" style="display:block;width:100%;text-align:left;background:#fff;border:0;border-bottom:1px solid #f1efe8;padding:13px 16px;cursor:pointer;font-family:inherit">' +
+          '<div style="display:flex;align-items:center;gap:8px"><span style="flex:none;width:7px;height:7px;border-radius:50%;background:#9a3a2c"></span><span style="font-size:13.5px;font-weight:700;color:#0f0f0f">' + esc(nt.title || 'Needs your review') + '</span></div>' +
+          (nt.body ? '<div style="font-size:12px;color:#5f5e5a;margin:4px 0 0;padding-left:15px;line-height:1.45">&ldquo;' + esc(String(nt.body).slice(0,140)) + '&rdquo;</div>' : '') +
+          '<div style="font-size:10.5px;color:#a39e95;margin:5px 0 0;padding-left:15px">' + esc(_notifTime(nt.created_at)) + ' · tap to open the file</div>' +
+        '</button>';
+      }).join('');
+    }
+    ov.innerHTML = '<div style="background:#faf9f5;width:340px;max-width:92vw;height:100%;overflow-y:auto;box-shadow:-6px 0 24px rgba(0,0,0,.14)">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:15px 16px;border-bottom:1px solid #ece8e0;background:#fff">' +
+        '<span style="font-size:15px;font-weight:700">Needs you</span>' +
+        '<button type="button" id="aariNotifClose" aria-label="Close" style="background:none;border:0;font-size:18px;color:#8a857c;cursor:pointer;padding:2px 6px">&times;</button>' +
+      '</div>' + rows +
+      (_notifs.length ? '<button type="button" id="aariNotifClearAll" style="display:block;width:100%;background:none;border:0;border-top:1px solid #ece8e0;padding:13px;color:#5f5e5a;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Mark all read</button>' : '') +
+    '</div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function(e){
+      if(e.target === ov){ ov.remove(); return; }
+      if(e.target.closest && e.target.closest('#aariNotifClose')){ ov.remove(); return; }
+      if(e.target.closest && e.target.closest('#aariNotifClearAll')){ _clearAllNotifs(); ov.remove(); return; }
+      var b = e.target.closest && e.target.closest('[data-notif]');
+      if(b){
+        var nid = b.getAttribute('data-notif'); var fid = b.getAttribute('data-file');
+        markNotifRead(nid);
+        ov.remove();
+        var file = (_files || []).find(function(x){ return x.id === fid; });
+        if(file && typeof openPlaybook === 'function') openPlaybook(file);
+      }
+    });
+  }
+  async function markNotifRead(id){
+    _notifs = _notifs.filter(function(n){ return n.id !== id; });
+    renderNotifBell();
+    try { await _client.from('tc_notifications').update({ read_at: new Date().toISOString() }).eq('id', id); } catch(e){ console.error('notif mark read failed', e); }
+  }
+  async function _clearAllNotifs(){
+    var ids = _notifs.map(function(n){ return n.id; });
+    _notifs = []; renderNotifBell();
+    try { for(var i=0;i<ids.length;i++){ await _client.from('tc_notifications').update({ read_at: new Date().toISOString() }).eq('id', ids[i]); } } catch(e){ console.error('notif clear failed', e); }
   }
 
   function renderTcCalendar(){
