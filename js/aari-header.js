@@ -968,6 +968,18 @@
   }
 
   function boot() {
+    // aari-banner.js is now the mobile top nav (logo + avatar + dropdown).
+    // On phones (≤900px), aari-header must not mount at all — even a
+    // background render leaks the bell / avatar over the banner. Marlenyi
+    // (July 25) kept seeing the top bell despite CSS + DOM-removal hides;
+    // this is the belt-and-suspenders fix at the source.
+    try {
+      if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 900px)').matches) {
+        var stale = document.getElementById(ROOT_ID);
+        if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+        return;
+      }
+    } catch (_) {}
     root = document.getElementById(ROOT_ID);
     if (!root) return;
     injectCss();
