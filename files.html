@@ -12925,21 +12925,39 @@ Tell me your planned move-out date and I will set the inspection.`
         '<div style="font-size:11.5px;color:#a9a49a;margin-top:8px">' + submitted.length + ' invoice' + (submitted.length === 1 ? '' : 's') + ' waiting on you</div>' +
         '<div style="margin-top:16px;padding-top:14px;border-top:0.5px solid rgba(15,15,15,0.08)">' + payRows + '</div></div>';
     } else if(pending.length){
-      // No submitted invoices yet · show projected pay run with per-TC breakdown
+      // No submitted invoices yet · show projected pay run with per-file breakdown
       var projRows = pending.map(function(pg){
         var isMe = String(pg.id) === String(mine);
         var nm = isMe ? 'You' : _tcDisplayName(pg.id).split(' ')[0];
         var t = pg.billable.reduce(function(s, f){ return s + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
-        return '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:10px 0;border-top:0.5px solid rgba(15,15,15,0.06)">' +
-          '<div style="min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
-          '<div style="font-size:11px;color:#7a756c;margin-top:2px">' + pg.billable.length + ' file' + (pg.billable.length === 1 ? '' : 's') + ' &middot; waiting for ' + esc(isMe ? 'you to send' : nm + ' to send') + '</div></div>' +
-          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:17px;font-weight:500;color:#0f0f0f;letter-spacing:-0.3px">' + _money(t) + '</span>' +
-        '</div>';
+        // When filtered to a single TC, list the actual FILES making up the total
+        // so the $80 clearly maps to "Wagner Ave" (or whatever). When viewing All
+        // TCs, keep the per-TC roll-up so the card doesn't blow up in length.
+        var inner;
+        if(_bfInvSelectedTc){
+          inner = pg.billable.map(function(f){
+            var addr = String(f.property_address || 'File').split(',')[0];
+            var svcLbl = (typeof _svcLabel === 'function') ? _svcLabel(f) : '';
+            var pay = fileTcPayCents(f);
+            return '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:9px 0;border-top:0.5px solid rgba(15,15,15,0.06)">' +
+              '<div style="min-width:0"><div style="font-size:12.5px;font-weight:600;color:#0f0f0f">' + esc(addr) + '</div>' +
+              (svcLbl ? '<div style="font-size:10.5px;color:#7a756c;margin-top:2px">' + esc(String(svcLbl)) + '</div>' : '') + '</div>' +
+              '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#0f0f0f;letter-spacing:-0.2px">' + _money(pay) + '</span>' +
+            '</div>';
+          }).join('');
+        } else {
+          inner = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:10px 0;border-top:0.5px solid rgba(15,15,15,0.06)">' +
+            '<div style="min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
+            '<div style="font-size:11px;color:#7a756c;margin-top:2px">' + pg.billable.length + ' file' + (pg.billable.length === 1 ? '' : 's') + ' &middot; waiting for ' + esc(isMe ? 'you to send' : nm + ' to send') + '</div></div>' +
+            '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:17px;font-weight:500;color:#0f0f0f;letter-spacing:-0.3px">' + _money(t) + '</span>' +
+          '</div>';
+        }
+        return inner;
       }).join('');
       payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px 20px 16px;margin-bottom:16px">' +
-        '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;margin-bottom:6px">Projected · nothing submitted yet</div>' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;margin-bottom:6px">Ready to invoice &middot; nothing submitted yet</div>' +
         '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:44px;font-weight:500;letter-spacing:-1px;line-height:1;color:#0f0f0f">' + _money(pendingTotal) + '</div>' +
-        '<div style="font-size:11.5px;color:#a9a49a;margin-top:8px">TCs will submit Thursday &middot; you pay Friday</div>' +
+        '<div style="font-size:11.5px;color:#a9a49a;margin-top:8px">Files at their last service stage &middot; TCs submit Thursday, you pay Friday</div>' +
         '<div style="margin-top:16px;padding-top:14px;border-top:0.5px solid rgba(15,15,15,0.08)">' + projRows + '</div></div>';
     } else {
       payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px;margin-bottom:16px;text-align:center">' +
@@ -13019,12 +13037,12 @@ Tell me your planned move-out date and I will set the inspection.`
         var nm = isMe ? 'You' : _tcDisplayName(g.tcId).split(' ')[0];
         var initial = (nm.charAt(0) || '?').toUpperCase();
         var isSel = (_bfInvSelectedTc === g.tcId);
-        // Right-side badge · owed (submitted-unpaid) wins over projected (pending billable)
+        // Right-side badge · owed (submitted-unpaid) wins over ready (billable-ready)
         var badge = '';
         if(g.owed){
           badge = '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:3px 8px;border-radius:5px;background:' + (isSel ? '#fbecea' : '#a3402f') + ';color:' + (isSel ? '#a3402f' : '#fff') + '">' + _money(g.owed) + ' owed</span>';
         } else if(g.projected){
-          badge = '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:3px 8px;border-radius:5px;background:' + (isSel ? '#f6edd9' : '#faf7ef') + ';color:' + (isSel ? '#8a6a1f' : '#8a6a1f') + ';border:0.5px solid ' + (isSel ? '#f6edd9' : '#e6dfcd') + '">' + _money(g.projected) + ' projected</span>';
+          badge = '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:3px 8px;border-radius:5px;background:' + (isSel ? '#f6edd9' : '#faf7ef') + ';color:' + (isSel ? '#8a6a1f' : '#8a6a1f') + ';border:0.5px solid ' + (isSel ? '#f6edd9' : '#e6dfcd') + '">' + _money(g.projected) + ' ready</span>';
         }
         ledger += '<button type="button" data-bf-inv-tc="' + esc(g.tcId) + '" style="width:100%;text-align:left;background:' + (isSel ? '#0f0f0f' : '#fff') + ';color:' + (isSel ? '#fff' : '#0f0f0f') + ';border:0.5px solid ' + (isSel ? '#0f0f0f' : 'rgba(15,15,15,0.10)') + ';border-radius:12px;padding:14px 14px 12px;margin-bottom:8px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;display:block">' +
           '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">' +
@@ -13066,7 +13084,10 @@ Tell me your planned move-out date and I will set the inspection.`
         return fileTcPayCents(b) - fileTcPayCents(a);
       });
       var pipeTotal = mineFiles.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
-      pipeSection = '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:14px">Active pipeline &middot; if these close</div>';
+      pipeSection = '<div style="padding:0 4px 8px;margin-top:14px">' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c">Active pipeline &middot; if these close</div>' +
+        '<div style="font-size:11px;color:#a9a49a;margin-top:3px;line-height:1.4">These are the files that add up to the &ldquo;Pipeline&rdquo; number on the card above.</div>' +
+      '</div>';
       if(!mineFiles.length){
         pipeSection += '<div style="' + _cardBase + ';padding:18px;text-align:center;font-size:12px;color:#a9a49a;font-style:italic;margin-bottom:12px">No active pipeline files.</div>';
       } else {
