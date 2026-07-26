@@ -377,15 +377,20 @@
     body[data-mnav-view="today"] #fileCalendar,
     body[data-mnav-view="today"] #boardWrap { display: none !important; }
 
-    /* Board · funnel view (Mock 3). Kill kanban swipe + chip strip so
-       the funnel + drill list stands alone. Also kill calendar heatmap
-       and Active files header (owned by other tabs). */
+    /* Board · always kill calendar heatmap and Active files header
+       (owned by other tabs). Kanban vs Funnel scoped further below. */
     body[data-mnav-view="board"] #calHeatmap,
     body[data-mnav-view="board"] #fileCalendar,
-    body[data-mnav-view="board"] #kanban,
-    body[data-mnav-view="board"] #kanban-chips,
     body[data-mnav-view="board"] #kanban-title,
     body[data-mnav-view="board"] #ft-filter { display: none !important; }
+
+    /* Board · Funnel view (Mock 3). Kill kanban swipe + chip strip. */
+    body[data-mnav-view="board"][data-board-view="funnel"] #kanban,
+    body[data-mnav-view="board"][data-board-view="funnel"] #kanban-chips { display: none !important; }
+
+    /* Board · Kanban view (Mock 1 refined). Kanban and its chip strip
+       are visible; funnel body inside #boardFunnel is empty (JS returns
+       just the header + toggle). No hides needed here. */
 
     /* Calendar · same as Today for now (calendar heatmap on its own).
        If Marlenyi wants a differentiated Calendar view later — e.g., a
@@ -13321,6 +13326,18 @@ Tell me your planned move-out date and I will set the inspection.`
   // CSS block). Fires from renderKanban() so it stays in sync with the same
   // data source; no separate loader.
   var _bfSelectedStage = null;
+  var _bfBoardView = null; // 'funnel' | 'kanban' · persisted per-user
+  function _bfLoadBoardView(){
+    if(_bfBoardView) return _bfBoardView;
+    try { _bfBoardView = localStorage.getItem('aari_board_mobile_view_' + ((_profile && _profile.id) ? _profile.id : 'anon')) || 'funnel'; } catch(_){ _bfBoardView = 'funnel'; }
+    if(_bfBoardView !== 'kanban' && _bfBoardView !== 'funnel') _bfBoardView = 'funnel';
+    return _bfBoardView;
+  }
+  function _bfSaveBoardView(v){
+    _bfBoardView = v;
+    try { localStorage.setItem('aari_board_mobile_view_' + ((_profile && _profile.id) ? _profile.id : 'anon'), v); } catch(_){}
+    try { document.body.dataset.boardView = v; } catch(_){}
+  }
   function _renderBoardFunnelMobile(){
     var wrap = document.getElementById('boardWrap');
     if(!wrap) return;
@@ -13359,19 +13376,29 @@ Tell me your planned move-out date and I will set the inspection.`
       for(var i = 0; i < stages.length; i++){ if(buckets[stages[i]].length){ _bfSelectedStage = stages[i]; break; } }
       if(!_bfSelectedStage) _bfSelectedStage = stages[0];
     }
-    // Header · counts
+    // Header · counts + view toggle
     var totalActive = filtered.length;
     var _needN = 0;
     filtered.forEach(function(f){
       var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
       if(d != null && d <= 0) _needN++;
     });
+    var _view = _bfLoadBoardView();
+    // Push to body so CSS can toggle #kanban visibility on Board tab
+    try { document.body.dataset.boardView = _view; } catch(_){}
+    var _segBtn = function(v, label){
+      var on = (_view === v);
+      return '<button type="button" data-board-view-set="' + v + '" style="border:0;background:' + (on ? '#fff' : 'transparent') + ';' + (on ? 'box-shadow:0 1px 2px rgba(0,0,0,.06);color:#0f0f0f;font-weight:700;' : 'color:#7a756c;font-weight:600;') + 'font-family:inherit;font-size:11px;padding:6px 14px;border-radius:18px;cursor:pointer;min-height:32px">' + label + '</button>';
+    };
     var head = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px">' +
       '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;letter-spacing:-0.3px;color:#0f0f0f">Board</span>' +
       '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c">' + totalActive + ' active</span></div>' +
-      '<div style="font-size:11.5px;color:#7a756c;margin-bottom:14px;line-height:1.4">' +
+      '<div style="font-size:11.5px;color:#7a756c;margin-bottom:12px;line-height:1.4">' +
         (_needN ? '<b style="color:#a3402f;font-weight:700">' + _needN + ' need you</b> · ' : '') +
         (buckets['under_contract'] ? buckets['under_contract'].length + ' under contract' : '') +
+      '</div>' +
+      '<div style="display:inline-flex;background:#f4f1ec;border-radius:20px;padding:2px;margin-bottom:14px">' +
+        _segBtn('funnel', 'Funnel') + _segBtn('kanban', 'Kanban') +
       '</div>';
     // Funnel bars
     var funnel = '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:14px;padding:14px 14px 10px;margin-bottom:16px">' +
@@ -13422,8 +13449,20 @@ Tell me your planned move-out date and I will set the inspection.`
       });
       drill += '</div>';
     }
-    host.innerHTML = head + funnel + drill;
-    // Wire clicks
+    // When Kanban view is picked, only render the header + toggle here.
+    // The kanban itself (#kanban + #kanban-chips) shows via the [board-mobile]
+    // CSS block scoped to body[data-board-view="kanban"].
+    var body = (_view === 'funnel') ? (funnel + drill) : '';
+    host.innerHTML = head + body;
+    // Wire view-toggle clicks
+    host.querySelectorAll('[data-board-view-set]').forEach(function(b){
+      b.addEventListener('click', function(){
+        _bfSaveBoardView(this.getAttribute('data-board-view-set'));
+        _renderBoardFunnelMobile();
+      });
+    });
+    if(_view !== 'funnel') return;
+    // Wire funnel-bar + file-open clicks
     host.querySelectorAll('[data-funnel-stage]').forEach(function(b){
       b.addEventListener('click', function(){
         _bfSelectedStage = this.getAttribute('data-funnel-stage');
