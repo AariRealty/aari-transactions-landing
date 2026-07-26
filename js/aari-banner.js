@@ -356,7 +356,7 @@
     // Inner pages get JUST the nav — their own content is the reason she
     // visited (files list, agent CRM, pipeline, etc.). Only /portal renders
     // the full Mark 03 hub below.
-    if (!isHome) return navHtml;
+    if (!isHome || !window.matchMedia('(max-width:899px)').matches) return navHtml;
 
     // /portal home · full Mark 03 experience
     return navHtml +
