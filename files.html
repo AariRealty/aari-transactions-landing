@@ -12958,13 +12958,19 @@ Tell me your planned move-out date and I will set the inspection.`
     }
 
     // ---- Per-TC ledger · YTD / MTD / owed-now, tap to switch view to that TC ----
-    // Built off UNFILTERED invoices — this section IS the switcher, so every
-    // TC always needs to appear regardless of the current filter.
+    // Built off UNFILTERED sources · this section IS the switcher, so every TC
+    // always needs to appear regardless of the current filter. Includes TCs
+    // who have EITHER invoices in the DB OR pending billable work — otherwise
+    // a coordinator whose first week hasn't landed as an invoice yet is
+    // unreachable from the switcher.
     var byTc = {};
+    var _ensureTc = function(id){
+      return byTc[id] || (byTc[id] = { tcId:id, owed:0, ytd:0, mtd:0, projected:0, hasInv:false });
+    };
     (_invoices || []).forEach(function(i){
       if(!i || !i.tc_id) return;
-      var g = byTc[i.tc_id] || (byTc[i.tc_id] = { tcId:i.tc_id, owed:0, ytd:0, mtd:0, all:[] });
-      g.all.push(i);
+      var g = _ensureTc(i.tc_id);
+      g.hasInv = true;
       if(i.status === 'submitted') g.owed += (i.total_cents || 0);
       if(i.status === 'paid'){
         var t = i.paid_at ? new Date(i.paid_at).getTime() : 0;
@@ -12972,8 +12978,15 @@ Tell me your planned move-out date and I will set the inspection.`
         if(t >= _m0) g.mtd += (i.total_cents || 0);
       }
     });
+    // Pull in TCs with pending billable work · projected total surfaced too
+    var _allGroups = _brokerInvoiceGroups();
+    _allGroups.forEach(function(pg){
+      if(!pg.billable.length) return;
+      var g = _ensureTc(pg.id);
+      pg.billable.forEach(function(f){ if(!fileIsCovered(f)) g.projected += fileTcPayCents(f); });
+    });
     var tcList = Object.keys(byTc).map(function(k){ return byTc[k]; })
-      .sort(function(a, b){ return (b.owed + b.mtd) - (a.owed + a.mtd); });
+      .sort(function(a, b){ return (b.owed + b.mtd + b.projected) - (a.owed + a.mtd + a.projected); });
     var ledger = '';
     if(tcList.length){
       ledger = '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:6px">Per coordinator &middot; tap to switch</div>';
@@ -12982,11 +12995,18 @@ Tell me your planned move-out date and I will set the inspection.`
         var nm = isMe ? 'You' : _tcDisplayName(g.tcId).split(' ')[0];
         var initial = (nm.charAt(0) || '?').toUpperCase();
         var isSel = (_bfInvSelectedTc === g.tcId);
+        // Right-side badge · owed (submitted-unpaid) wins over projected (pending billable)
+        var badge = '';
+        if(g.owed){
+          badge = '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:3px 8px;border-radius:5px;background:' + (isSel ? '#fbecea' : '#a3402f') + ';color:' + (isSel ? '#a3402f' : '#fff') + '">' + _money(g.owed) + ' owed</span>';
+        } else if(g.projected){
+          badge = '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:3px 8px;border-radius:5px;background:' + (isSel ? '#f6edd9' : '#faf7ef') + ';color:' + (isSel ? '#8a6a1f' : '#8a6a1f') + ';border:0.5px solid ' + (isSel ? '#f6edd9' : '#e6dfcd') + '">' + _money(g.projected) + ' projected</span>';
+        }
         ledger += '<button type="button" data-bf-inv-tc="' + esc(g.tcId) + '" style="width:100%;text-align:left;background:' + (isSel ? '#0f0f0f' : '#fff') + ';color:' + (isSel ? '#fff' : '#0f0f0f') + ';border:0.5px solid ' + (isSel ? '#0f0f0f' : 'rgba(15,15,15,0.10)') + ';border-radius:12px;padding:14px 14px 12px;margin-bottom:8px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;display:block">' +
           '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">' +
             '<div style="width:34px;height:34px;border-radius:50%;background:' + (isSel ? '#fff' : '#0f0f0f') + ';color:' + (isSel ? '#0f0f0f' : '#fff') + ';display:flex;align-items:center;justify-content:center;font:700 13px \'Inter\',sans-serif;flex:none">' + esc(initial) + '</div>' +
             '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:15px;font-weight:600;letter-spacing:-0.1px">' + esc(nm) + '</span>' +
-            (g.owed ? '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:3px 8px;border-radius:5px;background:' + (isSel ? '#fbecea' : '#a3402f') + ';color:' + (isSel ? '#a3402f' : '#fff') + '">' + _money(g.owed) + ' owed</span>' : '') +
+            badge +
           '</div>' +
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
             '<div><div style="font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:' + (isSel ? '#a9a49a' : '#7a756c') + ';margin-bottom:3px">This month</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:18px;font-weight:500;letter-spacing:-0.4px;line-height:1">' + _money(g.mtd) + '</div></div>' +
