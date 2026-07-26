@@ -351,7 +351,9 @@
      service sub-tab row scrolls sideways too rather than wrapping into tall stacks. */
   @media(max-width:600px){
     #kanban{display:flex !important;grid-template-columns:none !important;overflow-x:auto;gap:10px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;padding-bottom:6px}
-    #kanban .lane{flex:0 0 85%;scroll-snap-align:start}
+    /* [active-mock2] · widened from 85% → 94% so addresses stop chopping into
+       "2224" / "1530" / "1502" · you still get a small peek that says "swipe" */
+    #kanban .lane{flex:0 0 94%;scroll-snap-align:start}
     /* [active-mock2] · ADHD win · hide empty lanes so you land on real work
        instead of a full-screen empty column. renderKanban injects .lane-empty
        for zero-file lanes; :has() catches them and pulls the lane out of the
@@ -359,6 +361,47 @@
        line ~13017 kicks in with a proper CTA — you never see this on a truly
        empty board. */
     #kanban .lane:has(.lane-empty){ display: none !important; }
+    /* [active-mock2] · hide the service sub-row on mobile · one row of tabs
+       instead of two, less decision fatigue. Sales/Listings pills still work.
+       (MLS Setup and other service filters remain accessible on desktop.) */
+    #svc-subfilter{ display: none !important; }
+    /* [active-mock2] · lane jumper chip strip · JS injects #kanban-chips
+       right above #kanban so you can tap a stage instead of swiping through
+       every one to find it. */
+    #kanban-chips{
+      display: flex; gap: 6px;
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
+      padding: 4px 2px 12px;
+      scrollbar-width: none;
+    }
+    #kanban-chips::-webkit-scrollbar{ display: none; }
+    #kanban-chips .kchip{
+      flex: 0 0 auto;
+      padding: 7px 13px;
+      border-radius: 999px;
+      background: #fff;
+      border: 0.5px solid rgba(15,15,15,0.14);
+      font: 600 11px 'Inter', -apple-system, sans-serif;
+      color: #0f0f0f;
+      white-space: nowrap;
+      cursor: pointer;
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #kanban-chips .kchip .kct{
+      font-family: 'Playfair Display', Georgia, serif;
+      font-weight: 500;
+      font-size: 13px;
+      color: #a39e93;
+    }
+  }
+  /* Desktop · no chip strip (all lanes visible in the grid already) */
+  @media(min-width:601px){
+    #kanban-chips{ display: none; }
+  }
     .svc-subrow{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
     .svc-pill{white-space:nowrap;flex:0 0 auto}
     #ft-filter{display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
@@ -13080,6 +13123,40 @@ Tell me your planned move-out date and I will set the inspection.`
     wireKanbanDelegation();
     // List view mirrors every kanban refresh · honors the saved toggle.
     try { applyView(); } catch(_){}
+    try { _renderKanbanChips(); } catch(_){}
+  }
+
+  // Lane jumper chip strip · mobile-only quick-nav above the kanban swipe track.
+  // With multiple non-empty stages, swiping through each one to find "Under contract"
+  // is friction; a chip row makes every stage one tap away. Silent no-op on desktop.
+  function _renderKanbanChips(){
+    var k = document.getElementById('kanban');
+    if(!k) return;
+    // clean up any prior strip so the render stays fresh on every refresh
+    var old = document.getElementById('kanban-chips');
+    if(old && old.parentNode) old.parentNode.removeChild(old);
+    if(typeof window === 'undefined' || !window.matchMedia || !window.matchMedia('(max-width: 600px)').matches) return;
+    var lanes = Array.prototype.slice.call(k.querySelectorAll('.lane')).filter(function(l){ return !l.querySelector('.lane-empty'); });
+    if(lanes.length <= 1) return;
+    var strip = document.createElement('div');
+    strip.id = 'kanban-chips';
+    strip.innerHTML = lanes.map(function(l, i){
+      var nameEl = l.querySelector('.lane-name') || l.querySelector('.svc-lane-name');
+      var name = nameEl ? nameEl.textContent : ('Stage ' + (i + 1));
+      var countEl = l.querySelector('.lane-count') || l.querySelector('.svc-lane-count');
+      var count = countEl ? countEl.textContent : '';
+      return '<button type="button" class="kchip" data-lane-idx="' + i + '">' +
+        esc(name) + (count ? '<span class="kct">' + esc(count) + '</span>' : '') +
+        '</button>';
+    }).join('');
+    k.parentNode.insertBefore(strip, k);
+    strip.querySelectorAll('[data-lane-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var idx = parseInt(this.getAttribute('data-lane-idx'), 10);
+        var lane = lanes[idx];
+        if(lane && lane.scrollIntoView) lane.scrollIntoView({ behavior:'smooth', inline:'start', block:'nearest' });
+      });
+    });
   }
 
   // ---- Service board (additive) · same #kanban container, columns = service ladder ----
