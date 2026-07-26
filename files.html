@@ -16413,22 +16413,24 @@ Tell me your planned move-out date and I will set the inspection.`
     if(cellSave && _currentFile){ try { nfSaveGroup(); } catch(_){} return; }
     const cellCancel = e.target.closest('[data-cell-cancel]');
     if(cellCancel){ _setupCellEdit = null; try { renderContractTerms(_currentFile); } catch(_){} return; }
-    // Loan-type select save handler · exposed globally so the inline `onchange`
-    // on the sub-selector (rendered inside the Financing group) can call it. Kept
-    // right next to data-fin-set below so both financing writes live together.
-    if(!window.__aariSaveFinType){
-      window.__aariSaveFinType = function(v){
-        if(!_currentFile) return;
-        var _f = _currentFile;
-        var _lg = Object.assign({}, _f.logistics || {});
-        _lg.financing_type = String(v || '').toLowerCase();
-        (async function(){
-          try { var r = await _client.from('files').update({ logistics: _lg }).eq('id', _f.id); if(r && r.error) throw r.error; }
-          catch(err){ alert('Could not save loan type: ' + ((err && err.message) || 'unknown') + '.'); return; }
-          _f.logistics = _lg;
-          try { renderContractTerms(_f); } catch(_){ try { openPlaybook(_f); } catch(__){} }
-        })();
-      };
+    // Loan-type pill save · mirrors the data-fin-set pattern below so the same
+    // click delegate handles both writes. Marlenyi (Jul 26) wanted the loan-
+    // type row rendered as pill buttons, not a dropdown, to match the
+    // Financed/Cash toggle right above it.
+    const finTypeSet = e.target.closest('[data-fin-type-set]');
+    if(finTypeSet && _currentFile){
+      const _v = String(finTypeSet.getAttribute('data-fin-type-set') || '').toLowerCase();
+      const _f = _currentFile;
+      const _lg = Object.assign({}, _f.logistics || {});
+      // Tap-again on the current pick toggles the field off (back to unset).
+      _lg.financing_type = (_lg.financing_type === _v) ? '' : _v;
+      (async function(){
+        try { const r = await _client.from('files').update({ logistics: _lg }).eq('id', _f.id); if(r && r.error) throw r.error; }
+        catch(err){ alert('Could not save loan type: ' + ((err && err.message) || 'unknown') + '.'); return; }
+        _f.logistics = _lg;
+        try { renderContractTerms(_f); } catch(_){ try { openPlaybook(_f); } catch(__){} }
+      })();
+      return;
     }
     const finSet = e.target.closest('[data-fin-set]');
     if(finSet && _currentFile){
@@ -20276,16 +20278,18 @@ Tell me your planned move-out date and I will set the inspection.`
           '<button type="button" data-fin-set="financed" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'financed' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Financed</button>' +
           '<button type="button" data-fin-set="cash" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'cash' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Cash</button>' +
           '</span></div>';
-        // Loan-type sub-selector · only rendered when Financed. Writes into
-        // logistics.financing_type. Options match the label map at line 7348
-        // (Cash/Conventional/FHA/VA/USDA) plus Other for anything not in that set.
+        // Loan-type sub-selector · rendered as pill buttons to match the
+        // Financed/Cash pattern above (Marlenyi Jul 26: "display it as the
+        // other stab to select or change"). Writes into logistics.financing_type.
         if(fd.finType !== undefined){
-          var _lts = [['','—'],['conventional','Conventional'],['fha','FHA'],['va','VA'],['usda','USDA'],['other','Other']];
+          var _lts = [['conventional','Conventional'],['fha','FHA'],['va','VA'],['usda','USDA'],['other','Other']];
           var _cur = String(fd.finType || '').toLowerCase();
-          var _opts = _lts.map(function(p){ return '<option value="' + p[0] + '"' + (p[0] === _cur ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('');
-          // Inline onchange · calls the global helper defined below at page load.
-          return '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(fd.label) + '</span>' +
-            '<select data-fin-type-set onchange="window.__aariSaveFinType && window.__aariSaveFinType(this.value)" style="font:inherit;font-size:13px;font-weight:600;padding:6px 10px;border:1px solid #d9d4ca;border-radius:7px;background:#fff;color:#0f0f0f">' + _opts + '</select>' +
+          var _pills = _lts.map(function(p){
+            var on = (p[0] === _cur);
+            return '<button type="button" data-fin-type-set="' + p[0] + '" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (on ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">' + p[1] + '</button>';
+          }).join('');
+          return '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c;padding-top:6px;flex:none">' + esc(fd.label) + '</span>' +
+            '<span style="display:inline-flex;flex-wrap:wrap;gap:6px;justify-content:flex-end">' + _pills + '</span>' +
           '</div>';
         }
         if(fd.ro) return dispRow(fd.label, fd.val);
@@ -20413,16 +20417,18 @@ Tell me your planned move-out date and I will set the inspection.`
           '<button type="button" data-fin-set="financed" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'financed' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Financed</button>' +
           '<button type="button" data-fin-set="cash" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'cash' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Cash</button>' +
           '</span></div>';
-        // Loan-type sub-selector · only rendered when Financed. Writes into
-        // logistics.financing_type. Options match the label map at line 7348
-        // (Cash/Conventional/FHA/VA/USDA) plus Other for anything not in that set.
+        // Loan-type sub-selector · rendered as pill buttons to match the
+        // Financed/Cash pattern above (Marlenyi Jul 26: "display it as the
+        // other stab to select or change"). Writes into logistics.financing_type.
         if(fd.finType !== undefined){
-          var _lts = [['','—'],['conventional','Conventional'],['fha','FHA'],['va','VA'],['usda','USDA'],['other','Other']];
+          var _lts = [['conventional','Conventional'],['fha','FHA'],['va','VA'],['usda','USDA'],['other','Other']];
           var _cur = String(fd.finType || '').toLowerCase();
-          var _opts = _lts.map(function(p){ return '<option value="' + p[0] + '"' + (p[0] === _cur ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('');
-          // Inline onchange · calls the global helper defined below at page load.
-          return '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c">' + esc(fd.label) + '</span>' +
-            '<select data-fin-type-set onchange="window.__aariSaveFinType && window.__aariSaveFinType(this.value)" style="font:inherit;font-size:13px;font-weight:600;padding:6px 10px;border:1px solid #d9d4ca;border-radius:7px;background:#fff;color:#0f0f0f">' + _opts + '</select>' +
+          var _pills = _lts.map(function(p){
+            var on = (p[0] === _cur);
+            return '<button type="button" data-fin-type-set="' + p[0] + '" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (on ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">' + p[1] + '</button>';
+          }).join('');
+          return '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c;padding-top:6px;flex:none">' + esc(fd.label) + '</span>' +
+            '<span style="display:inline-flex;flex-wrap:wrap;gap:6px;justify-content:flex-end">' + _pills + '</span>' +
           '</div>';
         }
         if(fd.ro) return dispRow(fd.label, fd.val);
