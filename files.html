@@ -13355,105 +13355,188 @@ Tell me your planned move-out date and I will set the inspection.`
       host.innerHTML = '';
       return;
     }
-    // Same filtering renderKanban uses
+    // Count active files across ALL file types (so the pills know if they exist).
+    var _typeCounts = { sale:0, listing:0, lease:0, buyer_rep:0 };
+    (_files || []).forEach(function(f){
+      if(f.status === 'archived' || f.archived_at) return;
+      if((f.raw_form_data || {}).test_pool) return;
+      var t = f.file_type || 'sale';
+      if(_typeCounts[t] != null) _typeCounts[t]++;
+    });
     var stages = (typeof getStages === 'function') ? getStages() : [];
     if(!stages.length){ host.innerHTML = ''; return; }
+    // Filter by file type + status + search
     var filtered = (_files || [])
       .filter(function(f){ return (f.file_type || 'sale') === _fileTypeFilter; })
       .filter(function(f){ return f.status !== 'archived' && !f.archived_at; })
-      .filter(function(f){ return !((f.raw_form_data || {}).test_pool); });
+      .filter(function(f){ return !((f.raw_form_data || {}).test_pool); })
+      .filter(function(f){ return (typeof matchesSearch === 'function') ? matchesSearch(f) : true; });
+    // Bucket by stage AND compute the "Needs you" bucket (files with a real overdue,
+    // via file_deadlines pending rows or daysToClose past due).
     var buckets = {}; stages.forEach(function(s){ buckets[s] = []; });
+    var needYou = [];
     filtered.forEach(function(f){
       var s = deriveStage(f);
       if(buckets[s]) buckets[s].push(f);
       else buckets[stages[0]].push(f);
-    });
-    var maxC = 1;
-    stages.forEach(function(s){ if(buckets[s].length > maxC) maxC = buckets[s].length; });
-    // Default selection · first non-empty stage
-    if(!_bfSelectedStage || !buckets[_bfSelectedStage]){
-      _bfSelectedStage = null;
-      for(var i = 0; i < stages.length; i++){ if(buckets[stages[i]].length){ _bfSelectedStage = stages[i]; break; } }
-      if(!_bfSelectedStage) _bfSelectedStage = stages[0];
-    }
-    // Header · counts + view toggle
-    var totalActive = filtered.length;
-    var _needN = 0;
-    filtered.forEach(function(f){
+      // "Needs you" = closing today or overdue past-close
       var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
-      if(d != null && d <= 0) _needN++;
+      if(d != null && d <= 0) needYou.push(f);
     });
+    // Compute max ignoring empty stages; needYou is a special first bar
+    var maxC = Math.max(1, needYou.length);
+    stages.forEach(function(s){ if(buckets[s].length > maxC) maxC = buckets[s].length; });
+    // Default selection · needYou if any, else first non-empty stage
+    if(!_bfSelectedStage || (_bfSelectedStage !== '__needyou' && !buckets[_bfSelectedStage])){
+      if(needYou.length) _bfSelectedStage = '__needyou';
+      else {
+        _bfSelectedStage = null;
+        for(var i = 0; i < stages.length; i++){ if(buckets[stages[i]].length){ _bfSelectedStage = stages[i]; break; } }
+        if(!_bfSelectedStage) _bfSelectedStage = stages[0];
+      }
+    }
+    // Header + counts + view toggle
+    var totalActive = filtered.length;
     var _view = _bfLoadBoardView();
-    // Push to body so CSS can toggle #kanban visibility on Board tab
     try { document.body.dataset.boardView = _view; } catch(_){}
     var _segBtn = function(v, label){
       var on = (_view === v);
       return '<button type="button" data-board-view-set="' + v + '" style="border:0;background:' + (on ? '#fff' : 'transparent') + ';' + (on ? 'box-shadow:0 1px 2px rgba(0,0,0,.06);color:#0f0f0f;font-weight:700;' : 'color:#7a756c;font-weight:600;') + 'font-family:inherit;font-size:11px;padding:6px 14px;border-radius:18px;cursor:pointer;min-height:32px">' + label + '</button>';
     };
+    // File-type pill (Sales / Listings / etc.) · restore what was hidden earlier
+    var _ftPill = function(id, label){
+      var on = (_fileTypeFilter === id);
+      var n = _typeCounts[id] || 0;
+      return '<button type="button" data-bf-ft="' + id + '" style="border:0.5px solid ' + (on ? '#0f0f0f' : 'rgba(15,15,15,0.14)') + ';background:' + (on ? '#0f0f0f' : '#fff') + ';color:' + (on ? '#fff' : '#0f0f0f') + ';font:600 12px \'Inter\',-apple-system,sans-serif;padding:7px 13px;border-radius:999px;cursor:pointer;font-family:inherit;min-height:34px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;-webkit-tap-highlight-color:transparent">' + label + ' <span style="font-family:\'Playfair Display\',Georgia,serif;font-size:13px;font-weight:500;color:' + (on ? '#d6d1c6' : '#a9a49a') + '">' + n + '</span></button>';
+    };
+    var ftPills = '<div style="display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding:0 0 12px;margin:0 -2px 0;-ms-overflow-style:none;scrollbar-width:none" data-bf-pills>';
+    if(_typeCounts.sale)      ftPills += _ftPill('sale',      'Sales');
+    if(_typeCounts.listing)   ftPills += _ftPill('listing',   'Listings');
+    if(_typeCounts.lease)     ftPills += _ftPill('lease',     'Leases');
+    if(_typeCounts.buyer_rep) ftPills += _ftPill('buyer_rep', 'Buyer rep');
+    ftPills += '</div>';
+    // Search input · reuses global _searchQuery so kanban + funnel stay in sync
+    var searchHtml = '<div style="position:relative;margin-bottom:12px">' +
+      '<span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#a9a49a;font-size:13px;pointer-events:none">🔍</span>' +
+      '<input id="bf-search" value="' + esc(_searchQuery || '') + '" placeholder="Search address, client, agent…" style="width:100%;background:#fff;border:0.5px solid rgba(15,15,15,0.16);border-radius:10px;padding:10px 12px 10px 36px;font-size:16px;font-family:inherit;outline:none;-webkit-appearance:none;min-height:42px">' +
+    '</div>';
     var head = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px">' +
       '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;letter-spacing:-0.3px;color:#0f0f0f">Board</span>' +
       '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c">' + totalActive + ' active</span></div>' +
       '<div style="font-size:11.5px;color:#7a756c;margin-bottom:12px;line-height:1.4">' +
-        (_needN ? '<b style="color:#a3402f;font-weight:700">' + _needN + ' need you</b> · ' : '') +
-        (buckets['under_contract'] ? buckets['under_contract'].length + ' under contract' : '') +
+        (needYou.length ? '<b style="color:#a3402f;font-weight:700">' + needYou.length + ' need you</b>' : 'Nothing needs you right now') +
       '</div>' +
+      ftPills + searchHtml +
       '<div style="display:inline-flex;background:#f4f1ec;border-radius:20px;padding:2px;margin-bottom:14px">' +
         _segBtn('funnel', 'Funnel') + _segBtn('kanban', 'Kanban') +
       '</div>';
-    // Funnel bars
+    // ---- Funnel bars · Needs you first, then non-empty stages only ----
     var funnel = '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:14px;padding:14px 14px 10px;margin-bottom:16px">' +
       '<div style="font-size:9.5px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#a9a49a;margin-bottom:12px">Distribution &middot; tap a bar to drill in</div>';
-    stages.forEach(function(s, idx){
-      var c = buckets[s].length;
-      var pct = Math.round((c / maxC) * 100);
-      var name = ((typeof STAGE_LABELS === 'object' && STAGE_LABELS[s]) || s).toUpperCase();
-      var isSel = (s === _bfSelectedStage);
-      var isUrgent = (s === 'inspection' || s === 'ctc') && buckets[s].some(function(f){ var d = daysToClose(f); return d != null && d <= 2; });
-      var fillColor = isUrgent ? '#a3402f' : (isSel ? '#0f0f0f' : '#3d3a34');
-      var nColor = isUrgent ? '#a3402f' : '#0f0f0f';
-      funnel += '<div data-funnel-stage="' + esc(s) + '" style="display:grid;grid-template-columns:110px 1fr auto;align-items:center;gap:10px;padding:8px 0;cursor:pointer' + (idx > 0 ? ';border-top:0.5px solid #f3ede0' : '') + (isSel ? ';background:linear-gradient(90deg,rgba(15,15,15,0.03) 0%,transparent 100%);margin:0 -14px;padding-left:14px;padding-right:14px' : '') + '">' +
-        '<span style="font-size:11px;font-weight:600;color:#0f0f0f;text-transform:uppercase;letter-spacing:0.4px;line-height:1.2">' + esc(name) + '</span>' +
-        '<div style="height:12px;background:#f4f1ec;border-radius:6px;overflow:hidden"><div style="height:100%;background:' + fillColor + ';border-radius:6px;width:' + pct + '%;transition:width .3s ease"></div></div>' +
-        '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;color:' + nColor + ';letter-spacing:-0.3px;min-width:20px;text-align:right">' + c + '</span>' +
+    // rowFn writes one bar
+    var _fbar = function(key, label, count, isSel, urgent){
+      var pct = Math.round((count / maxC) * 100);
+      var fillColor = urgent ? '#a3402f' : (isSel ? '#0f0f0f' : '#3d3a34');
+      var nColor = urgent ? '#a3402f' : '#0f0f0f';
+      var isFirst = funnel.slice(-8).indexOf('mbottom') > -1;
+      return '<div data-funnel-stage="' + esc(key) + '" style="display:grid;grid-template-columns:100px 1fr auto;align-items:center;gap:10px;padding:9px 0;cursor:pointer' + (isFirst ? '' : ';border-top:0.5px solid #f3ede0') + (isSel ? ';background:linear-gradient(90deg,rgba(15,15,15,0.04) 0%,transparent 100%);margin:0 -14px;padding-left:14px;padding-right:14px' : '') + '">' +
+        '<span style="font-size:10.5px;font-weight:700;color:' + (urgent ? '#a3402f' : '#0f0f0f') + ';text-transform:uppercase;letter-spacing:0.4px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(label) + '</span>' +
+        '<div style="height:11px;background:#f4f1ec;border-radius:6px;overflow:hidden"><div style="height:100%;background:' + fillColor + ';border-radius:6px;width:' + pct + '%;transition:width .3s ease"></div></div>' +
+        '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;color:' + nColor + ';letter-spacing:-0.3px;min-width:20px;text-align:right">' + count + '</span>' +
       '</div>';
+    };
+    if(needYou.length){
+      funnel += _fbar('__needyou', 'Needs you', needYou.length, _bfSelectedStage === '__needyou', true);
+    }
+    // Only non-empty stages · empty ones just add noise
+    var _visibleStages = stages.filter(function(s){ return buckets[s].length > 0; });
+    var _emptyCount = stages.length - _visibleStages.length;
+    _visibleStages.forEach(function(s){
+      var c = buckets[s].length;
+      var label = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[s]) || s;
+      var isSel = (s === _bfSelectedStage);
+      var urgent = (s === 'inspection' || s === 'ctc') && buckets[s].some(function(f){ var d = daysToClose(f); return d != null && d <= 2; });
+      funnel += _fbar(s, label, c, isSel, urgent);
     });
+    if(_emptyCount){
+      funnel += '<div style="font-size:10px;color:#a9a49a;text-align:center;padding:9px 0 4px;border-top:0.5px solid #f3ede0;font-style:italic">' + _emptyCount + ' empty stage' + (_emptyCount === 1 ? '' : 's') + ' hidden</div>';
+    }
     funnel += '</div>';
-    // Drill list · selected stage
-    var selFiles = buckets[_bfSelectedStage] || [];
-    var selName = ((typeof STAGE_LABELS === 'object' && STAGE_LABELS[_bfSelectedStage]) || _bfSelectedStage).toUpperCase();
+    // ---- Drill list · selected stage (or Needs you) ----
+    var selFiles, selName;
+    if(_bfSelectedStage === '__needyou'){
+      selFiles = needYou;
+      selName = 'Needs you';
+    } else {
+      selFiles = buckets[_bfSelectedStage] || [];
+      selName = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[_bfSelectedStage]) || _bfSelectedStage;
+    }
     var drill = '<div style="display:flex;align-items:baseline;gap:8px;padding:0 4px 8px">' +
-      '<span style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c">' + esc(selName) + '</span>' +
+      '<span style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:' + (_bfSelectedStage === '__needyou' ? '#a3402f' : '#7a756c') + '">' + esc(String(selName).toUpperCase()) + '</span>' +
       '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#0f0f0f">' + selFiles.length + '</span></div>';
     if(!selFiles.length){
-      drill += '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:12px;padding:18px;text-align:center;font-size:12px;color:#a9a49a;font-style:italic">No files in this stage.</div>';
+      drill += '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:12px;padding:18px;text-align:center;font-size:12px;color:#a9a49a;font-style:italic">No files here.</div>';
     } else {
       drill += '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:12px;overflow:hidden">';
       selFiles.forEach(function(f, i){
         var addr = String(f.property_address || 'Untitled file').split(',')[0];
         var _agentName = (f.raw_form_data && f.raw_form_data.agent_name) ? String(f.raw_form_data.agent_name).trim() : '';
+        var _tc = f.assigned_tc_id ? (typeof _tcsById !== 'undefined' && _tcsById[f.assigned_tc_id]) : null;
+        var _tcName = _tc ? ((_tc.first_name || '') + ' ' + (_tc.last_name || '')).trim() : '';
         var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
-        var meta = _agentName ? esc(_agentName) : '';
+        var metaBits = [];
+        if(_agentName) metaBits.push(esc(_agentName));
+        if(_tcName) metaBits.push('TC: ' + esc(_tcName));
+        var meta = metaBits.join(' · ');
+        // Urgency badge · left edge color + right-side days label
+        var edge = '#e6e2d5', rightColor = '#7a756c', rightText = '';
         if(d != null){
-          if(d < 0) meta += (meta ? ' · ' : '') + 'closed ' + Math.abs(d) + 'd ago';
-          else if(d === 0) meta += (meta ? ' · ' : '') + 'closes today';
-          else meta += (meta ? ' · ' : '') + 'closes in ' + d + 'd';
+          if(d < 0){ edge = '#a3402f'; rightColor = '#a3402f'; rightText = Math.abs(d) + 'd late'; }
+          else if(d === 0){ edge = '#a3402f'; rightColor = '#a3402f'; rightText = 'today'; }
+          else if(d <= 5){ edge = '#c69a3a'; rightColor = '#8a6a1f'; rightText = d + 'd'; }
+          else { rightText = d + 'd'; }
         }
-        var right = '';
-        if(d != null && d <= 0) right = '<span style="font-size:10.5px;color:#a3402f;font-weight:600;letter-spacing:0.2px">today</span>';
-        else if(d != null && d <= 5) right = '<span style="font-size:10.5px;color:#a3402f;font-weight:600;letter-spacing:0.2px">' + d + 'd</span>';
-        else if(d != null) right = '<span style="font-size:10.5px;color:#7a756c;font-weight:600;letter-spacing:0.2px">' + d + 'd</span>';
-        drill += '<div data-file-open="' + esc(f.id) + '" style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;min-height:56px' + (i > 0 ? ';border-top:0.5px solid #f3ede0' : '') + '">' +
+        drill += '<div data-file-open="' + esc(f.id) + '" style="position:relative;display:flex;align-items:center;gap:12px;padding:12px 14px 12px 17px;cursor:pointer;min-height:56px' + (i > 0 ? ';border-top:0.5px solid #f3ede0' : '') + '">' +
+          '<span style="position:absolute;left:0;top:8px;bottom:8px;width:3px;background:' + edge + ';border-radius:0 2px 2px 0"></span>' +
           '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2">' + esc(addr) + '</div>' +
           (meta ? '<div style="font-size:11px;color:#7a756c;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + meta + '</div>' : '') +
-          '</div>' + right + '</div>';
+          '</div>' +
+          (rightText ? '<span style="flex:none;font-size:10.5px;color:' + rightColor + ';font-weight:700;letter-spacing:0.2px;text-transform:uppercase">' + esc(rightText) + '</span>' : '') +
+        '</div>';
       });
       drill += '</div>';
     }
-    // When Kanban view is picked, only render the header + toggle here.
+    // When Kanban view is picked, only render header + filters + toggle here.
     // The kanban itself (#kanban + #kanban-chips) shows via the [board-mobile]
     // CSS block scoped to body[data-board-view="kanban"].
     var body = (_view === 'funnel') ? (funnel + drill) : '';
     host.innerHTML = head + body;
+    // Wire file-type pill clicks · flip _fileTypeFilter and re-render
+    host.querySelectorAll('[data-bf-ft]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var ft = this.getAttribute('data-bf-ft');
+        if(ft === _fileTypeFilter) return;
+        _fileTypeFilter = ft;
+        try { localStorage.setItem('aari_files_type', ft); } catch(_){}
+        try { STAGES = STAGES_BY_TYPE[_fileTypeFilter] || STAGES_BY_TYPE.sale; } catch(_){}
+        try { renderFileTypeFilter(); } catch(_){}
+        try { renderKanbanShell(); } catch(_){}
+        try { renderKpis(); } catch(_){}
+        _bfSelectedStage = null; // reset selection so first stage of new type highlights
+        renderKanban(); // re-fires _renderBoardFunnelMobile at the end
+      });
+    });
+    // Wire search input · live filter, preserve focus + cursor position
+    var searchEl = host.querySelector('#bf-search');
+    if(searchEl){
+      searchEl.addEventListener('input', function(){
+        _searchQuery = (this.value || '').trim().toLowerCase();
+        var pos = this.selectionStart;
+        renderKanban(); // re-fires funnel render
+        var again = document.getElementById('bf-search');
+        if(again){ again.focus(); try { again.setSelectionRange(pos, pos); } catch(_){} }
+      });
+    }
     // Wire view-toggle clicks
     host.querySelectorAll('[data-board-view-set]').forEach(function(b){
       b.addEventListener('click', function(){
@@ -13462,7 +13545,6 @@ Tell me your planned move-out date and I will set the inspection.`
       });
     });
     if(_view !== 'funnel') return;
-    // Wire funnel-bar + file-open clicks
     host.querySelectorAll('[data-funnel-stage]').forEach(function(b){
       b.addEventListener('click', function(){
         _bfSelectedStage = this.getAttribute('data-funnel-stage');
