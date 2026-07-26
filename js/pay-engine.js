@@ -37,12 +37,14 @@
   // DEFAULT coordinator share of a service price. A coordinator may carry a
   // per-TC override (tc_pay_rates.pct); this is the fallback when none is set.
   var AT_TC_PCT = 40;
-  // Self-coordinated / in-house coordination pay a FLAT dollar rate, not a % split.
-  var FILE_ORG_PAY = 80;
-  // The File Organization SERVICE is different: it is a billed consumer service and
-  // pays the coordinator a flat 50% of its price ($99 -> $49.50), the SAME for every
-  // TC (never the per-TC % override). Distinct from the $80 in-house flat above.
+  // The File Organization SERVICE pays the coordinator a flat 50% of its price
+  // ($99 -> $49.50), the SAME for every TC (never the per-TC % override).
   var FILE_ORG_SVC_PCT = 50;
+  // Marlenyi (Jul 26): "Forget about the flat $80 anymore we are not doing.
+  // There is no self coordination." The self-coordinated / in-house $80 flat
+  // branch is removed — every file now runs the % split (tc_pay_rates.pct per
+  // TC, falling back to AT_TC_PCT) OR the File Organization service's flat 50%.
+  // Eileen's 50/50 continues to work via her tc_pay_rates row.
   // A member pays $50 off every TC file. It comes out of AARI's share, never the
   // coordinator's pay (atTcCut is computed off the FULL price, deliberately).
   var MEMBER_TC_DISCOUNT = 50;
@@ -104,25 +106,15 @@
     var v = f && f.raw_form_data && f.raw_form_data.fo_override;
     return v === true || v === 'true';
   }
-  // The agent IS the assigned coordinator (they ran their own deal), so it is
-  // file-org work, not a paid service. An OUTSIDE file is never self-coordinated:
-  // agent_id can equal assigned_tc_id purely because the TC uploaded the file.
-  // `tcName` is optional and lets a caller match imported files where the agent is
-  // stored as free text; omit it and only the id match applies.
-  function isSelfCoordinated(f, tcName){
-    if(!f || !f.assigned_tc_id) return false;
-    if(isOutsideFile(f)) return false;
-    if(f.agent_id && String(f.agent_id) === String(f.assigned_tc_id)) return true;
-    var an = (f.raw_form_data && f.raw_form_data.agent_name) ? String(f.raw_form_data.agent_name).trim().toLowerCase() : '';
-    var tn = tcName ? String(tcName).trim().toLowerCase() : '';
-    return !!(an && tn && an === tn);
-  }
-  function paysFileOrg(f, tcName){
-    return isFileOrgFile(f) || isFoOverride(f) || isSelfCoordinated(f, tcName) || (isAariRealtyFile(f) && !isTcService(f));
+  // Self-coordinated concept removed (Marlenyi Jul 26). Kept as a stub that
+  // always returns false so any lingering caller still compiles.
+  function isSelfCoordinated(){ return false; }
+  function paysFileOrg(f){
+    return isFileOrgFile(f) || isFoOverride(f);
   }
   // A billable service file (full price, % split).
-  function isSplitFile(f, tcName){
-    return !isFileOrgFile(f) && !isFoOverride(f) && !isSelfCoordinated(f, tcName) && !(isAariRealtyFile(f) && !isTcService(f));
+  function isSplitFile(f){
+    return !isFileOrgFile(f) && !isFoOverride(f);
   }
   // $50 off applies only to OUTSIDE TC clients on a membership. In-house Aari
   // Realty agents who order full TC pay full price, no discount.
@@ -139,11 +131,13 @@
   // What a coordinator earns on a file BEFORE membership-credit coverage is applied.
   // Coverage can only ever pull this to $0, never raise it, so this doubles as the
   // server's trustworthy CEILING when validating a submitted invoice line.
-  function tcPayCeiling(f, pct, tcName){
+  function tcPayCeiling(f, pct){
     // File Organization service · flat 50% of its price ($49.50), every TC the same.
     if(isFileOrgFile(f)) return SERVICE_PRICE.file_organization * FILE_ORG_SVC_PCT / 100;
-    // Self-coordinated / in-house / fo_override work · flat $80.
-    if(paysFileOrg(f, tcName)) return FILE_ORG_PAY;
+    // fo_override is an admin flag that reclassifies a file as file-org work;
+    // apply the same 50% file-org rule so overrides don't earn more than a
+    // real file-org file would.
+    if(isFoOverride(f)) return SERVICE_PRICE.file_organization * FILE_ORG_SVC_PCT / 100;
     return atTcCut(f, pct);
   }
   // What the client actually pays. `covered` = a membership credit already paid.
@@ -155,7 +149,8 @@
   }
 
   root.AariPayEngine = {
-    AT_TC_PCT: AT_TC_PCT, FILE_ORG_PAY: FILE_ORG_PAY, FILE_ORG_SVC_PCT: FILE_ORG_SVC_PCT, MEMBER_TC_DISCOUNT: MEMBER_TC_DISCOUNT,
+    AT_TC_PCT: AT_TC_PCT, FILE_ORG_SVC_PCT: FILE_ORG_SVC_PCT, MEMBER_TC_DISCOUNT: MEMBER_TC_DISCOUNT,
+    FILE_ORG_PAY: 0, // legacy · kept as 0 so any stale reader gets a no-op, not a crash
     SERVICE_PRICE: SERVICE_PRICE, SERVICE_ALIAS: SERVICE_ALIAS,
     TC_SERVICE_TYPES: TC_SERVICE_TYPES, CREDIT_SERVICES: CREDIT_SERVICES, UPFRONT_SERVICES: UPFRONT_SERVICES,
     svcKey: svcKey, isTcService: isTcService, isCreditService: isCreditService,
