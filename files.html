@@ -12955,9 +12955,9 @@ Tell me your planned move-out date and I will set the inspection.`
         return inner;
       }).join('');
       payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px 20px 16px;margin-bottom:16px">' +
-        '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;margin-bottom:6px">Ready to invoice &middot; nothing submitted yet</div>' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;margin-bottom:6px">To submit &middot; ready this week</div>' +
         '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:44px;font-weight:500;letter-spacing:-1px;line-height:1;color:#0f0f0f">' + _money(pendingTotal) + '</div>' +
-        '<div style="font-size:11.5px;color:#a9a49a;margin-top:8px">Files at their last service stage &middot; TCs submit Thursday, you pay Friday</div>' +
+        '<div style="font-size:11.5px;color:#a9a49a;margin-top:8px">Files at their last stage &middot; TCs submit Thursday, you pay Friday</div>' +
         '<div style="margin-top:16px;padding-top:14px;border-top:0.5px solid rgba(15,15,15,0.08)">' + projRows + '</div></div>';
     } else {
       payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px;margin-bottom:16px;text-align:center">' +
@@ -13030,9 +13030,17 @@ Tell me your planned move-out date and I will set the inspection.`
     var tcList = Object.keys(byTc).map(function(k){ return byTc[k]; })
       .sort(function(a, b){ return (b.owed + b.mtd + (b.pipeline || 0)) - (a.owed + a.mtd + (a.pipeline || 0)); });
     var ledger = '';
-    if(tcList.length){
-      ledger = '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:6px">Per coordinator &middot; tap to switch</div>';
-      tcList.forEach(function(g){
+    // When filtered to one TC, show ONLY that TC's card and drop the "tap to
+    // switch" caption in favor of a "tap to see all" affordance. When
+    // unfiltered, show every TC as the switcher.
+    var _shownTcList = _bfInvSelectedTc ? tcList.filter(function(g){ return String(g.tcId) === String(_bfInvSelectedTc); }) : tcList;
+    if(_shownTcList.length){
+      var ledHead = _bfInvSelectedTc
+        ? '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 4px;margin-top:6px">Coordinator</div>' +
+          '<div style="font-size:11px;color:#a9a49a;padding:0 4px 8px;line-height:1.4">Tap the card to switch back to all coordinators.</div>'
+        : '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:6px">Per coordinator &middot; tap to switch</div>';
+      ledger = ledHead;
+      _shownTcList.forEach(function(g){
         var isMe = String(g.tcId) === String(mine);
         var nm = isMe ? 'You' : _tcDisplayName(g.tcId).split(' ')[0];
         var initial = (nm.charAt(0) || '?').toUpperCase();
@@ -13072,6 +13080,8 @@ Tell me your planned move-out date and I will set the inspection.`
         if((f.raw_form_data || {}).test_pool) return false;
         if(typeof deriveStage === 'function' && deriveStage(f) === 'closed') return false;
         if(fileIsCovered(f)) return false;
+        // Skip billable-ready files · already shown in the TO SUBMIT card above
+        if(typeof fileIsBillable === 'function' && fileIsBillable(f)) return false;
         return true;
       });
       // Sort by closing date (soonest first), then by pay (biggest first)
@@ -13085,11 +13095,11 @@ Tell me your planned move-out date and I will set the inspection.`
       });
       var pipeTotal = mineFiles.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
       pipeSection = '<div style="padding:0 4px 8px;margin-top:14px">' +
-        '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c">Active pipeline &middot; if these close</div>' +
-        '<div style="font-size:11px;color:#a9a49a;margin-top:3px;line-height:1.4">These are the files that add up to the &ldquo;Pipeline&rdquo; number on the card above.</div>' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c">In progress &middot; will be ready later</div>' +
+        '<div style="font-size:11px;color:#a9a49a;margin-top:3px;line-height:1.4">Active files still working through their service stages. Won\'t pay until they hit the last step.</div>' +
       '</div>';
       if(!mineFiles.length){
-        pipeSection += '<div style="' + _cardBase + ';padding:18px;text-align:center;font-size:12px;color:#a9a49a;font-style:italic;margin-bottom:12px">No active pipeline files.</div>';
+        pipeSection += '<div style="' + _cardBase + ';padding:18px;text-align:center;font-size:12px;color:#a9a49a;font-style:italic;margin-bottom:12px">Nothing in progress.</div>';
       } else {
         pipeSection += '<div style="' + _cardBase + ';overflow:hidden;margin-bottom:12px">';
         // Card total header
@@ -13134,7 +13144,7 @@ Tell me your planned move-out date and I will set the inspection.`
     });
     weekList = Object.keys(weekMap).sort(function(a, b){ return a < b ? 1 : -1; });
     if(weekList.length){
-      history = '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:6px">Previous weeks' + (_bfInvSelectedTc ? ' &middot; ' + esc(_tcDisplayName(_bfInvSelectedTc).split(' ')[0]) : '') + '</div>';
+      history = '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:14px">Paid out' + (_bfInvSelectedTc ? ' &middot; ' + esc(_tcDisplayName(_bfInvSelectedTc).split(' ')[0]) : ' &middot; previous weeks') + '</div>';
       weekList.forEach(function(k, idx){
         var invs = weekMap[k];
         var total = invs.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
