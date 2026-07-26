@@ -437,6 +437,25 @@
       style.textContent = CSS;
       document.head.appendChild(style);
     }
+
+    // JS-level DOM removal · Marlenyi (July 25) kept seeing the aari-header
+    // bell overlap her avatar even with CSS !important hides. Something is
+    // re-adding it (or CSS specificity is losing a race). Just yank the
+    // element from the DOM after we mount. Also set up a MutationObserver
+    // so it stays gone if aari-header.js tries to re-inject.
+    var killHdr = function(){
+      var h = document.getElementById('aari-header');
+      if (h && h.parentNode) h.parentNode.removeChild(h);
+      document.querySelectorAll('.aari-hdr, .aari-hdr-bell, .aari-hdr-avatar, .aari-hdr-menu, #aari-hdr-bell, #aari-avatar-btn, #aari-hdr-menu, #aari-hdr-bell-wrap').forEach(function(el){ el.remove(); });
+    };
+    killHdr();
+    if (!window.__awbHdrObserver){
+      try {
+        window.__awbHdrObserver = new MutationObserver(function(){ killHdr(); });
+        window.__awbHdrObserver.observe(document.documentElement, { childList: true, subtree: true });
+      } catch(_){}
+    }
+
     const existing = document.getElementById('aari-banner');
     if(existing) existing.remove();
 
