@@ -11790,13 +11790,16 @@ Tell me your planned move-out date and I will set the inspection.`
       }
       strip += '</div>';
       html += strip;
-      // --- a tickable deadline row · checkbox clears it, the rest of the row opens the file ---
+      // --- a tickable deadline row · Mock 2 compact · Marlenyi's pick (July 25) ---
+      // Tighter than the older 44px row: 20px checkbox, single-line body
+      // (name on line 1, address on line 2 in muted 10.5px), days chip small
+      // on the right. Row still ~44px tall for tap comfort but visually denser.
       const cRow = function(d, meta, mc){
-        const box = '<input type="checkbox" data-cal-check data-fid="' + esc(d.fileId) + '" data-dkey="' + esc(d.key || '') + '" aria-label="Mark done" style="flex:none;width:22px;height:22px;accent-color:#0f0f0f;cursor:pointer;margin:0">';
-        return '<div style="display:flex;align-items:center;gap:12px;padding:12px 2px;border-top:0.5px solid #f3f0ea;min-height:44px">' + box +
-          '<div data-cal-open="' + esc(d.fileId) + '" style="flex:1;min-width:0;cursor:pointer"><div style="font-size:13px;color:#0f0f0f;line-height:1.3">' + esc(d.label || 'Deadline') + '</div>' +
-          '<div style="font-size:11px;color:#8a857c;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(String(d.address || '').split(',')[0]) + '</div></div>' +
-          (meta ? '<span style="flex:none;font-size:11px;font-weight:600;color:' + (mc || '#8a857c') + '">' + esc(meta) + '</span>' : '') + '</div>';
+        const box = '<input type="checkbox" data-cal-check data-fid="' + esc(d.fileId) + '" data-dkey="' + esc(d.key || '') + '" aria-label="Mark done" style="flex:none;width:20px;height:20px;accent-color:#a3402f;cursor:pointer;margin:0">';
+        return '<div style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-top:0.5px solid #f3f0ea;min-height:44px">' + box +
+          '<div data-cal-open="' + esc(d.fileId) + '" style="flex:1;min-width:0;cursor:pointer;line-height:1.25"><div style="font-size:13px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(d.label || 'Deadline') + '</div>' +
+          '<div style="font-size:10.5px;color:#8a857c;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(String(d.address || '').split(',')[0]) + '</div></div>' +
+          (meta ? '<span style="flex:none;font-size:10px;font-weight:600;color:' + (mc || '#8a857c') + ';letter-spacing:0.2px">' + esc(meta) + '</span>' : '') + '</div>';
       };
       let mbody = '';
       // Overdue · pinned on top, tickable, so the backlog clears from right here.
@@ -11804,7 +11807,13 @@ Tell me your planned move-out date and I will set the inspection.`
       // overwhelming the mobile view · show top 5, collapse the rest behind
       // a "Show all N" toggle. Desktop: unchanged, still shows all inline.
       if(overdue.length){
-        mbody += '<div class="overdue-head" style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:#a3402f;margin:4px 2px 0">Overdue &middot; ' + overdue.length + '</div>';
+        // Mock 2 · header row: label on left, "Clear all →" button on right.
+        // Clear all fires markDeadlineDone for every currently-visible overdue
+        // item (see the [data-overdue-clear-all] handler in _wireCal).
+        mbody += '<div class="overdue-head" style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 2px 0">' +
+          '<span style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:#a3402f">Overdue &middot; ' + overdue.length + '</span>' +
+          '<button type="button" data-overdue-clear-all style="background:#a3402f;color:#fff;border:0;padding:6px 12px;border-radius:8px;font:600 11px \'Inter\',sans-serif;letter-spacing:0.3px;cursor:pointer;min-height:32px">Clear all &rarr;</button>' +
+        '</div>';
         const overdueRows = overdue.map(function(d){ const days = Math.round((t0 - new Date(d.date).setHours(0,0,0,0)) / 86400000); return cRow(d, days + 'd late', '#a3402f'); });
         const OVERDUE_CAP = 5;
         if(overdueRows.length <= OVERDUE_CAP){
@@ -11939,6 +11948,39 @@ Tell me your planned move-out date and I will set the inspection.`
         if(!wrap) return;
         var open = wrap.classList.toggle('overdue-open');
         btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    });
+    // Mock 2 · Clear all overdue in one tap · Marlenyi's pick (July 25).
+    // Iterates every checkbox in the overdue block and fires markDeadlineDone
+    // for each (same code path as an individual tick). Confirms first to avoid
+    // an accidental swipe. Optimistically flips the checkboxes so the UI
+    // feels instant; the real state syncs as each markDeadlineDone resolves.
+    host.querySelectorAll('[data-overdue-clear-all]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var head = btn.closest('.overdue-head');
+        var wrap = head ? head.parentNode.querySelector('.overdue-wrap') : host.querySelector('.overdue-wrap');
+        if(!wrap) return;
+        var boxes = wrap.querySelectorAll('input[data-cal-check]');
+        var n = boxes.length;
+        if(!n) return;
+        if(!window.confirm('Clear all ' + n + ' overdue deadlines? Each will be marked done.')) return;
+        btn.disabled = true;
+        var origLabel = btn.innerHTML;
+        btn.innerHTML = 'Clearing ' + n + '&hellip;';
+        boxes.forEach(function(cb){
+          try {
+            var fid = cb.getAttribute('data-fid');
+            var key = cb.getAttribute('data-dkey');
+            var file = (_files || []).find(function(f){ return f && f.id === fid; });
+            if(!file) return;
+            cb.checked = true;
+            markDeadlineDone(file, key, '', '');
+          } catch(_){}
+        });
+        setTimeout(function(){
+          btn.innerHTML = '&#10003; Cleared ' + n;
+          setTimeout(function(){ btn.innerHTML = origLabel; btn.disabled = false; }, 1400);
+        }, 500);
       });
     });
     // Board / List switch · persists per user so a coordinator lands in the view they left in.
