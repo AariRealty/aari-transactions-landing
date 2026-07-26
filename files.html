@@ -12925,11 +12925,22 @@ Tell me your planned move-out date and I will set the inspection.`
         '<div style="font-size:11.5px;color:#a9a49a;margin-top:8px">' + submitted.length + ' invoice' + (submitted.length === 1 ? '' : 's') + ' waiting on you</div>' +
         '<div style="margin-top:16px;padding-top:14px;border-top:0.5px solid rgba(15,15,15,0.08)">' + payRows + '</div></div>';
     } else if(pending.length){
-      // No submitted invoices yet · show the projected pay run instead
+      // No submitted invoices yet · show projected pay run with per-TC breakdown
+      var projRows = pending.map(function(pg){
+        var isMe = String(pg.id) === String(mine);
+        var nm = isMe ? 'You' : _tcDisplayName(pg.id).split(' ')[0];
+        var t = pg.billable.reduce(function(s, f){ return s + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
+        return '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:10px 0;border-top:0.5px solid rgba(15,15,15,0.06)">' +
+          '<div style="min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
+          '<div style="font-size:11px;color:#7a756c;margin-top:2px">' + pg.billable.length + ' file' + (pg.billable.length === 1 ? '' : 's') + ' &middot; waiting for ' + esc(isMe ? 'you to send' : nm + ' to send') + '</div></div>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:17px;font-weight:500;color:#0f0f0f;letter-spacing:-0.3px">' + _money(t) + '</span>' +
+        '</div>';
+      }).join('');
       payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px 20px 16px;margin-bottom:16px">' +
         '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;margin-bottom:6px">Projected · nothing submitted yet</div>' +
         '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:44px;font-weight:500;letter-spacing:-1px;line-height:1;color:#0f0f0f">' + _money(pendingTotal) + '</div>' +
-        '<div style="font-size:11.5px;color:#a9a49a;margin-top:8px">TCs will submit on Thursday · you pay Friday</div></div>';
+        '<div style="font-size:11.5px;color:#a9a49a;margin-top:8px">TCs will submit Thursday &middot; you pay Friday</div>' +
+        '<div style="margin-top:16px;padding-top:14px;border-top:0.5px solid rgba(15,15,15,0.08)">' + projRows + '</div></div>';
     } else {
       payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px;margin-bottom:16px;text-align:center">' +
         '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:36px;font-weight:500;color:#7a756c;letter-spacing:-0.8px">$0</div>' +
@@ -12985,8 +12996,21 @@ Tell me your planned move-out date and I will set the inspection.`
       var g = _ensureTc(pg.id);
       pg.billable.forEach(function(f){ if(!fileIsCovered(f)) g.projected += fileTcPayCents(f); });
     });
+    // Full pipeline projection · every active non-closed file assigned to a
+    // TC. Answers "if every one of these deals closes, what will I owe?"
+    // Doesn't require the file to be at the last stage yet (unlike projected).
+    (_files || []).forEach(function(f){
+      if(!f || !f.assigned_tc_id) return;
+      if(f.status === 'archived' || f.archived_at) return;
+      if((f.raw_form_data || {}).test_pool) return;
+      if(typeof deriveStage === 'function' && deriveStage(f) === 'closed') return;
+      if(fileIsCovered(f)) return; // credit-covered = no pay
+      var g = _ensureTc(f.assigned_tc_id);
+      g.pipeline = (g.pipeline || 0) + fileTcPayCents(f);
+      g.pipelineCount = (g.pipelineCount || 0) + 1;
+    });
     var tcList = Object.keys(byTc).map(function(k){ return byTc[k]; })
-      .sort(function(a, b){ return (b.owed + b.mtd + b.projected) - (a.owed + a.mtd + a.projected); });
+      .sort(function(a, b){ return (b.owed + b.mtd + (b.pipeline || 0)) - (a.owed + a.mtd + (a.pipeline || 0)); });
     var ledger = '';
     if(tcList.length){
       ledger = '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:6px">Per coordinator &middot; tap to switch</div>';
@@ -13008,9 +13032,12 @@ Tell me your planned move-out date and I will set the inspection.`
             '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:15px;font-weight:600;letter-spacing:-0.1px">' + esc(nm) + '</span>' +
             badge +
           '</div>' +
-          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
-            '<div><div style="font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:' + (isSel ? '#a9a49a' : '#7a756c') + ';margin-bottom:3px">This month</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:18px;font-weight:500;letter-spacing:-0.4px;line-height:1">' + _money(g.mtd) + '</div></div>' +
-            '<div><div style="font-size:9px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:' + (isSel ? '#a9a49a' : '#7a756c') + ';margin-bottom:3px">YTD</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:18px;font-weight:500;letter-spacing:-0.4px;line-height:1">' + _money(g.ytd) + '</div></div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
+            '<div><div style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:' + (isSel ? '#a9a49a' : '#7a756c') + ';margin-bottom:3px">This month</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;letter-spacing:-0.4px;line-height:1">' + _money(g.mtd) + '</div></div>' +
+            '<div><div style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:' + (isSel ? '#a9a49a' : '#7a756c') + ';margin-bottom:3px">YTD</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;letter-spacing:-0.4px;line-height:1">' + _money(g.ytd) + '</div></div>' +
+            '<div><div style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:' + (isSel ? '#a9a49a' : '#7a756c') + ';margin-bottom:3px">Pipeline</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;letter-spacing:-0.4px;line-height:1' + (g.pipeline ? ';color:' + (isSel ? '#fff' : '#8a6a1f') : '') + '">' + _money(g.pipeline || 0) + '</div>' +
+              (g.pipelineCount ? '<div style="font-size:9px;color:' + (isSel ? '#a9a49a' : '#a9a49a') + ';margin-top:2px">' + g.pipelineCount + ' file' + (g.pipelineCount === 1 ? '' : 's') + '</div>' : '') +
+            '</div>' +
           '</div>' +
         '</button>';
       });
