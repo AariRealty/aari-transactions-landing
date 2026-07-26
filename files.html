@@ -1156,8 +1156,11 @@
     .cal-nav-btn, .cal-today-btn, .cal-mode-btn, .cal-sync-btn { min-height: 40px; min-width: 40px; padding: 8px 12px; }
     .view-toggle-pill, .view-tab { min-height: 40px; padding: 9px 14px; }
 
-    /* [14] Calendar deadline-row checkbox · larger hit area */
-    input[data-cal-check] { width: 26px !important; height: 26px !important; padding: 10px !important; margin: -8px 0 !important; box-sizing: content-box !important; }
+    /* [14] Calendar deadline-row checkbox · Marlenyi (July 25): the padded
+       version made checkboxes look huge and un-Mock-2. Row is already 44px
+       tall (tap comfort covered by the row); the checkbox itself is 20x20
+       to match Mock 2's tight look. */
+    input[data-cal-check] { width: 20px !important; height: 20px !important; padding: 0 !important; margin: 0 !important; box-sizing: border-box !important; accent-color: #a3402f; }
 
     /* [15] Cal week-strip day chips a touch taller so dynamic-type doesn't clip */
     .cal-week-day, [data-cal-day] { min-height: 58px; }
@@ -11959,23 +11962,24 @@ Tell me your planned move-out date and I will set the inspection.`
         btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       });
     });
-    // Mock 2 · Clear all overdue in one tap · Marlenyi's pick (July 25).
-    // Iterates every checkbox in the overdue block and fires markDeadlineDone
-    // for each (same code path as an individual tick). Confirms first to avoid
-    // an accidental swipe. Optimistically flips the checkboxes so the UI
-    // feels instant; the real state syncs as each markDeadlineDone resolves.
+    // Mock 2 · Clear all overdue in one tap · Marlenyi (July 25).
+    // Previous version passed empty ISO (silent fail) and never re-rendered.
+    // Now: real ISO date (today), awaits every markDeadlineDone in parallel,
+    // then re-renders calendar + kanban so the overdue count drops to 0.
     host.querySelectorAll('[data-overdue-clear-all]').forEach(function(btn){
-      btn.addEventListener('click', function(){
+      btn.addEventListener('click', async function(){
         var head = btn.closest('.overdue-head');
         var wrap = head ? head.parentNode.querySelector('.overdue-wrap') : host.querySelector('.overdue-wrap');
         if(!wrap) return;
         var boxes = wrap.querySelectorAll('input[data-cal-check]');
         var n = boxes.length;
         if(!n) return;
-        if(!window.confirm('Clear all ' + n + ' overdue deadlines? Each will be marked done.')) return;
+        if(!window.confirm('Clear all ' + n + ' overdue deadlines? Each will be marked done as of today.')) return;
         btn.disabled = true;
         var origLabel = btn.innerHTML;
         btn.innerHTML = 'Clearing ' + n + '&hellip;';
+        var iso = new Date().toISOString().slice(0, 10);
+        var jobs = [];
         boxes.forEach(function(cb){
           try {
             var fid = cb.getAttribute('data-fid');
@@ -11983,13 +11987,15 @@ Tell me your planned move-out date and I will set the inspection.`
             var file = (_files || []).find(function(f){ return f && f.id === fid; });
             if(!file) return;
             cb.checked = true;
-            markDeadlineDone(file, key, '', '');
+            cb.disabled = true;
+            jobs.push(markDeadlineDone(file, key, iso));
           } catch(_){}
         });
-        setTimeout(function(){
-          btn.innerHTML = '&#10003; Cleared ' + n;
-          setTimeout(function(){ btn.innerHTML = origLabel; btn.disabled = false; }, 1400);
-        }, 500);
+        try { await Promise.all(jobs); } catch(_){}
+        btn.innerHTML = '&#10003; Cleared ' + n;
+        try { renderCalHeatmap(); } catch(_){}
+        try { renderKanban(); } catch(_){}
+        setTimeout(function(){ btn.disabled = false; }, 400);
       });
     });
     // Board / List switch · persists per user so a coordinator lands in the view they left in.
