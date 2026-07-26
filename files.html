@@ -12815,7 +12815,141 @@ Tell me your planned move-out date and I will set the inspection.`
     return '<div style="border:0.5px dashed #ddd7cb;border-radius:10px;padding:22px 13px;text-align:center">' +
       '<div style="font-size:11px;color:#a39e93;line-height:1.5">' + text + '</div></div>';
   }
+  // Mobile broker view · Mock 2 (This-week pay run + history accordion).
+  // Marlenyi picked this July 26. Kills the 3-column board on phones and
+  // shows one focused pay run at the top with previous weeks collapsed
+  // below. Desktop keeps the 3-column board via the branch in
+  // brokerInvoiceBoardHtml.
+  function _brokerInvoiceMobileHtml(){
+    var submitted = (_invoices || []).filter(function(i){ return i.status === 'submitted'; });
+    var paid = (_invoices || []).filter(function(i){ return i.status === 'paid'; });
+    var owedNow = submitted.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
+    var totalInFlight = owedNow + paid.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
+    var mine = (_profile && _profile.id) || '';
+    // "Not yet sent" · per-TC billable that hasn't been submitted this week
+    var groups = _brokerInvoiceGroups();
+    var pending = groups.filter(function(g){ return g.billable.length; });
+    var pendingTotal = pending.reduce(function(s, g){
+      return s + g.billable.reduce(function(t, f){ return t + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
+    }, 0);
+    // Group paid invoices by ISO week (Mon start)
+    var weekKey = function(iso){
+      if(!iso) return 'no-date';
+      var d = new Date(iso); if(isNaN(d.getTime())) return 'no-date';
+      d.setHours(0, 0, 0, 0);
+      var day = d.getDay(); var diff = (day === 0 ? -6 : 1 - day);
+      d.setDate(d.getDate() + diff);
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    };
+    var weekLabel = function(key){
+      if(key === 'no-date') return 'Undated';
+      var p = key.split('-');
+      var d = new Date(+p[0], +p[1] - 1, +p[2]);
+      return 'Week of ' + d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+    };
+    var weekMap = {};
+    paid.forEach(function(i){
+      var k = weekKey(i.paid_at || i.submitted_at);
+      (weekMap[k] = weekMap[k] || []).push(i);
+    });
+    var weekList = Object.keys(weekMap).sort(function(a, b){ return a < b ? 1 : -1; });
+
+    var _cardBase = 'background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:12px';
+
+    // ---- Header ----
+    var head = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:14px">' +
+      '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;letter-spacing:-0.3px;color:#0f0f0f">Invoices</span>' +
+      '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c">' + _money(totalInFlight) + ' in flight</span></div>';
+
+    // ---- Pay run card · submitted invoices awaiting payment ----
+    var payRun = '';
+    if(submitted.length){
+      var payRows = submitted.map(function(i){
+        var isMe = String(i.tc_id) === String(mine);
+        var nm = isMe ? 'You' : _tcDisplayName(i.tc_id).split(' ')[0];
+        return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-top:0.5px solid rgba(15,15,15,0.06)">' +
+          '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
+          '<div style="font-size:10.5px;color:#7a756c;margin-top:2px">' + ((i.line_items || []).length) + ' file' + (((i.line_items || []).length) === 1 ? '' : 's') + ' &middot; ' + esc(i.invoice_number || '') + '</div></div>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:17px;font-weight:500;color:#0f0f0f;letter-spacing:-0.3px;min-width:60px;text-align:right">' + _money(i.total_cents || 0) + '</span>' +
+          '<button type="button" data-mark-invoice-paid="' + esc(i.id) + '" style="flex:none;background:#0f0f0f;color:#fff;border:0;padding:8px 14px;border-radius:8px;font:700 11px \'Inter\',sans-serif;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer;font-family:inherit">Pay</button>' +
+        '</div>';
+      }).join('');
+      payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px 20px 16px;margin-bottom:16px">' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;margin-bottom:6px">This week &middot; due Friday</div>' +
+        '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:44px;font-weight:500;letter-spacing:-1px;line-height:1;color:#0f0f0f">' + _money(owedNow) + '</div>' +
+        '<div style="font-size:11.5px;color:#a9a49a;margin-top:8px">' + submitted.length + ' invoice' + (submitted.length === 1 ? '' : 's') + ' waiting on you</div>' +
+        '<div style="margin-top:16px;padding-top:14px;border-top:0.5px solid rgba(15,15,15,0.08)">' + payRows + '</div></div>';
+    } else if(pending.length){
+      // No submitted invoices yet · show the projected pay run instead
+      payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px 20px 16px;margin-bottom:16px">' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;margin-bottom:6px">Projected · nothing submitted yet</div>' +
+        '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:44px;font-weight:500;letter-spacing:-1px;line-height:1;color:#0f0f0f">' + _money(pendingTotal) + '</div>' +
+        '<div style="font-size:11.5px;color:#a9a49a;margin-top:8px">TCs will submit on Thursday · you pay Friday</div></div>';
+    } else {
+      payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px;margin-bottom:16px;text-align:center">' +
+        '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:36px;font-weight:500;color:#7a756c;letter-spacing:-0.8px">$0</div>' +
+        '<div style="font-size:11.5px;color:#a9a49a;margin-top:6px">All clear · no invoices in flight</div></div>';
+    }
+
+    // ---- Not yet sent · per-TC pending work (only if there ARE submitted) ----
+    var notSent = '';
+    if(submitted.length && pending.length){
+      var nsRows = pending.map(function(g){
+        var isMe = String(g.id) === String(mine);
+        var nm = isMe ? 'You' : _tcDisplayName(g.id).split(' ')[0];
+        var paidLines = g.billable.filter(function(f){ return !fileIsCovered(f); });
+        var t = paidLines.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
+        return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-top:0.5px solid #f3ede0">' +
+          '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
+          '<div style="font-size:10.5px;color:#7a756c;margin-top:2px">' + g.billable.length + ' file' + (g.billable.length === 1 ? '' : 's') + ' &middot; waiting for ' + esc(isMe ? 'you to send' : nm + ' to send') + '</div></div>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c;letter-spacing:-0.2px">' + _money(t) + '</span>' +
+        '</div>';
+      }).join('');
+      notSent = '<div style="' + _cardBase + ';padding:14px 16px;margin-bottom:16px">' +
+        '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:2px">' +
+          '<span style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#a9a49a">Projected · not sent yet</span>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:14px;font-weight:500;color:#7a756c">' + _money(pendingTotal) + '</span>' +
+        '</div>' + nsRows + '</div>';
+    }
+
+    // ---- History accordion · paid weeks ----
+    var history = '';
+    if(weekList.length){
+      history = '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:6px">Previous weeks</div>';
+      weekList.forEach(function(k, idx){
+        var invs = weekMap[k];
+        var total = invs.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
+        var rows = invs.map(function(i){
+          var nm = _tcDisplayName(i.tc_id).split(' ')[0];
+          var when = i.paid_at ? new Date(i.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '';
+          return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:0.5px solid #f3ede0;font-size:12px">' +
+            '<div style="flex:1"><div style="color:#0f0f0f;font-weight:500">' + esc(nm) + '</div>' +
+            '<div style="color:#7a756c;font-size:10.5px;margin-top:1px">' + ((i.line_items || []).length) + ' file' + (((i.line_items || []).length) === 1 ? '' : 's') + '</div></div>' +
+            '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:13px;color:#0f0f0f;letter-spacing:-0.2px;font-weight:500">' + _money(i.total_cents || 0) + '</span>' +
+            '<span style="font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:2px 6px;border-radius:4px;color:#2c5f42;background:#e0efe5">Paid' + (when ? ' ' + esc(when) : '') + '</span>' +
+          '</div>';
+        }).join('');
+        history += '<details' + (idx === 0 ? ' open' : '') + ' style="' + _cardBase + ';margin-bottom:8px;overflow:hidden">' +
+          '<summary style="display:flex;align-items:center;gap:10px;padding:14px 14px;cursor:pointer;list-style:none;min-height:52px">' +
+            '<span style="flex:1;font-size:12px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:#0f0f0f">' + esc(weekLabel(k)) + '</span>' +
+            '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;color:#7a756c;letter-spacing:-0.3px;margin-right:8px">' + _money(total) + '</span>' +
+            '<span style="color:#a9a49a;font-size:14px">&#x2304;</span>' +
+          '</summary>' +
+          '<div style="padding:0 14px 12px">' + rows + '</div>' +
+        '</details>';
+      });
+    }
+    return head + payRun + notSent + history;
+  }
+
   function brokerInvoiceBoardHtml(){
+    // Mobile broker · Mock 2 layout (Marlenyi picked July 26). Kills the
+    // 3-column board on phones. Desktop keeps the board below.
+    try {
+      if(typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 600px)').matches){
+        return _brokerInvoiceMobileHtml();
+      }
+    } catch(_){}
     var groups = _brokerInvoiceGroups();
     var mine = (_profile && _profile.id) || '';
     var working = groups.filter(function(g){ return g.billable.length; });
