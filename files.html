@@ -13752,26 +13752,58 @@ Tell me your planned move-out date and I will set the inspection.`
       if((f.raw_form_data || {}).test_pool) return false;
       return true;
     });
+    // Sub-services own a micro-ladder from TC_SVC_TRACKS (File Organization, MLS Setup, etc.).
+    // Those files belong on THEIR OWN card with THEIR OWN stages — never on the spine
+    // (Sales/Listings) card, or the same file gets counted twice. `listing_coordinator`
+    // rides the listing spine per SPINE_DUP_SERVICES, so it stays with Listings.
+    var _isSubSvcFile = function(f){
+      if(!f) return false;
+      try {
+        var k = svcKey(f);
+        return !!(TC_SVC_TRACKS[k] && !SPINE_DUP_SERVICES[k]);
+      } catch(_){ return false; }
+    };
+    var _subSvcLabelOf = function(k){
+      return (typeof SERVICE_LABEL === 'object' && SERVICE_LABEL[k]) || k;
+    };
     var _typeCounts = { sale:0, listing:0, lease:0, buyer_rep:0 };
+    var _subCounts = {}; // sub-service id → file count
     _allActive.forEach(function(f){
+      if(_isSubSvcFile(f)){
+        var k = svcKey(f);
+        _subCounts[k] = (_subCounts[k] || 0) + 1;
+        return; // sub-service files live on their own card, not the spine
+      }
       var t = f.file_type || 'sale';
       if(_typeCounts[t] != null) _typeCounts[t]++;
     });
     var _searchFn = (typeof matchesSearch === 'function') ? matchesSearch : function(){ return true; };
     var _filteredAll = _allActive.filter(_searchFn);
     var _filter = _bfLoadFilter();
-    // Service catalog (only include types that have files)
+    // Spine catalog (only include types that have files)
     var _svcCatalog = [
       { id:'sale',      label:'Sales' },
       { id:'listing',   label:'Listings' },
       { id:'buyer_rep', label:'Buyer rep' },
       { id:'lease',     label:'Lease' }
     ].filter(function(s){ return _typeCounts[s.id] > 0; });
-    var _shownSvcs = (_filter === 'all') ? _svcCatalog : _svcCatalog.filter(function(s){ return s.id === _filter; });
+    // Sub-service catalog · ordered by domain frequency, only include ones with files
+    var _subSvcOrder = ['file_organization','mls_setup','listing_docs','offer_prep_basic','offer_prep_complete','standalone_review'];
+    var _subSvcCatalog = _subSvcOrder.filter(function(k){ return (_subCounts[k] || 0) > 0; }).map(function(k){
+      return { id:k, label:_subSvcLabelOf(k), sub:true };
+    });
+    var _combinedCatalog = _svcCatalog.concat(_subSvcCatalog);
+    var _shownSvcs = (_filter === 'all') ? _combinedCatalog : _combinedCatalog.filter(function(s){ return s.id === _filter; });
+    var _filesForSvc = function(s){
+      if(s.sub){
+        return _filteredAll.filter(function(f){ try { return svcKey(f) === s.id; } catch(_){ return false; } });
+      }
+      return _filteredAll.filter(function(f){ return !_isSubSvcFile(f) && (f.file_type || 'sale') === s.id; });
+    };
     // Displayed totals · sum across shown services after search
     var _displayCount = 0, _needYouCount = 0;
     _shownSvcs.forEach(function(s){
-      var svcFiles = _filteredAll.filter(function(f){ return (f.file_type || 'sale') === s.id; });
+      var svcFiles = _filesForSvc(s);
       _displayCount += svcFiles.length;
       svcFiles.forEach(function(f){
         var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
@@ -13791,9 +13823,11 @@ Tell me your planned move-out date and I will set the inspection.`
       return '<button type="button" data-bf-filter="' + id + '" style="border:0.5px solid ' + (on ? '#0f0f0f' : 'rgba(15,15,15,0.14)') + ';background:' + (on ? '#0f0f0f' : '#fff') + ';color:' + (on ? '#fff' : '#0f0f0f') + ';font:600 12px \'Inter\',-apple-system,sans-serif;padding:7px 13px;border-radius:999px;cursor:pointer;font-family:inherit;min-height:34px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;-webkit-tap-highlight-color:transparent">' + label + ' <span style="font-family:\'Playfair Display\',Georgia,serif;font-size:13px;font-weight:500;color:' + (on ? '#d6d1c6' : '#a9a49a') + '">' + count + '</span></button>';
     };
     var _totalAll = _typeCounts.sale + _typeCounts.listing + _typeCounts.lease + _typeCounts.buyer_rep;
+    _subSvcCatalog.forEach(function(s){ _totalAll += _subCounts[s.id] || 0; });
     var pills = '<div style="display:flex;gap:6px;overflow-x:auto;padding:0 0 12px;-webkit-overflow-scrolling:touch;-ms-overflow-style:none;scrollbar-width:none">' +
       _pill('all', 'All', _totalAll);
     _svcCatalog.forEach(function(s){ pills += _pill(s.id, s.label, _typeCounts[s.id]); });
+    _subSvcCatalog.forEach(function(s){ pills += _pill(s.id, s.label, _subCounts[s.id] || 0); });
     pills += '</div>';
     // ---- Search input · reuses global _searchQuery ----
     var searchHtml = '<div style="position:relative;margin-bottom:16px">' +
@@ -13803,11 +13837,18 @@ Tell me your planned move-out date and I will set the inspection.`
     // ---- Per-service pipeline cards ----
     var svcCards = '';
     _shownSvcs.forEach(function(s){
-      var svcStages = (typeof STAGES_BY_TYPE === 'object' && STAGES_BY_TYPE[s.id]) || [];
-      var svcFiles = _filteredAll.filter(function(f){ return (f.file_type || 'sale') === s.id; });
+      var svcStages, svcLabelOf;
+      if(s.sub){
+        svcStages = (TC_SVC_TRACKS[s.id] || []).slice();
+        svcLabelOf = function(st){ return st; }; // sub-service tracks already carry human labels
+      } else {
+        svcStages = ((typeof STAGES_BY_TYPE === 'object' && STAGES_BY_TYPE[s.id]) || []).slice();
+        svcLabelOf = function(st){ return (typeof STAGE_LABELS === 'object' && STAGE_LABELS[st]) || st; };
+      }
+      var svcFiles = _filesForSvc(s);
       var buckets = {}; svcStages.forEach(function(st){ buckets[st] = []; });
       svcFiles.forEach(function(f){
-        var st = deriveStage(f);
+        var st = s.sub ? (f.service_stage || svcStages[0]) : deriveStage(f);
         if(buckets[st]) buckets[st].push(f);
         else if(svcStages.length) buckets[svcStages[0]].push(f);
       });
@@ -13822,8 +13863,8 @@ Tell me your planned move-out date and I will set the inspection.`
         var stKey = s.id + '::' + st;
         var isSel = (_bfSelectedStage === stKey);
         var isZero = count === 0;
-        var isUrgent = (st === 'inspection' || st === 'ctc') && buckets[st].some(function(f){ var d = daysToClose(f); return d != null && d <= 2; });
-        var label = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[st]) || st;
+        var isUrgent = !s.sub && (st === 'inspection' || st === 'ctc') && buckets[st].some(function(f){ var d = daysToClose(f); return d != null && d <= 2; });
+        var label = svcLabelOf(st);
         var bg = isSel ? (isUrgent ? '#a3402f' : '#0f0f0f') : '#faf7ef';
         var border = isSel ? (isUrgent ? '#a3402f' : '#0f0f0f') : (isUrgent ? '#e7bcb0' : '#ece8e0');
         var textColor = isSel ? '#fff' : (isUrgent ? '#a3402f' : '#0f0f0f');
@@ -13838,7 +13879,7 @@ Tell me your planned move-out date and I will set the inspection.`
       if(_bfSelectedStage && _bfSelectedStage.indexOf(s.id + '::') === 0){
         var selStage = _bfSelectedStage.substring(s.id.length + 2);
         var selFiles = buckets[selStage] || [];
-        var selLabel = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[selStage]) || selStage;
+        var selLabel = svcLabelOf(selStage);
         svcCards += '<div style="margin-top:12px;padding-top:12px;border-top:0.5px solid #f3ede0">' +
           '<div style="display:flex;align-items:baseline;gap:8px;padding:0 4px 6px">' +
             '<span style="font-size:9.5px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#7a756c">' + esc(String(selLabel).toUpperCase()) + '</span>' +
@@ -13894,7 +13935,11 @@ Tell me your planned move-out date and I will set the inspection.`
         if(v === _filter) return;
         _bfSaveFilter(v);
         _bfSelectedStage = null;
-        if(v !== 'all' && v !== _fileTypeFilter){
+        // Sub-service pills (File Organization, MLS Setup, etc.) are Board-mobile-only —
+        // they aren't real file types, so don't sync _fileTypeFilter with them or the
+        // kanban/KPIs code path breaks.
+        var isSpine = (v === 'sale' || v === 'listing' || v === 'lease' || v === 'buyer_rep');
+        if(isSpine && v !== _fileTypeFilter){
           _fileTypeFilter = v;
           try { localStorage.setItem('aari_files_type', v); } catch(_){}
           try { STAGES = STAGES_BY_TYPE[_fileTypeFilter] || STAGES_BY_TYPE.sale; } catch(_){}
