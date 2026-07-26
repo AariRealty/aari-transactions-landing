@@ -30,6 +30,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Files &middot; Aari Transactions</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f0f0f">
+<link rel="apple-touch-icon" href="/images/aari-icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Aari TC">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@500&display=swap" rel="stylesheet">
@@ -11012,8 +11019,44 @@ Tell me your planned move-out date and I will set the inspection.`
   // date. The AI never edits a date or sends downstream — this is the record a human acts
   // on. Refreshed on every board load. This same table seeds Phase 2 (phone push).
   var _notifs = [];
+  // Web Push (Phase 2) · public VAPID key (private half lives only in send-web-push).
+  var _VAPID_PUBLIC = 'BKtv-wCRFa6Zj6rD3Hrkzzl6097tag9__fJkTNmlxxILQO-EBb7hj1MPnqF3H2WPKBzQRfV3he4ttlY_PmIox5o';
+  var _swReg = null;
+  function urlBase64ToUint8Array(base64String){
+    var padding = '='.repeat((4 - base64String.length % 4) % 4);
+    var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    var raw = atob(base64);
+    var out = new Uint8Array(raw.length);
+    for(var i = 0; i < raw.length; i++){ out[i] = raw.charCodeAt(i); }
+    return out;
+  }
+  async function registerAariSW(){
+    if(!('serviceWorker' in navigator)) return null;
+    if(_swReg) return _swReg;
+    try { _swReg = await navigator.serviceWorker.register('/sw.js'); return _swReg; }
+    catch(e){ console.warn('sw register failed', e); return null; }
+  }
+  async function enablePhoneAlerts(){
+    try {
+      if(!('serviceWorker' in navigator) || !('PushManager' in window)){
+        alert('This device cannot do push here. On iPhone, add this page to your Home Screen first (Share → Add to Home Screen), open it from there, then enable alerts.');
+        return;
+      }
+      var perm = await Notification.requestPermission();
+      if(perm !== 'granted'){ alert('Notifications are turned off. Turn them on for this site, then try again.'); return; }
+      var reg = await registerAariSW();
+      if(!reg){ alert('Could not set up notifications on this device.'); return; }
+      await navigator.serviceWorker.ready;
+      var sub = await reg.pushManager.getSubscription();
+      if(!sub){ sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(_VAPID_PUBLIC) }); }
+      var r = await _client.functions.invoke('save-push-subscription', { body: { subscription: sub.toJSON(), ua: navigator.userAgent } });
+      if(r && r.error){ console.error('save sub failed', r.error); alert('Could not save your phone. Try again.'); return; }
+      alert('Phone alerts are on. You will get a push the moment an agent flags a date.');
+    } catch(e){ console.error('enablePhoneAlerts failed', e); alert('Could not enable alerts: ' + (e && e.message ? e.message : e)); }
+  }
   async function loadNotifications(){
     if(!_client || !_profile) return;
+    try { registerAariSW(); } catch(_){}
     try {
       var role = (_profile.role || '').toLowerCase();
       var q = _client.from('tc_notifications').select('*').is('read_at', null).order('created_at', { ascending:false }).limit(50);
@@ -11061,6 +11104,10 @@ Tell me your planned move-out date and I will set the inspection.`
       '<div style="display:flex;align-items:center;justify-content:space-between;padding:15px 16px;border-bottom:1px solid #ece8e0;background:#fff">' +
         '<span style="font-size:15px;font-weight:700">Needs you</span>' +
         '<button type="button" id="aariNotifClose" aria-label="Close" style="background:none;border:0;font-size:18px;color:#8a857c;cursor:pointer;padding:2px 6px">&times;</button>' +
+      '</div>' +
+      '<div style="padding:11px 16px;border-bottom:1px solid #f1efe8;background:#fff">' +
+        '<button type="button" id="aariEnablePush" style="width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:8px;padding:10px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit">&#128241; Enable phone alerts</button>' +
+        '<div style="font-size:10.5px;color:#a39e95;margin:6px 2px 0;line-height:1.4">On iPhone, add this page to your Home Screen first, then tap enable.</div>' +
       '</div>' + rows +
       (_notifs.length ? '<button type="button" id="aariNotifClearAll" style="display:block;width:100%;background:none;border:0;border-top:1px solid #ece8e0;padding:13px;color:#5f5e5a;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">Mark all read</button>' : '') +
     '</div>';
@@ -11068,6 +11115,7 @@ Tell me your planned move-out date and I will set the inspection.`
     ov.addEventListener('click', function(e){
       if(e.target === ov){ ov.remove(); return; }
       if(e.target.closest && e.target.closest('#aariNotifClose')){ ov.remove(); return; }
+      if(e.target.closest && e.target.closest('#aariEnablePush')){ enablePhoneAlerts(); return; }
       if(e.target.closest && e.target.closest('#aariNotifClearAll')){ _clearAllNotifs(); ov.remove(); return; }
       var b = e.target.closest && e.target.closest('[data-notif]');
       if(b){
