@@ -420,6 +420,33 @@
     #today-hero .th-tag.insp { background: #eef3ea; color: #5f6f57; }
     #today-hero .th-tag.open { background: #f1efe8; color: #6b6760; }
 
+    /* Stale-sweep pill + sheet · Marlenyi Jul 27 · queue was getting spammed
+       by same-file overflow "Confirm X" tasks she'd already handled. Pill
+       opens a review sheet so she bulk-checks + marks done — no silent
+       auto-check, she's always in control. */
+    #today-hero .th-sweep-pill { display: block; width: 100%; margin: 18px 0 4px; background: #fff; border: 0.5px dashed #d9d1bc; border-radius: 12px; padding: 12px 14px; font: 600 12px 'Inter'; color: #7a756c; cursor: pointer; font-family: inherit; text-align: center; min-height: 44px; }
+    #today-hero .th-sweep-pill:hover { border-color: #0f0f0f; color: #0f0f0f; background: #fafaf7; }
+    #today-hero .th-sweep-sheet { margin-top: 10px; background: #fff; border-radius: 14px; padding: 14px 14px 12px; border: 0.5px solid #ece8e0; box-shadow: 0 6px 18px rgba(15,15,15,0.06); }
+    #today-hero .ths-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+    #today-hero .ths-t { font-family: Georgia, 'Times New Roman', serif; font-size: 16px; font-weight: 600; color: #0a0a0a; }
+    #today-hero .ths-close { background: none; border: 0; color: #a9a49a; font-size: 20px; line-height: 1; cursor: pointer; padding: 4px 8px; font-family: inherit; }
+    #today-hero .ths-close:hover { color: #0f0f0f; }
+    #today-hero .ths-why { font-size: 11.5px; color: #7a756c; line-height: 1.45; margin-bottom: 10px; }
+    #today-hero .ths-why b { color: #0a0a0a; font-weight: 600; }
+    #today-hero .ths-list { display: flex; flex-direction: column; }
+    #today-hero .ths-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 4px; border-top: 0.5px solid #f2eee2; font-size: 12.5px; cursor: pointer; }
+    #today-hero .ths-row:first-of-type { border-top: 0; }
+    #today-hero .ths-cb { width: 16px; height: 16px; accent-color: #0f0f0f; margin-top: 2px; flex: none; cursor: pointer; }
+    #today-hero .ths-body { flex: 1; min-width: 0; }
+    #today-hero .ths-nm { font-weight: 500; color: #0a0a0a; line-height: 1.3; }
+    #today-hero .ths-addr { font-size: 10.5px; color: #7a756c; margin-top: 2px; }
+    #today-hero .ths-foot { display: flex; gap: 10px; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 0.5px solid #f2eee2; }
+    #today-hero .ths-all { background: none; border: 0; color: #7a756c; font: 500 11.5px 'Inter'; cursor: pointer; padding: 6px 4px; font-family: inherit; text-decoration: underline; text-underline-offset: 2px; }
+    #today-hero .ths-all:hover { color: #0f0f0f; }
+    #today-hero .ths-mark { margin-left: auto; background: #0f0f0f; color: #fff; border: 0; border-radius: 9px; padding: 10px 16px; font: 700 12px 'Inter'; cursor: pointer; letter-spacing: 0.3px; font-family: inherit; }
+    #today-hero .ths-mark:disabled { background: #d9d4ca; color: #7a756c; cursor: not-allowed; }
+    #today-hero .ths-mark:not(:disabled):hover { background: #2a2a2a; }
+
     /* Board · per-service pipelines only on mobile · kanban swipe + chip
        strip stay for desktop. Marlenyi (July 26): kanban isn't the best
        fit on mobile; killed the toggle and going all-in on per-service
@@ -8147,8 +8174,24 @@ Tell me your planned move-out date and I will set the inspection.`
       return;
     }
     items.sort(function(a, b){ return a.sortKey - b.sortKey; });
-    const hero = items[0];
-    const queue = items.slice(1, 6);
+    // Dedupe by file · Marlenyi Jul 27 fix: one file's 4 overdue tasks were
+    // spamming the queue and pushing every other file off screen. Cap to
+    // one row per file; the file's other overdue tasks fall into the
+    // "stale sweep" pile at the bottom.
+    const _seenFile = {};
+    const _dedup = [];
+    const _spill = [];  // overflow tasks (same-file duplicates) go to the sweep
+    items.forEach(function(it){
+      if(_seenFile[it.file.id]){ _spill.push(it); return; }
+      _seenFile[it.file.id] = 1;
+      _dedup.push(it);
+    });
+    const hero = _dedup[0];
+    const queue = _dedup.slice(1, 6);
+    // Sweep pile · every overdue task NOT surfaced in the hero/queue.
+    // These are the "old confirmations she probably already handled but
+    // never checked off" pattern.
+    const stale = _spill.filter(function(it){ return it.days != null && it.days < 0; });
 
     // Build hero HTML.
     const _addr = String(hero.file.property_address || 'File').split(',')[0];
@@ -8164,8 +8207,9 @@ Tell me your planned move-out date and I will set the inspection.`
       _dueTxt = 'Opening task';
     }
     const _fileType = hero.file.file_type || 'sale';
+    const _fileN = _dedup.length;
     let _headHtml = '<div class="th-head">Today &middot; ' + new Date().toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }) +
-      '<span class="sub">Focus on this first &middot; ' + items.length + ' task' + (items.length === 1 ? '' : 's') + ' across ' + (new Set(items.map(function(x){ return x.file.id; })).size) + ' file' + '</span></div>';
+      '<span class="sub">Focus on this first &middot; ' + _fileN + ' file' + (_fileN === 1 ? '' : 's') + ' need you</span></div>';
     let _focusHtml = '<div class="th-focus" data-th-file="' + esc(hero.file.id) + '">' +
       '<div class="th-eb">Do this now</div>' +
       '<div class="th-addr">' + esc(_addr) + '</div>' +
@@ -8199,7 +8243,43 @@ Tell me your planned move-out date and I will set the inspection.`
           '</div>';
         }).join('');
     }
-    host.innerHTML = _headHtml + _focusHtml + _queueHtml;
+    // Stale-sweep pill · appears when there are same-file overflow overdue
+    // tasks. Tap opens a bottom sheet listing them with checkboxes; she
+    // reviews + bulk-marks done. Kills the "avalanche of confirms she
+    // already did" pattern without silently auto-checking anything.
+    let _sweepHtml = '';
+    if(stale.length){
+      _sweepHtml = '<button type="button" class="th-sweep-pill" data-th-sweep="1">&#128465; ' + stale.length + ' old overdue &middot; review &amp; clear &rarr;</button>';
+      // Sheet is rendered here but hidden; toggled by data-th-sweep click.
+      _sweepHtml += '<div class="th-sweep-sheet" hidden>' +
+        '<div class="ths-head">' +
+          '<div class="ths-t">Old overdue &middot; review &amp; clear</div>' +
+          '<button type="button" class="ths-close" data-th-sweep-close="1">&times;</button>' +
+        '</div>' +
+        '<div class="ths-why">These are same-file overflow items from your queue. Check any you\'ve already handled and tap <b>Mark done</b>.</div>' +
+        '<div class="ths-list">' +
+          stale.map(function(it, i){
+            const addr = String(it.file.property_address || '').split(',')[0];
+            const tagH = (typeof ucTagHtml === 'function') ? ucTagHtml(it.task.id) : '';
+            const tagInline = tagH ? tagH.replace('class="uc-tag ', 'class="th-tag ') : '';
+            return '<label class="ths-row" data-th-stale-idx="' + i + '">' +
+              '<input type="checkbox" class="ths-cb" data-th-stale-check="' + i + '">' +
+              '<div class="ths-body">' +
+                '<div class="ths-nm">' + tagInline + esc(it.task.label) + '</div>' +
+                '<div class="ths-addr">' + esc(addr) + ' &middot; ' + Math.abs(it.days) + 'd late</div>' +
+              '</div>' +
+            '</label>';
+          }).join('') +
+        '</div>' +
+        '<div class="ths-foot">' +
+          '<button type="button" class="ths-all" data-th-stale-all="1">Select all</button>' +
+          '<button type="button" class="ths-mark" data-th-stale-mark="1" disabled>Mark done (0)</button>' +
+        '</div>' +
+      '</div>';
+    }
+    host.innerHTML = _headHtml + _focusHtml + _queueHtml + _sweepHtml;
+    // Stash the stale set for the click handlers below.
+    host._staleSet = stale;
     // Wire: hero Send button → open the file drawer AND click its Send.
     // Queue row tap → open the file drawer.
     host.querySelectorAll('[data-th-file]').forEach(function(el){
@@ -8221,6 +8301,76 @@ Tell me your planned move-out date and I will set the inspection.`
         }
       });
     });
+    // Sweep sheet · open/close, select-all, mark-done bulk write.
+    const sweepBtn = host.querySelector('[data-th-sweep]');
+    const sheet = host.querySelector('.th-sweep-sheet');
+    if(sweepBtn && sheet){
+      sweepBtn.addEventListener('click', function(){ sheet.hidden = false; });
+      const closeBtn = sheet.querySelector('[data-th-sweep-close]');
+      if(closeBtn) closeBtn.addEventListener('click', function(){ sheet.hidden = true; });
+    }
+    const markBtn = host.querySelector('[data-th-stale-mark]');
+    const allBtn = host.querySelector('[data-th-stale-all]');
+    const _refreshMarkCt = function(){
+      if(!markBtn) return;
+      const n = host.querySelectorAll('.ths-cb:checked').length;
+      markBtn.textContent = 'Mark done (' + n + ')';
+      markBtn.disabled = n === 0;
+    };
+    host.querySelectorAll('.ths-cb').forEach(function(cb){
+      cb.addEventListener('change', _refreshMarkCt);
+    });
+    if(allBtn){
+      allBtn.addEventListener('click', function(){
+        const cbs = host.querySelectorAll('.ths-cb');
+        const anyOff = Array.prototype.some.call(cbs, function(c){ return !c.checked; });
+        cbs.forEach(function(c){ c.checked = anyOff; });
+        allBtn.textContent = anyOff ? 'Deselect all' : 'Select all';
+        _refreshMarkCt();
+      });
+    }
+    if(markBtn){
+      markBtn.addEventListener('click', async function(){
+        const picked = Array.prototype.map.call(host.querySelectorAll('.ths-cb:checked'), function(c){
+          return parseInt(c.getAttribute('data-th-stale-check'), 10);
+        }).filter(function(i){ return !isNaN(i); });
+        if(!picked.length) return;
+        const staleSet = host._staleSet || [];
+        markBtn.disabled = true;
+        markBtn.textContent = 'Saving...';
+        // Group picks by file so we do one DB update per file.
+        const byFile = {};
+        picked.forEach(function(i){
+          const it = staleSet[i]; if(!it) return;
+          if(!byFile[it.file.id]) byFile[it.file.id] = { file: it.file, tasks: [] };
+          byFile[it.file.id].tasks.push(it.task.id);
+        });
+        const stamp = new Date().toISOString();
+        const who = (_profile && (_profile.first_name || _profile.email)) || 'TC';
+        try {
+          const fids = Object.keys(byFile);
+          for(let i = 0; i < fids.length; i++){
+            const b = byFile[fids[i]];
+            const cur = (b.file.stage_tasks && typeof b.file.stage_tasks === 'object') ? Object.assign({}, b.file.stage_tasks) : {};
+            b.tasks.forEach(function(tid){ cur[tid] = { done: true, at: stamp, by: who, swept: true }; });
+            try {
+              if(_client){
+                await _client.from('files').update({ stage_tasks: cur }).eq('id', b.file.id);
+              }
+            } catch(_){}
+            b.file.stage_tasks = cur;
+          }
+          // Re-render everything that depends on task state.
+          try { renderTodayHero(); } catch(_){}
+          try { renderPriorityQueue(); } catch(_){}
+          try { renderKanban(); } catch(_){}
+        } catch(err){
+          console.warn('sweep mark failed', err);
+          markBtn.disabled = false;
+          markBtn.textContent = 'Try again';
+        }
+      });
+    }
   }
   // Re-render on every loadAndRender + on tab change + every 5 min tick so
   // "Due in 2 days" ages correctly if she leaves the tab open.
