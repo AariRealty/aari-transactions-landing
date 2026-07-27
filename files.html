@@ -21199,21 +21199,29 @@ Tell me your planned move-out date and I will set the inspection.`
       var _earlyN = laterTasks.filter(function(t){ return EARLY_TASK_IDS[t.id]; }).length;
       var _eh = _earlyN ? (' &middot; ' + _earlyN + ' to start early') : '';
       items.push('<button type="button" class="wt-link" data-wt-toggle="coming">Coming up &middot; ' + laterTasks.length + _eh + ' &rsaquo;</button>');
-      // Marlenyi (Jul 27): 18 rows at once was too much — but a fully hidden
-      // list left her without any preview. Compromise: show the first 5
-      // upcoming tasks by default, hide the rest behind a "N more ›" toggle
-      // that's less intimidating than a wall of tasks but still one tap from
-      // the full list.
-      var _WT_PREVIEW = 5;
-      var _preview = laterTasks.slice(0, _WT_PREVIEW);
-      var _hidden  = laterTasks.slice(_WT_PREVIEW);
-      lists += '<div data-wt-list="coming" style="margin-top:4px">' +
-        _preview.map(function(t){ return ckRow(file, t, dls, done, tagFn ? tagFn(t.id) : '', true); }).join('');
-      if(_hidden.length){
-        lists += '<button type="button" class="wt-link" data-wt-toggle="coming-more" style="display:block;margin:6px 0 2px">Show ' + _hidden.length + ' more &rsaquo;</button>' +
-          '<div data-wt-list="coming-more" hidden>' +
-          _hidden.map(function(t){ return ckRow(file, t, dls, done, tagFn ? tagFn(t.id) : '', true); }).join('') +
-          '</div>';
+      // Marlenyi (Jul 27): "don't hide it just prompt me to click on unlock
+      // the next five tasks" · progressive-disclosure in 5-task batches.
+      // Render every batch as its own <div data-wt-batch="N"> pre-inserted
+      // and hidden; the "Unlock next 5" prompt reveals one batch per tap
+      // and re-labels itself to reflect how many remain. When the last
+      // batch shows the prompt disappears. All handled by the existing
+      // wt-toggle style handler (upgraded below to support batch reveal).
+      var _WT_BATCH = 5;
+      lists += '<div data-wt-list="coming" style="margin-top:4px">';
+      var _b = 0;
+      for(var _i = 0; _i < laterTasks.length; _i += _WT_BATCH, _b++){
+        var _slice = laterTasks.slice(_i, _i + _WT_BATCH);
+        var _rowsHtml = _slice.map(function(t){ return ckRow(file, t, dls, done, tagFn ? tagFn(t.id) : '', true); }).join('');
+        // First batch shows by default; every subsequent batch is hidden and
+        // gated behind a preceding "Unlock next N" prompt button.
+        if(_b === 0){
+          lists += _rowsHtml;
+        } else {
+          var _remaining = laterTasks.length - _i;
+          var _batchN = Math.min(_WT_BATCH, _remaining);
+          lists += '<button type="button" class="wt-unlock" data-wt-unlock-batch="' + _b + '" style="display:block;width:100%;margin:8px 0 4px;background:#faf7ef;border:0.5px dashed #d9d1bc;border-radius:10px;padding:10px;font:600 12px \'Inter\';color:#5f5647;cursor:pointer;font-family:inherit">&#128274; Unlock next ' + _batchN + ' task' + (_batchN === 1 ? '' : 's') + ' &rarr;</button>' +
+            '<div data-wt-batch="' + _b + '" hidden>' + _rowsHtml + '</div>';
+        }
       }
       lists += '</div>';
     }
@@ -22073,6 +22081,18 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   // Your Work footer · toggle the Coming up / done lists open below the footer row.
   document.addEventListener('click', function(e){
+    // Progressive unlock · Marlenyi (Jul 27) "prompt me to click on unlock
+    // the next five task." Reveals ONE 5-task batch per tap and hides the
+    // button so the next unlock prompt slides up in its place.
+    const un = e.target.closest && e.target.closest('[data-wt-unlock-batch]');
+    if(un){
+      const b = un.getAttribute('data-wt-unlock-batch');
+      const host = document.getElementById('tpb-checklist');
+      const batch = host && host.querySelector('[data-wt-batch="' + b + '"]');
+      if(batch) batch.hidden = false;
+      un.style.display = 'none';
+      return;
+    }
     const wt = e.target.closest && e.target.closest('[data-wt-toggle]');
     if(!wt) return;
     const key = wt.getAttribute('data-wt-toggle');
