@@ -8254,11 +8254,21 @@ Tell me your planned move-out date and I will set the inspection.`
         // didn't approve that prefix, wants raw deadline names on
         // chase rows.
         let lbl = String(ci.label || '').replace(/^Reminder\s*·\s*/i, '');
+        // Chase fires today (days === 0 above) but the ACTUAL deadline is
+        // ci.dueDate — typically 3 business days out. Store days = days to
+        // the real deadline so the day chip reads "Due Thu" (not "Today"),
+        // otherwise it looks like the deadline itself is due today when
+        // this is just the pre-chase heads-up. Marlenyi Jul 27.
+        let _deadlineDays = 0;
+        if(ci.dueDate instanceof Date){
+          const _dd = new Date(ci.dueDate.getTime()); _dd.setHours(0, 0, 0, 0);
+          _deadlineDays = Math.round((_dd - _t0) / 86400000);
+        }
         items.push({
           file: f,
           task: { id: ci.key, label: lbl, dl: rawKey },
-          days: days,
-          sortKey: days,
+          days: _deadlineDays,
+          sortKey: 0.5,   // after real "today" items, before other things
           isReminder: true
         });
         _dlKeysSeen[ci.fileId + ':' + rawKey] = 1;
@@ -8302,7 +8312,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const _fileN = 1 + _fileOrder.length;
     let _headHtml = '<div class="th-head">Today &middot; ' + new Date().toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }) +
       '<span class="sub">' + _totalN + ' due today &middot; across ' + _fileN + ' file' + (_fileN === 1 ? '' : 's') + '</span></div>';
-    let _focusHtml = '<div class="th-focus" data-th-file="' + esc(hero.file.id) + '" data-th-task="' + esc(hero.task.id) + '"' + (hero.isReminder ? ' data-th-reminder="1"' : '') + (hero.task.dl ? ' data-th-dl="' + esc(hero.task.dl) + '"' : '') + '>' +
+    let _focusHtml = '<div class="th-focus" data-th-file="' + esc(hero.file.id) + '" data-th-task="' + esc(hero.task.id) + '" data-th-days="' + (hero.days == null ? '' : hero.days) + '"' + (hero.isReminder ? ' data-th-reminder="1"' : '') + (hero.task.dl ? ' data-th-dl="' + esc(hero.task.dl) + '"' : '') + '>' +
       '<div class="th-eb">Do this now</div>' +
       '<div class="th-addr">' + esc(_addr) + '</div>' +
       '<div class="th-nm">' + esc(hero.task.label) + '</div>' +
@@ -8369,13 +8379,17 @@ Tell me your planned move-out date and I will set the inspection.`
               else if(it.days <= 6) d = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][(new Date(_t0.getTime() + it.days * 86400000)).getDay()];
               else d = 'In ' + it.days + 'd';
             }
+            // Chase heads-up rows · prefix the day chip with "Due" so it
+            // reads "Due Thu" instead of just "Thu" — makes the future
+            // deadline read as a deadline, not a random task placement.
+            if(it.isReminder && it.days != null && it.days > 0) d = 'Due ' + d;
             const warnCls = (it.days != null && it.days <= 0) ? ' warn' : '';
             const parts = [];
             if(catLbl) parts.push(esc(catLbl));
             if(prefix) parts.push(esc(prefix));
             parts.push(esc(rest));
             const labelHtml = parts.join(' &middot; ');
-            return '<div class="th-r th-r-grouped" data-th-file="' + esc(fid) + '" data-th-task="' + esc(it.task.id) + '"' + (it.isReminder ? ' data-th-reminder="1"' : '') + (it.task.dl ? ' data-th-dl="' + esc(it.task.dl) + '"' : '') + '>' +
+            return '<div class="th-r th-r-grouped" data-th-file="' + esc(fid) + '" data-th-task="' + esc(it.task.id) + '" data-th-days="' + (it.days == null ? '' : it.days) + '"' + (it.isReminder ? ' data-th-reminder="1"' : '') + (it.task.dl ? ' data-th-dl="' + esc(it.task.dl) + '"' : '') + '>' +
               '<div class="dot"></div>' +
               '<div class="body">' +
                 '<div class="nm">' + labelHtml + '</div>' +
@@ -8396,12 +8410,14 @@ Tell me your planned move-out date and I will set the inspection.`
         const fid = el.getAttribute('data-th-file');
         const tid = el.getAttribute('data-th-task');
         const dl  = el.getAttribute('data-th-dl') || '';
+        const daysAttr = el.getAttribute('data-th-days');
+        const days = (daysAttr === '' || daysAttr == null) ? null : parseInt(daysAttr, 10);
         const isReminder = el.getAttribute('data-th-reminder') === '1';
         const f = _files.find(function(x){ return x.id === fid; });
         if(!f) return;
         // Group header (no task id) → full file drawer.
         if(!tid){ try { openPlaybook(f); } catch(_){} return; }
-        openTaskSheet(f, { id: tid, dl: dl, isReminder: isReminder, autoSend: isSend });
+        openTaskSheet(f, { id: tid, dl: dl, days: days, isReminder: isReminder, autoSend: isSend });
       });
     });
     // Sweep sheet handlers removed · dedupe-by-file cap is gone, so there
@@ -8557,9 +8573,22 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     // Category tag from task id / deadline key.
     const cat = _tsCatFor(taskObj.id, taskObj.dl || opts.dl);
-    // Address (short form) + due chip.
+    // Address (short form) + due chip. `opts.days` is the days-to-actual-
+    // deadline from the row (so chase reminders read "Due Thu", not
+    // "Due today"). Falls back to "Due today" only when no days data.
     const addr = String(file.property_address || 'File').split(',')[0];
-    const _due = 'Due today';
+    let _due = 'Due today';
+    if(opts.days != null && !isNaN(opts.days)){
+      const dn = opts.days;
+      if(dn < 0) _due = Math.abs(dn) + ' day' + (dn === -1 ? '' : 's') + ' overdue';
+      else if(dn === 0) _due = 'Due today';
+      else if(dn === 1) _due = 'Due tomorrow';
+      else if(dn <= 6){
+        const _t0 = new Date(); _t0.setHours(0, 0, 0, 0);
+        const _wd = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][(new Date(_t0.getTime() + dn * 86400000)).getDay()];
+        _due = 'Due ' + _wd;
+      } else _due = 'Due in ' + dn + ' days';
+    }
     // Task label · prefer the checklist label, fall back to the row's raw
     // (chase items don't have a resolved task, so pass the raw label in).
     const rawLbl = String(taskObj.label || opts.label || '');
