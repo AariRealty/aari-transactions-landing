@@ -8203,24 +8203,24 @@ Tell me your planned move-out date and I will set the inspection.`
           // even if the DB write is racing / failed. (Marlenyi Jul 27)
           if(_sweptTasksThisSession && _sweptTasksThisSession.has(f.id + ':' + t.id)) return;
           if(t.showIf && !t.showIf(f)) return;
-          // Same "on you now" rule as buildUcTracksHtml (opening tasks, chase
-          // date passed, or due <= 3 days) · Clear-to-close = all-now.
-          let isNow = false, days = null;
-          if(stg === 'ctc') isNow = true;
-          if(typeof isOpeningTaskId === 'function' && isOpeningTaskId(t.id)) isNow = true;
+          // Marlenyi Jul 27 (strict) · "what I need to see is was due today.
+          // That is it." Only include tasks whose deadline hits TODAY, or
+          // whose chase date is exactly today. No overdue, no "+3 days"
+          // fuzzy window, no all-CTC bucket.
+          let isToday = false, days = null;
           if(t.dl && dls[t.dl] && dls[t.dl].date){
             const dd = new Date(dls[t.dl].date.getTime()); dd.setHours(0, 0, 0, 0);
             days = Math.round((dd - _t0) / 86400000);
-            if(days <= 3) isNow = true;
+            if(days === 0) isToday = true;
             if(t.dl && CHASE_KEYS && CHASE_KEYS[t.dl]){
               const cd = (typeof chaseDateFor === 'function') ? chaseDateFor(dls[t.dl].date) : null;
-              if(cd){ const c = new Date(cd.getTime()); c.setHours(0, 0, 0, 0); if(c <= _t0) isNow = true; }
+              if(cd){ const c = new Date(cd.getTime()); c.setHours(0, 0, 0, 0);
+                if(c.getTime() === _t0.getTime()) isToday = true;
+              }
             }
           }
-          if(!isNow) return;
-          // Sort key · overdue first, then soonest.
-          const sortKey = (days == null) ? 1e9 : days;
-          items.push({ file: f, task: t, days: days, sortKey: sortKey });
+          if(!isToday) return;
+          items.push({ file: f, task: t, days: days, sortKey: (days == null) ? 0 : days });
         });
       } catch(_){}
     });
@@ -8240,7 +8240,9 @@ Tell me your planned move-out date and I will set the inspection.`
         if(!ci || !(ci.date instanceof Date)) return;
         const d = new Date(ci.date.getTime()); d.setHours(0, 0, 0, 0);
         const days = Math.round((d - _t0) / 86400000);
-        if(days > 0) return;   // future item · not "today"
+        // Marlenyi Jul 27 (strict) · today ONLY. No overdue reminders,
+        // no future previews. If it hit yesterday, it's not for today.
+        if(days !== 0) return;
         // Strip __chase suffix to compare against stage_task deadline keys.
         const rawKey = String(ci.key || '').replace(/__chase$/, '');
         if(_dlKeysSeen[ci.fileId + ':' + rawKey]) return;   // already surfaced as a task
@@ -8297,7 +8299,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const _totalN = items.length;
     const _fileN = 1 + _fileOrder.length;
     let _headHtml = '<div class="th-head">Today &middot; ' + new Date().toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }) +
-      '<span class="sub">' + _totalN + ' thing' + (_totalN === 1 ? '' : 's') + ' due &middot; across ' + _fileN + ' file' + (_fileN === 1 ? '' : 's') + '</span></div>';
+      '<span class="sub">' + _totalN + ' due today &middot; across ' + _fileN + ' file' + (_fileN === 1 ? '' : 's') + '</span></div>';
     let _focusHtml = '<div class="th-focus" data-th-file="' + esc(hero.file.id) + '">' +
       '<div class="th-eb">Do this now</div>' +
       '<div class="th-addr">' + esc(_addr) + '</div>' +
