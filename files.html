@@ -8282,10 +8282,11 @@ Tell me your planned move-out date and I will set the inspection.`
           '</div>' +
           grp.items.map(function(it){
             // Marlenyi Jul 27 · standardize row format · every row reads
-            // as "Prefix · task · day". Extract the leading verb (Confirm /
-            // Remind / Follow up) as its own segment separated by a middle
-            // dot, then lowercase the rest of the task label. Consistent
-            // rhythm across every row.
+            // as "Category · Prefix · task · day". Category tag (Title /
+            // Loan / Insp / Open) comes first as inline text so every row
+            // announces what track it belongs to before the verb. Then
+            // the leading verb (Confirm / Remind / Follow up) as its own
+            // segment, then the lowercase task label. Consistent rhythm.
             const raw = String(it.task.label || '');
             let prefix = '', rest = raw;
             const m = raw.match(/^(Follow up|Confirm|Remind|Request|Send|Order)\s*[·:.-]?\s*(.+)$/i);
@@ -8300,6 +8301,24 @@ Tell me your planned move-out date and I will set the inspection.`
                 rest = rest[0].toLowerCase() + rest.slice(1);
               }
             }
+            // Category tag · inline text prefix. Look up UC_TAG_OF by task
+            // id first (stage tasks). For chase/reminder items whose id
+            // doesn't match, fall back to keyword matching on the deadline
+            // key. Returns 'Title' / 'Loan' / 'Insp' / 'Open' / ''.
+            let catLbl = '';
+            try {
+              let tag = (typeof UC_TAG_OF !== 'undefined') ? UC_TAG_OF[it.task.id] : null;
+              if(!tag && typeof isOpeningTaskId === 'function' && isOpeningTaskId(it.task.id)) tag = (typeof UC_TAGS !== 'undefined') ? UC_TAGS.open : null;
+              if(!tag){
+                const dk = String(it.task.dl || it.task.id || '').toLowerCase();
+                if(/title|survey|commitment|policy|lien|estoppel|hoa|condo/.test(dk)) catLbl = 'Title';
+                else if(/insp/.test(dk)) catLbl = 'Insp';
+                else if(/loan|financ|apprais|approval/.test(dk)) catLbl = 'Loan';
+                else if(/emd|deposit|escrow|opening|kickoff/.test(dk)) catLbl = 'Open';
+              } else {
+                catLbl = tag.lab || '';
+              }
+            } catch(_){}
             let d = '';
             if(it.days != null){
               if(it.days < 0) d = Math.abs(it.days) + 'd late';
@@ -8309,9 +8328,11 @@ Tell me your planned move-out date and I will set the inspection.`
               else d = 'In ' + it.days + 'd';
             }
             const warnCls = (it.days != null && it.days <= 0) ? ' warn' : '';
-            const labelHtml = prefix
-              ? (esc(prefix) + ' &middot; ' + esc(rest))
-              : esc(rest);
+            const parts = [];
+            if(catLbl) parts.push(esc(catLbl));
+            if(prefix) parts.push(esc(prefix));
+            parts.push(esc(rest));
+            const labelHtml = parts.join(' &middot; ');
             return '<div class="th-r th-r-grouped" data-th-file="' + esc(fid) + '">' +
               '<div class="dot"></div>' +
               '<div class="body">' +
