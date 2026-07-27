@@ -42,6 +42,12 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@500&display=swap" rel="stylesheet">
 <style>
   *{box-sizing:border-box}
+  /* Pin text scaling to the CSS values regardless of iOS Dynamic Type /
+     Safari's default text-size auto-inflation. Marlenyi (Jul 26) reported
+     the drawer felt "too zoomed in" even after we compacted padding —
+     root cause was Safari upscaling every font-size based on her system
+     Dynamic Type setting. This locks the page to authored sizes. */
+  html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   body{margin:0;font-family:'Inter',-apple-system,system-ui,sans-serif;background:#fafafa;color:#0f0f0f;-webkit-font-smoothing:antialiased}
   a{color:inherit}
 
@@ -351,7 +357,109 @@
      service sub-tab row scrolls sideways too rather than wrapping into tall stacks. */
   @media(max-width:600px){
     #kanban{display:flex !important;grid-template-columns:none !important;overflow-x:auto;gap:10px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;padding-bottom:6px}
-    #kanban .lane{flex:0 0 85%;scroll-snap-align:start}
+    /* [active-mock2] · widened from 85% → 94% so addresses stop chopping into
+       "2224" / "1530" / "1502" · you still get a small peek that says "swipe" */
+    #kanban .lane{flex:0 0 94%;scroll-snap-align:start}
+    /* [active-mock2] · ADHD win · hide empty lanes so you land on real work
+       instead of a full-screen empty column. renderKanban injects .lane-empty
+       for zero-file lanes; :has() catches them and pulls the lane out of the
+       swipe track. If ALL lanes are empty, the whole-kanban zero state at
+       line ~13017 kicks in with a proper CTA — you never see this on a truly
+       empty board. */
+    #kanban .lane:has(.lane-empty){ display: none !important; }
+    /* [active-mock2] · hide the service sub-row on mobile · one row of tabs
+       instead of two, less decision fatigue. Sales/Listings pills still work.
+       (MLS Setup and other service filters remain accessible on desktop.) */
+    #svc-subfilter{ display: none !important; }
+
+    /* [mnav-view-scope] · Marlenyi (July 26): each bottom-nav tab renders
+       ONLY its own section. No bleed-through — Today shows calendar, Board
+       shows kanban, Calendar shows the calendar heatmap on its own, Invoices
+       is handled by _syncBoardVisibility inline styles.
+       body[data-mnav-view] is set by _syncBoardVisibility() on every tab
+       change. Desktop is untouched — this only fires on ≤600px. */
+
+    /* Today · calendar section only. Kill Active files header + kanban. */
+    body[data-mnav-view="today"] #fileCalendar,
+    body[data-mnav-view="today"] #boardWrap { display: none !important; }
+
+    /* Board · per-service pipelines only on mobile · kanban swipe + chip
+       strip stay for desktop. Marlenyi (July 26): kanban isn't the best
+       fit on mobile; killed the toggle and going all-in on per-service
+       mini-pipelines. Also kill calendar heatmap and Active files header
+       (owned by other tabs). */
+    body[data-mnav-view="board"] #calHeatmap,
+    body[data-mnav-view="board"] #fileCalendar,
+    body[data-mnav-view="board"] #kanban,
+    body[data-mnav-view="board"] #kanban-chips,
+    body[data-mnav-view="board"] #kanban-title,
+    body[data-mnav-view="board"] #ft-filter { display: none !important; }
+
+    /* Calendar · same as Today for now (calendar heatmap on its own). */
+    body[data-mnav-view="calendar"] #fileCalendar,
+    body[data-mnav-view="calendar"] #boardWrap { display: none !important; }
+
+    /* Invoice · every other section OUT so #invoiceScreen stands alone. */
+    body[data-mnav-view="invoice"] #calHeatmap,
+    body[data-mnav-view="invoice"] #fileCalendar,
+    body[data-mnav-view="invoice"] #boardWrap,
+    body[data-mnav-view="invoice"] #dupBanner { display: none !important; }
+
+    /* Page-level chrome from files.html · redundant on mobile because
+       the bottom nav already tells you where you are. Each tab renders
+       its own header (Today / Board / Calendar / Invoices) with its own
+       counts and search where relevant.
+       Was scoped to body.has-mnav, which is added by JS on init — that
+       caused a visible FOUC where the desktop h1/search/kpi flashed on
+       page load before JS ran. Scoping to the viewport (matching the
+       mobile media query) hides them the instant CSS parses, no wait. */
+    .page-head,
+    .tc-filter,
+    .metrics-inline,
+    #agent-msg-panel { display: none !important; }
+
+    /* Kanban skeleton would flash briefly on load before renderKanban
+       populates + _syncBoardVisibility scopes hides. Default-hide these
+       containers on mobile; per-tab CSS below re-shows the right one. */
+    #boardWrap { display: none !important; }
+    body[data-mnav-view="board"] #boardWrap { display: block !important; }
+    /* [active-mock2] · lane jumper chip strip · JS injects #kanban-chips
+       right above #kanban so you can tap a stage instead of swiping through
+       every one to find it. */
+    #kanban-chips{
+      display: flex; gap: 6px;
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
+      padding: 4px 2px 12px;
+      scrollbar-width: none;
+    }
+    #kanban-chips::-webkit-scrollbar{ display: none; }
+    #kanban-chips .kchip{
+      flex: 0 0 auto;
+      padding: 7px 13px;
+      border-radius: 999px;
+      background: #fff;
+      border: 0.5px solid rgba(15,15,15,0.14);
+      font: 600 11px 'Inter', -apple-system, sans-serif;
+      color: #0f0f0f;
+      white-space: nowrap;
+      cursor: pointer;
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #kanban-chips .kchip .kct{
+      font-family: 'Playfair Display', Georgia, serif;
+      font-weight: 500;
+      font-size: 13px;
+      color: #a39e93;
+    }
+  }
+  /* Desktop · no chip strip (all lanes visible in the grid already) */
+  @media(min-width:601px){
+    #kanban-chips{ display: none; }
+  }
     .svc-subrow{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
     .svc-pill{white-space:nowrap;flex:0 0 auto}
     #ft-filter{display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
@@ -373,13 +481,21 @@
     [data-invoice-board][data-inv-active="sent"] [data-inv-col]:not([data-inv-col="sent"]){display:none}
     [data-invoice-board][data-inv-active="paid"] [data-inv-col]:not([data-inv-col="paid"]){display:none}
   }
-  /* Mobile bottom nav (Direction A) · thumb-reachable view switch. Desktop hidden. */
+  /* Mobile bottom nav (Direction A) · thumb-reachable view switch. Desktop hidden.
+     Icons · Marlenyi picked Mock 3 (state-based, iOS pattern): each tab has
+     an outline glyph shown when inactive and a filled glyph shown when active.
+     The `.on` class flips visibility between the two <g> groups inside the SVG. */
   #mnav{display:none;position:fixed;left:0;right:0;bottom:0;z-index:9985;background:#fff;border-top:1px solid #ece8e0;padding-bottom:env(safe-area-inset-bottom)}
-  #mnav .mn{flex:1;background:none;border:0;font-family:inherit;font-size:9.5px;font-weight:600;color:#8a857c;padding:8px 0 9px;display:flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer}
-  #mnav .mn .ic{font-size:16px;line-height:1}
-  #mnav .mn.on{color:#0f0f0f}
+  #mnav .mn{flex:1;background:none;border:0;font-family:inherit;font-size:10px;font-weight:500;color:#a9a49a;padding:8px 0 9px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+  #mnav .mn .ic{width:22px;height:22px;display:flex;align-items:center;justify-content:center}
+  #mnav .mn .ic svg{width:100%;height:100%;display:block}
+  #mnav .mn .ic svg .outline{stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;fill:none}
+  #mnav .mn .ic svg .solid{fill:currentColor;stroke:none;display:none}
+  #mnav .mn.on{color:#0f0f0f;font-weight:700}
+  #mnav .mn.on .ic svg .outline{display:none}
+  #mnav .mn.on .ic svg .solid{display:block}
   #mnav .mn .bdg{display:inline-block;min-width:15px;font-size:9px;font-weight:700;color:#fff;background:#9a3a2c;border-radius:999px;padding:0 4px;margin-left:3px}
-  @media(max-width:600px){ #mnav{display:flex} body.has-mnav{padding-bottom:60px} }
+  @media(max-width:600px){ #mnav{display:flex} body.has-mnav{padding-bottom:64px} }
 
   /* ===== Mobile playbook drawer · full-screen on phones ===== */
   @media(max-width:680px){
@@ -1028,7 +1144,153 @@
     .tpb-popmodal.rail .rail-seg-btn{flex:1;min-height:36px}
     .tpb-popmodal.rail #rail-request-agent{display:none}
     .tpb-popmodal.rail #tpb-del-head{display:none}
+    /* Empty ref-link buttons + score chip crowded the top bar and pushed
+       the close × off the right edge on iPhone (Marlenyi Jul 26: "can't
+       even exit out of the window"). Hide them on mobile — the same
+       actions live inside the overflow ⋯ menu. */
+    .tpb-popmodal.rail .tpb-footlinks,
+    .tpb-popmodal.rail .rail-bar-score { display: none !important; }
+    /* On mobile the floating "× Close" FAB IS the close, so the top-bar
+       X becomes redundant · hide it to avoid two exit controls on screen
+       (Marlenyi Jul 26: "There is now 2 exit buttons"). */
+    .tpb-popmodal.rail .rail-close { display: none !important; }
     .rail-menu-mobile{display:block!important}
+    /* Safety-net floating close pill · pinned to the top-right of the
+       viewport whenever any rail drawer is open. */
+    body:has(#tpb-popview:not([hidden])) #rail-close-fab,
+    body:has(.tpb-popmodal.rail:not([hidden])) #rail-close-fab { display: inline-flex !important; }
+    /* File drawer · mobile compaction (July 26 revised). Marlenyi's second
+       screenshot showed the earlier bumps read as "too zoomed in" — rows
+       chunky, top bar clipping the address. Compact everything back to a
+       density that matches the phone viewport, while keeping the two clarity
+       wins: hide the redundant "· the agent sees this" and darken the day
+       line. Scoped to .tpb-popmodal.rail so nothing outside the drawer moves. */
+    .tpb-popmodal.rail .rail-right { padding: 8px 12px 20px !important; }
+    .tpb-popmodal.rail .tpb-ck-section { padding: 10px 12px !important; }
+    .tpb-popmodal.rail .rail-svcstage-meta { display: none; }
+    .tpb-popmodal.rail .ck-task { padding: 8px 0; gap: 8px; }
+    .tpb-popmodal.rail .ck-label { font-size: 13px; line-height: 1.35; }
+    .tpb-popmodal.rail .ck-sub { font-size: 11px; line-height: 1.4; }
+    .tpb-popmodal.rail .ck-task input[type="checkbox"] { width: 17px; height: 17px; margin-top: 2px; }
+    .tpb-popmodal.rail .ck-toggle { padding: 6px 8px; font-size: 12px; }
+    .tpb-popmodal.rail .uc-day { font-size: 11.5px; color: #5f5e5a; }
+    .tpb-popmodal.rail .rail-eb, .tpb-popmodal.rail .tpb-ck-eb { font-size: 10.5px; }
+    /* Uc-step rows (Contract type / Parties / Financing / Terms & dates) —
+       trim the desktop-generous padding so four rows don't dominate the
+       viewport. Row still comfortably tappable at 48px total. */
+    .tpb-popmodal.rail .uc-acc-hd, .tpb-popmodal.rail .uc-step { padding: 10px 12px !important; }
+    .tpb-popmodal.rail .uc-acc-l, .tpb-popmodal.rail .uc-step-l { font-size: 13px; gap: 10px; }
+    .tpb-popmodal.rail .uc-step-num { width: 20px; height: 20px; font-size: 10.5px; }
+  }
+  /* Sticky Do-Now bar · black pill bar pinned to the bottom of the viewport
+     when a rail drawer is open. Shows the current "next" task's label +
+     Send → button so the top action is always in thumb reach. Hidden on
+     desktop and when there is no next task to do. */
+  #rail-donow-bar {
+    display: none;
+    position: fixed;
+    left: 12px; right: 12px;
+    bottom: calc(env(safe-area-inset-bottom, 10px) + 12px);
+    background: #0f0f0f; color: #fff;
+    border-radius: 14px;
+    padding: 12px 12px 12px 16px;
+    z-index: 10000;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.32);
+    align-items: center; gap: 10px;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  }
+  #rail-donow-bar .dn-body { flex: 1; min-width: 0; }
+  #rail-donow-bar .dn-eb { font-size: 9px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: #e8a99d; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; }
+  #rail-donow-bar .dn-dot { width: 6px; height: 6px; border-radius: 50%; background: #e8a99d; animation: dnPulse 1.6s ease-in-out infinite; }
+  @keyframes dnPulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  #rail-donow-bar .dn-nm { font-size: 14px; font-weight: 700; color: #fff; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #rail-donow-bar .dn-btn { flex: none; background: #fff; color: #0f0f0f; border: 0; border-radius: 10px; padding: 11px 15px; font: 700 12.5px 'Inter'; cursor: pointer; letter-spacing: 0.2px; }
+  body:has(#tpb-popview:not([hidden])) #rail-donow-bar,
+  body:has(.tpb-popmodal.rail:not([hidden])) #rail-donow-bar {
+    /* JS decides `display: flex` vs `display: none` based on whether a
+       next task exists; the has() rule only unblocks display when the
+       drawer is open. */
+    display: none; /* placeholder — JS toggles */
+  }
+
+  /* Invoice-submit prompt · green card that appears inside the drawer
+     when a file has closed. TC's cut is auto-calculated + submit is a
+     single tap. */
+  .rail-invoice-prompt { background: #eef4ee; border: 0.5px solid #cbe0d1; border-radius: 12px; padding: 14px 16px; margin: 0 -12px 14px; }
+  .rail-invoice-prompt .rip-eb { font: 700 10px 'Inter'; letter-spacing: 1.2px; text-transform: uppercase; color: #2c5f42; margin-bottom: 6px; }
+  .rail-invoice-prompt .rip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+  .rail-invoice-prompt .rip-t { font-family: Georgia, 'Times New Roman', serif; font-size: 15px; font-weight: 600; color: #0f0f0f; }
+  .rail-invoice-prompt .rip-amt { font-family: 'Playfair Display', Georgia, serif; font-size: 20px; letter-spacing: -0.5px; font-weight: 500; color: #2c5f42; }
+  .rail-invoice-prompt .rip-why { font-size: 11.5px; color: #5f6f57; line-height: 1.4; margin-bottom: 10px; }
+  .rail-invoice-prompt .rip-go { background: #2c5f42; color: #fff; border: 0; border-radius: 9px; padding: 10px 16px; font: 700 12.5px 'Inter'; cursor: pointer; letter-spacing: 0.3px; }
+
+  /* Rescue close FAB · always hidden until CSS above (inside the mobile
+     @media) shows it when a rail drawer is open. Solid black pill with the
+     word "Close" so it reads as a button, not an icon. */
+  #rail-close-fab {
+    display: none;
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 10px) + 12px);
+    right: 12px;
+    align-items: center; justify-content: center; gap: 6px;
+    border: 0;
+    background: #0f0f0f; color: #fff;
+    border-radius: 999px;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.3px;
+    padding: 10px 16px;
+    min-height: 40px;
+    cursor: pointer;
+    z-index: 10001;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.32);
+  }
+  #rail-close-fab span { font-size: 18px; line-height: 1; margin-right: 2px; }
+
+  /* Drawer content zoom on iPhone. Zoom on the modal itself shrinks the
+     whole modal box too (looks weird — small centered card in a big
+     viewport). Instead zoom the two INNER children (top bar + content grid)
+     so the modal stays 96vw but everything inside is 30% smaller. */
+  @media (max-width: 600px){
+    .tpb-popmodal.rail .tpb-popbar,
+    .tpb-popmodal.rail .rail-grid { zoom: 0.7; }
+
+    /* Email flags card was landing at the top of the drawer, above the actual
+       checklist. Marlenyi (Jul 27): "why am I looking at email history on the
+       top" — she wants tasks first. Hidden on mobile since the emails also
+       surface in the notif bell + on the file card in the calendar. */
+    .tpb-popmodal.rail #rail-email-flags { display: none !important; }
+
+    /* Stage-jump chip strip · Marlenyi picked Mock 5 (battery fill · next
+       stage's chip fills as she checks tasks in the current stage; when it
+       hits 100% it turns green + pulses + becomes tappable to advance). */
+    #rail-stage-chips { position: sticky; top: 0; z-index: 3; background: #fafafa; padding: 10px 4px 8px; margin: 0 -12px 12px; display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; border-bottom: 0.5px solid #ede8d8; }
+    #rail-stage-chips::-webkit-scrollbar { display: none; }
+    #rail-stage-chips .sjc { flex: 0 0 auto; padding: 7px 14px; border-radius: 999px; background: #fff; border: 0.5px solid #e0dbc9; font: 600 12px 'Inter'; color: #7a756c; white-space: nowrap; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; min-height: 34px; position: relative; overflow: hidden; }
+    #rail-stage-chips .sjc .n { font-family: 'Playfair Display', Georgia, serif; font-size: 12px; font-weight: 500; color: #a9a49a; position: relative; z-index: 1; }
+    #rail-stage-chips .sjc .lbl { position: relative; z-index: 1; }
+    #rail-stage-chips .sjc.done { color: #0f0f0f; }
+    #rail-stage-chips .sjc.cur  { background: #0f0f0f; color: #fff; border-color: #0f0f0f; }
+    #rail-stage-chips .sjc.cur .n { color: #d6d1c6; }
+    #rail-stage-chips .sjc.lck  { opacity: .5; cursor: default; }
+    /* Battery-fill for the next stage. Fill % is set inline via --pct. */
+    #rail-stage-chips .sjc.filling { border-color: #cbe0d1; }
+    #rail-stage-chips .sjc.filling::before { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: var(--pct, 0%); background: linear-gradient(90deg, rgba(62,125,87,0.16) 0%, rgba(62,125,87,0.08) 100%); z-index: 0; transition: width .4s ease-out; }
+    #rail-stage-chips .sjc.filling.full { background: #eef4ee; border-color: #3e7d57; color: #2c5f42; animation: sjcReady 1.8s ease-in-out infinite; cursor: pointer; }
+    #rail-stage-chips .sjc.filling.full::before { width: 100%; background: rgba(62,125,87,0.18); }
+    #rail-stage-chips .sjc.filling.full .n { color: #2c5f42; font-weight: 700; }
+    @keyframes sjcReady { 0%,100%{ box-shadow: 0 0 0 3px rgba(62,125,87,0.14); } 50%{ box-shadow: 0 0 0 6px rgba(62,125,87,0.06); } }
+    /* Fallback if zoom is dropped by a future Safari — hammer font-size */
+    @supports not (zoom: 0.7){
+      .tpb-popmodal.rail .rail-right,
+      .tpb-popmodal.rail .rail-right *,
+      .tpb-popmodal.rail .tpb-popbar,
+      .tpb-popmodal.rail .tpb-popbar * {
+        font-size: 11px !important;
+      }
+      .tpb-popmodal.rail .rail-right h1,
+      .tpb-popmodal.rail .rail-right h2,
+      .tpb-popmodal.rail .rail-right h3 { font-size: 13px !important; }
+    }
   }
   .ct-verify-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:16px;align-items:start}
   .ct-verify-terms{min-width:0}
@@ -1156,8 +1418,11 @@
     .cal-nav-btn, .cal-today-btn, .cal-mode-btn, .cal-sync-btn { min-height: 40px; min-width: 40px; padding: 8px 12px; }
     .view-toggle-pill, .view-tab { min-height: 40px; padding: 9px 14px; }
 
-    /* [14] Calendar deadline-row checkbox · larger hit area */
-    input[data-cal-check] { width: 26px !important; height: 26px !important; padding: 10px !important; margin: -8px 0 !important; box-sizing: content-box !important; }
+    /* [14] Calendar deadline-row checkbox · Marlenyi (July 25): the padded
+       version made checkboxes look huge and un-Mock-2. Row is already 44px
+       tall (tap comfort covered by the row); the checkbox itself is 20x20
+       to match Mock 2's tight look. */
+    input[data-cal-check] { width: 20px !important; height: 20px !important; padding: 0 !important; margin: 0 !important; box-sizing: border-box !important; accent-color: #a3402f; }
 
     /* [15] Cal week-strip day chips a touch taller so dynamic-type doesn't clip */
     .cal-week-day, [data-cal-day] { min-height: 58px; }
@@ -1257,9 +1522,13 @@
     /* keep the toast above the FABs too so they don't visually stack under */
     body.has-mnav .undo-toast { bottom: calc(150px + env(safe-area-inset-bottom)) !important; }
 
-    /* Overdue collapse · top-5 shown, "Show all N" reveals rest */
+    /* Overdue collapse · top-N shown, "Show all M" reveals rest */
     .overdue-more { display: none; }
     .overdue-open .overdue-more { display: block; }
+    /* Kill the border-top on the FIRST row so there's no stray line right
+       under the "Overdue · N · Clear all →" header. Marlenyi flagged this
+       (July 25). */
+    .overdue-wrap > div:first-child { border-top: 0 !important; }
     .overdue-toggle {
       display: block; width: 100%;
       background: transparent; border: 0; border-top: 0.5px solid #f3f0ea;
@@ -1271,6 +1540,113 @@
     .overdue-open .overdue-toggle .overdue-toggle-open { display: none; }
     .overdue-toggle .overdue-toggle-close { display: none; }
     .overdue-open .overdue-toggle .overdue-toggle-close { display: inline; }
+
+    /* [active-mock2] · Active files section · pipeline card folds to a
+       slim one-line bar on mobile. Marlenyi picked Mock 2 for ADHD:
+       hide the big number by default, tap to expand the breakdown.
+       Piggybacks on the existing data-pl-toggle click handler which
+       toggles .cal-open on .cal-pl-detail. */
+    #earnBox {
+      background: #fff !important;
+      padding: 0 !important;
+      border: 0.5px solid rgba(15,15,15,0.10) !important;
+      border-radius: 12px !important;
+      margin-top: 6px !important;
+    }
+    #earnBox [data-pl-toggle]{
+      display: grid !important;
+      grid-template-columns: auto 1fr auto !important;
+      align-items: center !important;
+      gap: 10px !important;
+      padding: 12px 14px !important;
+      text-align: left !important;
+    }
+    /* original eyebrow ("Pipeline net · if all X close") is too wordy for the
+       slim bar. Hide it collapsed; show it in the expanded body as a subtitle. */
+    #earnBox [data-pl-toggle] > div:nth-child(1){
+      display: none !important;
+    }
+    /* short pseudo-label for the collapsed bar */
+    #earnBox [data-pl-toggle]::before{
+      content: 'Pipeline net';
+      grid-column: 1 !important;
+      font: 700 10px 'Inter', -apple-system, sans-serif;
+      letter-spacing: 1.6px;
+      text-transform: uppercase;
+      color: #a9a49a;
+      line-height: 1.2;
+      justify-self: start;
+    }
+    /* big number · shrunk to inline · right of eyebrow */
+    #earnBox [data-pl-toggle] > div:nth-child(2){
+      grid-column: 2 !important;
+      font-size: 20px !important;
+      line-height: 1 !important;
+      text-align: left !important;
+      justify-self: start !important;
+    }
+    /* stats row · hidden collapsed */
+    #earnBox [data-pl-toggle] > div:nth-child(3){
+      display: none !important;
+    }
+    /* "Show the breakdown ▾" hint · hidden, we use a chevron */
+    #earnBox [data-pl-toggle] > div:nth-child(4){
+      display: none !important;
+    }
+    /* chevron on the right */
+    #earnBox [data-pl-toggle]::after{
+      content: '\2304';
+      grid-column: 3 !important;
+      color: #a9a49a;
+      font-size: 16px;
+      line-height: 1;
+      transition: transform .2s ease;
+      justify-self: end;
+    }
+    /* expanded state · body reveals stats row + breakdown */
+    #earnBox:has(.cal-pl-detail.cal-open) [data-pl-toggle]::after{
+      transform: rotate(180deg);
+    }
+    #earnBox:has(.cal-pl-detail.cal-open) [data-pl-toggle]{
+      grid-template-columns: auto 1fr auto !important;
+      grid-auto-rows: auto;
+    }
+    #earnBox:has(.cal-pl-detail.cal-open) [data-pl-toggle] > div:nth-child(3){
+      display: flex !important;
+      grid-column: 1 / -1 !important;
+      justify-content: flex-start !important;
+      flex-wrap: wrap !important;
+      gap: 8px 14px !important;
+      margin-top: 4px !important;
+      padding-top: 10px !important;
+      border-top: 0.5px solid #f3ede0 !important;
+      font-size: 11px !important;
+    }
+    /* expanded · restore the wordy eyebrow as a small subtitle beneath the stats */
+    #earnBox:has(.cal-pl-detail.cal-open) [data-pl-toggle] > div:nth-child(1){
+      display: block !important;
+      grid-column: 1 / -1 !important;
+      grid-row: 3 !important;
+      font: 500 10.5px 'Inter', -apple-system, sans-serif !important;
+      text-transform: none !important;
+      letter-spacing: 0 !important;
+      color: #a9a49a !important;
+      margin-top: 6px !important;
+      text-align: left !important;
+    }
+    /* P&L breakdown table · lives outside data-pl-toggle so style it separately.
+       Default max-height 220px is too short for the full breakdown once the
+       stats row moves into the toggle body. Also override the dark border
+       (designed for the cream card) with a hairline for the white one. */
+    #earnBox .cal-pl-detail{
+      padding: 0 14px !important;
+    }
+    #earnBox .cal-pl-detail.cal-open{
+      max-height: 400px !important;
+      border-top: 0.5px solid #f3ede0 !important;
+      padding: 10px 14px 14px !important;
+      margin-top: 0 !important;
+    }
   }
 </style>
 </head>
@@ -1288,7 +1664,7 @@
 <!-- Shared chrome -->
 <div id="aari-header" data-aari-view="files" data-aari-show-submit="no"></div>
 <script src="/js/aari-header.js?v=2" defer></script>
-<script src="/js/aari-banner.js?v=14" defer></script>
+<script src="/js/aari-banner.js?v=16" defer></script>
 
 <main class="page" id="page-main" style="display:none">
 
@@ -1514,6 +1890,20 @@
 
 <!-- WORK RAIL · two-pane workspace · contract PDF pinned left, all sections inline right -->
 <div class="tpb-pop-backdrop" id="tpb-pop-backdrop"></div>
+  <!-- Rescue close FAB · pinned to top-right of the viewport, only visible on
+       mobile when a rail drawer is open. Visibility is controlled entirely by
+       CSS below (no inline display) so the show/hide rules aren't overridden
+       by an inline style. -->
+  <button type="button" id="rail-close-fab" aria-label="Close"><span aria-hidden="true">&times;</span> Close</button>
+  <!-- Sticky Do-Now bar · pinned to the bottom of the viewport when a rail
+       drawer is open. Reads the current "next" task and mirrors its Send. -->
+  <div id="rail-donow-bar" hidden>
+    <div class="dn-body">
+      <div class="dn-eb"><span class="dn-dot"></span> Do this now</div>
+      <div class="dn-nm" id="rail-donow-nm">—</div>
+    </div>
+    <button type="button" class="dn-btn" id="rail-donow-btn">Send →</button>
+  </div>
   <div id="tpb-popview" class="tpb-popmodal" hidden>
     <div class="tpb-popbar">
       <button type="button" class="tpb-popback" id="tpb-popback">&larr; All sections</button>
@@ -2655,7 +3045,7 @@ The buyer's review period begins the moment they are received.
         {
           id:'wtc_survey_title_request_email',
           task:'wtc_survey_title_request',
-          tasks:['wtc_survey_title_request','wtc_title_insurance_request'],
+          tasks:['wtc_survey_title_request'],
           showIf:(f)=>f.contract_type !== 'builder',
           thread:4,
           label:'Survey + title · request',
@@ -11005,6 +11395,14 @@ Tell me your planned move-out date and I will set the inspection.`
       if(inv) inv.style.display = (_activeView === 'invoice') ? '' : 'none';
       const heat = document.getElementById('calHeatmap');
       if(heat) heat.style.display = (_activeView === 'invoice') ? 'none' : '';
+      // Expose the current mnav view on body so mobile CSS can scope hides
+      // (Today hides the Active files section; Board / Calendar / Invoices
+      // do not). See body[data-mnav-view="today"] rule above.
+      try {
+        document.body.dataset.mnavView = (_activeView === 'invoice')
+          ? 'invoice'
+          : (typeof _mnavDest !== 'undefined' ? _mnavDest : 'today');
+      } catch(_){}
       // The earnings box does not belong on an invoice. #fileCalendar has to stay (it carries the
       // toggle), and the earnings box rides along inside it, so the broker's "Aari Transactions
       // net" with its revenue and TC-pay breakdown was sitting directly above her own invoice.
@@ -11066,11 +11464,30 @@ Tell me your planned move-out date and I will set the inspection.`
     if(!nav){
       nav = document.createElement('nav');
       nav.id = 'mnav';
+      // Icon set · Mock 3 (state-based). Every icon has an .outline and a
+       // .solid <g>; CSS at #mnav .mn.on flips visibility. Each SVG viewBox is
+       // 0 0 24 24 for consistent sizing across tabs.
+      var _icToday    = '<svg viewBox="0 0 24 24">' +
+        '<g class="outline"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></g>' +
+        '<g class="solid"><circle cx="12" cy="12" r="4"/><rect x="11" y="1" width="2" height="4" rx="1"/><rect x="11" y="19" width="2" height="4" rx="1"/><rect x="1" y="11" width="4" height="2" rx="1"/><rect x="19" y="11" width="4" height="2" rx="1"/><rect x="3.4" y="5.4" width="4" height="2" rx="1" transform="rotate(45 5.4 6.4)"/><rect x="16.6" y="16.6" width="4" height="2" rx="1" transform="rotate(45 18.6 17.6)"/><rect x="3.4" y="16.6" width="4" height="2" rx="1" transform="rotate(-45 5.4 17.6)"/><rect x="16.6" y="5.4" width="4" height="2" rx="1" transform="rotate(-45 18.6 6.4)"/></g>' +
+      '</svg>';
+      var _icBoard    = '<svg viewBox="0 0 24 24">' +
+        '<g class="outline"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="10" rx="1"/><rect x="17" y="4" width="4" height="7" rx="1"/></g>' +
+        '<g class="solid"><rect x="3" y="4" width="5.5" height="16" rx="1"/><rect x="9.5" y="4" width="5.5" height="10" rx="1"/><rect x="16" y="4" width="5" height="7" rx="1"/></g>' +
+      '</svg>';
+      var _icCalendar = '<svg viewBox="0 0 24 24">' +
+        '<g class="outline"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></g>' +
+        '<g class="solid"><path d="M8 2a1 1 0 011 1v2h6V3a1 1 0 112 0v2h2a2 2 0 012 2v2H3V7a2 2 0 012-2h2V3a1 1 0 011-1zM3 11h18v10a2 2 0 01-2 2H5a2 2 0 01-2-2V11z"/></g>' +
+      '</svg>';
+      var _icInvoice  = '<svg viewBox="0 0 24 24">' +
+        '<g class="outline"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/><path d="M10 12h4M10 16h4"/></g>' +
+        '<g class="solid"><path d="M6 2h9l5 5v14a1 1 0 01-1 1H6a1 1 0 01-1-1V3a1 1 0 011-1zm8 1v5h5m-8 3h4v2h-4zm0 4h4v2h-4z"/></g>' +
+      '</svg>';
       nav.innerHTML =
-        '<button type="button" class="mn" data-mnav="today"><span class="ic">&#9673;</span>Today</button>' +
-        '<button type="button" class="mn" data-mnav="board"><span class="ic">&#9638;</span>Board</button>' +
-        '<button type="button" class="mn" data-mnav="calendar"><span class="ic">&#9636;</span>Calendar</button>' +
-        '<button type="button" class="mn" data-mnav="invoice"><span class="ic">$</span><span class="lbl">Invoices</span></button>';
+        '<button type="button" class="mn" data-mnav="today"><span class="ic">'    + _icToday    + '</span>Today</button>' +
+        '<button type="button" class="mn" data-mnav="board"><span class="ic">'    + _icBoard    + '</span>Board</button>' +
+        '<button type="button" class="mn" data-mnav="calendar"><span class="ic">' + _icCalendar + '</span>Calendar</button>' +
+        '<button type="button" class="mn" data-mnav="invoice"><span class="ic">'  + _icInvoice  + '</span><span class="lbl">Invoices</span></button>';
       document.body.appendChild(nav);
       document.body.classList.add('has-mnav');
       nav.addEventListener('click', function(e){
@@ -11097,11 +11514,18 @@ Tell me your planned move-out date and I will set the inspection.`
       ensureMobileNav();
       return;
     }
-    if(_activeView !== 'board'){ _activeView = 'board'; _mnavSaveView('board'); try { renderTcCalendar(); } catch(_){} _syncBoardVisibility(); }
+    if(_activeView !== 'board'){ _activeView = 'board'; _mnavSaveView('board'); try { renderTcCalendar(); } catch(_){} }
     _mnavDest = dest;
-    var anchorId = dest === 'board' ? 'boardWrap' : (dest === 'calendar' ? 'calHeatmap' : 'fileCalendar');
-    var el = document.getElementById(anchorId);
-    if(el){ setTimeout(function(){ try { el.scrollIntoView({ behavior:'smooth', block:'start' }); } catch(_){} }, 70); }
+    // Always re-sync body[data-mnav-view] and inline show/hide even when
+    // _activeView didn't change, so switching between Today / Board / Calendar
+    // updates which section is visible (mobile CSS scopes hides by mnav view).
+    _syncBoardVisibility();
+    // Force the calendar heatmap to re-render so its mobile grid picks up
+    // the fresh body[data-mnav-view] — Today = week strip, Calendar = month grid.
+    // Without this, tapping Calendar leaves the calendar in whatever mode
+    // Today rendered it in first.
+    try { renderCalHeatmap(); } catch(_){}
+    window.scrollTo({ top:0, behavior:'auto' });
     ensureMobileNav();
   }
 
@@ -11730,48 +12154,90 @@ Tell me your planned move-out date and I will set the inspection.`
     // Reached only below CAL_MOBILE_BP. Everything below this block is the untouched desktop
     // month grid. Content is the SAME deadline data (byDay, overdue); only the shape changes.
     if(_calIsMobile()){
-      // ===== MOBILE · Option C · week strip + tap-a-day agenda with REAL checkboxes =====
-      // One view, no tabs. A week strip sits on top; tapping a day loads that day's deadlines
-      // below. Every row carries a real checkbox wired to markDeadlineDone, so Eileen clears a
-      // deadline straight from the calendar and it drops off everywhere at once. Overdue is
-      // pinned above the day so the backlog is always one tap from clearing. Items landing
-      // within 3 business days carry a "soon" flag so nothing slides into overdue unseen.
+      // ===== MOBILE · week strip (default) OR month grid (Calendar tab) =====
+      // The Calendar bottom-tab wants a full-month view instead of the daily
+      // week strip. When body[data-mnav-view]='calendar', render a compact
+      // 7-column month grid. Otherwise (Today tab, etc.) keep the week strip
+      // that Marlenyi picked for her daily driver.
+      const _mobileGridMode = (document.body && document.body.dataset && document.body.dataset.mnavView === 'calendar') ? 'month' : 'week';
       if(!_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(t0); base.setHours(0,0,0,0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; }
       const wk0 = new Date(_calWeekStart); wk0.setHours(0,0,0,0);
       // 3-business-day early flag · true when the due day is 1-3 business days out from today.
       const _soon = function(ms){ if(ms <= t0) return false; let n = 0; const cur = new Date(t0); while(cur.getTime() < ms){ cur.setDate(cur.getDate() + 1); const dow = cur.getDay(); if(dow !== 0 && dow !== 6) n++; if(n > 3) return false; } return n >= 1 && n <= 3; };
-      // --- week strip · 7 tappable day chips + week paging ---
-      const wkEnd = new Date(wk0); wkEnd.setDate(wkEnd.getDate() + 6);
       const _md = function(dt){ return dt.toLocaleDateString('en-US', { month:'short', day:'numeric' }); };
-      let strip = '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">' +
-        '<button type="button" data-cal-wknav="-1" aria-label="Previous week" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:30px;height:30px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8249;</button>' +
-        '<span style="flex:1;text-align:center;font-size:12px;font-weight:600;color:#0f0f0f">' + esc(_md(wk0)) + ' &ndash; ' + esc(_md(wkEnd)) + '</span>' +
-        '<button type="button" data-cal-wknav="1" aria-label="Next week" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:30px;height:30px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8250;</button></div>';
-      strip += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:14px">';
-      for(let i = 0; i < 7; i++){
-        const cd = new Date(wk0); cd.setDate(cd.getDate() + i); cd.setHours(0,0,0,0); const cts = cd.getTime();
-        const items = byDay[cts] || [];
-        const realN = items.filter(function(x){ return !x.isChase; }).length;
-        const isToday = cts === t0, isSel = cts === _calSelDay, isOver = cts < t0 && realN > 0;
-        let cs = 'display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 0 6px;border-radius:10px;cursor:pointer;min-height:52px;';
-        if(isSel) cs += 'background:#0f0f0f;color:#fff;';
-        else { cs += 'color:#0f0f0f;'; if(isToday) cs += 'box-shadow:inset 0 0 0 1.5px #0f0f0f;'; }
-        const dot = items.length
-          ? '<span style="width:16px;height:16px;border-radius:9px;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;background:' + (isSel ? '#fff' : (isOver ? '#a3402f' : '#0f0f0f')) + ';color:' + (isSel ? '#0f0f0f' : '#fff') + '">' + items.length + '</span>'
-          : '<span style="width:16px;height:16px"></span>';
-        strip += '<button type="button" data-cal-selday="' + cts + '" style="border:0;font-family:inherit;' + cs + '">' +
-          '<span style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;opacity:.7">' + ['S','M','T','W','T','F','S'][i] + '</span>' +
-          '<span style="font-size:15px;font-weight:600;line-height:1">' + cd.getDate() + '</span>' + dot + '</button>';
+      let strip = '';
+      if(_mobileGridMode === 'month'){
+        // --- month grid · 7-column, ~48px per cell · day number + deadline dot ---
+        const Y = _calMonth.getFullYear(), M = _calMonth.getMonth();
+        const monthLabel = _calMonth.toLocaleDateString('en-US', { month:'long', year:'numeric' });
+        strip += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">' +
+          '<button type="button" data-cal-nav="prev" aria-label="Previous month" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:32px;height:32px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8249;</button>' +
+          '<span style="flex:1;text-align:center;font-family:Georgia,\'Times New Roman\',serif;font-size:15px;font-weight:600;color:#0f0f0f">' + esc(monthLabel) + '</span>' +
+          '<button type="button" data-cal-nav="next" aria-label="Next month" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:32px;height:32px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8250;</button></div>';
+        // Weekday header
+        strip += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:4px">' +
+          ['S','M','T','W','T','F','S'].map(function(x){ return '<div style="font-size:9px;text-transform:uppercase;color:#a9a49a;text-align:center;font-weight:700;letter-spacing:.05em;padding:4px 0">' + x + '</div>'; }).join('') + '</div>';
+        const startDow = new Date(Y, M, 1).getDay();
+        const daysInMonth = new Date(Y, M + 1, 0).getDate();
+        const prevDays = new Date(Y, M, 0).getDate();
+        const totalCells = Math.ceil((startDow + daysInMonth) / 7) * 7;
+        strip += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:14px">';
+        for(let i = 0; i < totalCells; i++){
+          const dayNum = i - startDow + 1;
+          const isCurMonth = dayNum >= 1 && dayNum <= daysInMonth;
+          const cellDate = isCurMonth ? new Date(Y, M, dayNum) : (dayNum < 1 ? new Date(Y, M - 1, prevDays + dayNum) : new Date(Y, M + 1, dayNum - daysInMonth));
+          cellDate.setHours(0, 0, 0, 0);
+          const cts = cellDate.getTime();
+          const items = byDay[cts] || [];
+          const realN = items.filter(function(x){ return !x.isChase; }).length;
+          const isToday = cts === t0, isSel = cts === _calSelDay, isOver = cts < t0 && realN > 0;
+          let cs = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:46px;border-radius:8px;cursor:pointer;padding:4px 0;position:relative;';
+          if(!isCurMonth) cs += 'opacity:.28;';
+          if(isSel) cs += 'background:#0f0f0f;color:#fff;';
+          else { cs += 'color:#0f0f0f;'; if(isToday) cs += 'box-shadow:inset 0 0 0 1.5px #0f0f0f;'; }
+          const dot = items.length
+            ? '<span style="width:5px;height:5px;border-radius:5px;background:' + (isSel ? '#fff' : (isOver ? '#a3402f' : '#0f0f0f')) + ';display:block"></span>'
+            : '<span style="width:5px;height:5px;display:block"></span>';
+          strip += '<button type="button" data-cal-selday="' + cts + '" style="border:0;font-family:inherit;' + cs + '">' +
+            '<span style="font-size:13px;font-weight:' + (isToday ? '700' : '500') + ';line-height:1">' + cellDate.getDate() + '</span>' + dot + '</button>';
+        }
+        strip += '</div>';
+      } else {
+        // --- week strip · 7 tappable day chips + week paging ---
+        const wkEnd = new Date(wk0); wkEnd.setDate(wkEnd.getDate() + 6);
+        strip = '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">' +
+          '<button type="button" data-cal-wknav="-1" aria-label="Previous week" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:30px;height:30px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8249;</button>' +
+          '<span style="flex:1;text-align:center;font-size:12px;font-weight:600;color:#0f0f0f">' + esc(_md(wk0)) + ' &ndash; ' + esc(_md(wkEnd)) + '</span>' +
+          '<button type="button" data-cal-wknav="1" aria-label="Next week" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:30px;height:30px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8250;</button></div>';
+        strip += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:14px">';
+        for(let i = 0; i < 7; i++){
+          const cd = new Date(wk0); cd.setDate(cd.getDate() + i); cd.setHours(0,0,0,0); const cts = cd.getTime();
+          const items = byDay[cts] || [];
+          const realN = items.filter(function(x){ return !x.isChase; }).length;
+          const isToday = cts === t0, isSel = cts === _calSelDay, isOver = cts < t0 && realN > 0;
+          let cs = 'display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 0 6px;border-radius:10px;cursor:pointer;min-height:52px;';
+          if(isSel) cs += 'background:#0f0f0f;color:#fff;';
+          else { cs += 'color:#0f0f0f;'; if(isToday) cs += 'box-shadow:inset 0 0 0 1.5px #0f0f0f;'; }
+          const dot = items.length
+            ? '<span style="width:16px;height:16px;border-radius:9px;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;background:' + (isSel ? '#fff' : (isOver ? '#a3402f' : '#0f0f0f')) + ';color:' + (isSel ? '#0f0f0f' : '#fff') + '">' + items.length + '</span>'
+            : '<span style="width:16px;height:16px"></span>';
+          strip += '<button type="button" data-cal-selday="' + cts + '" style="border:0;font-family:inherit;' + cs + '">' +
+            '<span style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;opacity:.7">' + ['S','M','T','W','T','F','S'][i] + '</span>' +
+            '<span style="font-size:15px;font-weight:600;line-height:1">' + cd.getDate() + '</span>' + dot + '</button>';
+        }
+        strip += '</div>';
       }
-      strip += '</div>';
       html += strip;
-      // --- a tickable deadline row · checkbox clears it, the rest of the row opens the file ---
+      // --- a tickable deadline row · Mock 2 compact · Marlenyi's pick (July 25) ---
+      // Tighter than the older 44px row: 20px checkbox, single-line body
+      // (name on line 1, address on line 2 in muted 10.5px), days chip small
+      // on the right. Row still ~44px tall for tap comfort but visually denser.
       const cRow = function(d, meta, mc){
-        const box = '<input type="checkbox" data-cal-check data-fid="' + esc(d.fileId) + '" data-dkey="' + esc(d.key || '') + '" aria-label="Mark done" style="flex:none;width:22px;height:22px;accent-color:#0f0f0f;cursor:pointer;margin:0">';
-        return '<div style="display:flex;align-items:center;gap:12px;padding:12px 2px;border-top:0.5px solid #f3f0ea;min-height:44px">' + box +
-          '<div data-cal-open="' + esc(d.fileId) + '" style="flex:1;min-width:0;cursor:pointer"><div style="font-size:13px;color:#0f0f0f;line-height:1.3">' + esc(d.label || 'Deadline') + '</div>' +
-          '<div style="font-size:11px;color:#8a857c;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(String(d.address || '').split(',')[0]) + '</div></div>' +
-          (meta ? '<span style="flex:none;font-size:11px;font-weight:600;color:' + (mc || '#8a857c') + '">' + esc(meta) + '</span>' : '') + '</div>';
+        const box = '<input type="checkbox" data-cal-check data-fid="' + esc(d.fileId) + '" data-dkey="' + esc(d.key || '') + '" aria-label="Mark done" style="flex:none;width:20px;height:20px;accent-color:#a3402f;cursor:pointer;margin:0">';
+        return '<div style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-top:0.5px solid #f3f0ea;min-height:44px">' + box +
+          '<div data-cal-open="' + esc(d.fileId) + '" style="flex:1;min-width:0;cursor:pointer;line-height:1.25"><div style="font-size:13px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(d.label || 'Deadline') + '</div>' +
+          '<div style="font-size:10.5px;color:#8a857c;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(String(d.address || '').split(',')[0]) + '</div></div>' +
+          (meta ? '<span style="flex:none;font-size:10px;font-weight:600;color:' + (mc || '#8a857c') + ';letter-spacing:0.2px">' + esc(meta) + '</span>' : '') + '</div>';
       };
       let mbody = '';
       // Overdue · pinned on top, tickable, so the backlog clears from right here.
@@ -11779,9 +12245,15 @@ Tell me your planned move-out date and I will set the inspection.`
       // overwhelming the mobile view · show top 5, collapse the rest behind
       // a "Show all N" toggle. Desktop: unchanged, still shows all inline.
       if(overdue.length){
-        mbody += '<div class="overdue-head" style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:#a3402f;margin:4px 2px 0">Overdue &middot; ' + overdue.length + '</div>';
+        // Marlenyi (July 25 v3): "Clear all button should not exist."
+        // Removed · deadlines need individual attention (ticking a checkbox
+        // means the deadline was ACTUALLY met · a bulk-clear could hide real
+        // outstanding work). Header is just the "Overdue · N" tag now.
+        mbody += '<div class="overdue-head" style="margin:4px 2px 8px">' +
+          '<span style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:#a3402f">Overdue &middot; ' + overdue.length + '</span>' +
+        '</div>';
         const overdueRows = overdue.map(function(d){ const days = Math.round((t0 - new Date(d.date).setHours(0,0,0,0)) / 86400000); return cRow(d, days + 'd late', '#a3402f'); });
-        const OVERDUE_CAP = 5;
+        const OVERDUE_CAP = 3;
         if(overdueRows.length <= OVERDUE_CAP){
           mbody += '<div class="overdue-wrap">' + overdueRows.join('') + '</div>';
         } else {
@@ -11808,15 +12280,9 @@ Tell me your planned move-out date and I will set the inspection.`
       // so the whole calendar section reads as ONE unified card wrapped by
       // #calHeatmap (see the [cal-04-wire] CSS block near the top of the file).
       html += '<div data-cal-inner style="background:transparent;padding:8px 0 0;border-top:1px solid #f3ede0;margin-top:2px">' + mbody + '</div>';
-      // Cal Mock 3 · footer sync row · replaces the header Sync button.
-      // Reassures TCs their Google Calendar is current without asking them
-      // to click; the "Sync now" link is a fallback if the auto-sync ever
-      // hiccups. #cal-sync id is preserved so the existing click handler
-      // keeps working (see line ~11930).
-      html += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #f3ede0;display:flex;justify-content:space-between;align-items:center;font-size:11px;color:#7a756c">' +
-        '<span style="font-style:italic">Auto-synced &middot; connect once, stays current</span>' +
-        '<a href="#" id="cal-sync" style="color:#0f0f0f;text-decoration:none;font-weight:600;letter-spacing:0.3px">Sync now &rarr;</a>' +
-      '</div>';
+      // Marlenyi (July 25 v4) moved the Auto-synced footer to the avatar
+      // dropdown (see aari-banner.js · Google Calendar menu item) since sync
+      // is a one-time setup, not something to see on every calendar view.
       host.innerHTML = html; _wireCal(host); return;
     }
     // ---- two columns: heatmap (left) · today + overdue pinned (right) ----
@@ -11916,6 +12382,8 @@ Tell me your planned move-out date and I will set the inspection.`
         btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       });
     });
+    // Clear-all handler removed · Marlenyi asked to kill the button
+    // (July 25 v3). Individual checkbox ticks still work.
     // Board / List switch · persists per user so a coordinator lands in the view they left in.
     _syncBoardVisibility();
     host.querySelectorAll('[data-active-view]').forEach(function(b){
@@ -11931,6 +12399,83 @@ Tell me your planned move-out date and I will set the inspection.`
     // Self-heal · once per session, when the calendar opens, quietly re-push every
     // deadline so nothing on the coordinator's calendar can drift stale.
     try { if(!window.__aariGcalSelfHealed){ window.__aariGcalSelfHealed = true; setTimeout(function(){ try { gcalSyncDeadlines(); } catch(_){} }, 1500); } } catch(_){}
+    // One-shot cleanup · walk-through removed from the engine (July 26). Sync
+    // never deletes stale events on its own, so any walk-through the engine
+    // previously pushed lingers on the TC's Google Calendar. Iterate every
+    // file assigned to the signed-in coordinator once and delete the
+    // walk-through event on each. Guarded per-user in localStorage so it
+    // runs exactly once, then never again.
+    try {
+      var CLEAN_KEY = 'aari_gcal_walkthrough_cleaned_v1_' + ((_profile && _profile.id) ? _profile.id : 'anon');
+      if(_profile && _profile.id && !localStorage.getItem(CLEAN_KEY)){
+        setTimeout(async function(){
+          try {
+            var mine = (_files || []).filter(function(f){
+              return f && f.assigned_tc_id === _profile.id && f.status !== 'archived';
+            });
+            if(!mine.length){ try { localStorage.setItem(CLEAN_KEY, new Date().toISOString()); } catch(_){} return; }
+            console.log('[walkthrough-cleanup] scrubbing walk-through events on', mine.length, 'files');
+            for(var i = 0; i < mine.length; i++){
+              try { await gcalDeleteDeadline(mine[i].id, 'walk_through'); } catch(_){}
+            }
+            try { localStorage.setItem(CLEAN_KEY, new Date().toISOString()); } catch(_){}
+            console.log('[walkthrough-cleanup] done');
+          } catch(_){}
+        }, 3000);
+      }
+    } catch(_){}
+    // One-shot cleanup · auto-check every deadline that is currently overdue.
+    // Marlenyi (July 26): "check it all for me as if it was completed" · scoped
+    // to CURRENTLY PAST-DUE only, never touches future tasks. Uses the engine's
+    // own _tcCalDeadlines() output (which already excludes closed/archived
+    // files, completed deadlines via _dlDoneFor, and now walk-through) and
+    // calls markDeadlineDone() so the audit log records each completion
+    // properly. Guarded per-user in localStorage so it runs exactly once.
+    // Chase reminders and the derived insp_checkin item are excluded — they're
+    // not real deadlines, so nothing to mark complete on them.
+    try {
+      // v2 · v1 filter only touched files assigned to the signed-in user.
+      // Marlenyi (broker/owner) sees every coordinator's files in the
+      // overdue pane, so the first pass left Milennys' and Eileen's
+      // overdue on screen. For broker/owner: strip every visible overdue
+      // regardless of assignment. TCs stay scoped to their own book.
+      // v2 also invalidates the v1 flag so this fires again for anyone
+      // whose v1 pass already ran.
+      var OD_KEY = 'aari_overdue_autocleared_v2_' + ((_profile && _profile.id) ? _profile.id : 'anon');
+      var _isBrokerScope = _profile && String(_profile.role || '').toLowerCase() === 'broker';
+      if(_profile && _profile.id && !localStorage.getItem(OD_KEY)){
+        setTimeout(async function(){
+          try {
+            var todayD = new Date(); todayD.setHours(0, 0, 0, 0);
+            var todayIso = todayD.toISOString().slice(0, 10);
+            var fileById = {}; (_files || []).forEach(function(f){ if(f) fileById[f.id] = f; });
+            var overdue = (_tcCalDeadlines() || []).filter(function(d){
+              if(!d || !(d.date instanceof Date) || isNaN(d.date.getTime())) return false;
+              if(d.isChase) return false;
+              if(d.key === 'insp_checkin') return false;
+              if(typeof d.key === 'string' && d.key.slice(-7) === '__chase') return false;
+              var f = fileById[d.fileId];
+              if(!f) return false;
+              // TCs only clear their own book; broker/owner clears everything they see.
+              if(!_isBrokerScope && f.assigned_tc_id !== _profile.id) return false;
+              var dd = new Date(d.date.getTime()); dd.setHours(0, 0, 0, 0);
+              return dd.getTime() < todayD.getTime();
+            });
+            if(!overdue.length){ try { localStorage.setItem(OD_KEY, new Date().toISOString()); } catch(_){} return; }
+            console.log('[overdue-autoclear] marking', overdue.length, 'past-due deadlines as done');
+            for(var i = 0; i < overdue.length; i++){
+              var item = overdue[i];
+              var f = fileById[item.fileId];
+              if(!f) continue;
+              try { await markDeadlineDone(f, item.key, todayIso, 'Auto-cleared past due'); } catch(_){}
+            }
+            try { localStorage.setItem(OD_KEY, new Date().toISOString()); } catch(_){}
+            console.log('[overdue-autoclear] done · re-rendering');
+            try { renderCalHeatmap(); } catch(_){}
+          } catch(_){}
+        }, 4500);
+      }
+    } catch(_){}
     const ss = host.querySelector('#cal-search');
     if(ss) ss.addEventListener('input', function(){ _calSearch = this.value; const pos = this.selectionStart; renderTcCalendar(); const e = document.querySelector('#fileCalendar #cal-search'); if(e){ e.focus(); try { e.setSelectionRange(pos, pos); } catch(_){} } });
     const sync = host.querySelector('#cal-sync');
@@ -12433,7 +12978,355 @@ Tell me your planned move-out date and I will set the inspection.`
     return '<div style="border:0.5px dashed #ddd7cb;border-radius:10px;padding:22px 13px;text-align:center">' +
       '<div style="font-size:11px;color:#a39e93;line-height:1.5">' + text + '</div></div>';
   }
+  // Mobile broker view · Mock 2 + per-TC ledger (Marlenyi picked July 26,
+  // then asked to add YTD / MTD payout tracking + fix tap targets +
+  // narrow-screen row crushing).
+  // Layout (top → bottom):
+  //   Header · Invoices + total in flight
+  //   Pay run card · this-week owed, per-TC rows with 44px Pay buttons
+  //   Per-TC ledger · one card per coordinator with owed / MTD / YTD.
+  //     Tapping a TC filters the history accordion to just their weeks.
+  //   Previous weeks accordion · paid invoices grouped by ISO week
+  var _bfInvSelectedTc = null; // tap a TC card to filter history
+  function _brokerInvoiceMobileHtml(){
+    var mine = (_profile && _profile.id) || '';
+    // Unfiltered sources (per-TC ledger cards need to see EVERYONE regardless
+    // of the current TC filter · they're the switcher, not filtered results).
+    var submittedAll = (_invoices || []).filter(function(i){ return i.status === 'submitted'; });
+    var paidAll = (_invoices || []).filter(function(i){ return i.status === 'paid'; });
+    // TC filter · applied to pay run, projected, and history. Empty ⇒ everyone.
+    var _matchTc = function(i){ return !_bfInvSelectedTc || String(i.tc_id) === String(_bfInvSelectedTc); };
+    var submitted = submittedAll.filter(_matchTc);
+    var paid = paidAll.filter(_matchTc);
+    var owedNow = submitted.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
+    var totalInFlight = owedNow + paid.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
+    // Year + month boundaries for YTD / MTD (always computed off ALL invoices)
+    var _now = new Date();
+    var _y0 = new Date(_now.getFullYear(), 0, 1).getTime();
+    var _m0 = new Date(_now.getFullYear(), _now.getMonth(), 1).getTime();
+    // "Not yet sent" · per-TC billable that hasn't been submitted this week
+    var groups = _brokerInvoiceGroups();
+    var pending = groups.filter(function(g){ return g.billable.length; });
+    // Apply TC filter to pending too — pay run + projected show only that TC.
+    if(_bfInvSelectedTc){
+      pending = pending.filter(function(g){ return String(g.id) === String(_bfInvSelectedTc); });
+    }
+    var pendingTotal = pending.reduce(function(s, g){
+      return s + g.billable.reduce(function(t, f){ return t + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
+    }, 0);
+    // Group paid invoices by ISO week (Mon start)
+    var weekKey = function(iso){
+      if(!iso) return 'no-date';
+      var d = new Date(iso); if(isNaN(d.getTime())) return 'no-date';
+      d.setHours(0, 0, 0, 0);
+      var day = d.getDay(); var diff = (day === 0 ? -6 : 1 - day);
+      d.setDate(d.getDate() + diff);
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    };
+    var weekLabel = function(key){
+      if(key === 'no-date') return 'Undated';
+      var p = key.split('-');
+      var d = new Date(+p[0], +p[1] - 1, +p[2]);
+      return 'Week of ' + d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+    };
+    var weekMap = {};
+    paid.forEach(function(i){
+      var k = weekKey(i.paid_at || i.submitted_at);
+      (weekMap[k] = weekMap[k] || []).push(i);
+    });
+    var weekList = Object.keys(weekMap).sort(function(a, b){ return a < b ? 1 : -1; });
+
+    var _cardBase = 'background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:12px';
+
+    // ---- Header + "Viewing" banner when a TC is selected ----
+    var head = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:14px">' +
+      '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;letter-spacing:-0.3px;color:#0f0f0f">Invoices</span>' +
+      '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c">' + _money(totalInFlight) + (_bfInvSelectedTc ? '' : ' in flight') + '</span></div>';
+    if(_bfInvSelectedTc){
+      var _selNm = (String(_bfInvSelectedTc) === String(mine)) ? 'You' : _tcDisplayName(_bfInvSelectedTc).split(' ')[0];
+      head += '<div style="display:flex;align-items:center;gap:10px;background:#0f0f0f;color:#fff;border-radius:12px;padding:11px 14px;margin-bottom:14px">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:9.5px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#a9a49a">Viewing</div>' +
+        '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:16px;font-weight:600;letter-spacing:-0.2px;margin-top:1px">' + esc(_selNm) + '</div></div>' +
+        '<button type="button" data-bf-inv-tc-clear="1" style="flex:none;background:rgba(255,255,255,0.14);color:#fff;border:0;border-radius:8px;padding:0 14px;min-height:36px;font:700 11px \'Inter\',sans-serif;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer;font-family:inherit">All TCs</button>' +
+      '</div>';
+    }
+
+    // ---- Pay run card · submitted invoices awaiting payment ----
+    var payRun = '';
+    if(submitted.length){
+      var payRows = submitted.map(function(i){
+        var isMe = String(i.tc_id) === String(mine);
+        var nm = isMe ? 'You' : _tcDisplayName(i.tc_id).split(' ')[0];
+        // Row flex-wraps so on ≤375px the Pay button drops to its own line
+        // instead of crushing the name/amount. min-height:44px on the button
+        // meets iOS tap-target guidance.
+        return '<div style="display:flex;align-items:center;gap:10px;padding:12px 0;border-top:0.5px solid rgba(15,15,15,0.06);flex-wrap:wrap">' +
+          '<div style="flex:1 1 55%;min-width:0"><div style="font-size:14px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
+          '<div style="font-size:11px;color:#7a756c;margin-top:2px">' + ((i.line_items || []).length) + ' file' + (((i.line_items || []).length) === 1 ? '' : 's') + ' &middot; ' + esc(i.invoice_number || '') + '</div></div>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:18px;font-weight:500;color:#0f0f0f;letter-spacing:-0.3px;text-align:right">' + _money(i.total_cents || 0) + '</span>' +
+          '<button type="button" data-mark-invoice-paid="' + esc(i.id) + '" style="flex:1 1 100%;min-height:44px;background:#0f0f0f;color:#fff;border:0;padding:0 18px;border-radius:8px;font:700 12px \'Inter\',sans-serif;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer;font-family:inherit;margin-top:2px">Pay ' + _money(i.total_cents || 0) + '</button>' +
+        '</div>';
+      }).join('');
+      payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px 20px 16px;margin-bottom:16px">' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;margin-bottom:6px">This week &middot; due Friday</div>' +
+        '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:44px;font-weight:500;letter-spacing:-1px;line-height:1;color:#0f0f0f">' + _money(owedNow) + '</div>' +
+        '<div style="font-size:11.5px;color:#a9a49a;margin-top:8px">' + submitted.length + ' invoice' + (submitted.length === 1 ? '' : 's') + ' waiting on you</div>' +
+        '<div style="margin-top:16px;padding-top:14px;border-top:0.5px solid rgba(15,15,15,0.08)">' + payRows + '</div></div>';
+    } else if(pending.length){
+      // No submitted invoices yet · show projected pay run with per-file breakdown
+      var projRows = pending.map(function(pg){
+        var isMe = String(pg.id) === String(mine);
+        var nm = isMe ? 'You' : _tcDisplayName(pg.id).split(' ')[0];
+        var t = pg.billable.reduce(function(s, f){ return s + (fileIsCovered(f) ? 0 : fileTcPayCents(f)); }, 0);
+        // When filtered to a single TC, list the actual FILES making up the total
+        // so the $80 clearly maps to "Wagner Ave" (or whatever). When viewing All
+        // TCs, keep the per-TC roll-up so the card doesn't blow up in length.
+        var inner;
+        if(_bfInvSelectedTc){
+          inner = pg.billable.map(function(f){
+            var addr = String(f.property_address || 'File').split(',')[0];
+            var svcLbl = (typeof _svcLabel === 'function') ? _svcLabel(f) : '';
+            var pay = fileTcPayCents(f);
+            return '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:9px 0;border-top:0.5px solid rgba(15,15,15,0.06)">' +
+              '<div style="min-width:0"><div style="font-size:12.5px;font-weight:600;color:#0f0f0f">' + esc(addr) + '</div>' +
+              (svcLbl ? '<div style="font-size:10.5px;color:#7a756c;margin-top:2px">' + esc(String(svcLbl)) + '</div>' : '') + '</div>' +
+              '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#0f0f0f;letter-spacing:-0.2px">' + _money(pay) + '</span>' +
+            '</div>';
+          }).join('');
+        } else {
+          inner = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:10px 0;border-top:0.5px solid rgba(15,15,15,0.06)">' +
+            '<div style="min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
+            '<div style="font-size:11px;color:#7a756c;margin-top:2px">' + pg.billable.length + ' file' + (pg.billable.length === 1 ? '' : 's') + ' &middot; waiting for ' + esc(isMe ? 'you to send' : nm + ' to send') + '</div></div>' +
+            '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:17px;font-weight:500;color:#0f0f0f;letter-spacing:-0.3px">' + _money(t) + '</span>' +
+          '</div>';
+        }
+        return inner;
+      }).join('');
+      payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px 20px 16px;margin-bottom:16px">' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;margin-bottom:6px">To submit &middot; ready this week</div>' +
+        '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:44px;font-weight:500;letter-spacing:-1px;line-height:1;color:#0f0f0f">' + _money(pendingTotal) + '</div>' +
+        '<div style="font-size:11.5px;color:#a9a49a;margin-top:8px">Files at their last stage &middot; TCs submit Thursday, you pay Friday</div>' +
+        '<div style="margin-top:16px;padding-top:14px;border-top:0.5px solid rgba(15,15,15,0.08)">' + projRows + '</div></div>';
+    } else {
+      payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px;margin-bottom:16px;text-align:center">' +
+        '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:36px;font-weight:500;color:#7a756c;letter-spacing:-0.8px">$0</div>' +
+        '<div style="font-size:11.5px;color:#a9a49a;margin-top:6px">All clear · no invoices in flight</div></div>';
+    }
+
+    // ---- Not yet sent · per-TC pending work (only if there ARE submitted) ----
+    var notSent = '';
+    if(submitted.length && pending.length){
+      var nsRows = pending.map(function(g){
+        var isMe = String(g.id) === String(mine);
+        var nm = isMe ? 'You' : _tcDisplayName(g.id).split(' ')[0];
+        var paidLines = g.billable.filter(function(f){ return !fileIsCovered(f); });
+        var t = paidLines.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
+        return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-top:0.5px solid #f3ede0">' +
+          '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
+          '<div style="font-size:10.5px;color:#7a756c;margin-top:2px">' + g.billable.length + ' file' + (g.billable.length === 1 ? '' : 's') + ' &middot; waiting for ' + esc(isMe ? 'you to send' : nm + ' to send') + '</div></div>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c;letter-spacing:-0.2px">' + _money(t) + '</span>' +
+        '</div>';
+      }).join('');
+      notSent = '<div style="' + _cardBase + ';padding:14px 16px;margin-bottom:16px">' +
+        '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:2px">' +
+          '<span style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#a9a49a">Projected · not sent yet</span>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:14px;font-weight:500;color:#7a756c">' + _money(pendingTotal) + '</span>' +
+        '</div>' + nsRows + '</div>';
+    }
+
+    // ---- Per-TC ledger · YTD / MTD / owed-now, tap to switch view to that TC ----
+    // Built off UNFILTERED sources · this section IS the switcher, so every TC
+    // always needs to appear regardless of the current filter. Includes TCs
+    // who have EITHER invoices in the DB OR pending billable work — otherwise
+    // a coordinator whose first week hasn't landed as an invoice yet is
+    // unreachable from the switcher.
+    var byTc = {};
+    var _ensureTc = function(id){
+      return byTc[id] || (byTc[id] = { tcId:id, owed:0, ytd:0, mtd:0, projected:0, hasInv:false });
+    };
+    (_invoices || []).forEach(function(i){
+      if(!i || !i.tc_id) return;
+      var g = _ensureTc(i.tc_id);
+      g.hasInv = true;
+      if(i.status === 'submitted') g.owed += (i.total_cents || 0);
+      if(i.status === 'paid'){
+        var t = i.paid_at ? new Date(i.paid_at).getTime() : 0;
+        if(t >= _y0) g.ytd += (i.total_cents || 0);
+        if(t >= _m0) g.mtd += (i.total_cents || 0);
+      }
+    });
+    // Pull in TCs with pending billable work · projected total surfaced too
+    var _allGroups = _brokerInvoiceGroups();
+    _allGroups.forEach(function(pg){
+      if(!pg.billable.length) return;
+      var g = _ensureTc(pg.id);
+      pg.billable.forEach(function(f){ if(!fileIsCovered(f)) g.projected += fileTcPayCents(f); });
+    });
+    // Full pipeline projection · every active non-closed file assigned to a
+    // TC. Answers "if every one of these deals closes, what will I owe?"
+    // Doesn't require the file to be at the last stage yet (unlike projected).
+    (_files || []).forEach(function(f){
+      if(!f || !f.assigned_tc_id) return;
+      if(f.status === 'archived' || f.archived_at) return;
+      if((f.raw_form_data || {}).test_pool) return;
+      if(typeof deriveStage === 'function' && deriveStage(f) === 'closed') return;
+      if(fileIsCovered(f)) return; // credit-covered = no pay
+      var g = _ensureTc(f.assigned_tc_id);
+      g.pipeline = (g.pipeline || 0) + fileTcPayCents(f);
+      g.pipelineCount = (g.pipelineCount || 0) + 1;
+    });
+    var tcList = Object.keys(byTc).map(function(k){ return byTc[k]; })
+      .sort(function(a, b){ return (b.owed + b.mtd + (b.pipeline || 0)) - (a.owed + a.mtd + (a.pipeline || 0)); });
+    var ledger = '';
+    // When filtered to one TC, show ONLY that TC's card and drop the "tap to
+    // switch" caption in favor of a "tap to see all" affordance. When
+    // unfiltered, show every TC as the switcher.
+    var _shownTcList = _bfInvSelectedTc ? tcList.filter(function(g){ return String(g.tcId) === String(_bfInvSelectedTc); }) : tcList;
+    if(_shownTcList.length){
+      var ledHead = _bfInvSelectedTc
+        ? '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 4px;margin-top:6px">Coordinator</div>' +
+          '<div style="font-size:11px;color:#a9a49a;padding:0 4px 8px;line-height:1.4">Tap the card to switch back to all coordinators.</div>'
+        : '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:6px">Per coordinator &middot; tap to switch</div>';
+      ledger = ledHead;
+      _shownTcList.forEach(function(g){
+        var isMe = String(g.tcId) === String(mine);
+        var nm = isMe ? 'You' : _tcDisplayName(g.tcId).split(' ')[0];
+        var initial = (nm.charAt(0) || '?').toUpperCase();
+        var isSel = (_bfInvSelectedTc === g.tcId);
+        // Right-side badge · owed (submitted-unpaid) wins over ready (billable-ready)
+        var badge = '';
+        if(g.owed){
+          badge = '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:3px 8px;border-radius:5px;background:' + (isSel ? '#fbecea' : '#a3402f') + ';color:' + (isSel ? '#a3402f' : '#fff') + '">' + _money(g.owed) + ' owed</span>';
+        } else if(g.projected){
+          badge = '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:3px 8px;border-radius:5px;background:' + (isSel ? '#f6edd9' : '#faf7ef') + ';color:' + (isSel ? '#8a6a1f' : '#8a6a1f') + ';border:0.5px solid ' + (isSel ? '#f6edd9' : '#e6dfcd') + '">' + _money(g.projected) + ' ready</span>';
+        }
+        ledger += '<button type="button" data-bf-inv-tc="' + esc(g.tcId) + '" style="width:100%;text-align:left;background:' + (isSel ? '#0f0f0f' : '#fff') + ';color:' + (isSel ? '#fff' : '#0f0f0f') + ';border:0.5px solid ' + (isSel ? '#0f0f0f' : 'rgba(15,15,15,0.10)') + ';border-radius:12px;padding:14px 14px 12px;margin-bottom:8px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;display:block">' +
+          '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">' +
+            '<div style="width:34px;height:34px;border-radius:50%;background:' + (isSel ? '#fff' : '#0f0f0f') + ';color:' + (isSel ? '#0f0f0f' : '#fff') + ';display:flex;align-items:center;justify-content:center;font:700 13px \'Inter\',sans-serif;flex:none">' + esc(initial) + '</div>' +
+            '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:15px;font-weight:600;letter-spacing:-0.1px">' + esc(nm) + '</span>' +
+            badge +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
+            '<div><div style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:' + (isSel ? '#a9a49a' : '#7a756c') + ';margin-bottom:3px">This month</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;letter-spacing:-0.4px;line-height:1">' + _money(g.mtd) + '</div></div>' +
+            '<div><div style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:' + (isSel ? '#a9a49a' : '#7a756c') + ';margin-bottom:3px">YTD</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;letter-spacing:-0.4px;line-height:1">' + _money(g.ytd) + '</div></div>' +
+            '<div><div style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:' + (isSel ? '#a9a49a' : '#7a756c') + ';margin-bottom:3px">Pipeline</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;letter-spacing:-0.4px;line-height:1' + (g.pipeline ? ';color:' + (isSel ? '#fff' : '#8a6a1f') : '') + '">' + _money(g.pipeline || 0) + '</div>' +
+              (g.pipelineCount ? '<div style="font-size:9px;color:' + (isSel ? '#a9a49a' : '#a9a49a') + ';margin-top:2px">' + g.pipelineCount + ' file' + (g.pipelineCount === 1 ? '' : 's') + '</div>' : '') +
+            '</div>' +
+          '</div>' +
+        '</button>';
+      });
+    }
+
+    // ---- Active pipeline · only when a TC is selected ----
+    // Every non-closed non-archived non-covered file assigned to the picked
+    // TC, with the file's projected pay. Tap a row to open the playbook.
+    var pipeSection = '';
+    if(_bfInvSelectedTc){
+      var mineFiles = (_files || []).filter(function(f){
+        if(!f || String(f.assigned_tc_id) !== String(_bfInvSelectedTc)) return false;
+        if(f.status === 'archived' || f.archived_at) return false;
+        if((f.raw_form_data || {}).test_pool) return false;
+        if(typeof deriveStage === 'function' && deriveStage(f) === 'closed') return false;
+        if(fileIsCovered(f)) return false;
+        // Skip billable-ready files · already shown in the TO SUBMIT card above
+        if(typeof fileIsBillable === 'function' && fileIsBillable(f)) return false;
+        return true;
+      });
+      // Sort by closing date (soonest first), then by pay (biggest first)
+      mineFiles.sort(function(a, b){
+        var da = (typeof daysToClose === 'function') ? daysToClose(a) : null;
+        var db = (typeof daysToClose === 'function') ? daysToClose(b) : null;
+        if(da != null && db != null && da !== db) return da - db;
+        if(da != null && db == null) return -1;
+        if(da == null && db != null) return 1;
+        return fileTcPayCents(b) - fileTcPayCents(a);
+      });
+      var pipeTotal = mineFiles.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
+      pipeSection = '<div style="padding:0 4px 8px;margin-top:14px">' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c">In progress &middot; will be ready later</div>' +
+        '<div style="font-size:11px;color:#a9a49a;margin-top:3px;line-height:1.4">Active files still working through their service stages. Won\'t pay until they hit the last step.</div>' +
+      '</div>';
+      if(!mineFiles.length){
+        pipeSection += '<div style="' + _cardBase + ';padding:18px;text-align:center;font-size:12px;color:#a9a49a;font-style:italic;margin-bottom:12px">Nothing in progress.</div>';
+      } else {
+        pipeSection += '<div style="' + _cardBase + ';overflow:hidden;margin-bottom:12px">';
+        // Card total header
+        pipeSection += '<div style="display:flex;align-items:baseline;justify-content:space-between;padding:12px 14px 8px;font-size:11px">' +
+          '<span style="font-family:\'Inter\',sans-serif;font-weight:700;letter-spacing:0.4px;color:#0f0f0f;text-transform:uppercase">' + mineFiles.length + ' file' + (mineFiles.length === 1 ? '' : 's') + '</span>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;color:#8a6a1f;letter-spacing:-0.3px">' + _money(pipeTotal) + '</span>' +
+        '</div>';
+        mineFiles.forEach(function(f){
+          var addr = String(f.property_address || 'Untitled file').split(',')[0];
+          var stage = (typeof deriveStage === 'function') ? deriveStage(f) : '';
+          var stageLabel = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[stage]) || stage || '';
+          var svcLbl = (typeof _svcLabel === 'function') ? _svcLabel(f) : ((f.file_type || 'sale').replace('_', ' '));
+          var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+          var pay = fileTcPayCents(f);
+          var edge = '#e6e2d5', dText = '';
+          if(d != null){
+            if(d < 0){ edge = '#a3402f'; dText = Math.abs(d) + 'd late'; }
+            else if(d === 0){ edge = '#a3402f'; dText = 'today'; }
+            else if(d <= 5){ edge = '#c69a3a'; dText = d + 'd'; }
+            else { dText = d + 'd'; }
+          }
+          pipeSection += '<div data-inv-file-open="' + esc(f.id) + '" style="position:relative;display:flex;align-items:center;gap:10px;padding:11px 14px 11px 17px;border-top:0.5px solid #f3ede0;cursor:pointer;min-height:56px">' +
+            '<span style="position:absolute;left:0;top:8px;bottom:8px;width:3px;background:' + edge + ';border-radius:0 2px 2px 0"></span>' +
+            '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2">' + esc(addr) + '</div>' +
+            '<div style="font-size:11px;color:#7a756c;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(String(svcLbl)) + (stageLabel ? ' &middot; ' + esc(String(stageLabel)) : '') + (dText ? ' &middot; ' + esc(dText) : '') + '</div>' +
+            '</div>' +
+            '<span style="flex:none;font-family:\'Playfair Display\',Georgia,serif;font-size:14px;font-weight:500;color:#8a6a1f;letter-spacing:-0.2px">' + _money(pay) + '</span>' +
+          '</div>';
+        });
+        pipeSection += '</div>';
+      }
+    }
+
+    // ---- History accordion · paid weeks (respects the TC filter) ----
+    var history = '';
+    var _paidForHistory = _bfInvSelectedTc ? paid.filter(function(i){ return String(i.tc_id) === String(_bfInvSelectedTc); }) : paid;
+    // Rebuild weekMap from the (possibly filtered) history
+    weekMap = {};
+    _paidForHistory.forEach(function(i){
+      var k = weekKey(i.paid_at || i.submitted_at);
+      (weekMap[k] = weekMap[k] || []).push(i);
+    });
+    weekList = Object.keys(weekMap).sort(function(a, b){ return a < b ? 1 : -1; });
+    if(weekList.length){
+      history = '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:14px">Paid out' + (_bfInvSelectedTc ? ' &middot; ' + esc(_tcDisplayName(_bfInvSelectedTc).split(' ')[0]) : ' &middot; previous weeks') + '</div>';
+      weekList.forEach(function(k, idx){
+        var invs = weekMap[k];
+        var total = invs.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
+        var rows = invs.map(function(i){
+          var nm = _tcDisplayName(i.tc_id).split(' ')[0];
+          var when = i.paid_at ? new Date(i.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '';
+          return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:0.5px solid #f3ede0;font-size:12px">' +
+            '<div style="flex:1"><div style="color:#0f0f0f;font-weight:500">' + esc(nm) + '</div>' +
+            '<div style="color:#7a756c;font-size:10.5px;margin-top:1px">' + ((i.line_items || []).length) + ' file' + (((i.line_items || []).length) === 1 ? '' : 's') + '</div></div>' +
+            '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:13px;color:#0f0f0f;letter-spacing:-0.2px;font-weight:500">' + _money(i.total_cents || 0) + '</span>' +
+            '<span style="font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:2px 6px;border-radius:4px;color:#2c5f42;background:#e0efe5">Paid' + (when ? ' ' + esc(when) : '') + '</span>' +
+          '</div>';
+        }).join('');
+        history += '<details' + (idx === 0 ? ' open' : '') + ' style="' + _cardBase + ';margin-bottom:8px;overflow:hidden">' +
+          '<summary style="display:flex;align-items:center;gap:10px;padding:14px 14px;cursor:pointer;list-style:none;min-height:52px">' +
+            '<span style="flex:1;font-size:12px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;color:#0f0f0f">' + esc(weekLabel(k)) + '</span>' +
+            '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;color:#7a756c;letter-spacing:-0.3px;margin-right:8px">' + _money(total) + '</span>' +
+            '<span style="color:#a9a49a;font-size:14px">&#x2304;</span>' +
+          '</summary>' +
+          '<div style="padding:0 14px 12px">' + rows + '</div>' +
+        '</details>';
+      });
+    }
+    return head + payRun + notSent + ledger + pipeSection + history;
+  }
+
   function brokerInvoiceBoardHtml(){
+    // Mobile broker · Mock 2 layout (Marlenyi picked July 26). Kills the
+    // 3-column board on phones. Desktop keeps the board below.
+    try {
+      if(typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 600px)').matches){
+        return _brokerInvoiceMobileHtml();
+      }
+    } catch(_){}
     var groups = _brokerInvoiceGroups();
     var mine = (_profile && _profile.id) || '';
     var working = groups.filter(function(g){ return g.billable.length; });
@@ -12725,6 +13618,28 @@ Tell me your planned move-out date and I will set the inspection.`
       try { renderInvoiceScreen(); } catch(_){}
       return;
     }
+    // Mobile broker · per-TC ledger card tap · filters history to that TC
+    var tc = e.target && e.target.closest && e.target.closest('[data-bf-inv-tc]');
+    if(tc){
+      var tid = tc.getAttribute('data-bf-inv-tc');
+      _bfInvSelectedTc = (_bfInvSelectedTc === tid) ? null : tid; // toggle
+      try { renderInvoiceScreen(); } catch(_){}
+      return;
+    }
+    var tcClr = e.target && e.target.closest && e.target.closest('[data-bf-inv-tc-clear]');
+    if(tcClr){
+      _bfInvSelectedTc = null;
+      try { renderInvoiceScreen(); } catch(_){}
+      return;
+    }
+    // Invoice screen · pipeline file row → open the file's playbook
+    var fo = e.target && e.target.closest && e.target.closest('[data-inv-file-open]');
+    if(fo){
+      var fid = fo.getAttribute('data-inv-file-open');
+      var f = (_files || []).find(function(x){ return x.id === fid; });
+      if(f && typeof openPlaybook === 'function') openPlaybook(f);
+      return;
+    }
   });
   function renderFileList(){
     const host = document.getElementById('fileList');
@@ -12929,6 +13844,317 @@ Tell me your planned move-out date and I will set the inspection.`
     wireKanbanDelegation();
     // List view mirrors every kanban refresh · honors the saved toggle.
     try { applyView(); } catch(_){}
+    try { _renderKanbanChips(); } catch(_){}
+    try { _renderBoardFunnelMobile(); } catch(_){}
+  }
+
+  // Board mobile · per-service pipelines (Marlenyi picked July 26 · Mock 3
+  // then refined into the combined final layout).
+  // Every active service (Sales / Listings / Buyer rep / Lease) gets its own
+  // card with its OWN stage ladder (Sales runs Setup → Under contract → CTC
+  // → Closed; Listings is New → MLS Setup → Active; etc.). Tap any stage
+  // chip to open its file list inline inside that service card. The All
+  // pill shows every service at once; each specific pill filters to one.
+  // Kanban swipe + chip strip are killed on mobile Board (see the
+  // body[data-mnav-view="board"] CSS block) — the full swipe kanban is
+  // desktop-only now. Fires from renderKanban() so it stays in sync with
+  // the same _files data; no separate loader.
+  var _bfSelectedStage = null; // 'svc::stage' or null
+  var _bfFilter = null; // 'all' | 'sale' | 'listing' | 'lease' | 'buyer_rep'
+  function _bfLoadFilter(){
+    if(_bfFilter) return _bfFilter;
+    try { _bfFilter = localStorage.getItem('aari_bf_filter_' + ((_profile && _profile.id) ? _profile.id : 'anon')) || 'all'; } catch(_){ _bfFilter = 'all'; }
+    return _bfFilter;
+  }
+  function _bfSaveFilter(v){
+    _bfFilter = v;
+    try { localStorage.setItem('aari_bf_filter_' + ((_profile && _profile.id) ? _profile.id : 'anon'), v); } catch(_){}
+  }
+  function _renderBoardFunnelMobile(){
+    var wrap = document.getElementById('boardWrap');
+    if(!wrap) return;
+    // Ensure the host exists and sits before the kanban
+    var host = document.getElementById('boardFunnel');
+    if(!host){
+      host = document.createElement('div');
+      host.id = 'boardFunnel';
+      var k = document.getElementById('kanban');
+      if(k && k.parentNode){ k.parentNode.insertBefore(host, k); }
+      else { wrap.appendChild(host); }
+    }
+    // Only render on mobile; desktop keeps kanban visible via CSS
+    if(typeof window === 'undefined' || !window.matchMedia || !window.matchMedia('(max-width: 600px)').matches){
+      host.innerHTML = '';
+      return;
+    }
+    // ---- Data prep ----
+    var _allActive = (_files || []).filter(function(f){
+      if(f.status === 'archived' || f.archived_at) return false;
+      if((f.raw_form_data || {}).test_pool) return false;
+      return true;
+    });
+    // Sub-services own a micro-ladder from TC_SVC_TRACKS (File Organization, MLS Setup, etc.).
+    // Those files belong on THEIR OWN card with THEIR OWN stages — never on the spine
+    // (Sales/Listings) card, or the same file gets counted twice. `listing_coordinator`
+    // rides the listing spine per SPINE_DUP_SERVICES, so it stays with Listings.
+    var _isSubSvcFile = function(f){
+      if(!f) return false;
+      try {
+        var k = svcKey(f);
+        return !!(TC_SVC_TRACKS[k] && !SPINE_DUP_SERVICES[k]);
+      } catch(_){ return false; }
+    };
+    var _subSvcLabelOf = function(k){
+      return (typeof SERVICE_LABEL === 'object' && SERVICE_LABEL[k]) || k;
+    };
+    var _typeCounts = { sale:0, listing:0, lease:0, buyer_rep:0 };
+    var _subCounts = {}; // sub-service id → file count
+    _allActive.forEach(function(f){
+      if(_isSubSvcFile(f)){
+        var k = svcKey(f);
+        _subCounts[k] = (_subCounts[k] || 0) + 1;
+        return; // sub-service files live on their own card, not the spine
+      }
+      var t = f.file_type || 'sale';
+      if(_typeCounts[t] != null) _typeCounts[t]++;
+    });
+    var _searchFn = (typeof matchesSearch === 'function') ? matchesSearch : function(){ return true; };
+    var _filteredAll = _allActive.filter(_searchFn);
+    var _filter = _bfLoadFilter();
+    // Spine catalog (only include types that have files)
+    var _svcCatalog = [
+      { id:'sale',      label:'Sales' },
+      { id:'listing',   label:'Listings' },
+      { id:'buyer_rep', label:'Buyer rep' },
+      { id:'lease',     label:'Lease' }
+    ].filter(function(s){ return _typeCounts[s.id] > 0; });
+    // Sub-service catalog · ordered by domain frequency, only include ones with files
+    var _subSvcOrder = ['file_organization','mls_setup','listing_docs','offer_prep_basic','offer_prep_complete','standalone_review'];
+    var _subSvcCatalog = _subSvcOrder.filter(function(k){ return (_subCounts[k] || 0) > 0; }).map(function(k){
+      return { id:k, label:_subSvcLabelOf(k), sub:true };
+    });
+    var _combinedCatalog = _svcCatalog.concat(_subSvcCatalog);
+    var _shownSvcs = (_filter === 'all') ? _combinedCatalog : _combinedCatalog.filter(function(s){ return s.id === _filter; });
+    var _filesForSvc = function(s){
+      if(s.sub){
+        return _filteredAll.filter(function(f){ try { return svcKey(f) === s.id; } catch(_){ return false; } });
+      }
+      return _filteredAll.filter(function(f){ return !_isSubSvcFile(f) && (f.file_type || 'sale') === s.id; });
+    };
+    // Displayed totals · sum across shown services after search
+    var _displayCount = 0, _needYouCount = 0;
+    _shownSvcs.forEach(function(s){
+      var svcFiles = _filesForSvc(s);
+      _displayCount += svcFiles.length;
+      svcFiles.forEach(function(f){
+        var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+        if(d != null && d <= 0) _needYouCount++;
+      });
+    });
+    // ---- Header + counts ----
+    var head = '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px">' +
+      '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;letter-spacing:-0.3px;color:#0f0f0f">Board</span>' +
+      '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c">' + _displayCount + ' active</span></div>' +
+      '<div style="font-size:11.5px;color:#7a756c;margin-bottom:12px;line-height:1.4">' +
+        (_needYouCount ? '<b style="color:#a3402f;font-weight:700">' + _needYouCount + ' need you</b>' : 'Nothing needs you right now') +
+      '</div>';
+    // ---- Pills · All + service types ----
+    var _pill = function(id, label, count){
+      var on = (_filter === id);
+      return '<button type="button" data-bf-filter="' + id + '" style="border:0.5px solid ' + (on ? '#0f0f0f' : 'rgba(15,15,15,0.14)') + ';background:' + (on ? '#0f0f0f' : '#fff') + ';color:' + (on ? '#fff' : '#0f0f0f') + ';font:600 12px \'Inter\',-apple-system,sans-serif;padding:7px 13px;border-radius:999px;cursor:pointer;font-family:inherit;min-height:34px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;-webkit-tap-highlight-color:transparent">' + label + ' <span style="font-family:\'Playfair Display\',Georgia,serif;font-size:13px;font-weight:500;color:' + (on ? '#d6d1c6' : '#a9a49a') + '">' + count + '</span></button>';
+    };
+    var _totalAll = _typeCounts.sale + _typeCounts.listing + _typeCounts.lease + _typeCounts.buyer_rep;
+    _subSvcCatalog.forEach(function(s){ _totalAll += _subCounts[s.id] || 0; });
+    var pills = '<div style="display:flex;gap:6px;overflow-x:auto;padding:0 0 12px;-webkit-overflow-scrolling:touch;-ms-overflow-style:none;scrollbar-width:none">' +
+      _pill('all', 'All', _totalAll);
+    _svcCatalog.forEach(function(s){ pills += _pill(s.id, s.label, _typeCounts[s.id]); });
+    _subSvcCatalog.forEach(function(s){ pills += _pill(s.id, s.label, _subCounts[s.id] || 0); });
+    pills += '</div>';
+    // ---- Search input · reuses global _searchQuery ----
+    var searchHtml = '<div style="position:relative;margin-bottom:16px">' +
+      '<span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#a9a49a;font-size:13px;pointer-events:none">🔍</span>' +
+      '<input id="bf-search" value="' + esc(_searchQuery || '') + '" placeholder="Search address, client, agent…" style="width:100%;background:#fff;border:0.5px solid rgba(15,15,15,0.16);border-radius:10px;padding:10px 12px 10px 36px;font-size:16px;font-family:inherit;outline:none;-webkit-appearance:none;min-height:42px">' +
+    '</div>';
+    // ---- Per-service pipeline cards ----
+    var svcCards = '';
+    _shownSvcs.forEach(function(s){
+      var svcStages, svcLabelOf;
+      if(s.sub){
+        svcStages = (TC_SVC_TRACKS[s.id] || []).slice();
+        svcLabelOf = function(st){ return st; }; // sub-service tracks already carry human labels
+      } else {
+        svcStages = ((typeof STAGES_BY_TYPE === 'object' && STAGES_BY_TYPE[s.id]) || []).slice();
+        svcLabelOf = function(st){ return (typeof STAGE_LABELS === 'object' && STAGE_LABELS[st]) || st; };
+      }
+      var svcFiles = _filesForSvc(s);
+      var buckets = {}; svcStages.forEach(function(st){ buckets[st] = []; });
+      svcFiles.forEach(function(f){
+        var st = s.sub ? (f.service_stage || svcStages[0]) : deriveStage(f);
+        if(buckets[st]) buckets[st].push(f);
+        else if(svcStages.length) buckets[svcStages[0]].push(f);
+      });
+      svcCards += '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:14px;padding:14px;margin-bottom:12px">' +
+        '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px">' +
+          '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:16px;font-weight:600;letter-spacing:-0.2px">' + esc(s.label) + '</span>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c">' + svcFiles.length + '</span>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch">';
+      svcStages.forEach(function(st){
+        var count = buckets[st].length;
+        var stKey = s.id + '::' + st;
+        var isSel = (_bfSelectedStage === stKey);
+        var isZero = count === 0;
+        var isUrgent = !s.sub && (st === 'inspection' || st === 'ctc') && buckets[st].some(function(f){ var d = daysToClose(f); return d != null && d <= 2; });
+        var label = svcLabelOf(st);
+        var bg = isSel ? (isUrgent ? '#a3402f' : '#0f0f0f') : '#faf7ef';
+        var border = isSel ? (isUrgent ? '#a3402f' : '#0f0f0f') : (isUrgent ? '#e7bcb0' : '#ece8e0');
+        var textColor = isSel ? '#fff' : (isUrgent ? '#a3402f' : '#0f0f0f');
+        var opacity = (isZero && !isSel) ? '.5' : '1';
+        svcCards += '<button type="button" data-bf-stage-svc="' + s.id + '" data-bf-stage-key="' + esc(st) + '" style="flex:0 0 auto;background:' + bg + ';border:0.5px solid ' + border + ';border-radius:10px;padding:8px 12px;cursor:pointer;display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:78px;-webkit-tap-highlight-color:transparent;font-family:inherit;color:' + textColor + ';opacity:' + opacity + '">' +
+          '<span style="font-size:8.5px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;opacity:.7;line-height:1.2">' + esc(String(label).toUpperCase()) + '</span>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:20px;font-weight:500;letter-spacing:-0.5px;line-height:1">' + count + '</span>' +
+        '</button>';
+      });
+      svcCards += '</div>'; // close stages row
+      // Inline drill list if this service has the currently selected stage
+      if(_bfSelectedStage && _bfSelectedStage.indexOf(s.id + '::') === 0){
+        var selStage = _bfSelectedStage.substring(s.id.length + 2);
+        var selFiles = buckets[selStage] || [];
+        var selLabel = svcLabelOf(selStage);
+        svcCards += '<div style="margin-top:12px;padding-top:12px;border-top:0.5px solid #f3ede0">' +
+          '<div style="display:flex;align-items:baseline;gap:8px;padding:0 4px 6px">' +
+            '<span style="font-size:9.5px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#7a756c">' + esc(String(selLabel).toUpperCase()) + '</span>' +
+            '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:14px;font-weight:500;color:#0f0f0f">' + selFiles.length + '</span>' +
+          '</div>';
+        if(!selFiles.length){
+          svcCards += '<div style="padding:14px;text-align:center;font-size:11.5px;color:#a9a49a;font-style:italic">No files in this stage.</div>';
+        } else {
+          selFiles.forEach(function(f, i){
+            var addr = String(f.property_address || 'Untitled file').split(',')[0];
+            var _agentName = (f.raw_form_data && f.raw_form_data.agent_name) ? String(f.raw_form_data.agent_name).trim() : '';
+            var _tc = f.assigned_tc_id ? (typeof _tcsById !== 'undefined' && _tcsById[f.assigned_tc_id]) : null;
+            var _tcName = _tc ? ((_tc.first_name || '') + ' ' + (_tc.last_name || '')).trim() : '';
+            var d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+            var metaBits = [];
+            if(_agentName) metaBits.push(esc(_agentName));
+            if(_tcName) metaBits.push('TC: ' + esc(_tcName));
+            var meta = metaBits.join(' · ');
+            var edge = '#e6e2d5', rightColor = '#7a756c', rightText = '';
+            if(d != null){
+              if(d < 0){ edge = '#a3402f'; rightColor = '#a3402f'; rightText = Math.abs(d) + 'd late'; }
+              else if(d === 0){ edge = '#a3402f'; rightColor = '#a3402f'; rightText = 'today'; }
+              else if(d <= 5){ edge = '#c69a3a'; rightColor = '#8a6a1f'; rightText = d + 'd'; }
+              else { rightText = d + 'd'; }
+            }
+            svcCards += '<div data-file-open="' + esc(f.id) + '" style="position:relative;display:flex;align-items:center;gap:12px;padding:11px 4px 11px 13px;cursor:pointer;min-height:52px' + (i > 0 ? ';border-top:0.5px solid #f3ede0' : '') + '">' +
+              '<span style="position:absolute;left:0;top:8px;bottom:8px;width:3px;background:' + edge + ';border-radius:0 2px 2px 0"></span>' +
+              '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(addr) + '</div>' +
+              (meta ? '<div style="font-size:10.5px;color:#7a756c;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + meta + '</div>' : '') +
+              '</div>' +
+              (rightText ? '<span style="flex:none;font-size:10px;font-weight:700;letter-spacing:0.2px;color:' + rightColor + ';text-transform:uppercase">' + esc(rightText) + '</span>' : '') +
+            '</div>';
+          });
+        }
+        svcCards += '</div>'; // close drill
+      }
+      svcCards += '</div>'; // close service card
+    });
+    // Empty state · nothing matched search
+    if(!_shownSvcs.length || _displayCount === 0){
+      svcCards += '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.10);border-radius:12px;padding:24px;text-align:center;font-size:12px;color:#a9a49a;font-style:italic">' +
+        (_searchQuery ? 'No files match &ldquo;' + esc(_searchQuery) + '&rdquo;.' : 'No active files.') +
+      '</div>';
+    }
+    // Foot note · desktop kanban
+    var foot = '<div style="text-align:center;color:#a9a49a;font-size:10.5px;padding:14px 4px 4px;font-style:italic;margin-top:6px">Full swipe kanban lives on desktop</div>';
+    host.innerHTML = head + pills + searchHtml + svcCards + foot;
+    // ---- Wire clicks ----
+    // Pills · switch filter, sync _fileTypeFilter when picking a specific service
+    host.querySelectorAll('[data-bf-filter]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var v = this.getAttribute('data-bf-filter');
+        if(v === _filter) return;
+        _bfSaveFilter(v);
+        _bfSelectedStage = null;
+        // Sub-service pills (File Organization, MLS Setup, etc.) are Board-mobile-only —
+        // they aren't real file types, so don't sync _fileTypeFilter with them or the
+        // kanban/KPIs code path breaks.
+        var isSpine = (v === 'sale' || v === 'listing' || v === 'lease' || v === 'buyer_rep');
+        if(isSpine && v !== _fileTypeFilter){
+          _fileTypeFilter = v;
+          try { localStorage.setItem('aari_files_type', v); } catch(_){}
+          try { STAGES = STAGES_BY_TYPE[_fileTypeFilter] || STAGES_BY_TYPE.sale; } catch(_){}
+          try { renderFileTypeFilter(); } catch(_){}
+          try { renderKanbanShell(); } catch(_){}
+          try { renderKpis(); } catch(_){}
+          renderKanban(); // re-fires _renderBoardFunnelMobile at end
+        } else {
+          _renderBoardFunnelMobile();
+        }
+      });
+    });
+    // Search input · live filter, preserve focus + cursor
+    var searchEl = host.querySelector('#bf-search');
+    if(searchEl){
+      searchEl.addEventListener('input', function(){
+        _searchQuery = (this.value || '').trim().toLowerCase();
+        var pos = this.selectionStart;
+        _renderBoardFunnelMobile();
+        var again = document.getElementById('bf-search');
+        if(again){ again.focus(); try { again.setSelectionRange(pos, pos); } catch(_){} }
+      });
+    }
+    // Stage chips · toggle selection
+    host.querySelectorAll('[data-bf-stage-key]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var svc = this.getAttribute('data-bf-stage-svc');
+        var stage = this.getAttribute('data-bf-stage-key');
+        var newKey = svc + '::' + stage;
+        _bfSelectedStage = (_bfSelectedStage === newKey) ? null : newKey; // tap-again to close
+        _renderBoardFunnelMobile();
+      });
+    });
+    // File rows · open the playbook drawer
+    host.querySelectorAll('[data-file-open]').forEach(function(b){
+      b.addEventListener('click', function(){
+        var fid = this.getAttribute('data-file-open');
+        var f = (_files || []).find(function(x){ return x.id === fid; });
+        if(f && typeof openPlaybook === 'function') openPlaybook(f);
+      });
+    });
+  }
+
+  // Lane jumper chip strip · mobile-only quick-nav above the kanban swipe track.
+  // With multiple non-empty stages, swiping through each one to find "Under contract"
+  // is friction; a chip row makes every stage one tap away. Silent no-op on desktop.
+  function _renderKanbanChips(){
+    var k = document.getElementById('kanban');
+    if(!k) return;
+    // clean up any prior strip so the render stays fresh on every refresh
+    var old = document.getElementById('kanban-chips');
+    if(old && old.parentNode) old.parentNode.removeChild(old);
+    if(typeof window === 'undefined' || !window.matchMedia || !window.matchMedia('(max-width: 600px)').matches) return;
+    var lanes = Array.prototype.slice.call(k.querySelectorAll('.lane')).filter(function(l){ return !l.querySelector('.lane-empty'); });
+    if(lanes.length <= 1) return;
+    var strip = document.createElement('div');
+    strip.id = 'kanban-chips';
+    strip.innerHTML = lanes.map(function(l, i){
+      var nameEl = l.querySelector('.lane-name') || l.querySelector('.svc-lane-name');
+      var name = nameEl ? nameEl.textContent : ('Stage ' + (i + 1));
+      var countEl = l.querySelector('.lane-count') || l.querySelector('.svc-lane-count');
+      var count = countEl ? countEl.textContent : '';
+      return '<button type="button" class="kchip" data-lane-idx="' + i + '">' +
+        esc(name) + (count ? '<span class="kct">' + esc(count) + '</span>' : '') +
+        '</button>';
+    }).join('');
+    k.parentNode.insertBefore(strip, k);
+    strip.querySelectorAll('[data-lane-idx]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var idx = parseInt(this.getAttribute('data-lane-idx'), 10);
+        var lane = lanes[idx];
+        if(lane && lane.scrollIntoView) lane.scrollIntoView({ behavior:'smooth', inline:'start', block:'nearest' });
+      });
+    });
   }
 
   // ---- Service board (additive) · same #kanban container, columns = service ladder ----
@@ -15239,12 +16465,34 @@ Tell me your planned move-out date and I will set the inspection.`
     if(cellSave && _currentFile){ try { nfSaveGroup(); } catch(_){} return; }
     const cellCancel = e.target.closest('[data-cell-cancel]');
     if(cellCancel){ _setupCellEdit = null; try { renderContractTerms(_currentFile); } catch(_){} return; }
+    // Loan-type pill save · mirrors the data-fin-set pattern below so the same
+    // click delegate handles both writes. Marlenyi (Jul 26) wanted the loan-
+    // type row rendered as pill buttons, not a dropdown, to match the
+    // Financed/Cash toggle right above it.
+    const finTypeSet = e.target.closest('[data-fin-type-set]');
+    if(finTypeSet && _currentFile){
+      const _v = String(finTypeSet.getAttribute('data-fin-type-set') || '').toLowerCase();
+      const _f = _currentFile;
+      const _lg = Object.assign({}, _f.logistics || {});
+      // Tap-again on the current pick toggles the field off (back to unset).
+      _lg.financing_type = (_lg.financing_type === _v) ? '' : _v;
+      (async function(){
+        try { const r = await _client.from('files').update({ logistics: _lg }).eq('id', _f.id); if(r && r.error) throw r.error; }
+        catch(err){ alert('Could not save loan type: ' + ((err && err.message) || 'unknown') + '.'); return; }
+        _f.logistics = _lg;
+        try { renderContractTerms(_f); } catch(_){ try { openPlaybook(_f); } catch(__){} }
+      })();
+      return;
+    }
     const finSet = e.target.closest('[data-fin-set]');
     if(finSet && _currentFile){
       const _v = finSet.getAttribute('data-fin-set');
       const _f = _currentFile;
       const _lg = Object.assign({}, _f.logistics || {});
       _lg.financing_confirmed = _v;   // isCashFile reads this first, so it overrides the contract's loan amount
+      // Flipping to Cash clears any prior loan-type pick so it doesn't stick around
+      // in downstream views (line 7348 label map, invoices, etc.).
+      if(_v === 'cash') _lg.financing_type = 'cash';
       (async function(){
         try { const r = await _client.from('files').update({ logistics: _lg }).eq('id', _f.id); if(r && r.error) throw r.error; }
         catch(err){ alert('Could not save financing type: ' + ((err && err.message) || 'unknown') + '.'); return; }
@@ -15483,6 +16731,148 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){ _emailFlagsByFile[fileId] = []; }
     return _emailFlagsByFile[fileId];
   }
+  // Sticky Do-Now bar · mirrors the current "next" task at the bottom of
+  // the viewport so the top action is always in thumb reach. Reads the
+  // .ck-next row the checklist just rendered and forwards taps to that
+  // row's Send button (or scrolls to it if the task has no email).
+  function renderDoNowBar(){
+    const bar = document.getElementById('rail-donow-bar');
+    if(!bar || !_currentFile) return;
+    // Hide when the drawer isn't open OR we're on desktop.
+    const drawer = document.getElementById('tpb-popview');
+    const drawerOpen = drawer && !drawer.hidden;
+    const isMobile = window.matchMedia && window.matchMedia('(max-width: 600px)').matches;
+    if(!drawerOpen || !isMobile){ bar.style.display = 'none'; return; }
+    // Find the current NEXT task's label from the freshly-marked row.
+    const nextRow = document.querySelector('#tpb-checklist .ck-task-wrap.ck-next .ck-label');
+    if(!nextRow){ bar.style.display = 'none'; return; }
+    const nm = document.getElementById('rail-donow-nm');
+    if(nm) nm.textContent = nextRow.textContent.trim();
+    // Wire the Send: prefer forwarding the tap to the .ck-next row's inline
+    // .ck-send button (opens its email); fallback to scrolling to the row.
+    const btn = document.getElementById('rail-donow-btn');
+    if(btn && !btn.dataset.wired){
+      btn.dataset.wired = '1';
+      btn.addEventListener('click', function(){
+        const send = document.querySelector('#tpb-checklist .ck-task-wrap.ck-next .ck-send:not(:disabled)');
+        if(send){ send.click(); return; }
+        // No email · scroll to the task so she can complete it inline.
+        const row = document.querySelector('#tpb-checklist .ck-task-wrap.ck-next');
+        if(row) row.scrollIntoView({ behavior:'smooth', block:'center' });
+      });
+    }
+    bar.style.display = 'flex';
+  }
+
+  // Invoice-submit prompt · green card at the top of the checklist when a
+  // file has reached the Closed stage. TC's cut is read from tcPayFor(file)
+  // + submit is a one-tap [data-submit-invoice] handler already wired at
+  // line ~13575. Nothing appears until the file actually closes.
+  function renderInvoicePromptBanner(){
+    if(!_currentFile) return;
+    const host = document.getElementById('tpb-checklist');
+    if(!host) return;
+    // Clean any prior prompt so we don't stack.
+    const prior = host.querySelector(':scope > .rail-invoice-prompt');
+    if(prior && prior.parentNode) prior.parentNode.removeChild(prior);
+    const stg = (typeof deriveStage === 'function') ? deriveStage(_currentFile) : (_currentFile.transaction_stage || '');
+    if(stg !== 'closed') return;
+    // How much the TC will get paid on this file. Skip the prompt entirely
+    // when there is no pay (covered / paused files).
+    let pay = 0;
+    try { pay = (typeof tcPayFor === 'function') ? Number(tcPayFor(_currentFile) || 0) : 0; } catch(_){ pay = 0; }
+    if(pay <= 0) return;
+    // Already invoiced? Don't nag.
+    try {
+      const inv = _currentFile.tc_invoice_status || (_currentFile.raw_form_data && _currentFile.raw_form_data.tc_invoice_status);
+      if(inv && String(inv).toLowerCase() !== 'unbilled') return;
+    } catch(_){}
+    const el = document.createElement('div');
+    el.className = 'rail-invoice-prompt';
+    const _fmt = (typeof _payFmt === 'function') ? _payFmt(pay) : pay.toFixed(2);
+    el.innerHTML =
+      '<div class="rip-eb">&#10003; File closed · time to invoice</div>' +
+      '<div class="rip-head"><span class="rip-t">Submit invoice to broker</span><span class="rip-amt">$' + _fmt + '</span></div>' +
+      '<div class="rip-why">Get paid on the next Friday pay-run · send it now so it doesn&rsquo;t miss the batch.</div>' +
+      '<button type="button" class="rip-go" data-submit-invoice="1">Submit invoice &rarr;</button>';
+    host.insertBefore(el, host.firstChild);
+  }
+
+  // Stage-jump chip strip (Mock 5 · picked Jul 27). Sticky row of stage
+  // chips at the top of the drawer. Past stages show a ✓ pill, the current
+  // stage is the black filled pill with a task-count badge, and the NEXT
+  // stage's chip battery-fills from left-to-right based on how many of the
+  // current stage's tasks are checked off. When it hits 100% the next chip
+  // turns green + pulses + becomes a data-move-next-stage target — Marlenyi
+  // just taps it to advance the file. Later stages render as locked pills.
+  //
+  // Reuses the existing document-level click delegate at line ~16556 that
+  // handles data-move-next-stage (gates, DB write, audit log), so nothing
+  // new to wire on the JS side.
+  function _sjcTaskCount(f, stage){
+    try {
+      const ft = f.file_type || 'sale';
+      let tasks;
+      // Match stageProgress' merged-under-contract logic (line 15687) so the
+      // chip count agrees with the drawer's "X of Y" header on sale files.
+      if(stage === 'under_contract' && ft === 'sale'){
+        const seen = {}; tasks = [];
+        const add = function(t){
+          if(!t || seen[t.id] || (typeof UC_MERGE_SKIP !== 'undefined' && UC_MERGE_SKIP[t.id])) return;
+          if(/_weekly_update$/.test(t.id) && t.id !== 'uc_weekly_update') return;
+          if(t.showIf && !t.showIf(f)) return;
+          seen[t.id] = true; tasks.push(t);
+        };
+        ['under_contract','inspection','appraisal','remedy'].forEach(function(s){ (((STAGE_CHECKLISTS[ft] || {})[s]) || []).forEach(add); });
+      } else {
+        tasks = ((STAGE_CHECKLISTS[ft] || {})[stage] || []).filter(t => !t.showIf || t.showIf(f));
+      }
+      const dt = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
+      return { done: tasks.filter(t => dt[t.id]).length, total: tasks.length };
+    } catch(_){ return { done: 0, total: 0 }; }
+  }
+  function renderStageJumpChips(){
+    const right = document.getElementById('rail-right');
+    if(!right || !_currentFile) return;
+    let el = document.getElementById('rail-stage-chips');
+    if(!el){
+      el = document.createElement('div'); el.id = 'rail-stage-chips';
+      right.insertBefore(el, right.firstChild);
+    }
+    const f = _currentFile;
+    const ft = f.file_type || 'sale';
+    const stages = (typeof STAGES_BY_TYPE === 'object' && STAGES_BY_TYPE[ft]) ? STAGES_BY_TYPE[ft].slice() : [];
+    if(!stages.length){ el.style.display = 'none'; return; }
+    const cur = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || stages[0]);
+    let curIdx = stages.indexOf(cur);
+    if(curIdx < 0) curIdx = 0;
+    const curProg = _sjcTaskCount(f, cur);
+    const curPct = curProg.total ? Math.round((curProg.done / curProg.total) * 100) : 0;
+    const isReady = curProg.total > 0 && curProg.done >= curProg.total;
+    const chips = stages.map(function(s, i){
+      const lbl = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[s]) || s;
+      // Skip synthetic 'waiting_for_tc' from the visible list (it's shown as
+      // 'new' in the pipeline UX and the drawer already surfaces the setup card).
+      if(i < curIdx){
+        return '<span class="sjc done">✓ ' + esc(lbl) + '</span>';
+      }
+      if(i === curIdx){
+        var cbadge = curProg.total ? (' <span class="n">' + curProg.done + '/' + curProg.total + '</span>') : '';
+        return '<span class="sjc cur"><span class="lbl">' + esc(lbl) + '</span>' + cbadge + '</span>';
+      }
+      if(i === curIdx + 1){
+        // The advance target. Only tappable when full; renders data-move-next-stage
+        // so the existing handler owns the DB write + audit log.
+        var pctStyle = ' style="--pct:' + curPct + '%"';
+        var full = isReady ? ' full' : '';
+        var attr = isReady ? (' data-move-next-stage="' + esc(s) + '"') : '';
+        var badge = isReady ? '<span class="n">Advance</span>' : '<span class="n">' + curPct + '%</span>';
+        return '<span class="sjc filling' + full + '"' + pctStyle + attr + '><span class="lbl">' + esc(lbl) + '</span> ' + badge + '</span>';
+      }
+      return '<span class="sjc lck">' + esc(lbl) + '</span>';
+    }).join('');
+    el.innerHTML = chips;
+  }
   async function renderEmailFlagsBanner(){
     const right = document.getElementById('rail-right');
     if(!right || !_currentFile) return;
@@ -15617,7 +17007,7 @@ Tell me your planned move-out date and I will set the inspection.`
     el.style.display = 'block';
     const cur = f.service_stage || track[0];
     el.innerHTML = '<div style="background:#fff;border:1px solid #ece8e0;border-radius:10px;padding:12px 14px;margin:0 0 14px">' +
-      '<p style="font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#8a857c;font-weight:700;margin:0 0 8px">Service stage · the agent sees this</p>' +
+      '<p class="rail-svcstage-lbl" style="font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#8a857c;font-weight:700;margin:0 0 8px">Service stage<span class="rail-svcstage-meta"> · the agent sees this</span></p>' +
       '<select id="svc-stage-sel" style="width:100%;font-family:inherit;font-size:13px;padding:9px 11px;border:1px solid rgba(15,15,15,0.18);border-radius:8px;background:#fff;color:#0f0f0f">' +
         track.map(function(s){ return '<option' + (s===cur ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') +
       '</select>' +
@@ -15722,6 +17112,9 @@ Tell me your planned move-out date and I will set the inspection.`
     renderAgentRequestsBanner();
     renderEmailFlagsBanner();
     renderServiceStage();
+    // Chip strip is rendered LAST so it sits at the top (insertBefore
+    // firstChild order = last call wins the top slot).
+    try { renderStageJumpChips(); } catch(_){}
     _openPopKey = null;
     _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null; _ctConfStep = 0; _revEdit = false; _partyStep = 0; _partyEdit = false; _finStep = 0; _setupEditSec = ''; _setupStep = 'review'; _dlSourcesOpen = false; _dlDateEditKey = null; _spineEditSec = null; _ucOpenTrack = null; _setupCellEdit = null; _uc5Open = true; _inspExtOpen = false; _spineReviewKey = null;
     _dlCalcOpen = false; _dlGroupOpen = { coming:false, done:false }; _dlWhyOpen = {}; _dlExtendKey = null;
@@ -16954,9 +18347,11 @@ Tell me your planned move-out date and I will set the inspection.`
           sub:'Ask the listing agent for any existing survey and the seller&rsquo;s owner&rsquo;s title policy. Survey is due within 5 days of Effective Date per FAR/BAR; the prior owner&rsquo;s policy can qualify the buyer for the reissue rate.',
           softComplete:{ flag:'na', label:'Mark as not applicable', chip:'Not applicable' },
           showIf:(f)=>f.contract_type !== 'builder' },
-        { id:'wtc_title_insurance_request', label:'Request existing title policy',
-          sub:'Request the seller&rsquo;s existing owner&rsquo;s title policy through the listing agent, never the seller directly. The prior policy can qualify the buyer for the reissue rate. Uses the same request email as the survey.',
-          softComplete:{ flag:'na', label:'Mark as not applicable', chip:'Not applicable' } },
+        // wtc_title_insurance_request was a duplicate ask — same title policy,
+        // same email as wtc_survey_title_request. Marlenyi (Jul 26): "Title
+        // policy repeats." Kept the ID out of every list so it stops rendering
+        // on drawers; existing completion rows are harmless and expire with
+        // their files.
       ],
       under_contract: [
         { id:'uc_add_lender_contact', label:'Add lender contact',
@@ -16976,9 +18371,9 @@ Tell me your planned move-out date and I will set the inspection.`
         { id:'uc_lender_followup',   label:'Loan in process · lender',
           showIf:(f)=>!isCashFile(f),
           sub:'Template in &ldquo;What to send next&rdquo;.' },
-        { id:'uc_flood_insurance',   label:'Confirm flood insurance requirement with lender &middot; verify flood zone and NFIP eligibility per &sect;10(d)',
+        { id:'uc_flood_insurance',   label:'Flood insurance · lender',
           showIf:(f)=>!isCashFile(f),
-          sub:'Template in &ldquo;What to send next&rdquo;. Financed deals only &mdash; the cash equivalent is the title flood-zone check in Inspection.' },
+          sub:'Confirm flood insurance requirement with the lender · verify flood zone and NFIP eligibility per &sect;10(d). Template in &ldquo;What to send next&rdquo;. Financed deals only &mdash; the cash equivalent is the title flood-zone check in Inspection.' },
         { id:'uc_title_commitment_reminder', label:'Remind title · commitment due', dl:'title_commitment',
           softComplete:{ flag:'received', label:'Mark as received', chip:'Received' },
           sub:'Template in &ldquo;What to send next&rdquo; — based on the contract deadline.' },
@@ -16986,8 +18381,8 @@ Tell me your planned move-out date and I will set the inspection.`
           sub:'Template in &ldquo;What to send next&rdquo; — confirm both brokers signed and it is on file. Comprehensive Rider GG.' },
         { id:'uc_lien_search',       label:'Order lien search',
           sub:'Template in &ldquo;What to send next&rdquo; — order early so it clears before closing.' },
-        { id:'uc_elevation_cert',    label:'Request Elevation Certificate &middot; required per contract &sect;10(d)',
-          sub:'Template in &ldquo;What to send next&rdquo; — ask the listing agent whether the seller already has one before ordering.' },
+        { id:'uc_elevation_cert',    label:'Elevation certificate · request',
+          sub:'Required per contract &sect;10(d). Template in &ldquo;What to send next&rdquo; — ask the listing agent whether the seller already has one before ordering.' },
         { id:'uc_tenant_lease',      label:'Confirm lease info · tenant', dl:'tenant_lease',
           showIf:(f)=>(((f.logistics||{}).ctc_tenant_occupied)==='yes'),
           sub:'Due within 5 days of Effective Date when the property is tenant occupied.' },
@@ -17027,26 +18422,28 @@ Tell me your planned move-out date and I will set the inspection.`
           sub:'Before the inspection deadline, confirm the buyer will finish in time. If not, draft an extension addendum (seller must agree) to move the date.' },
         { id:'insp_decision_followup', label:'Inspection decision · buyer agent', dl:'inspection_end',
           sub:'Template in &ldquo;What to send next&rdquo;. Log the buyer decision in the dropdown below.' },
-        { id:'insp_proceed_confirmed', label:'Buyer proceeding · notify',
+        { id:'insp_proceed_confirmed', label:'Buyer proceeding · notify all parties',
           showIf:(f)=>((f.logistics||{}).inspection_decision)==='proceed',
-          sub:'Master-thread announcement once the buyer proceeds.' },
-        { id:'insp_proceed_notice', label:'Proceeding · notice to seller',
-          showIf:(f)=>((f.logistics||{}).inspection_decision)==='proceed' },
-        { id:'insp_cancel_confirmed', label:'Buyer canceling · notify',
+          sub:'Master-thread announcement — hits every party in one email.' },
+        { id:'insp_proceed_notice', label:'Proceeding · confirm seller signed off',
+          showIf:(f)=>((f.logistics||{}).inspection_decision)==='proceed',
+          sub:'Workflow check — the "notify all parties" email above is the delivery; this row records the seller-side confirmation.' },
+        { id:'insp_cancel_confirmed', label:'Buyer canceling · notify all parties',
           showIf:(f)=>((f.logistics||{}).inspection_decision)==='cancel',
           emailGate:{ requiresLogistics:'cancellation_release_uploaded', note:'Upload the executed cancellation and release before sending.' },
-          sub:'Upload the executed cancellation and release below; the email attaches it.' },
-        { id:'insp_cancel_notice',  label:'Canceling · notice to seller',
-          showIf:(f)=>((f.logistics||{}).inspection_decision)==='cancel' },
+          sub:'Upload the executed cancellation and release below; the email attaches it and hits every party in one thread.' },
+        { id:'insp_cancel_notice',  label:'Canceling · confirm seller signed off',
+          showIf:(f)=>((f.logistics||{}).inspection_decision)==='cancel',
+          sub:'Workflow check — the "notify all parties" email above is the delivery; this records the seller-side receipt.' },
         { id:'insp_deposit_return', label:'Canceling · deposit return',
           showIf:(f)=>((f.logistics||{}).inspection_decision)==='cancel' },
         { id:'insp_permits',        label:'Follow up · open permits' },
         { id:'insp_lender_update',  label:'Loan status · lender',
           showIf:(f)=>!isCashFile(f),
           sub:'Template in &ldquo;What to send next&rdquo;.' },
-        { id:'insp_flood_zone',     label:'Verify flood zone with title &middot; confirm zone and NFIP eligibility per &sect;10(d)',
+        { id:'insp_flood_zone',     label:'Flood zone · title',
           showIf:(f)=>isCashFile(f),
-          sub:'Cash file &mdash; no lender is ordering a flood determination, so title confirms it. Get the answer before the inspection period ends, while the buyer can still walk. Deliberately NOT wired to clear the inspection deadline: this is a watch task, and checking it must never hide a live deadline.' },
+          sub:'Confirm zone and NFIP eligibility per &sect;10(d). Cash file &mdash; no lender is ordering a flood determination, so title confirms it. Get the answer before the inspection period ends, while the buyer can still walk. Deliberately NOT wired to clear the inspection deadline: this is a watch task, and checking it must never hide a live deadline.' },
         { id:'insp_weekly_update',  label:'Weekly update',
           sub:'Template in &ldquo;What to send next&rdquo;.' },
       ],
@@ -17105,13 +18502,13 @@ Tell me your planned move-out date and I will set the inspection.`
           sub:'Verify title closer, lender, both agents, buyer, and seller contact information has not changed. Update anything that has.' },
         { id:'app_insurance_binder', label:'Confirm insurance binder', showIf:(f)=>!isCashFile(f),
           sub:'Financed deals · the lender needs the hazard insurance binder, named as mortgagee, before Clear to Close. Confirm it is bound and sent to the lender and title.' },
-        { id:'app_missing_info',     label:'Flag any missing information to agent',
-          showIf:(f)=>{ try { const mf = (typeof missingFieldsFor === 'function') ? missingFieldsFor({}, f) : []; return !!(mf && mf.length); } catch(_){ return false; } },
-          sub:'If the system flags missing items on this file, send the agent a request for what is still needed.' },
-        { id:'app_title_commitment', label:'Title commitment · on track', dl:'title_commitment',
+        { id:'app_missing_info',     label:'Missing info · re-flag if still open',
+          showIf:(f)=>{ try { const mf = (typeof missingFieldsFor === 'function') ? missingFieldsFor({}, f) : []; return !!(mf && mf.length) && !((f.stage_tasks||{}).uc_missing_info); } catch(_){ return false; } },
+          sub:'Only shows if UC didn&rsquo;t clear the missing-info ask · re-flag the agent so nothing stalls the file at appraisal.' },
+        { id:'app_title_commitment', label:'Title commitment · still waiting', dl:'title_commitment',
           softComplete:{ flag:'received', label:'Mark as received', chip:'Received' },
           showIf:(f)=>!((f.stage_tasks||{}).uc_title_commitment_reminder),
-          sub:'Template in &ldquo;What to send next&rdquo;.' },
+          sub:'Only shows if the UC reminder wasn&rsquo;t already sent. Template in &ldquo;What to send next&rdquo;.' },
         { id:'app_weekly_update',    label:'Weekly update',
           sub:'Template in &ldquo;What to send next&rdquo;.' },
       ],
@@ -17119,10 +18516,10 @@ Tell me your planned move-out date and I will set the inspection.`
         { id:'ctc_payment_link',   label:'Send payment link',
           showIf:(f)=>TC_SERVICES.indexOf(f.service_type) !== -1,
           sub:'Payment link auto-generates from Stripe based on the service type on this file. Send on Thread 1 — agent only. File closes regardless of payment status.' },
-        { id:'ctc_title_commitment_received', label:'Title commitment received', dl:'title_commitment',
+        { id:'ctc_title_commitment_received', label:'Title commitment · final received', dl:'title_commitment',
           softComplete:{ flag:'received', label:'Mark as received', chip:'Received' },
           showIf:(f)=>!((f.stage_tasks||{}).app_title_commitment),
-          sub:'Due 15 days before closing. Template in &ldquo;What to send next&rdquo;.' },
+          sub:'Only shows if Appraisal didn&rsquo;t already log receipt. Due 15 days before closing. Template in &ldquo;What to send next&rdquo;.' },
         { id:'ctc_title_review',   label:'Review title commitment',
           sub:'Exceptions found? Flip the &ldquo;Title exceptions&rdquo; flag above — it loads the notify + resolve tasks.' },
         { id:'ctc_open_permits',   label:'Verify permits closed',
@@ -17148,7 +18545,7 @@ Tell me your planned move-out date and I will set the inspection.`
         { id:'ctc_home_warranty',  label:'Home warranty · confirm ordered',
           showIf:(f)=>{ var ex = (typeof extractedFields === 'function' ? extractedFields(f) : null) || {}; return ex.flag_home_warranty === 'yes'; },
           sub:'From the contract: a home warranty was elected. Confirm the plan is ordered and charged to the responsible party on the closing statement.' },
-        { id:'ctc_estoppels',      label:'Estoppels received', dl:'estoppel',
+        { id:'ctc_estoppels',      label:'Tenant estoppels · received', dl:'estoppel',
           sub:'Due 10 days before closing. Template in &ldquo;What to send next&rdquo;.',
           showIf:(f)=>(((f.logistics||{}).ctc_tenant_occupied)==='yes') },
         { id:'ctc_fincen',         label:'FinCEN report · entity cash',
@@ -17438,7 +18835,7 @@ Tell me your planned move-out date and I will set the inspection.`
         label:'Order seller payoff + confirm liens',
         sub:'Request the mortgage payoff and confirm any additional liens, judgments, or unpaid assessments so the closing agent has clean figures. Order early, they take days.' },
       { id:'s_ctc_estoppel_final', owner:'TC',
-        label:'Confirm final HOA / condo estoppel received',
+        label:'HOA estoppel · final received',
         sub:'The estoppel governs what the seller owes the association at closing. Confirm the closing agent has the final figures.',
         showIf:function(f){ return _sHasHoa(f); } },
       { id:'s_ctc_deed_docs', owner:'Title',
@@ -17789,7 +19186,7 @@ Tell me your planned move-out date and I will set the inspection.`
   // waiting_for_tc list for historical reasons) actually belongs in Under Contract:
   // it happens AFTER the TC confirms the file and clicks Move to Under Contract.
   // We redistribute at read time so the definition arrays stay intact.
-  const OPENING_TASK_IDS = ['wtc_agent_confirm','wtc_opening_email','wtc_escrow_instructions','wtc_buyer_deposit_title','wtc_other_agent_intro','wtc_processor_intro','wtc_hoa_request','wtc_survey_title_request','wtc_title_insurance_request','wtc_condo_docs'];
+  const OPENING_TASK_IDS = ['wtc_agent_confirm','wtc_opening_email','wtc_escrow_instructions','wtc_buyer_deposit_title','wtc_other_agent_intro','wtc_processor_intro','wtc_hoa_request','wtc_survey_title_request','wtc_condo_docs'];
   function isOpeningTaskId(id){ return OPENING_TASK_IDS.indexOf(id) !== -1; }
   function _isBothFile(f){ return String((f || {}).client_type || '') === 'both'; }
   // Seller task ids that duplicate a buyer/TC workflow task, dropped on both-side files.
@@ -19081,6 +20478,20 @@ Tell me your planned move-out date and I will set the inspection.`
           '<button type="button" data-fin-set="financed" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'financed' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Financed</button>' +
           '<button type="button" data-fin-set="cash" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'cash' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Cash</button>' +
           '</span></div>';
+        // Loan-type sub-selector · rendered as pill buttons to match the
+        // Financed/Cash pattern above (Marlenyi Jul 26: "display it as the
+        // other stab to select or change"). Writes into logistics.financing_type.
+        if(fd.finType !== undefined){
+          var _lts = [['conventional','Conventional'],['fha','FHA'],['va','VA'],['usda','USDA'],['other','Other']];
+          var _cur = String(fd.finType || '').toLowerCase();
+          var _pills = _lts.map(function(p){
+            var on = (p[0] === _cur);
+            return '<button type="button" data-fin-type-set="' + p[0] + '" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (on ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">' + p[1] + '</button>';
+          }).join('');
+          return '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c;padding-top:6px;flex:none">' + esc(fd.label) + '</span>' +
+            '<span style="display:inline-flex;flex-wrap:wrap;gap:6px;justify-content:flex-end">' + _pills + '</span>' +
+          '</div>';
+        }
         if(fd.ro) return dispRow(fd.label, fd.val);
         if(_setupEditAll) return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5"><div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div><input data-nf-field="' + fd.f + '" value="' + esc(fd.val).replace(/"/g, '&quot;') + '" placeholder="Type it in" style="width:100%;font:inherit;font-size:13px;font-weight:600;padding:8px 10px;border:1px solid #d9d4ca;border-radius:8px;background:#fff;color:#0f0f0f"></div>';
         if(_setupCellEdit === fd.f){
@@ -19118,7 +20529,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const _defs = {
       contract:   ['Contract', 'contract', [{f:'__type',label:'Type',sel:_typeSelect},{f:'address',label:'Property',val:(ex.address||file.property_address||'')},{f:'county',label:'County',val:(ex.county||'')},{f:'legal',label:'Legal description',val:(ex.legal||'')}]],
       parties:    ['Parties', 'parties', _pf],
-      financing:  ['Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),fin:(_financed?'financed':'cash')}].concat(_financed ? [{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}] : [])],
+      financing:  ['Financing', 'financing', [{f:'__fin',label:'Type',val:(_financed?'Financed':'Cash'),fin:(_financed?'financed':'cash')}].concat(_financed ? [{f:'__finType',label:'Loan type',finType:(((file.logistics||{}).financing_type)||'')},{f:'loan_amount',label:'Loan amount',val:_money(ex.loan_amount)}] : [])],
       pricedates: ['Price', 'pricedates', [{f:'price',label:'Purchase price',val:_price},{f:'emd',label:'Initial deposit',val:_money(ex.emd)},{f:'balance_to_close',label:'Balance to close',val:_money(ex.balance_to_close)}]],
       contacts:   ['Lender contact', 'contacts', [{f:'lender_name',label:'Lender / loan officer',val:(ex.lender_name||'')},{f:'lender_email',label:'Lender email',val:(ex.lender_email||'')},{f:'lender_phone',label:'Lender phone',val:(ex.lender_phone||'')}]],
     };
@@ -19206,6 +20617,20 @@ Tell me your planned move-out date and I will set the inspection.`
           '<button type="button" data-fin-set="financed" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'financed' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Financed</button>' +
           '<button type="button" data-fin-set="cash" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (fd.fin === 'cash' ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">Cash</button>' +
           '</span></div>';
+        // Loan-type sub-selector · rendered as pill buttons to match the
+        // Financed/Cash pattern above (Marlenyi Jul 26: "display it as the
+        // other stab to select or change"). Writes into logistics.financing_type.
+        if(fd.finType !== undefined){
+          var _lts = [['conventional','Conventional'],['fha','FHA'],['va','VA'],['usda','USDA'],['other','Other']];
+          var _cur = String(fd.finType || '').toLowerCase();
+          var _pills = _lts.map(function(p){
+            var on = (p[0] === _cur);
+            return '<button type="button" data-fin-type-set="' + p[0] + '" style="font-size:12px;font-weight:600;border-radius:7px;padding:5px 12px;cursor:pointer;font-family:inherit;' + (on ? 'background:#0f0f0f;color:#fff;border:1px solid #0f0f0f' : 'background:#fff;color:#5f5e5a;border:1px solid #d9d4ca') + '">' + p[1] + '</button>';
+          }).join('');
+          return '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;font-size:13px;padding:7px 0;border-top:0.5px solid #f1ede5"><span style="color:#8a857c;padding-top:6px;flex:none">' + esc(fd.label) + '</span>' +
+            '<span style="display:inline-flex;flex-wrap:wrap;gap:6px;justify-content:flex-end">' + _pills + '</span>' +
+          '</div>';
+        }
         if(fd.ro) return dispRow(fd.label, fd.val);
         if(_setupEditAll) return '<div style="padding:7px 0;border-top:0.5px solid #f1ede5"><div style="font-size:11px;color:#8a857c;margin-bottom:4px">' + esc(fd.label) + '</div><input data-nf-field="' + fd.f + '" value="' + esc(fd.val).replace(/"/g, '&quot;') + '" placeholder="Type it in" style="width:100%;font:inherit;font-size:13px;font-weight:600;padding:8px 10px;border:1px solid #d9d4ca;border-radius:8px;background:#fff;color:#0f0f0f"></div>';
         if(_setupCellEdit === fd.f){
@@ -19687,7 +21112,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // Open the file (Effective + 1)
     'wtc_agent_confirm','wtc_opening_email','wtc_escrow_instructions','wtc_buyer_deposit_title',
     'wtc_other_agent_intro','wtc_processor_intro','wtc_hoa_request','wtc_condo_docs',
-    'wtc_survey_title_request','wtc_title_insurance_request','uc_add_lender_contact',
+    'wtc_survey_title_request','uc_add_lender_contact',
     // Deposit (Effective + 3)
     'uc_emd_wiring','uc_emd_followup','uc_addl_followup',
     // Financing application + survey (Effective + 5)
@@ -19750,7 +21175,31 @@ Tell me your planned move-out date and I will set the inspection.`
       var _earlyN = laterTasks.filter(function(t){ return EARLY_TASK_IDS[t.id]; }).length;
       var _eh = _earlyN ? (' &middot; ' + _earlyN + ' to start early') : '';
       items.push('<button type="button" class="wt-link" data-wt-toggle="coming">Coming up &middot; ' + laterTasks.length + _eh + ' &rsaquo;</button>');
-      lists += '<div data-wt-list="coming" hidden style="margin-top:4px">' + laterTasks.map(function(t){ return ckRow(file, t, dls, done, tagFn ? tagFn(t.id) : '', true); }).join('') + '</div>';
+      // Marlenyi (Jul 27): "don't hide it just prompt me to click on unlock
+      // the next five tasks" · progressive-disclosure in 5-task batches.
+      // Render every batch as its own <div data-wt-batch="N"> pre-inserted
+      // and hidden; the "Unlock next 5" prompt reveals one batch per tap
+      // and re-labels itself to reflect how many remain. When the last
+      // batch shows the prompt disappears. All handled by the existing
+      // wt-toggle style handler (upgraded below to support batch reveal).
+      var _WT_BATCH = 5;
+      lists += '<div data-wt-list="coming" style="margin-top:4px">';
+      var _b = 0;
+      for(var _i = 0; _i < laterTasks.length; _i += _WT_BATCH, _b++){
+        var _slice = laterTasks.slice(_i, _i + _WT_BATCH);
+        var _rowsHtml = _slice.map(function(t){ return ckRow(file, t, dls, done, tagFn ? tagFn(t.id) : '', true); }).join('');
+        // First batch shows by default; every subsequent batch is hidden and
+        // gated behind a preceding "Unlock next N" prompt button.
+        if(_b === 0){
+          lists += _rowsHtml;
+        } else {
+          var _remaining = laterTasks.length - _i;
+          var _batchN = Math.min(_WT_BATCH, _remaining);
+          lists += '<button type="button" class="wt-unlock" data-wt-unlock-batch="' + _b + '" style="display:block;width:100%;margin:8px 0 4px;background:#faf7ef;border:0.5px dashed #d9d1bc;border-radius:10px;padding:10px;font:600 12px \'Inter\';color:#5f5647;cursor:pointer;font-family:inherit">&#128274; Unlock next ' + _batchN + ' task' + (_batchN === 1 ? '' : 's') + ' &rarr;</button>' +
+            '<div data-wt-batch="' + _b + '" hidden>' + _rowsHtml + '</div>';
+        }
+      }
+      lists += '</div>';
     }
     if(doneTasks && doneTasks.length){
       items.push('<button type="button" class="wt-link" data-wt-toggle="done">' + doneTasks.length + ' done &rsaquo;</button>');
@@ -20062,11 +21511,12 @@ Tell me your planned move-out date and I will set the inspection.`
       if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">Covered</span><span style="' + sub + '">membership credit</span></div>';
       return '<span style="' + faint + '">covered &middot; membership</span>';
     }
-    // File Organization SERVICE pays 50% ($49.50). In-house / self-coordinated work pays flat $80.
+    // File Organization SERVICE pays 50% ($49.50). Self-coordinated + in-house
+    // $80 branch was removed Jul 26 per Marlenyi — every file now uses the
+    // service's % split. Only the file-org SERVICE keeps its flat 50% rate.
     if(paysFileOrg(f)){
-      var _foSvc = isFileOrgFile(f);
-      var foAmt = _foSvc ? '$49.50' : '$80';
-      var foLbl = _foSvc ? 'file org &middot; 50%' : 'in-house &middot; self-coordinated';
+      var foAmt = '$49.50';
+      var foLbl = 'file org &middot; 50%';
       if(role === 'broker') return '<div style="' + col + '"><span style="' + big + '">' + foAmt + '</span><span style="' + sub + '">TC pay &middot; ' + foLbl + '</span></div>';
       return '<div style="' + col + '"><span style="' + big + '">' + foAmt + '</span><span style="' + sub + '">' + foLbl + '</span></div>';
     }
@@ -20101,8 +21551,10 @@ Tell me your planned move-out date and I will set the inspection.`
         var dSvc = 'File organization &middot; flat <b>50%</b> ($49.50) to the TC' + (role === 'broker' ? ' &middot; Aari keeps $49.50' : '');
         return { fig: '<span style="' + fFo + '">$49.50</span>', detail: dSvc };
       }
-      var d = 'In-house &middot; self-coordinated &middot; flat <b>$80</b> to the TC' + (role === 'broker' ? ' &middot; no Aari Transactions charge' : '');
-      return { fig: '<span style="' + fFo + '">$80</span>', detail: d };
+      // fo_override files (admin flag): pay the file-org 50% ($49.50), same
+      // as a real file-org file. Self-coordinated / $80 branch removed Jul 26.
+      var d = 'File-org override &middot; flat <b>50%</b> ($49.50) to the TC' + (role === 'broker' ? ' &middot; Aari keeps $49.50' : '');
+      return { fig: '<span style="' + fFo + '">$49.50</span>', detail: d };
     }
     if(isSplitFile(f)){
       var p = svcPrice(f);
@@ -20297,7 +21749,9 @@ Tell me your planned move-out date and I will set the inspection.`
     body += '<div style="background:#faf6ec;border:1px solid #e0d2a8;border-radius:9px;padding:11px 13px;margin-top:16px">' +
       '<div style="font-size:11px;font-weight:600;color:#7a4e0b;margin-bottom:3px">Compliance</div>' +
       '<div style="font-size:11.5px;color:#8a6d3b;line-height:1.5">The agent supplies and approves every term in writing. Aari prepares the documents only, no advice on price or terms.</div></div>';
-    host.innerHTML = (typeof fileMoneyHtml === 'function' ? fileMoneyHtml(file) : '') + body;
+    // Money strip stripped Jul 27 · same reason as renderStageChecklist ·
+    // pay info belongs on Invoices, not inside the checklist.
+    host.innerHTML = body;
   }
   // ===== Board auto-advance (approved July 24) =====
   // The file moves to the next column on its own as the coordinator checks off tasks — but ONLY
@@ -20577,7 +22031,11 @@ Tell me your planned move-out date and I will set the inspection.`
     const _showDueSoon = !_isSetupStage && stage !== 'under_contract';
     // "Update the agent" is a communication action, not a task — it sits at the BOTTOM
     // of the work (after the tracks, just above Move), not crowding the top of Do next.
-    host.innerHTML = contractGuardBannerHtml(file) + fileMoneyHtml(file) + roBanner + saBanner + payBanner + closingBanner + gate + widget +
+    // fileMoneyHtml(file) was here — Marlenyi (Jul 27): "I don't wanna keep
+    // the TC payout in a checklist where we're supposed to be tracking
+    // deadlines for clients." Money strip belongs on the Invoices tab, not
+    // between deadline tasks. The Invoices view already surfaces per-file pay.
+    host.innerHTML = contractGuardBannerHtml(file) + roBanner + saBanner + payBanner + closingBanner + gate + widget +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
       (_showDueSoon ? dueSoon : '') + ((_isSetupStage || _usedTracks) ? '' : updateBtnHtml(file)) + moveBtn;
     // During Setup, hide the whole "Your work" pop when it has nothing to show (no
@@ -20592,9 +22050,25 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){}
     // Work rail · re-mark the NEXT task after every checklist render.
     try { if(typeof markNextTask === 'function') markNextTask(); } catch(_){}
+    // Sticky Do-Now bar · reads the fresh .ck-next row and mirrors it.
+    try { if(typeof renderDoNowBar === 'function') renderDoNowBar(); } catch(_){}
+    // Invoice-submit prompt · injects at the top of the checklist when closed.
+    try { if(typeof renderInvoicePromptBanner === 'function') renderInvoicePromptBanner(); } catch(_){}
   }
   // Your Work footer · toggle the Coming up / done lists open below the footer row.
   document.addEventListener('click', function(e){
+    // Progressive unlock · Marlenyi (Jul 27) "prompt me to click on unlock
+    // the next five task." Reveals ONE 5-task batch per tap and hides the
+    // button so the next unlock prompt slides up in its place.
+    const un = e.target.closest && e.target.closest('[data-wt-unlock-batch]');
+    if(un){
+      const b = un.getAttribute('data-wt-unlock-batch');
+      const host = document.getElementById('tpb-checklist');
+      const batch = host && host.querySelector('[data-wt-batch="' + b + '"]');
+      if(batch) batch.hidden = false;
+      un.style.display = 'none';
+      return;
+    }
     const wt = e.target.closest && e.target.closest('[data-wt-toggle]');
     if(!wt) return;
     const key = wt.getAttribute('data-wt-toggle');
@@ -21100,6 +22574,9 @@ Tell me your planned move-out date and I will set the inspection.`
   });
   async function renderPlaybook(file){
     const stage = deriveStage(file);
+    // Refresh the stage-jump chip strip so its battery fill reflects the
+    // latest task-completion state after every re-render.
+    try { renderStageJumpChips(); } catch(_){}
     document.getElementById('tpb-stage').textContent = STAGE_LABELS[stage] || stage;
     document.getElementById('tpb-addr').textContent = file.property_address || 'Untitled file';
     const parts = [];
@@ -21545,6 +23022,10 @@ Tell me your planned move-out date and I will set the inspection.`
     try { if(window.__railSyncSeg) window.__railSyncSeg(); } catch(_){}
     const cx = document.getElementById('rail-close');
     if(cx) cx.addEventListener('click', closePlaybook);
+    // Rescue close FAB · same handler, wired once per open. Marlenyi (Jul 26)
+    // couldn't reach the top-bar close on iPhone.
+    const cfab = document.getElementById('rail-close-fab');
+    if(cfab && !cfab.dataset.wired){ cfab.addEventListener('click', closePlaybook); cfab.dataset.wired = '1'; }
   }
   // In rail mode every section is already visible — "opening" one scrolls to it.
   // fd/next stay collapsed and toggle. Non-rail fallback keeps the old behavior.

@@ -145,6 +145,26 @@
     .awb-menu .sep{height:1px;background:#f0ede2;margin:6px 4px}
     .awb-menu .signout{color:#a32d2d}
     .awb-menu .signout:hover{background:#faeaea}
+    .awb-menu .gcal-status{
+      display:flex;align-items:center;justify-content:space-between;gap:10px;
+      padding:9px 12px;font-size:12px;color:var(--awb-muted);cursor:default;
+    }
+    .awb-menu .gcal-status .gcal-lbl{font-weight:600;color:var(--awb-ink-2)}
+    .awb-menu .gcal-status .gcal-val{font-style:italic}
+    .awb-menu .gcal-status .gcal-check{color:#3a7d4a;font-style:normal;font-weight:700;margin-left:4px}
+    /* App switcher · distinguished entry that jumps out of the transactions app
+       to the agent+broker hub. Sits under the who-block, styled as a small
+       card so it reads as "leaves here" rather than another regular menu item. */
+    .awb-menu a.app-switch{
+      background:var(--awb-cream);border:0.5px solid var(--awb-line);
+      margin:2px 4px 6px;padding:10px 12px;border-radius:10px;
+      display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto;
+      column-gap:10px;row-gap:1px;
+    }
+    .awb-menu a.app-switch:hover{background:#f0ece0}
+    .awb-menu a.app-switch .as-name{grid-column:1;grid-row:1;font-size:13.5px;font-weight:700;color:var(--awb-ink);letter-spacing:-0.1px}
+    .awb-menu a.app-switch .as-sub{grid-column:1;grid-row:2;font-size:11px;font-weight:500;color:var(--awb-muted)}
+    .awb-menu a.app-switch .as-chev{grid-column:2;grid-row:1 / span 2;align-self:center;color:var(--awb-muted);font-size:15px}
     @media (max-width:600px){
       .awb-menu{right:-4px;left:auto;width:240px}
     }
@@ -350,11 +370,27 @@
                 '<div class="who-name">' + esc(profile.fullName) + '</div>' +
                 '<div class="who-role">' + esc(profile.roleWord) + '</div>' +
               '</div>' +
+              // App switcher · this app is TC-only; agent + broker work lives
+              // in hub.joinaari.com. Marlenyi (July 26) asked to wire the jump
+              // so hats can switch without hunting for a URL. First menu item
+              // so it lands under the thumb.
+              '<a href="https://hub.joinaari.com" class="app-switch" role="menuitem">' +
+                '<span class="as-name">Agent Hub</span>' +
+                '<span class="as-sub">Agent + Broker</span>' +
+                '<span class="as-chev">&rarr;</span>' +
+              '</a>' +
               '<a href="/portal.html#recent-activity" role="menuitem">Recent activity</a>' +
               '<a href="/portal.html#membership" role="menuitem">Membership</a>' +
               '<a href="/portal.html#billing-documents" role="menuitem">Billing &amp; Documents</a>' +
               brokerLine +
               '<a href="/portal.html#profile" role="menuitem">Settings</a>' +
+              '<div class="sep"></div>' +
+              // Google Calendar status · Marlenyi (July 25) moved this here from the
+              // /files.html calendar-card footer since sync is a one-time setup.
+              '<div class="gcal-status" role="menuitem">' +
+                '<span class="gcal-lbl">Google Calendar</span>' +
+                '<span class="gcal-val">Auto-synced <span class="gcal-check">&#10003;</span></span>' +
+              '</div>' +
               '<div class="sep"></div>' +
               '<a href="#" class="signout" role="menuitem" data-awb-signout>Sign out</a>' +
             '</div>' +
