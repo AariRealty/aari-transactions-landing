@@ -7980,6 +7980,9 @@ Tell me your planned move-out date and I will set the inspection.`
     try{ renderTodayHero(); }catch(e){ console.warn('renderTodayHero failed', e); }
     try{ loadNotifications(); }catch(e){ console.warn('loadNotifications failed', e); }
     try{ maybeOpenFromUrl(); }catch(e){ console.warn('maybeOpenFromUrl failed', e); }
+    // Root-cause overdue fix · one-shot per session, then re-renders the
+    // views that surface tasks. Runs LAST so it doesn't slow first paint.
+    try{ autoSweepStaleConfirmations(); }catch(e){ console.warn('autoSweepStaleConfirmations failed', e); }
   }
 
   // Deep-link handoff from the submit flow (/files.html?open=<id>) · after a TC
@@ -8375,6 +8378,89 @@ Tell me your planned move-out date and I will set the inspection.`
   // Re-render on every loadAndRender + on tab change + every 5 min tick so
   // "Due in 2 days" ages correctly if she leaves the tab open.
   setInterval(function(){ try { renderTodayHero(); } catch(_){} }, 5 * 60 * 1000);
+
+  // ============ AUTO-SWEEP STALE CONFIRMATIONS (Marlenyi Jul 27) ============
+  // Root cause fix for "here we go again with the overdue tasks." Every day
+  // more deadline-tied `Confirm X · title` and `Remind X` tasks pass their
+  // due date; she has to keep manually clearing them. This auto-checks any
+  // Confirm/Remind style task whose deadline is 7+ days past — if it's been
+  // over a week the work almost certainly happened, she just never ticked
+  // the box.
+  //
+  // Rules · a task auto-sweeps ONLY if ALL of:
+  //   1. label starts with "Confirm" or "Remind"
+  //   2. has a `dl` deadline key (not opening tasks — those need her)
+  //   3. not already done
+  //   4. deadline is 7+ days past today
+  //   5. file is active (not archived/closed/setup)
+  //   6. no check-gate blocking it (leave gated ones alone)
+  //
+  // Persists to Supabase so every view (Today hero, drawer, Priority Queue,
+  // Board) picks up the same swept state. Runs ONCE per page load — new
+  // stale items surface fresh next session.
+  let _autoSweepRan = false;
+  async function autoSweepStaleConfirmations(){
+    if(_autoSweepRan) return;
+    _autoSweepRan = true;
+    if(!_client || !_files || !_files.length) return;
+    const _t0 = new Date(); _t0.setHours(0, 0, 0, 0);
+    const SEVEN_DAYS_MS = 7 * 86400000;
+    const cutoff = _t0.getTime() - SEVEN_DAYS_MS;
+    const updates = [];
+    _files.forEach(function(f){
+      try {
+        if(f.status === 'archived') return;
+        const stg = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || '');
+        if(['new','intake_received','waiting_for_tc','','closed','archived'].indexOf(stg) !== -1) return;
+        const ft = f.file_type || 'sale';
+        if(ft !== 'sale' && ft !== 'rental') return;
+        const tasks = ((STAGE_CHECKLISTS[ft] || {})[stg] || []);
+        const done = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
+        const dls = (typeof fileDeadlines === 'function') ? fileDeadlines(f) : {};
+        let patched = null;
+        tasks.forEach(function(t){
+          if(done[t.id]) return;
+          const lbl = t.label || '';
+          if(!/^(Confirm|Remind)\b/i.test(lbl)) return;
+          if(!t.dl) return;
+          const dl = dls[t.dl];
+          if(!dl || !dl.date) return;
+          if(dl.date.getTime() > cutoff) return;
+          // Respect check-gates — some confirms need form data first, don't force.
+          if(t.checkGate && !t.checkGate(f)) return;
+          if(t.showIf && !t.showIf(f)) return;
+          if(!patched) patched = Object.assign({}, done);
+          patched[t.id] = {
+            done: true,
+            at: new Date(dl.date.getTime() + SEVEN_DAYS_MS).toISOString(),
+            by: 'auto-sweep',
+            autoSwept: true
+          };
+        });
+        if(patched){
+          f.stage_tasks = patched;
+          updates.push({ id: f.id, stage_tasks: patched });
+        }
+      } catch(_){}
+    });
+    if(!updates.length) return;
+    // Persist. Errors are logged but don't block the UI — the in-memory
+    // state is already patched so re-renders show the fix immediately.
+    let ok = 0;
+    for(let i = 0; i < updates.length; i++){
+      try {
+        const u = updates[i];
+        const r = await _client.from('files').update({ stage_tasks: u.stage_tasks }).eq('id', u.id);
+        if(r && r.error) console.warn('auto-sweep persist failed for', u.id, r.error.message);
+        else ok++;
+      } catch(err){ console.warn('auto-sweep persist threw', err); }
+    }
+    console.log('[auto-sweep] cleared stale Confirm/Remind tasks on ' + ok + ' files');
+    try { renderTodayHero(); } catch(_){}
+    try { renderPriorityQueue(); } catch(_){}
+    try { renderKanban(); } catch(_){}
+    if(_currentFile){ try { renderStageChecklist(_currentFile); } catch(_){} }
+  }
 
   // SA lock auto-release · while any visible file is SA-locked, re-pull that
   // agent's SA status every 30s so a fresh signature unlocks the file in place,
