@@ -1182,6 +1182,48 @@
     .tpb-popmodal.rail .uc-acc-l, .tpb-popmodal.rail .uc-step-l { font-size: 13px; gap: 10px; }
     .tpb-popmodal.rail .uc-step-num { width: 20px; height: 20px; font-size: 10.5px; }
   }
+  /* Sticky Do-Now bar · black pill bar pinned to the bottom of the viewport
+     when a rail drawer is open. Shows the current "next" task's label +
+     Send → button so the top action is always in thumb reach. Hidden on
+     desktop and when there is no next task to do. */
+  #rail-donow-bar {
+    display: none;
+    position: fixed;
+    left: 12px; right: 12px;
+    bottom: calc(env(safe-area-inset-bottom, 10px) + 12px);
+    background: #0f0f0f; color: #fff;
+    border-radius: 14px;
+    padding: 12px 12px 12px 16px;
+    z-index: 10000;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.32);
+    align-items: center; gap: 10px;
+    font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  }
+  #rail-donow-bar .dn-body { flex: 1; min-width: 0; }
+  #rail-donow-bar .dn-eb { font-size: 9px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: #e8a99d; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; }
+  #rail-donow-bar .dn-dot { width: 6px; height: 6px; border-radius: 50%; background: #e8a99d; animation: dnPulse 1.6s ease-in-out infinite; }
+  @keyframes dnPulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+  #rail-donow-bar .dn-nm { font-size: 14px; font-weight: 700; color: #fff; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #rail-donow-bar .dn-btn { flex: none; background: #fff; color: #0f0f0f; border: 0; border-radius: 10px; padding: 11px 15px; font: 700 12.5px 'Inter'; cursor: pointer; letter-spacing: 0.2px; }
+  body:has(#tpb-popview:not([hidden])) #rail-donow-bar,
+  body:has(.tpb-popmodal.rail:not([hidden])) #rail-donow-bar {
+    /* JS decides `display: flex` vs `display: none` based on whether a
+       next task exists; the has() rule only unblocks display when the
+       drawer is open. */
+    display: none; /* placeholder — JS toggles */
+  }
+
+  /* Invoice-submit prompt · green card that appears inside the drawer
+     when a file has closed. TC's cut is auto-calculated + submit is a
+     single tap. */
+  .rail-invoice-prompt { background: #eef4ee; border: 0.5px solid #cbe0d1; border-radius: 12px; padding: 14px 16px; margin: 0 -12px 14px; }
+  .rail-invoice-prompt .rip-eb { font: 700 10px 'Inter'; letter-spacing: 1.2px; text-transform: uppercase; color: #2c5f42; margin-bottom: 6px; }
+  .rail-invoice-prompt .rip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+  .rail-invoice-prompt .rip-t { font-family: Georgia, 'Times New Roman', serif; font-size: 15px; font-weight: 600; color: #0f0f0f; }
+  .rail-invoice-prompt .rip-amt { font-family: 'Playfair Display', Georgia, serif; font-size: 20px; letter-spacing: -0.5px; font-weight: 500; color: #2c5f42; }
+  .rail-invoice-prompt .rip-why { font-size: 11.5px; color: #5f6f57; line-height: 1.4; margin-bottom: 10px; }
+  .rail-invoice-prompt .rip-go { background: #2c5f42; color: #fff; border: 0; border-radius: 9px; padding: 10px 16px; font: 700 12.5px 'Inter'; cursor: pointer; letter-spacing: 0.3px; }
+
   /* Rescue close FAB · always hidden until CSS above (inside the mobile
      @media) shows it when a rail drawer is open. Solid black pill with the
      word "Close" so it reads as a button, not an icon. */
@@ -1853,6 +1895,15 @@
        CSS below (no inline display) so the show/hide rules aren't overridden
        by an inline style. -->
   <button type="button" id="rail-close-fab" aria-label="Close"><span aria-hidden="true">&times;</span> Close</button>
+  <!-- Sticky Do-Now bar · pinned to the bottom of the viewport when a rail
+       drawer is open. Reads the current "next" task and mirrors its Send. -->
+  <div id="rail-donow-bar" hidden>
+    <div class="dn-body">
+      <div class="dn-eb"><span class="dn-dot"></span> Do this now</div>
+      <div class="dn-nm" id="rail-donow-nm">—</div>
+    </div>
+    <button type="button" class="dn-btn" id="rail-donow-btn">Send →</button>
+  </div>
   <div id="tpb-popview" class="tpb-popmodal" hidden>
     <div class="tpb-popbar">
       <button type="button" class="tpb-popback" id="tpb-popback">&larr; All sections</button>
@@ -16705,6 +16756,73 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){ _emailFlagsByFile[fileId] = []; }
     return _emailFlagsByFile[fileId];
   }
+  // Sticky Do-Now bar · mirrors the current "next" task at the bottom of
+  // the viewport so the top action is always in thumb reach. Reads the
+  // .ck-next row the checklist just rendered and forwards taps to that
+  // row's Send button (or scrolls to it if the task has no email).
+  function renderDoNowBar(){
+    const bar = document.getElementById('rail-donow-bar');
+    if(!bar || !_currentFile) return;
+    // Hide when the drawer isn't open OR we're on desktop.
+    const drawer = document.getElementById('tpb-popview');
+    const drawerOpen = drawer && !drawer.hidden;
+    const isMobile = window.matchMedia && window.matchMedia('(max-width: 600px)').matches;
+    if(!drawerOpen || !isMobile){ bar.style.display = 'none'; return; }
+    // Find the current NEXT task's label from the freshly-marked row.
+    const nextRow = document.querySelector('#tpb-checklist .ck-task-wrap.ck-next .ck-label');
+    if(!nextRow){ bar.style.display = 'none'; return; }
+    const nm = document.getElementById('rail-donow-nm');
+    if(nm) nm.textContent = nextRow.textContent.trim();
+    // Wire the Send: prefer forwarding the tap to the .ck-next row's inline
+    // .ck-send button (opens its email); fallback to scrolling to the row.
+    const btn = document.getElementById('rail-donow-btn');
+    if(btn && !btn.dataset.wired){
+      btn.dataset.wired = '1';
+      btn.addEventListener('click', function(){
+        const send = document.querySelector('#tpb-checklist .ck-task-wrap.ck-next .ck-send:not(:disabled)');
+        if(send){ send.click(); return; }
+        // No email · scroll to the task so she can complete it inline.
+        const row = document.querySelector('#tpb-checklist .ck-task-wrap.ck-next');
+        if(row) row.scrollIntoView({ behavior:'smooth', block:'center' });
+      });
+    }
+    bar.style.display = 'flex';
+  }
+
+  // Invoice-submit prompt · green card at the top of the checklist when a
+  // file has reached the Closed stage. TC's cut is read from tcPayFor(file)
+  // + submit is a one-tap [data-submit-invoice] handler already wired at
+  // line ~13575. Nothing appears until the file actually closes.
+  function renderInvoicePromptBanner(){
+    if(!_currentFile) return;
+    const host = document.getElementById('tpb-checklist');
+    if(!host) return;
+    // Clean any prior prompt so we don't stack.
+    const prior = host.querySelector(':scope > .rail-invoice-prompt');
+    if(prior && prior.parentNode) prior.parentNode.removeChild(prior);
+    const stg = (typeof deriveStage === 'function') ? deriveStage(_currentFile) : (_currentFile.transaction_stage || '');
+    if(stg !== 'closed') return;
+    // How much the TC will get paid on this file. Skip the prompt entirely
+    // when there is no pay (covered / paused files).
+    let pay = 0;
+    try { pay = (typeof tcPayFor === 'function') ? Number(tcPayFor(_currentFile) || 0) : 0; } catch(_){ pay = 0; }
+    if(pay <= 0) return;
+    // Already invoiced? Don't nag.
+    try {
+      const inv = _currentFile.tc_invoice_status || (_currentFile.raw_form_data && _currentFile.raw_form_data.tc_invoice_status);
+      if(inv && String(inv).toLowerCase() !== 'unbilled') return;
+    } catch(_){}
+    const el = document.createElement('div');
+    el.className = 'rail-invoice-prompt';
+    const _fmt = (typeof _payFmt === 'function') ? _payFmt(pay) : pay.toFixed(2);
+    el.innerHTML =
+      '<div class="rip-eb">&#10003; File closed · time to invoice</div>' +
+      '<div class="rip-head"><span class="rip-t">Submit invoice to broker</span><span class="rip-amt">$' + _fmt + '</span></div>' +
+      '<div class="rip-why">Get paid on the next Friday pay-run · send it now so it doesn&rsquo;t miss the batch.</div>' +
+      '<button type="button" class="rip-go" data-submit-invoice="1">Submit invoice &rarr;</button>';
+    host.insertBefore(el, host.firstChild);
+  }
+
   // Stage-jump chip strip (Mock 5 · picked Jul 27). Sticky row of stage
   // chips at the top of the drawer. Past stages show a ✓ pill, the current
   // stage is the black filled pill with a task-count badge, and the NEXT
@@ -21932,6 +22050,10 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){}
     // Work rail · re-mark the NEXT task after every checklist render.
     try { if(typeof markNextTask === 'function') markNextTask(); } catch(_){}
+    // Sticky Do-Now bar · reads the fresh .ck-next row and mirrors it.
+    try { if(typeof renderDoNowBar === 'function') renderDoNowBar(); } catch(_){}
+    // Invoice-submit prompt · injects at the top of the checklist when closed.
+    try { if(typeof renderInvoicePromptBanner === 'function') renderInvoicePromptBanner(); } catch(_){}
   }
   // Your Work footer · toggle the Coming up / done lists open below the footer row.
   document.addEventListener('click', function(e){
