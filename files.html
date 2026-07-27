@@ -8230,15 +8230,24 @@ Tell me your planned move-out date and I will set the inspection.`
       } catch(_){}
     });
     // Marlenyi Jul 27 · merge in the Calendar tab's deadline reminders
-    // (chase dates + actual deadlines) that hit today or overdue. Fixes
-    // "Why am I not seeing all the items here on the today's tab?" —
-    // the Calendar knew about deadlines the stage_task engine missed.
-    // Dedupe against stage_tasks by (fileId + deadline key), so we don't
-    // double up when a chase date has a matching Confirm task already.
+    // (chase dates + actual deadlines) that hit today. Dedupe:
+    // AGGRESSIVELY. Every stage_task in the file's current stage that has
+    // a `dl` key claims that deadline — even if the task isn't currently
+    // surfaced in Today. That kills the "same email twice" bug where a
+    // calendar chase for survey and a checklist task for survey both
+    // fired on the same day for the same file.
     try {
       const _dlKeysSeen = {};
-      items.forEach(function(it){
-        if(it.task && it.task.dl) _dlKeysSeen[it.file.id + ':' + it.task.dl] = 1;
+      _files.forEach(function(f){
+        try {
+          if(f.status === 'archived') return;
+          const stg = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || '');
+          const ft = f.file_type || 'sale';
+          const allTasks = ((STAGE_CHECKLISTS[ft] || {})[stg] || []);
+          allTasks.forEach(function(t){
+            if(t && t.dl) _dlKeysSeen[f.id + ':' + t.dl] = 1;
+          });
+        } catch(_){}
       });
       const calItems = (typeof _tcCalDeadlines === 'function') ? _tcCalDeadlines() : [];
       calItems.forEach(function(ci){
