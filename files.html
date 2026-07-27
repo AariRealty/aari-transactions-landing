@@ -8150,6 +8150,9 @@ Tell me your planned move-out date and I will set the inspection.`
         const dls = (typeof fileDeadlines === 'function') ? fileDeadlines(f) : {};
         tasks.forEach(function(t){
           if(done[t.id]) return;
+          // In-session sweep · task already flagged as stale, don't show it
+          // even if the DB write is racing / failed. (Marlenyi Jul 27)
+          if(_sweptTasksThisSession && _sweptTasksThisSession.has(f.id + ':' + t.id)) return;
           if(t.showIf && !t.showIf(f)) return;
           // Same "on you now" rule as buildUcTracksHtml (opening tasks, chase
           // date passed, or due <= 3 days) · Clear-to-close = all-now.
@@ -8398,15 +8401,25 @@ Tell me your planned move-out date and I will set the inspection.`
   // Persists to Supabase so every view (Today hero, drawer, Priority Queue,
   // Board) picks up the same swept state. Runs ONCE per page load — new
   // stale items surface fresh next session.
+  // In-session sweep set · tasks we've decided are stale + should be
+  // treated as done client-side even if the DB write is in flight or
+  // failed. Keyed as "fileId:taskId". Consumed by renderTodayHero so
+  // Marlenyi never sees a task we've already decided to sweep.
+  const _sweptTasksThisSession = new Set();
   let _autoSweepRan = false;
   async function autoSweepStaleConfirmations(){
+    // Fix (Marlenyi Jul 27): guard was BEFORE the files check, so an
+    // early load with no files trapped the flag and the real sweep
+    // never ran. Now the client/files check gates first; only when
+    // there's actual work do we set the flag.
     if(_autoSweepRan) return;
-    _autoSweepRan = true;
     if(!_client || !_files || !_files.length) return;
+    _autoSweepRan = true;
     const _t0 = new Date(); _t0.setHours(0, 0, 0, 0);
     const SEVEN_DAYS_MS = 7 * 86400000;
     const cutoff = _t0.getTime() - SEVEN_DAYS_MS;
     const updates = [];
+    let considered = 0, matched = 0;
     _files.forEach(function(f){
       try {
         if(f.status === 'archived') return;
@@ -8419,6 +8432,7 @@ Tell me your planned move-out date and I will set the inspection.`
         const dls = (typeof fileDeadlines === 'function') ? fileDeadlines(f) : {};
         let patched = null;
         tasks.forEach(function(t){
+          considered++;
           if(done[t.id]) return;
           const lbl = t.label || '';
           if(!/^(Confirm|Remind)\b/i.test(lbl)) return;
@@ -8426,9 +8440,13 @@ Tell me your planned move-out date and I will set the inspection.`
           const dl = dls[t.dl];
           if(!dl || !dl.date) return;
           if(dl.date.getTime() > cutoff) return;
-          // Respect check-gates — some confirms need form data first, don't force.
           if(t.checkGate && !t.checkGate(f)) return;
           if(t.showIf && !t.showIf(f)) return;
+          matched++;
+          // Defense in depth · flag it locally so renderTodayHero
+          // filters it out immediately even if the DB write is racing
+          // or fails.
+          _sweptTasksThisSession.add(f.id + ':' + t.id);
           if(!patched) patched = Object.assign({}, done);
           patched[t.id] = {
             done: true,
@@ -8441,25 +8459,26 @@ Tell me your planned move-out date and I will set the inspection.`
           f.stage_tasks = patched;
           updates.push({ id: f.id, stage_tasks: patched });
         }
-      } catch(_){}
+      } catch(err){ console.warn('[auto-sweep] per-file failed for', f && f.id, err); }
     });
-    if(!updates.length) return;
-    // Persist. Errors are logged but don't block the UI — the in-memory
-    // state is already patched so re-renders show the fix immediately.
-    let ok = 0;
-    for(let i = 0; i < updates.length; i++){
-      try {
-        const u = updates[i];
-        const r = await _client.from('files').update({ stage_tasks: u.stage_tasks }).eq('id', u.id);
-        if(r && r.error) console.warn('auto-sweep persist failed for', u.id, r.error.message);
-        else ok++;
-      } catch(err){ console.warn('auto-sweep persist threw', err); }
-    }
-    console.log('[auto-sweep] cleared stale Confirm/Remind tasks on ' + ok + ' files');
+    console.log('[auto-sweep] considered ' + considered + ' tasks, matched ' + matched + ' across ' + updates.length + ' files');
+    // Re-render immediately (in-memory + local sweep set already applied).
+    // The DB persist runs after so the render doesn't wait on network.
     try { renderTodayHero(); } catch(_){}
     try { renderPriorityQueue(); } catch(_){}
     try { renderKanban(); } catch(_){}
     if(_currentFile){ try { renderStageChecklist(_currentFile); } catch(_){} }
+    if(!updates.length) return;
+    let ok = 0, failed = 0;
+    for(let i = 0; i < updates.length; i++){
+      try {
+        const u = updates[i];
+        const r = await _client.from('files').update({ stage_tasks: u.stage_tasks }).eq('id', u.id);
+        if(r && r.error){ console.warn('[auto-sweep] persist failed for', u.id, r.error.message); failed++; }
+        else ok++;
+      } catch(err){ console.warn('[auto-sweep] persist threw for', updates[i] && updates[i].id, err); failed++; }
+    }
+    console.log('[auto-sweep] persisted ' + ok + ' files (' + failed + ' failed)');
   }
 
   // SA lock auto-release · while any visible file is SA-locked, re-pull that
