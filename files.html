@@ -698,6 +698,11 @@
   .tpb-ef-copy:hover{background:#f3f3f1}
   .tpb-ef-copy.copied{color:#2f855a;border-color:#2f855a;background:#f0fdf4}
   .tpb-review-notice{background:#fdf6e3;border:0.5px solid #f0d89a;border-radius:6px;padding:8px 12px;margin:8px 0 4px;font-size:11.5px;font-weight:600;color:#9a7c3a;line-height:1.4}
+  /* Opening-email guardrail · Marlenyi Jul 27 · never CC clients on the
+     kickoff thread. Red-bordered note above the To field so Eileen/whoever
+     copies the pre-filled recipients verbatim without adding buyer/seller. */
+  .tpb-noclient-notice{background:#fdecea;border:0.5px solid #f2c4bd;border-left:3px solid #a3402f;border-radius:6px;padding:9px 12px;margin:8px 0 6px;font-size:11.5px;color:#7a2a20;line-height:1.5}
+  .tpb-noclient-notice b{color:#5a1e17;font-weight:700}
   .tpb-ef-body{margin-top:4px}
   .tpb-ef-textarea{width:100%;min-height:160px;font-family:inherit;font-size:12px;line-height:1.5;color:#222;background:#fafaf9;border:0.5px solid rgba(15,15,15,0.12);border-radius:4px;padding:8px 10px;resize:vertical;box-sizing:border-box}
   .tpb-email-actions{display:flex;gap:8px;justify-content:flex-end}
@@ -17834,6 +17839,15 @@ Tell me your planned move-out date and I will set the inspection.`
     const reviewNotice = _reviewNeedsLink
       ? '<div class="tpb-review-notice">Action required &mdash; paste the Google review link before sending this email.</div>'
       : '';
+    // Marlenyi Jul 27 · opening emails go to industry parties only
+    // (agents, lender, title, TC). Clients (buyer/seller) must NEVER be
+    // on this thread. Guardrail note appears above the To field for
+    // opening-email templates so Eileen/whoever copies verbatim without
+    // adding client CCs on their own.
+    const _isOpeningEmail = e && e.task && (typeof OPENING_EMAIL_TASKS === 'object') && OPENING_EMAIL_TASKS[e.task];
+    const noClientNotice = _isOpeningEmail
+      ? '<div class="tpb-noclient-notice">&#128683; <b>Never copy the client on this thread.</b> To &amp; Cc are pre-filled below with agents, lender, title, and TC only &mdash; do not add buyer or seller emails.</div>'
+      : '';
     // Fill-these prompt removed per request · no "fill these before you send" form
     // and no "to fill" badge. Anything still blank shows as an editable [placeholder]
     // in the email body, which the TC can fill inline before copying.
@@ -17848,6 +17862,7 @@ Tell me your planned move-out date and I will set the inspection.`
       '</div>' +
       ((e.priority && !sent) ? '<div style="display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:700;color:#9a3a2c;background:#fdecea;border:0.5px solid #f2c4bd;border-radius:7px;padding:7px 11px;margin:6px 0 2px">&#9201; ' + esc(e.priority) + '</div>' : '') +
       missingBlock +
+      noClientNotice +
       '<div class="tpb-email-fields">' +
         '<div class="tpb-ef-row"><span class="tpb-ef-key">TO</span><span class="tpb-ef-val" data-copy-field="to">'+esc(filledTo)+'</span><button class="tpb-ef-copy" data-copy-target="to" data-eid="'+eid+'">Copy</button></div>' +
         (filledCc ? '<div class="tpb-ef-row"><span class="tpb-ef-key">CC</span><span class="tpb-ef-val" data-copy-field="cc">'+esc(filledCc)+'</span><button class="tpb-ef-copy" data-copy-target="cc" data-eid="'+eid+'">Copy</button></div>' : '') +
@@ -24666,6 +24681,21 @@ Tell me your planned move-out date and I will set the inspection.`
         // the sale sides keep their fixed TC service. service_type drives spine + checklist + pricing.
         var svcId = (_nfSide === 'listing') ? _nfLstSvc : ((NF_SIDE_SVC[_nfSide] || NF_SIDE_SVC.buyer).id);
         var svcFileType = (_nfSide === 'listing') ? 'listing' : ((NF_SIDE_SVC[_nfSide] || NF_SIDE_SVC.buyer).file_type);
+        // Marlenyi Jul 27 · "Any transactions I input myself default to
+        // file organization unless I assign a TC or TC requests to run
+        // it as a full TC service on behalf of the agent." When the
+        // submitter is a broker, downgrade the service to File Org so
+        // the file lands in the compliance lane with a light checklist
+        // instead of the full-TC deadline set. Upgrading later happens
+        // via the drawer's service-type editor (or by assigning a TC
+        // who requests full-TC handling).
+        try {
+          var _submitterRole = (_profile && String(_profile.role || '').toLowerCase()) || '';
+          if(_submitterRole === 'broker' && _nfSide !== 'listing'){
+            svcId = 'file_organization';
+            svcFileType = 'compliance';
+          }
+        } catch(_){}
         var ures = await _client.auth.getUser();
         var uid = (ures && ures.data && ures.data.user && ures.data.user.id) || _profile.id;
         var id = (crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-'+Date.now());
