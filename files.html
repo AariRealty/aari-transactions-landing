@@ -1211,6 +1211,26 @@
   @media (max-width: 600px){
     .tpb-popmodal.rail .tpb-popbar,
     .tpb-popmodal.rail .rail-grid { zoom: 0.7; }
+
+    /* Stage-jump chip strip · Marlenyi picked Mock 5 (battery fill · next
+       stage's chip fills as she checks tasks in the current stage; when it
+       hits 100% it turns green + pulses + becomes tappable to advance). */
+    #rail-stage-chips { position: sticky; top: 0; z-index: 3; background: #fafafa; padding: 10px 4px 8px; margin: 0 -12px 12px; display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch; border-bottom: 0.5px solid #ede8d8; }
+    #rail-stage-chips::-webkit-scrollbar { display: none; }
+    #rail-stage-chips .sjc { flex: 0 0 auto; padding: 7px 14px; border-radius: 999px; background: #fff; border: 0.5px solid #e0dbc9; font: 600 12px 'Inter'; color: #7a756c; white-space: nowrap; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; min-height: 34px; position: relative; overflow: hidden; }
+    #rail-stage-chips .sjc .n { font-family: 'Playfair Display', Georgia, serif; font-size: 12px; font-weight: 500; color: #a9a49a; position: relative; z-index: 1; }
+    #rail-stage-chips .sjc .lbl { position: relative; z-index: 1; }
+    #rail-stage-chips .sjc.done { color: #0f0f0f; }
+    #rail-stage-chips .sjc.cur  { background: #0f0f0f; color: #fff; border-color: #0f0f0f; }
+    #rail-stage-chips .sjc.cur .n { color: #d6d1c6; }
+    #rail-stage-chips .sjc.lck  { opacity: .5; cursor: default; }
+    /* Battery-fill for the next stage. Fill % is set inline via --pct. */
+    #rail-stage-chips .sjc.filling { border-color: #cbe0d1; }
+    #rail-stage-chips .sjc.filling::before { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: var(--pct, 0%); background: linear-gradient(90deg, rgba(62,125,87,0.16) 0%, rgba(62,125,87,0.08) 100%); z-index: 0; transition: width .4s ease-out; }
+    #rail-stage-chips .sjc.filling.full { background: #eef4ee; border-color: #3e7d57; color: #2c5f42; animation: sjcReady 1.8s ease-in-out infinite; cursor: pointer; }
+    #rail-stage-chips .sjc.filling.full::before { width: 100%; background: rgba(62,125,87,0.18); }
+    #rail-stage-chips .sjc.filling.full .n { color: #2c5f42; font-weight: 700; }
+    @keyframes sjcReady { 0%,100%{ box-shadow: 0 0 0 3px rgba(62,125,87,0.14); } 50%{ box-shadow: 0 0 0 6px rgba(62,125,87,0.06); } }
     /* Fallback if zoom is dropped by a future Safari — hammer font-size */
     @supports not (zoom: 0.7){
       .tpb-popmodal.rail .rail-right,
@@ -16679,6 +16699,81 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){ _emailFlagsByFile[fileId] = []; }
     return _emailFlagsByFile[fileId];
   }
+  // Stage-jump chip strip (Mock 5 · picked Jul 27). Sticky row of stage
+  // chips at the top of the drawer. Past stages show a ✓ pill, the current
+  // stage is the black filled pill with a task-count badge, and the NEXT
+  // stage's chip battery-fills from left-to-right based on how many of the
+  // current stage's tasks are checked off. When it hits 100% the next chip
+  // turns green + pulses + becomes a data-move-next-stage target — Marlenyi
+  // just taps it to advance the file. Later stages render as locked pills.
+  //
+  // Reuses the existing document-level click delegate at line ~16556 that
+  // handles data-move-next-stage (gates, DB write, audit log), so nothing
+  // new to wire on the JS side.
+  function _sjcTaskCount(f, stage){
+    try {
+      const ft = f.file_type || 'sale';
+      let tasks;
+      // Match stageProgress' merged-under-contract logic (line 15687) so the
+      // chip count agrees with the drawer's "X of Y" header on sale files.
+      if(stage === 'under_contract' && ft === 'sale'){
+        const seen = {}; tasks = [];
+        const add = function(t){
+          if(!t || seen[t.id] || (typeof UC_MERGE_SKIP !== 'undefined' && UC_MERGE_SKIP[t.id])) return;
+          if(/_weekly_update$/.test(t.id) && t.id !== 'uc_weekly_update') return;
+          if(t.showIf && !t.showIf(f)) return;
+          seen[t.id] = true; tasks.push(t);
+        };
+        ['under_contract','inspection','appraisal','remedy'].forEach(function(s){ (((STAGE_CHECKLISTS[ft] || {})[s]) || []).forEach(add); });
+      } else {
+        tasks = ((STAGE_CHECKLISTS[ft] || {})[stage] || []).filter(t => !t.showIf || t.showIf(f));
+      }
+      const dt = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
+      return { done: tasks.filter(t => dt[t.id]).length, total: tasks.length };
+    } catch(_){ return { done: 0, total: 0 }; }
+  }
+  function renderStageJumpChips(){
+    const right = document.getElementById('rail-right');
+    if(!right || !_currentFile) return;
+    let el = document.getElementById('rail-stage-chips');
+    if(!el){
+      el = document.createElement('div'); el.id = 'rail-stage-chips';
+      right.insertBefore(el, right.firstChild);
+    }
+    const f = _currentFile;
+    const ft = f.file_type || 'sale';
+    const stages = (typeof STAGES_BY_TYPE === 'object' && STAGES_BY_TYPE[ft]) ? STAGES_BY_TYPE[ft].slice() : [];
+    if(!stages.length){ el.style.display = 'none'; return; }
+    const cur = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || stages[0]);
+    let curIdx = stages.indexOf(cur);
+    if(curIdx < 0) curIdx = 0;
+    const curProg = _sjcTaskCount(f, cur);
+    const curPct = curProg.total ? Math.round((curProg.done / curProg.total) * 100) : 0;
+    const isReady = curProg.total > 0 && curProg.done >= curProg.total;
+    const chips = stages.map(function(s, i){
+      const lbl = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[s]) || s;
+      // Skip synthetic 'waiting_for_tc' from the visible list (it's shown as
+      // 'new' in the pipeline UX and the drawer already surfaces the setup card).
+      if(i < curIdx){
+        return '<span class="sjc done">✓ ' + esc(lbl) + '</span>';
+      }
+      if(i === curIdx){
+        var cbadge = curProg.total ? (' <span class="n">' + curProg.done + '/' + curProg.total + '</span>') : '';
+        return '<span class="sjc cur"><span class="lbl">' + esc(lbl) + '</span>' + cbadge + '</span>';
+      }
+      if(i === curIdx + 1){
+        // The advance target. Only tappable when full; renders data-move-next-stage
+        // so the existing handler owns the DB write + audit log.
+        var pctStyle = ' style="--pct:' + curPct + '%"';
+        var full = isReady ? ' full' : '';
+        var attr = isReady ? (' data-move-next-stage="' + esc(s) + '"') : '';
+        var badge = isReady ? '<span class="n">Advance</span>' : '<span class="n">' + curPct + '%</span>';
+        return '<span class="sjc filling' + full + '"' + pctStyle + attr + '><span class="lbl">' + esc(lbl) + '</span> ' + badge + '</span>';
+      }
+      return '<span class="sjc lck">' + esc(lbl) + '</span>';
+    }).join('');
+    el.innerHTML = chips;
+  }
   async function renderEmailFlagsBanner(){
     const right = document.getElementById('rail-right');
     if(!right || !_currentFile) return;
@@ -16918,6 +17013,9 @@ Tell me your planned move-out date and I will set the inspection.`
     renderAgentRequestsBanner();
     renderEmailFlagsBanner();
     renderServiceStage();
+    // Chip strip is rendered LAST so it sits at the top (insertBefore
+    // firstChild order = last call wins the top slot).
+    try { renderStageJumpChips(); } catch(_){}
     _openPopKey = null;
     _ctContactsStep = false; _ctTermsExpanded = false; _contactsExpanded = false; _contactEditKey = null; _dlEditKey = null; _dlDueEditKey = null; _ctReviewIdx = null; _ctConfStep = 0; _revEdit = false; _partyStep = 0; _partyEdit = false; _finStep = 0; _setupEditSec = ''; _setupStep = 'review'; _dlSourcesOpen = false; _dlDateEditKey = null; _spineEditSec = null; _ucOpenTrack = null; _setupCellEdit = null; _uc5Open = true; _inspExtOpen = false; _spineReviewKey = null;
     _dlCalcOpen = false; _dlGroupOpen = { coming:false, done:false }; _dlWhyOpen = {}; _dlExtendKey = null;
@@ -22330,6 +22428,9 @@ Tell me your planned move-out date and I will set the inspection.`
   });
   async function renderPlaybook(file){
     const stage = deriveStage(file);
+    // Refresh the stage-jump chip strip so its battery fill reflects the
+    // latest task-completion state after every re-render.
+    try { renderStageJumpChips(); } catch(_){}
     document.getElementById('tpb-stage').textContent = STAGE_LABELS[stage] || stage;
     document.getElementById('tpb-addr').textContent = file.property_address || 'Untitled file';
     const parts = [];
