@@ -1182,6 +1182,22 @@
     .tpb-popmodal.rail .uc-acc-l, .tpb-popmodal.rail .uc-step-l { font-size: 13px; gap: 10px; }
     .tpb-popmodal.rail .uc-step-num { width: 20px; height: 20px; font-size: 10.5px; }
   }
+  /* ADHD-approved buckets · Marlenyi picked Mock 3 (Today/This week/Later).
+     Today is loud and visually dominant; This week is a quiet supporting
+     strip; Later collapses to a single pill so the drawer breathes. */
+  .uc-today{background:#fff;border:0.5px solid rgba(15,15,15,0.06);border-radius:14px;padding:14px 14px 8px;margin:8px 0 12px;box-shadow:0 4px 16px rgba(15,15,15,0.04)}
+  .uc-today-hd{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}
+  .uc-today-lbl{font-family:Georgia,'Times New Roman',serif;font-size:20px;font-weight:600;letter-spacing:-0.3px;color:#0f0f0f}
+  .uc-today-ct{font-family:'Playfair Display',Georgia,serif;font-size:14px;font-weight:500;color:#7a756c}
+  .uc-week{background:#fff;border:0.5px solid rgba(15,15,15,0.06);border-radius:12px;padding:10px 14px 8px;margin:0 0 12px}
+  .uc-week-hd{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px}
+  .uc-week-lbl{font-family:Georgia,'Times New Roman',serif;font-size:15px;font-weight:600;color:#0f0f0f}
+  .uc-week-ct{font-family:'Playfair Display',Georgia,serif;font-size:12.5px;font-weight:500;color:#7a756c}
+  .uc-later-wrap{margin:0 0 12px;text-align:center}
+  .uc-later-pill{display:inline-flex;align-items:center;gap:8px;background:#fff;border:0.5px dashed #d9d1bc;border-radius:999px;padding:10px 18px;font:600 12px 'Inter';color:#7a756c;cursor:pointer;font-family:inherit;min-height:40px}
+  .uc-later-pill:hover{border-color:#0f0f0f;color:#0f0f0f}
+  [data-wt-list="later"]:not([hidden]){background:#fff;border:0.5px solid rgba(15,15,15,0.06);border-radius:12px;padding:10px 14px;text-align:left}
+
   /* Sticky Do-Now bar · black pill bar pinned to the bottom of the viewport
      when a rail drawer is open. Shows the current "next" task's label +
      Send → button so the top action is always in thumb reach. Hidden on
@@ -21248,29 +21264,68 @@ Tell me your planned move-out date and I will set the inspection.`
     // Clear to Close: keep the closing-run sequence (do them in order), don't reshuffle.
     if(!_allNow) nowTasks = nowTasks.slice().sort(function(a, b){ const da = _days(a), db = _days(b); return (da == null ? 1e9 : da) - (db == null ? 1e9 : db); });
 
+    // ADHD-approved buckets · Marlenyi picked Mock 3 (Jul 27):
+    //   TODAY      · everything that's on-her-now (overdue, due today,
+    //                chase-date passed, opening tasks) · loud + open
+    //   THIS WEEK  · due in the next 7 days (excluding today) · slim strip
+    //   LATER      · rest of the stage · single "N more →" pill
+    // Same underlying data as the old "On you now / Coming up" split,
+    // reorganized so she only sees what she can act on now.
+    const _todayTasks = nowTasks.slice();
+    const _todayIds = {}; _todayTasks.forEach(function(t){ _todayIds[t.id] = 1; });
+    const _weekTasks = openTasks.filter(function(t){
+      if(_todayIds[t.id]) return false;
+      const d = _days(t);
+      return d != null && d > 0 && d <= 7;
+    });
+    const _weekIds = {}; _weekTasks.forEach(function(t){ _weekIds[t.id] = 1; });
+    const _laterTasks = openTasks.filter(function(t){ return !_todayIds[t.id] && !_weekIds[t.id]; });
+
     let html = ucTimelineHtml(file);
-    const CAP = _allNow ? 14 : 6;
-    const shown = nowTasks.slice(0, CAP);
-    const extra = nowTasks.slice(CAP);
-    html += '<p class="uc-needsyou-hd">On you now &middot; ' + nowTasks.length + '</p>';
-    if(nowTasks.length){
-      // Top row keeps its real (colored) date + bold label; the rest are muted.
-      html += shown.map(function(t, i){
+
+    // TODAY · big + loud
+    html += '<section class="uc-today"><div class="uc-today-hd"><span class="uc-today-lbl">Today</span><span class="uc-today-ct">' +
+      (_todayTasks.length || 'nothing') + (_todayTasks.length === 1 ? ' to do' : (_todayTasks.length ? ' to do' : ' urgent · you&rsquo;re ahead')) +
+      '</span></div>';
+    if(_todayTasks.length){
+      html += _todayTasks.map(function(t, i){
         return i === 0
           ? '<div class="uc-top">' + ckRow(file, t, dls, done, ucTagHtml(t.id)) + '</div>'
           : ckRow(file, t, dls, done, ucTagHtml(t.id), true);
       }).join('');
-      if(extra.length){
-        html += '<details class="uc-later"><summary class="uc-later-sum">+ ' + extra.length + ' more now<span class="uc-chev">&#8250;</span></summary>' +
-          extra.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id), true); }).join('') + '</details>';
-      }
-    } else {
-      html += '<p class="ck-empty">Nothing urgent right now. You&rsquo;re ahead.</p>';
     }
-    // Simplify (ADHD · one focus): the loan-with-lender reassurance box and the deadline
-    // box are dropped from the body. The spine NOW line already flags "N late", and the
-    // Deadlines section still holds the detail. Keeps one focal box, the task on you.
-    html += wtFooter(file, laterTasks, doneTasks, dls, done, ucTagHtml);
+    html += '</section>';
+
+    // THIS WEEK · slim strip
+    if(_weekTasks.length){
+      html += '<section class="uc-week"><div class="uc-week-hd"><span class="uc-week-lbl">This week</span><span class="uc-week-ct">' + _weekTasks.length + '</span></div>' +
+        _weekTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id), true); }).join('') +
+        '</section>';
+    }
+
+    // LATER · a single collapse pill
+    if(_laterTasks.length){
+      html += '<div class="uc-later-wrap"><button type="button" class="uc-later-pill" data-wt-toggle="later">&#128337; ' + _laterTasks.length + ' more · later this stage &rarr;</button>' +
+        '<div data-wt-list="later" hidden style="margin-top:8px">' +
+        _laterTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id), true); }).join('') +
+        '</div></div>';
+    }
+
+    // Done pile + Draft update link · same as before, at the bottom.
+    const _doneN = doneTasks.length;
+    if(_doneN || ((file.file_type || 'sale') === 'sale' || (file.file_type || '') === 'rental')){
+      const _foot = [];
+      if(_doneN){
+        _foot.push('<button type="button" class="wt-link" data-wt-toggle="done">' + _doneN + ' done &rsaquo;</button>');
+      }
+      if(_doneN && ((file.file_type || 'sale') === 'sale' || (file.file_type || '') === 'rental')){
+        _foot.push('<button type="button" class="wt-link" data-draft-update="1">&#9993; Draft update</button>');
+      }
+      if(_foot.length){
+        html += '<div class="wt-foot" style="margin-top:14px">' + _foot.join('') + '</div><div id="upd-draft-host"></div>' +
+          (_doneN ? ('<div data-wt-list="done" hidden style="margin-top:4px">' + doneTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id)); }).join('') + '</div>') : '');
+      }
+    }
     return html;
   }
 
