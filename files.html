@@ -1272,6 +1272,17 @@
   .rail-invoice-prompt .rip-why { font-size: 11.5px; color: #5f6f57; line-height: 1.4; margin-bottom: 10px; }
   .rail-invoice-prompt .rip-go { background: #2c5f42; color: #fff; border: 0; border-radius: 9px; padding: 10px 16px; font: 700 12.5px 'Inter'; cursor: pointer; letter-spacing: 0.3px; }
 
+  /* Friday weekly-update nudge · Marlenyi Jul 27. Same green tone as
+     the invoice-submit banner so both "we've done a thing, now do the
+     follow-through action" moments read as the same pattern. */
+  .rail-weekly-nudge { background: #eef4ee; border: 0.5px solid #cbe0d1; border-radius: 12px; padding: 14px 16px; margin: 0 -12px 14px; }
+  .rail-weekly-nudge .rwn-eb { font: 700 10px 'Inter'; letter-spacing: 1.2px; text-transform: uppercase; color: #2c5f42; margin-bottom: 6px; }
+  .rail-weekly-nudge .rwn-head { margin-bottom: 4px; }
+  .rail-weekly-nudge .rwn-t { font-family: Georgia, 'Times New Roman', serif; font-size: 15px; font-weight: 600; color: #0f0f0f; }
+  .rail-weekly-nudge .rwn-why { font-size: 11.5px; color: #5f6f57; line-height: 1.4; margin-bottom: 10px; }
+  .rail-weekly-nudge .rwn-go { background: #2c5f42; color: #fff; border: 0; border-radius: 9px; padding: 10px 16px; font: 700 12.5px 'Inter'; cursor: pointer; letter-spacing: 0.3px; font-family: inherit; }
+  .rail-weekly-nudge .rwn-go:hover { background: #244f38; }
+
   /* Rescue close FAB · always hidden until CSS above (inside the mobile
      @media) shows it when a rail drawer is open. Solid black pill with the
      word "Close" so it reads as a button, not an icon. */
@@ -16838,6 +16849,65 @@ Tell me your planned move-out date and I will set the inspection.`
     host.insertBefore(el, host.firstChild);
   }
 
+  // Weekly-update nudge · Marlenyi Jul 27 · "deploy the weekly email for me
+  // after completing tasks for the week." Every FRIDAY, if she checked off
+  // at least one task on this file since Monday AND hasn't already sent
+  // this week's weekly update, show a green prompt at the top of the
+  // drawer: "N tasks done this week · send the update to [agent]?" One
+  // tap opens the pre-filled email preview (existing data-draft-update
+  // handler). She reviews + sends · no autonomous send.
+  function renderWeeklyUpdateNudge(){
+    if(!_currentFile) return;
+    const host = document.getElementById('tpb-checklist');
+    if(!host) return;
+    // Clean any prior nudge so we don't stack on re-renders.
+    const prior = host.querySelector(':scope > .rail-weekly-nudge');
+    if(prior && prior.parentNode) prior.parentNode.removeChild(prior);
+    // Only Fridays (0=Sun, 5=Fri, 6=Sat).
+    const today = new Date();
+    if(today.getDay() !== 5) return;
+    // Skip archived / setup files · no agent update to send there.
+    if(_currentFile.status === 'archived') return;
+    const _ft = _currentFile.file_type || 'sale';
+    if(_ft !== 'sale' && _ft !== 'rental') return;
+    const stg = (typeof deriveStage === 'function') ? deriveStage(_currentFile) : (_currentFile.transaction_stage || '');
+    if(['new','intake_received','waiting_for_tc','','closed','archived'].indexOf(stg) !== -1) return;
+    // How many tasks were checked off since Monday 00:00 this week?
+    const dt = (_currentFile.stage_tasks && typeof _currentFile.stage_tasks === 'object') ? _currentFile.stage_tasks : {};
+    const monday = new Date(today.getTime());
+    monday.setHours(0, 0, 0, 0);
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));  // back to Mon
+    let doneThisWeek = 0;
+    let sentThisWeek = false;
+    Object.keys(dt).forEach(function(k){
+      const rec = dt[k];
+      if(!rec || !rec.done || !rec.at) return;
+      const at = new Date(rec.at);
+      if(isNaN(at.getTime()) || at < monday) return;
+      if(/_weekly_update$/.test(k)){ sentThisWeek = true; return; }
+      doneThisWeek++;
+    });
+    // Already sent this week's update? Don't nag.
+    if(sentThisWeek) return;
+    // Nothing to talk about? Don't nag.
+    if(doneThisWeek < 1) return;
+    // Agent first name (fallback: "the agent").
+    let agentName = 'the agent';
+    try {
+      if(_drawerAgent && (_drawerAgent.first_name || _drawerAgent.name)){
+        agentName = String(_drawerAgent.first_name || _drawerAgent.name).split(' ')[0];
+      }
+    } catch(_){}
+    const el = document.createElement('div');
+    el.className = 'rail-weekly-nudge';
+    el.innerHTML =
+      '<div class="rwn-eb">&#10003; ' + doneThisWeek + ' task' + (doneThisWeek === 1 ? '' : 's') + ' done this week</div>' +
+      '<div class="rwn-head"><span class="rwn-t">Send weekly update to ' + esc(agentName) + '?</span></div>' +
+      '<div class="rwn-why">It&rsquo;s Friday · draft is pre-filled, one tap after review.</div>' +
+      '<button type="button" class="rwn-go" data-draft-update="1">Draft &amp; review &rarr;</button>';
+    host.insertBefore(el, host.firstChild);
+  }
+
   // Stage-jump chip strip (Mock 5 · picked Jul 27). Sticky row of stage
   // chips at the top of the drawer. Past stages show a ✓ pill, the current
   // stage is the black filled pill with a task-count badge, and the NEXT
@@ -22237,6 +22307,10 @@ Tell me your planned move-out date and I will set the inspection.`
     try { if(typeof renderDoNowBar === 'function') renderDoNowBar(); } catch(_){}
     // Invoice-submit prompt · injects at the top of the checklist when closed.
     try { if(typeof renderInvoicePromptBanner === 'function') renderInvoicePromptBanner(); } catch(_){}
+    // Friday weekly-update nudge · Marlenyi picked Option A (prompt only,
+    // no autonomous send). Fires only on Fridays when tasks were checked
+    // off this week AND this week's weekly update hasn't been sent yet.
+    try { if(typeof renderWeeklyUpdateNudge === 'function') renderWeeklyUpdateNudge(); } catch(_){}
   }
   // Your Work footer · toggle the Coming up / done lists open below the footer row.
   document.addEventListener('click', function(e){
