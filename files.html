@@ -8187,6 +8187,43 @@ Tell me your planned move-out date and I will set the inspection.`
         });
       } catch(_){}
     });
+    // Marlenyi Jul 27 · merge in the Calendar tab's deadline reminders
+    // (chase dates + actual deadlines) that hit today or overdue. Fixes
+    // "Why am I not seeing all the items here on the today's tab?" —
+    // the Calendar knew about deadlines the stage_task engine missed.
+    // Dedupe against stage_tasks by (fileId + deadline key), so we don't
+    // double up when a chase date has a matching Confirm task already.
+    try {
+      const _dlKeysSeen = {};
+      items.forEach(function(it){
+        if(it.task && it.task.dl) _dlKeysSeen[it.file.id + ':' + it.task.dl] = 1;
+      });
+      const calItems = (typeof _tcCalDeadlines === 'function') ? _tcCalDeadlines() : [];
+      calItems.forEach(function(ci){
+        if(!ci || !(ci.date instanceof Date)) return;
+        const d = new Date(ci.date.getTime()); d.setHours(0, 0, 0, 0);
+        const days = Math.round((d - _t0) / 86400000);
+        if(days > 0) return;   // future item · not "today"
+        // Strip __chase suffix to compare against stage_task deadline keys.
+        const rawKey = String(ci.key || '').replace(/__chase$/, '');
+        if(_dlKeysSeen[ci.fileId + ':' + rawKey]) return;   // already surfaced as a task
+        const f = _files.find(function(x){ return x.id === ci.fileId; });
+        if(!f) return;
+        // Clean up the label · strip the "Reminder ·" prefix, add
+        // "Follow up:" for chase items so she knows it's a chase not the
+        // deadline itself.
+        let lbl = String(ci.label || '').replace(/^Reminder\s*·\s*/i, '');
+        if(ci.isChase) lbl = 'Follow up · ' + lbl;
+        items.push({
+          file: f,
+          task: { id: ci.key, label: lbl, dl: rawKey },
+          days: days,
+          sortKey: days,
+          isReminder: true
+        });
+        _dlKeysSeen[ci.fileId + ':' + rawKey] = 1;
+      });
+    } catch(err){ console.warn('[today-hero] calendar merge failed', err); }
     if(!items.length){
       host.innerHTML = '<div class="th-head">Today &middot; ' + new Date().toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }) + '<span class="sub">Nothing urgent</span></div><div class="th-empty">You&rsquo;re ahead. Nothing on you right now.</div>';
       return;
