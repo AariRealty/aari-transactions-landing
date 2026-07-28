@@ -15,6 +15,49 @@
    policies allow. The service_role key MUST NEVER appear in this file.
    ============================================================================ */
 
+/* ---------------------------------------------------------------------------
+ * SSO handoff receiver · Marlenyi Jul 28.
+ *
+ * When this site is loaded in an iframe from hub.joinaari.com (the TC pill
+ * flow), the hub sends the parent user's Supabase session via postMessage.
+ * We stash the tokens in Supabase's own localStorage slot BEFORE the JS
+ * client boots so the page picks up the session on first render and the
+ * login modal never has to appear.
+ *
+ * Registered synchronously — this file loads before auth.js on every
+ * auth-gated page. Fails open on any exception so a broken handoff can
+ * never lock the user out.
+ * ------------------------------------------------------------------------- */
+(function () {
+  var LS_KEY = 'sb-fnlrgmuvtgwzjsihqxcn-auth-token';
+  window.addEventListener('message', function (e) {
+    if (e.origin !== 'https://hub.joinaari.com') return;
+    var d = e && e.data;
+    if (!d || d.type !== 'aari-auth-handoff') return;
+    if (!d.access_token || !d.refresh_token) return;
+    try {
+      var payload = {
+        access_token: d.access_token,
+        refresh_token: d.refresh_token,
+        expires_at: d.expires_at || (Math.floor(Date.now() / 1000) + 3600),
+        expires_in: d.expires_in || 3600,
+        token_type: 'bearer',
+        user: d.user || null
+      };
+      localStorage.setItem(LS_KEY, JSON.stringify(payload));
+    } catch (_err) { /* localStorage blocked · fall through */ }
+    try {
+      if (window.sb && window.sb.auth && typeof window.sb.auth.setSession === 'function') {
+        window.sb.auth.setSession({
+          access_token: d.access_token,
+          refresh_token: d.refresh_token
+        });
+      }
+    } catch (_err) { /* no-op */ }
+    try { window.dispatchEvent(new Event('aari-auth-handoff-received')); } catch (_err) {}
+  }, false);
+})();
+
 window.AARI_SUPABASE_CONFIG = {
   // Provisioned 2026-05-10. Browser-safe (anon publishable key).
   SUPABASE_URL: 'https://fnlrgmuvtgwzjsihqxcn.supabase.co',
