@@ -13146,7 +13146,29 @@ Tell me your planned move-out date and I will set the inspection.`
     // Per-user view preference · Marlenyi and Eileen each keep their own last
     // Month/Week choice (namespaced by user id, so a shared browser won't collide).
     try { const _uid = (_profile && _profile.id) ? _profile.id : 'anon'; if(_calViewUser !== _uid){ const _sv = localStorage.getItem('aari_cal_view_' + _uid); _calView = (_sv === 'week') ? 'week' : 'month'; _calViewUser = _uid; } } catch(_){}
-    const all = _tcCalDeadlines();
+    // Marlenyi Jul 28 · On the mobile Calendar tab she wants ONLY closings on
+    // the month grid (matching the hub.joinaari.com "Your calendar" look).
+    // Force closings-only when the Calendar bottom-tab is active — the #closings-list
+    // below the grid already surfaces the countdown, so this trims noise.
+    const _closingsOnly = !!(document.body && document.body.dataset && document.body.dataset.mnavView === 'calendar');
+    let all;
+    if(_closingsOnly){
+      all = [];
+      (_files || []).forEach(function(f){
+        if(!f || f.status === 'archived' || f.status === 'closed' || !f.closing_date) return;
+        const cd = new Date(String(f.closing_date).slice(0,10) + 'T12:00:00');
+        if(isNaN(cd)) return;
+        all.push({
+          fileId: f.id,
+          date: cd,
+          key: 'closing',
+          label: 'Closing',
+          address: f.property_address || ''
+        });
+      });
+    } else {
+      all = _tcCalDeadlines();
+    }
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const t0 = today.getTime();
     if(!_calMonth) _calMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -13185,12 +13207,18 @@ Tell me your planned move-out date and I will set the inspection.`
     // still fires on file changes, deadline updates, and view-open (see
     // gcalSyncDeadlines() call sites) so nothing depends on the manual
     // button in normal use.
+    // Header · title on the left, Month/Week toggle on the right (desktop or
+    // Today tab week strip). Marlenyi Jul 28 · closings-only mode drops the
+    // toggle — week view on a closings-only grid isn't useful.
     let html = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px">' +
-      '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:18px;font-weight:600;color:#0f0f0f;letter-spacing:-0.2px;line-height:1.1">Calendar</span>' +
-      '<span style="display:inline-flex;background:#f4f1ec;border-radius:20px;padding:2px">' + _segBtn('month', 'Month') + _segBtn('week', 'Week') + '</span>' +
+      '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:18px;font-weight:600;color:#0f0f0f;letter-spacing:-0.2px;line-height:1.1">' +
+        (_closingsOnly ? 'Your calendar' : 'Calendar') +
+      '</span>' +
+      (_closingsOnly ? '' : ('<span style="display:inline-flex;background:#f4f1ec;border-radius:20px;padding:2px">' + _segBtn('month', 'Month') + _segBtn('week', 'Week') + '</span>')) +
     '</div>';
-    // Next closings · pinned at the very top of the calendar, above the grid.
-    html += nextClosingsHtml();
+    // Next closings strip · skipped in closings-only mode because the
+    // #closings-list card below the grid already shows the same countdown.
+    if(!_closingsOnly) html += nextClosingsHtml();
     // ---- WEEK view · full-width timeline, no right agenda column ----
     if(_calView === 'week'){
       if(!_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(t0); base.setHours(0, 0, 0, 0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; }
@@ -13275,6 +13303,15 @@ Tell me your planned move-out date and I will set the inspection.`
         strip += '</div>';
       }
       html += strip;
+      // Marlenyi Jul 28 · Calendar tab is "closings only" — skip the overdue
+      // block + selected-day deadline agenda. The #closings-list card below
+      // the grid already shows the upcoming closings countdown, so this keeps
+      // the tab focused on the money horizon (like hub.joinaari.com's cal).
+      if(_closingsOnly){
+        host.innerHTML = html;
+        _wireCal(host);
+        return;
+      }
       // --- a tickable deadline row · Mock 2 compact · Marlenyi's pick (July 25) ---
       // Tighter than the older 44px row: 20px checkbox, single-line body
       // (name on line 1, address on line 2 in muted 10.5px), days chip small
