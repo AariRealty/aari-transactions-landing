@@ -151,20 +151,20 @@
           window.location.href = next;
           return;
         }
-        // Role-based routing · Eileen → BD cockpit, staff → CRM, agents → portal.
-        // Marlenyi (July 28): desktop must land on /aari-crm exactly as it did
-        // pre-07-25. The /portal hub is a MOBILE-ONLY experience — sending a
-        // broker to /portal on desktop shows the bare hub instead of the CRM
-        // she actually uses. Mobile still gets /portal.
+        // Role-based routing · Eileen → BD cockpit; brokers + TCs land in the
+        // transaction management portal (/files.html); agents → /portal.
+        // Marlenyi (July 28): the transaction site should send staff to the
+        // TC portal (files.html), not the brokerage CRM (/aari-crm). Mobile
+        // hub /portal is still an option, but files.html is the correct home
+        // on both mobile and desktop for anyone working transactions.
         try {
           const profile = await global.AariAuth.getAgentProfile();
-          const isMobile = (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
           if (profile && profile.role === 'tc' && String(profile.first_name || '').toLowerCase() === 'eileen') {
             window.location.href = '/eileen.html';
             return;
           }
           if (profile && (profile.role === 'tc' || profile.role === 'broker')) {
-            window.location.href = isMobile ? '/portal' : '/aari-crm';
+            window.location.href = '/files.html';
             return;
           }
         } catch (_) { /* profile lookup failure → fall through to /portal */ }
@@ -250,9 +250,8 @@
   async function portalDestination() {
     try {
       const profile = await global.AariAuth.getAgentProfile();
-      const isMobile = (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
       if (profile && profile.role === 'tc' && String(profile.first_name || '').toLowerCase() === 'eileen') return '/eileen.html';
-      if (profile && (profile.role === 'tc' || profile.role === 'broker')) return isMobile ? '/portal' : '/aari-crm';
+      if (profile && (profile.role === 'tc' || profile.role === 'broker')) return '/files.html';
     } catch (_) {}
     return '/portal';
   }
