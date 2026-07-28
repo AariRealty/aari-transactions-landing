@@ -22683,13 +22683,30 @@ Tell me your planned move-out date and I will set the inspection.`
     // reorganized so she only sees what she can act on now.
     const _todayTasks = nowTasks.slice();
     const _todayIds = {}; _todayTasks.forEach(function(t){ _todayIds[t.id] = 1; });
+    // Marlenyi Jul 28 · "I just need to see what's due today and what's
+    // due in the next 3 days I don't need to see what's due in 6 days."
+    // Week window tightened from 7 → 3 days. Anything past 3 days out
+    // falls into the collapsed "later this stage" pill.
     const _weekTasks = openTasks.filter(function(t){
       if(_todayIds[t.id]) return false;
       const d = _days(t);
-      return d != null && d > 0 && d <= 7;
+      return d != null && d > 0 && d <= 3;
     });
     const _weekIds = {}; _weekTasks.forEach(function(t){ _weekIds[t.id] = 1; });
     const _laterTasks = openTasks.filter(function(t){ return !_todayIds[t.id] && !_weekIds[t.id]; });
+    // Marlenyi Jul 28 · "when we check it off, just cross it off with a
+    // line, but leave it there and maybe make it gray out." Instead of
+    // hiding today's just-checked items into the "N done" collapsed
+    // footer, keep them visible in the Today section with the built-in
+    // .adhd-done strikethrough + gray. At midnight they roll out
+    // naturally (the check timestamp no longer falls in today's window).
+    const _t0Time = _t0.getTime();
+    const _doneTodayInline = doneTasks.filter(function(t){
+      const rec = done[t.id];
+      if(!rec || !rec.at) return false;
+      try { return new Date(rec.at).getTime() >= _t0Time; } catch(_){ return false; }
+    });
+    const _doneTodayIds = {}; _doneTodayInline.forEach(function(t){ _doneTodayIds[t.id] = 1; });
 
     let html = ucTimelineHtml(file);
 
@@ -22698,7 +22715,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // overrides; secondary Today rows use the compact renderer.
     var _todayHeadCt = _todayTasks.length
       ? (_todayTasks.length + (_todayTasks.length === 1 ? ' to do' : ' to do'))
-      : 'Nothing urgent &middot; you&rsquo;re ahead';
+      : (_doneTodayInline.length ? _doneTodayInline.length + ' done' : 'Nothing urgent &middot; you&rsquo;re ahead');
     html += '<section class="uc-today"><div class="uc-today-hd"><span class="uc-today-lbl">Today</span><span class="uc-today-ct">' +
       _todayHeadCt + '</span></div>';
     if(_todayTasks.length){
@@ -22707,6 +22724,11 @@ Tell me your planned move-out date and I will set the inspection.`
           ? '<div class="uc-top">' + ckRow(file, t, dls, done, ucTagHtml(t.id)) + '</div>'
           : adhdCompactRow(file, t, dls, done, 'today', true);
       }).join('');
+    }
+    // Just-checked items · struck-through + gray, still visible so she
+    // sees the momentum. Roll off naturally after midnight.
+    if(_doneTodayInline.length){
+      html += _doneTodayInline.map(function(t){ return adhdCompactRow(file, t, dls, done, 'today', false); }).join('');
     }
     html += '</section>';
 
@@ -22732,7 +22754,9 @@ Tell me your planned move-out date and I will set the inspection.`
     // so Eileen don't send 2 times." Weekly update now goes out ONLY via
     // the Friday nudge at the top of the drawer, so there is one and only
     // one place to send it, no double-send risk.
-    const _doneN = doneTasks.length;
+    // Exclude today's just-checked items from the collapsed "N done"
+    // footer count · they're already visible inline in the Today section.
+    const _doneN = doneTasks.length - _doneTodayInline.length;
     let _nextStage = '';
     try {
       const _st = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || '');
@@ -22759,8 +22783,11 @@ Tell me your planned move-out date and I will set the inspection.`
       }
       html += '</div><div id="upd-draft-host"></div>';
       if(_doneN){
+        // Only historical done tasks (checked before today) · today's
+        // just-checked items already show inline in the Today section.
         html += '<div data-wt-list="done" hidden style="margin-top:4px">' +
-          doneTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id)); }).join('') +
+          doneTasks.filter(function(t){ return !_doneTodayIds[t.id]; })
+            .map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id)); }).join('') +
           '</div>';
       }
     }
