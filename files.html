@@ -1537,10 +1537,16 @@
        top" — she wants tasks first. Hidden on mobile since the emails also
        surface in the notif bell + on the file card in the calendar. */
     .tpb-popmodal.rail #rail-email-flags { display: none !important; }
-    /* Marlenyi Jul 28 · hard-hide the stage jump chip strip AND the
-       email flags banner from the top of every drawer, everywhere,
-       always. Both take up too much space above the tasks. */
-    #rail-stage-chips, #rail-email-flags { display: none !important; }
+    /* Marlenyi Jul 28 · stage jump chip strip stays killed at the top of
+       every drawer (redundant with the Under contract card below).
+       Email flags · toggleable · collapsed to a small pill by default;
+       tap to expand. */
+    #rail-stage-chips { display: none !important; }
+    #rail-email-flags.eflags-collapsed > div { display: none !important; }
+    #rail-email-flags.eflags-collapsed { margin-bottom: 10px !important; }
+    #rail-email-flags .eflags-toggle { display: inline-flex; align-items: center; gap: 8px; background: #eef1f6; color: #0c447c; border: 0.5px solid #cfdcef; border-radius: 999px; padding: 5px 12px; font: 700 10.5px 'Inter', sans-serif; letter-spacing: .5px; text-transform: uppercase; cursor: pointer; font-family: inherit; }
+    #rail-email-flags .eflags-toggle:hover { background: #dfe8f4; }
+    #rail-email-flags .eflags-toggle .n { background: #0c447c; color: #fff; border-radius: 999px; padding: 1px 7px; font-size: 10px; font-weight: 700; }
 
     /* Stage-jump chip strip · Marlenyi picked Mock 5 (battery fill · next
        stage's chip fills as she checks tasks in the current stage; when it
@@ -16988,6 +16994,10 @@ Tell me your planned move-out date and I will set the inspection.`
     if(insU) insU.addEventListener('click', () => ctSave(file, null, { inspection_waived: false }));
     // Drop focus into the box when a row enters edit mode.
     if(_ctEditingField){ const bx = document.getElementById('ctd-' + _ctEditingField); if(bx){ bx.focus(); bx.select && bx.select(); } }
+    // Property kind toggle lives inside the Contract type section — Eileen flagged that
+    // the checklist depends on resale vs new-build vs land vs rental, so it needs to sit
+    // where the rest of the deal terms are set.
+    try { renderPropertyKindStrip(); } catch(_){}
   }
 
   // Kanban card · Mockup 1 (approved June 2026): black header (address +
@@ -18204,13 +18214,6 @@ Tell me your planned move-out date and I will set the inspection.`
     el.innerHTML = chips;
   }
   async function renderEmailFlagsBanner(){
-    // Marlenyi Jul 28 · email flags panel takes too much space at the
-    // top of the drawer · hidden. Data still loads; if she asks for it
-    // back, flip the display line below.
-    const _ex = document.getElementById('rail-email-flags');
-    if(_ex) _ex.style.display = 'none';
-    return;
-    // eslint-disable-next-line no-unreachable
     const right = document.getElementById('rail-right');
     if(!right || !_currentFile) return;
     let el = document.getElementById('rail-email-flags');
@@ -18218,6 +18221,10 @@ Tell me your planned move-out date and I will set the inspection.`
       el = document.createElement('div'); el.id = 'rail-email-flags';
       right.insertBefore(el, right.firstChild);
       el.addEventListener('click', async function(e){
+        // Panel-level collapse toggle · flips _emailFlagsPanelOpen and
+        // just adds/removes the .eflags-collapsed class without re-render.
+        const pt = e.target.closest && e.target.closest('[data-eflag-panel-toggle]');
+        if(pt){ window._emailFlagsPanelOpen = !_emailFlagsPanelOpen; el.classList.toggle('eflags-collapsed', !_emailFlagsPanelOpen); return; }
         const t = e.target.closest && e.target.closest('[data-eflag-toggle]');
         if(t){ const k = t.getAttribute('data-eflag-toggle'); _emailFlagOpen[k] = !_emailFlagOpen[k]; renderEmailFlagsBanner(); return; }
         const b = e.target.closest && e.target.closest('[data-eflag-done]'); if(!b) return;
@@ -18248,7 +18255,13 @@ Tell me your planned move-out date and I will set the inspection.`
         const fn = _firstName(r.source_from); if(fn && g.senders.indexOf(fn) === -1) g.senders.push(fn);
       });
       el.style.display = 'block';
-      el.innerHTML = '<div style="background:#eef1f6;border:1px solid #cfdcef;border-radius:10px;padding:12px 14px;margin:0 0 14px">' +
+      // Marlenyi Jul 28 · collapsed by default · tap the pill to expand.
+      // Persisted per-file via _emailFlagsPanelOpen so it stays open once
+      // she pops it in a session.
+      if(typeof _emailFlagsPanelOpen === 'undefined') window._emailFlagsPanelOpen = false;
+      if(!_emailFlagsPanelOpen) el.classList.add('eflags-collapsed'); else el.classList.remove('eflags-collapsed');
+      const _flagPill = '<button type="button" class="eflags-toggle" data-eflag-panel-toggle>&#9993; Email flags <span class="n">' + order.length + '</span></button>';
+      el.innerHTML = _flagPill + '<div style="background:#eef1f6;border:1px solid #cfdcef;border-radius:10px;padding:12px 14px;margin:8px 0 14px">' +
         '<p style="font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#0c447c;font-weight:700;margin:0 0 8px">&#9993; Email flags &middot; ' + order.length + '</p>' +
         order.map(function(key){
           const g = groups[key];
@@ -18336,29 +18349,34 @@ Tell me your planned move-out date and I will set the inspection.`
     return 'existing';
   }
   function renderPropertyKindStrip(){
-    const right = document.getElementById('rail-right'); if(!right || !_currentFile) return;
+    // Marlenyi Jul 28 · moved from top-of-drawer into the Contract type
+    // section (they're the same decision · property type largely drives
+    // contract type). Prepended to #tpb-terms so it sits at the top of
+    // the Contract type panel when that section is expanded.
+    const host = document.getElementById('tpb-terms');
+    if(!host || !_currentFile) return;
     const f = _currentFile;
-    let el = document.getElementById('rail-prop-kind');
-    if(!el){
-      el = document.createElement('div'); el.id = 'rail-prop-kind';
-      el.style.cssText = 'margin:0 0 12px';
-      right.insertBefore(el, right.firstChild);
-    }
+    // Remove any existing strip · will re-inject below (re-render safe).
+    const prev = host.querySelector('.propkind-strip');
+    if(prev) prev.remove();
     const current = f.property_kind || _propKindDefault(f);
-    el.innerHTML = '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.08);border-radius:10px;padding:8px 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+    const strip = document.createElement('div');
+    strip.className = 'propkind-strip';
+    strip.style.cssText = 'margin:0 0 12px';
+    strip.innerHTML = '<div style="background:#fff;border:0.5px solid rgba(15,15,15,0.08);border-radius:10px;padding:8px 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
       '<span style="font:700 9.5px \'Inter\';letter-spacing:1.2px;text-transform:uppercase;color:#8a857c">Property</span>' +
       _PROP_KINDS.map(function(k){
         const on = current === k.key;
         return '<button type="button" data-prop-kind="' + esc(k.key) + '" style="background:' + (on ? '#0f0f0f' : '#faf7ef') + ';color:' + (on ? '#fff' : '#5f5647') + ';border:0.5px solid ' + (on ? '#0f0f0f' : '#ece8dc') + ';border-radius:6px;padding:5px 10px;font:600 11px \'Inter\',sans-serif;cursor:pointer;font-family:inherit;letter-spacing:.2px">' + esc(k.label) + '</button>';
       }).join('') +
     '</div>';
-    // Wire clicks · optimistic UI + write to Supabase.
-    el.querySelectorAll('[data-prop-kind]').forEach(function(btn){
+    host.insertBefore(strip, host.firstChild);
+    strip.querySelectorAll('[data-prop-kind]').forEach(function(btn){
       btn.addEventListener('click', async function(){
         const kind = btn.getAttribute('data-prop-kind');
         if(!kind || kind === current) return;
         f.property_kind = kind;
-        renderPropertyKindStrip();
+        try { renderContractTerms(f); } catch(_){}
         try {
           await _client.from('files').update({ property_kind: kind }).eq('id', f.id);
         } catch(err){ console.warn('[prop-kind] save failed', err); }
@@ -18500,7 +18518,8 @@ Tell me your planned move-out date and I will set the inspection.`
     renderAgentRequestsBanner();
     renderEmailFlagsBanner();
     renderServiceStage();
-    try { renderPropertyKindStrip(); } catch(_){}
+    // Property type chip strip now lives INSIDE the Contract type
+    // section (they're the same decision) · no longer at the top.
     // Chip strip is rendered LAST so it sits at the top (insertBefore
     // firstChild order = last call wins the top slot).
     try { renderStageJumpChips(); } catch(_){}
