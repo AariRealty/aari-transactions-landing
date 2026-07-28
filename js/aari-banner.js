@@ -22,17 +22,20 @@
 (function aariBanner(){
   'use strict';
 
+  // Marlenyi Jul 28 · four role-labeled tabs on the top nav, one for
+  // each hat she wears. TC + Agent were already primary; Broker + Money
+  // got promoted out of the MORE menu (were "Run the team" + "Pipeline").
   const PRIMARY = [
-    { id:'files', label:'Move the files', sub:'Kanban · playbook', href:'/files.html',         icon:iconFolder(), match:['/files.html','/tc-cockpit'], roles:['tc','broker'] },
-    { id:'agent', label:'Agent Portal',   sub:'Leads · CRM',       href:'/aari-agent-crm.html',icon:iconUsers(),  match:['/aari-agent-crm'],            roles:['broker','agent'] },
+    { id:'tc',     label:'TC',     sub:'Kanban · playbook',      href:'/files.html',           icon:iconFolder(), match:['/files.html','/tc-cockpit'], roles:['tc','broker'] },
+    { id:'agent',  label:'Agent',  sub:'Leads · CRM',            href:'/aari-agent-crm.html',  icon:iconUsers(),  match:['/aari-agent-crm'],           roles:['broker','agent'] },
+    { id:'broker', label:'Broker', sub:'Run the team',           href:'/broker-cockpit.html',  icon:iconShield(), match:['/broker-cockpit'],           roles:['broker'] },
+    { id:'money',  label:'Money',  sub:'Pipeline · pay',         href:'/pipeline.html',        icon:iconChart(),  match:['/pipeline'],                 roles:['broker'] },
   ];
   const MORE = [
     { id:'submit',     label:'Submit a file',     href:'/index.html?modal-only=1#apply', icon:iconUpload(), match:['/agent-submit'],       roles:['broker','agent'], intake:true },
-    { id:'team',       label:'Run the team',      href:'/broker-cockpit.html',      icon:iconUsers(),  match:['/broker-cockpit'],     roles:['broker'] },
     { id:'prospecting',label:'Fill the pipeline', href:'/prospecting.html',         icon:iconBook(),   match:['/prospecting','/bd'],  roles:['broker'] },
     { id:'quality',    label:'Service quality',   href:'/files-sla.html',           icon:iconChart(),  match:['/files-sla'],          roles:['tc','broker'] },
     { id:'compliance', label:'Defend the audit',  href:'/files-compliance.html',    icon:iconShield(), match:['/files-compliance'],   roles:['broker'] },
-    { id:'pipeline',   label:'Pipeline',          href:'/pipeline.html',            icon:iconChart(),  match:['/pipeline'],           roles:['broker'] },
     { id:'contacts',   label:'My contacts',       href:'/my-contacts.html',         icon:iconBook(),   match:['/my-contacts'],        roles:['broker','agent'] },
     { id:'reviews',    label:'Reviews',           href:'/aari-reviews.html',        icon:iconStar(),   match:['/aari-reviews'],       roles:['broker','agent'] },
   ];
