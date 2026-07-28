@@ -449,12 +449,12 @@
         try {
           if (window.AariAuth && typeof window.AariAuth.signOut === 'function') {
             Promise.resolve(window.AariAuth.signOut()).finally(function () {
-              window.location.href = '/index.html';
+              window.location.href = 'https://hub.joinaari.com/';
             });
             return;
           }
         } catch (_) {}
-        window.location.href = '/index.html';
+        window.location.href = 'https://hub.joinaari.com/';
       });
     });
   }
