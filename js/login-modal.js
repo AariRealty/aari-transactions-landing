@@ -151,22 +151,20 @@
           window.location.href = next;
           return;
         }
-        // Role-based routing · Eileen → BD cockpit, brokers → calm briefing hub,
-        // TCs → CRM (they need the file queue immediately), agents → portal.
-        // Marlenyi (July 25) confirmed: post-login, brokers must land on the
-        // Direction 3 hub, not the heavy CRM dashboard.
+        // Role-based routing · Eileen → BD cockpit, staff → CRM, agents → portal.
+        // Marlenyi (July 28): desktop must land on /aari-crm exactly as it did
+        // pre-07-25. The /portal hub is a MOBILE-ONLY experience — sending a
+        // broker to /portal on desktop shows the bare hub instead of the CRM
+        // she actually uses. Mobile still gets /portal.
         try {
           const profile = await global.AariAuth.getAgentProfile();
+          const isMobile = (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
           if (profile && profile.role === 'tc' && String(profile.first_name || '').toLowerCase() === 'eileen') {
             window.location.href = '/eileen.html';
             return;
           }
-          if (profile && profile.role === 'broker') {
-            window.location.href = '/portal';
-            return;
-          }
-          if (profile && profile.role === 'tc') {
-            window.location.href = '/aari-crm';
+          if (profile && (profile.role === 'tc' || profile.role === 'broker')) {
+            window.location.href = isMobile ? '/portal' : '/aari-crm';
             return;
           }
         } catch (_) { /* profile lookup failure → fall through to /portal */ }
@@ -252,9 +250,9 @@
   async function portalDestination() {
     try {
       const profile = await global.AariAuth.getAgentProfile();
+      const isMobile = (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 600px)').matches);
       if (profile && profile.role === 'tc' && String(profile.first_name || '').toLowerCase() === 'eileen') return '/eileen.html';
-      if (profile && profile.role === 'broker') return '/portal';
-      if (profile && profile.role === 'tc') return '/aari-crm';
+      if (profile && (profile.role === 'tc' || profile.role === 'broker')) return isMobile ? '/portal' : '/aari-crm';
     } catch (_) {}
     return '/portal';
   }
