@@ -396,6 +396,8 @@
     #today-hero .th-focus { background: #fff; border-radius: 18px; padding: 20px 18px; margin-bottom: 14px; box-shadow: 0 4px 14px rgba(15,15,15,0.06); border: 0.5px solid rgba(15,15,15,0.06); }
     #today-hero .th-eb { font: 700 9.5px 'Inter'; letter-spacing: 1.4px; text-transform: uppercase; color: #a3402f; margin-bottom: 10px; display: inline-flex; align-items: center; gap: 6px; }
     #today-hero .th-eb::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #a3402f; animation: thPulse 1.6s ease-in-out infinite; }
+    #today-hero .th-eb.th-eb-soft { color: #8a7a5b; }
+    #today-hero .th-eb.th-eb-soft::before { background: #c69a3a; animation: none; }
     @keyframes thPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
     #today-hero .th-addr { font-family: Georgia, 'Times New Roman', serif; font-size: 13px; font-weight: 500; color: #7a756c; margin-bottom: 4px; }
     #today-hero .th-nm { font-family: Georgia, 'Times New Roman', serif; font-size: 20px; font-weight: 600; line-height: 1.25; letter-spacing: -0.3px; color: #0a0a0a; margin-bottom: 8px; }
@@ -8214,8 +8216,16 @@ Tell me your planned move-out date and I will set the inspection.`
             const dd = new Date(dls[t.dl].date.getTime()); dd.setHours(0, 0, 0, 0);
             days = Math.round((dd - _t0) / 86400000);
           }
-          if(days !== 0) return;
-          items.push({ file: f, task: t, days: 0, sortKey: 0 });
+          if(days == null) return;
+          // Marlenyi Jul 27 · rolling window instead of strict today.
+          // Show: overdue (past deadline, not checked off) · today (0) ·
+          // tomorrow (1). Anything 2+ days out surfaces via the chase
+          // reminder path below with the cream "3 days" chip. Overdue is
+          // gated by auto-sweep (7d cap) so ancient items don't linger.
+          if(days > 1) return;
+          // Sort: overdue first (most urgent), then today, then tomorrow.
+          const _sort = days < 0 ? (-100 + days * 0.01) : days;
+          items.push({ file: f, task: t, days: days, sortKey: _sort });
         });
       } catch(_){}
     });
@@ -8313,15 +8323,26 @@ Tell me your planned move-out date and I will set the inspection.`
     } else if(typeof isOpeningTaskId === 'function' && isOpeningTaskId(hero.task.id)){
       _dueTxt = 'Opening task';
     }
-    const _totalN = items.length;
-    const _fileN = 1 + _fileOrder.length;
+    // Bucket counts for the header · overdue / today / upcoming (tomorrow +
+    // heads-up). Honest sub-label so she knows the mix at a glance.
+    let _nOver = 0, _nToday = 0, _nSoon = 0;
+    items.forEach(function(it){
+      if(!it.isReminder && it.days != null && it.days < 0) _nOver++;
+      else if(!it.isReminder && it.days === 0) _nToday++;
+      else _nSoon++;
+    });
+    const _subParts = [];
+    if(_nOver)  _subParts.push(_nOver + ' overdue');
+    if(_nToday) _subParts.push(_nToday + ' due today');
+    if(_nSoon)  _subParts.push(_nSoon + ' upcoming');
+    const _sub = _subParts.length ? _subParts.join(' &middot; ') : (items.length + ' items');
     let _headHtml = '<div class="th-head">Today &middot; ' + new Date().toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }) +
-      '<span class="sub">' + _totalN + ' due today &middot; across ' + _fileN + ' file' + (_fileN === 1 ? '' : 's') + '</span></div>';
+      '<span class="sub">' + _sub + '</span></div>';
     let _focusHtml = '<div class="th-focus" data-th-file="' + esc(hero.file.id) + '" data-th-task="' + esc(hero.task.id) + '" data-th-days="' + (hero.days == null ? '' : hero.days) + '"' + (hero.isReminder ? ' data-th-reminder="1"' : '') + (hero.task.dl ? ' data-th-dl="' + esc(hero.task.dl) + '"' : '') + '>' +
-      '<div class="th-eb">Do this now</div>' +
+      '<div class="th-eb' + ((hero.isReminder || (hero.days != null && hero.days > 0)) ? ' th-eb-soft' : '') + '">' + ((hero.isReminder || (hero.days != null && hero.days > 0)) ? 'Get ahead of this' : 'Do this now') + '</div>' +
       '<div class="th-addr">' + esc(_addr) + '</div>' +
       '<div class="th-nm">' + esc(hero.task.label) + '</div>' +
-      '<div class="th-meta">' + _tagInline + (_dueTxt ? '<span class="' + (hero.days != null && hero.days <= 1 ? 'due' : '') + '">' + esc(_dueTxt) + '</span>' : '') + '</div>' +
+      '<div class="th-meta">' + _tagInline + (_dueTxt ? '<span class="' + (hero.days != null && hero.days <= 0 && !hero.isReminder ? 'due' : '') + '">' + esc(_dueTxt) + '</span>' : '') + '</div>' +
       '<button type="button" class="th-send" data-th-file="' + esc(hero.file.id) + '" data-th-task="' + esc(hero.task.id) + '">Send &rarr;</button>' +
     '</div>';
     // Queue is now grouped by file · every file that has open work today
@@ -8379,17 +8400,17 @@ Tell me your planned move-out date and I will set the inspection.`
             if(it.days != null){
               if(it.days < 0) d = Math.abs(it.days) + 'd late';
               else if(it.days === 0) d = 'Today';
-              else if(it.days === 1) d = 'Tomorrow';
-              else if(it.days <= 6) d = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][(new Date(_t0.getTime() + it.days * 86400000)).getDay()];
+              else if(it.days === 1) d = '1 day';
+              else if(it.days <= 6) d = it.days + ' days';
               else d = 'In ' + it.days + 'd';
             }
             // Heads-up chase rows always read "3 days" · the chase only ever
             // fires on the 3-business-day mark, so the horizon is constant.
-            // Calendar day counts can drift to 4-5 when a weekend sits in
-            // between — the message stays the RULE (3 business days out).
             if(it.isReminder) d = '3 days';
-            const warnCls = (it.days != null && it.days <= 0) ? ' warn' : '';
-            const headsCls = it.isReminder ? ' heads' : '';
+            // Chip color · red for anything past-due or hitting today,
+            // cream for upcoming (tomorrow / heads-up).
+            const warnCls = (it.days != null && it.days <= 0 && !it.isReminder) ? ' warn' : '';
+            const headsCls = (it.isReminder || (it.days != null && it.days > 0)) ? ' heads' : '';
             const parts = [];
             if(catLbl) parts.push(esc(catLbl));
             if(prefix) parts.push(esc(prefix));
