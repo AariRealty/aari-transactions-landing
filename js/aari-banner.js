@@ -572,11 +572,11 @@
         e.preventDefault();
         try {
           if (window.AariAuth && typeof window.AariAuth.signOut === 'function'){
-            Promise.resolve(window.AariAuth.signOut()).then(function(){ window.location.href = '/'; });
+            Promise.resolve(window.AariAuth.signOut()).then(function(){ window.location.href = 'https://hub.joinaari.com/'; });
             return;
           }
         } catch(_){}
-        window.location.href = '/';
+        window.location.href = 'https://hub.joinaari.com/';
       });
     }
   }
