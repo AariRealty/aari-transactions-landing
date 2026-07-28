@@ -18,23 +18,54 @@
 /* ---------------------------------------------------------------------------
  * SSO handoff receiver · Marlenyi Jul 28.
  *
- * When this site is loaded in an iframe from hub.joinaari.com (the TC pill
- * flow), the hub sends the parent user's Supabase session via postMessage.
- * We stash the tokens in Supabase's own localStorage slot BEFORE the JS
- * client boots so the page picks up the session on first render and the
- * login modal never has to appear.
+ * Two paths so this survives every load ordering:
+ *   Path A — URL hash: hub.joinaari.com puts the session in the iframe URL
+ *     as #aari-auth=<base64 JSON>. We read + strip it synchronously here,
+ *     BEFORE Supabase's JS client boots, so the client finds a valid
+ *     session on first check and the login modal never has to appear.
+ *   Path B — postMessage: fallback for cases where the hash was stripped
+ *     (redirect, referrer policy) or arrives late from the parent.
  *
- * Registered synchronously — this file loads before auth.js on every
- * auth-gated page. Fails open on any exception so a broken handoff can
- * never lock the user out.
+ * This file is loaded before auth.js on every auth-gated page. Fails open
+ * on any exception so a broken handoff can never lock the user out.
+ * ------------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------------
+ * Direct-visit gate · Marlenyi Jul 28.
+ *
+ * If someone lands on an auth-gated page here without a Supabase session AND
+ * without an inbound hash handoff AND we are NOT inside an iframe (i.e. the
+ * hub embed flow), bounce to hub.joinaari.com so they hit the shared
+ * "Miss us?" sign-in template. Only fires on obviously private surfaces —
+ * marketing pages (/, /index.html, /about, /contact, etc.) load normally.
  * ------------------------------------------------------------------------- */
 (function () {
+  try {
+    if (window.top !== window.self) return;             // embedded · parent handles auth
+  } catch (_e) { return; }
+  var p = (window.location.pathname || '').toLowerCase();
+  // Only gate the private surfaces. Anything else (marketing, public forms,
+  // reset-password, login modal callers) loads without redirect.
+  var GATED = /^\/(files|files-|portal|tc-cockpit|tc-portal|broker-cockpit|broker-backoffice|broker-weekly-report|aari-agent-crm|aari-crm|prospecting|pipeline|my-contacts|aari-reviews|associate-dashboard|briefing|eileen|milennys|marlenyi)(\.html)?(\/|$)/;
+  if (!GATED.test(p)) return;
+  // If a handoff hash is present or a Supabase session already exists in
+  // localStorage, let the page load — the receiver below will seed it.
+  if ((window.location.hash || '').indexOf('aari-auth=') !== -1) return;
+  try {
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (!k) continue;
+      if (k.indexOf('supabase.auth.token') === 0) return;
+      if (/^sb-.*-auth-token$/.test(k)) return;
+    }
+  } catch (_e) { return; }
+  window.location.replace('https://hub.joinaari.com/');
+})();
+
+(function () {
   var LS_KEY = 'sb-fnlrgmuvtgwzjsihqxcn-auth-token';
-  window.addEventListener('message', function (e) {
-    if (e.origin !== 'https://hub.joinaari.com') return;
-    var d = e && e.data;
-    if (!d || d.type !== 'aari-auth-handoff') return;
-    if (!d.access_token || !d.refresh_token) return;
+
+  function _seed(d) {
+    if (!d || !d.access_token || !d.refresh_token) return;
     try {
       var payload = {
         access_token: d.access_token,
@@ -55,6 +86,30 @@
       }
     } catch (_err) { /* no-op */ }
     try { window.dispatchEvent(new Event('aari-auth-handoff-received')); } catch (_err) {}
+  }
+
+  // Path A · read the URL hash SYNCHRONOUSLY so Supabase's JS client sees
+  // the session on first localStorage read, before any login-modal code runs.
+  try {
+    var m = (window.location.hash || '').match(/[#&]aari-auth=([^&]+)/);
+    if (m && m[1]) {
+      var raw = atob(decodeURIComponent(m[1]));
+      var d = JSON.parse(raw);
+      _seed(d);
+      // Scrub the hash so tokens do not linger in the URL bar or history.
+      try {
+        var clean = window.location.pathname + window.location.search;
+        history.replaceState(null, '', clean);
+      } catch (_e) {}
+    }
+  } catch (_e) { /* malformed hash · fall through */ }
+
+  // Path B · postMessage fallback for anything Path A missed.
+  window.addEventListener('message', function (e) {
+    if (e.origin !== 'https://hub.joinaari.com') return;
+    var msg = e && e.data;
+    if (!msg || msg.type !== 'aari-auth-handoff') return;
+    _seed(msg);
   }, false);
 })();
 
