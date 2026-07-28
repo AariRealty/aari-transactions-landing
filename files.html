@@ -13307,19 +13307,41 @@ Tell me your planned move-out date and I will set the inspection.`
       // (address + days-out) that opens the file drawer on tap. No overdue
       // block, no other-deadline noise — just closings for the tapped day.
       if(_closingsOnly){
-        const selD = new Date(_calSelDay);
-        const _sameDay = function(a, b){ return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); };
-        const selItems = (byDay[_calSelDay] || []).slice();
-        const selLab = (_calSelDay === t0 ? 'Today &middot; ' : '') + selD.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
-        let cbody = '<div style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:#0f0f0f;margin:14px 2px 8px">' + selLab + ' &middot; ' + selItems.length + '</div>';
-        if(selItems.length){
-          cbody += selItems.map(function(d){
+        // v4 · Show all closings for the visible month by default so she always
+        // sees something under the grid. When she TAPS a specific day, filter
+        // to just that day. "Selected day" = same visible month AND has items,
+        // OR the day was explicitly tapped (`_calSelDayTapped` flag).
+        const Ycur = _calMonth.getFullYear(), Mcur = _calMonth.getMonth();
+        const monthLabel = _calMonth.toLocaleDateString('en-US', { month:'long', year:'numeric' });
+        const dayInVisible = function(ts){ const dd = new Date(ts); return dd.getFullYear()===Ycur && dd.getMonth()===Mcur; };
+        const tappedItems = (byDay[_calSelDay] || []).slice();
+        const showTapped = !!_calSelDayTapped && dayInVisible(_calSelDay) && tappedItems.length > 0;
+        let items, label;
+        if(showTapped){
+          const selD = new Date(_calSelDay);
+          label = (_calSelDay === t0 ? 'Today &middot; ' : '') + selD.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+          items = tappedItems;
+        } else {
+          items = [];
+          Object.keys(byDay).forEach(function(k){ if(dayInVisible(parseInt(k, 10))){ items = items.concat(byDay[k]); } });
+          items.sort(function(a, b){ return a.date - b.date; });
+          label = monthLabel;
+        }
+        let cbody = '<div style="display:flex;align-items:center;justify-content:space-between;margin:14px 2px 8px">' +
+          '<span style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:#0f0f0f">' + label + ' &middot; ' + items.length + '</span>' +
+          (showTapped ? '<button type="button" data-cal-clear-tap style="border:0;background:none;font-family:inherit;font-size:11px;color:#8a857c;text-decoration:underline;cursor:pointer;padding:2px 0">See whole month</button>' : '') +
+        '</div>';
+        if(items.length){
+          cbody += items.map(function(d){
             const f = (_files || []).find(function(x){ return x && x.id === d.fileId; });
             const addr = (f && f.property_address ? String(f.property_address).split(',')[0] : String(d.address || '').split(',')[0]) || 'Closing';
-            const days = Math.round((new Date(d.date).setHours(0,0,0,0) - t0) / 86400000);
+            const dt = new Date(d.date); dt.setHours(0,0,0,0);
+            const days = Math.round((dt.getTime() - t0) / 86400000);
             const dchip = (days === 0) ? 'Today' : (days === 1 ? 'Tomorrow' : (days < 0 ? Math.abs(days) + 'd late' : days + ' days'));
             const dcolor = (days < 0) ? '#a3402f' : (days <= 2 ? '#a3402f' : (days <= 7 ? '#8a6d1b' : '#8a857c'));
+            const dateBadge = dt.toLocaleDateString('en-US', { month:'short', day:'numeric' });
             return '<div data-cal-open="' + esc(d.fileId) + '" style="display:flex;align-items:center;gap:10px;padding:11px 4px;border-top:0.5px solid #f3f0ea;cursor:pointer;min-height:44px">' +
+              (showTapped ? '' : '<span style="flex:none;font-family:Georgia,\'Times New Roman\',serif;font-size:12px;font-weight:600;color:#5f5e5a;min-width:44px">' + esc(dateBadge) + '</span>') +
               '<div style="flex:1;min-width:0;line-height:1.25">' +
                 '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:14px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(addr) + '</div>' +
                 '<div style="font-size:10.5px;color:#8a857c;margin-top:2px;letter-spacing:.4px;text-transform:uppercase;font-weight:600">Closing</div>' +
@@ -13328,11 +13350,14 @@ Tell me your planned move-out date and I will set the inspection.`
             '</div>';
           }).join('');
         } else {
-          cbody += '<div style="font-size:12px;color:#a39e95;padding:11px 4px;border-top:0.5px solid #f3f0ea">No closings on this day.</div>';
+          cbody += '<div style="font-size:12px;color:#a39e95;padding:11px 4px;border-top:0.5px solid #f3f0ea">No closings ' + (showTapped ? 'on this day.' : 'this month.') + '</div>';
         }
         html += '<div data-cal-inner style="padding:8px 0 0;border-top:1px solid #f3ede0;margin-top:2px">' + cbody + '</div>';
         host.innerHTML = html;
         _wireCal(host);
+        // Wire the "See whole month" reset link
+        const clr = host.querySelector('[data-cal-clear-tap]');
+        if(clr) clr.addEventListener('click', function(){ _calSelDayTapped = false; try { renderCalHeatmap(); } catch(_){} });
         return;
       }
       // --- a tickable deadline row · Mock 2 compact · Marlenyi's pick (July 25) ---
@@ -13596,7 +13621,7 @@ Tell me your planned move-out date and I will set the inspection.`
     });
     host.querySelectorAll('[data-cal-group]').forEach(function(b){ b.addEventListener('click', function(){ const k = this.getAttribute('data-cal-group'); _calOpen[k] = !_calOpen[k]; renderTcCalendar(); }); });
     host.querySelectorAll('[data-cal-view]').forEach(function(b){ b.addEventListener('click', function(){ const v = this.getAttribute('data-cal-view'); if(v === _calView) return; _calView = v; try { localStorage.setItem('aari_cal_view_' + ((_profile && _profile.id) ? _profile.id : 'anon'), v); } catch(_){} if(v === 'week' && !_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(); base.setHours(0, 0, 0, 0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; } renderCalHeatmap(); }); });
-    host.querySelectorAll('[data-cal-nav]').forEach(function(b){ b.addEventListener('click', function(){ const dir = this.getAttribute('data-cal-nav') === 'next' ? 1 : -1; if(_calView === 'week'){ const ws = _calWeekStart ? new Date(_calWeekStart) : new Date(); ws.setHours(0, 0, 0, 0); ws.setDate(ws.getDate() + 7 * dir); _calWeekStart = ws; } else { _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() + dir, 1); } renderCalHeatmap(); }); });
+    host.querySelectorAll('[data-cal-nav]').forEach(function(b){ b.addEventListener('click', function(){ const dir = this.getAttribute('data-cal-nav') === 'next' ? 1 : -1; if(_calView === 'week'){ const ws = _calWeekStart ? new Date(_calWeekStart) : new Date(); ws.setHours(0, 0, 0, 0); ws.setDate(ws.getDate() + 7 * dir); _calWeekStart = ws; } else { _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() + dir, 1); window._calSelDayTapped = false; } renderCalHeatmap(); }); });
     // Mobile List | Week tab. Separate from the desktop Month/Week toggle on purpose: on a phone
     // there is no month grid to switch to, so this picks between the agenda and the week strip.
     host.querySelectorAll('[data-cal-mtab]').forEach(function(b){ b.addEventListener('click', function(){ const v = this.getAttribute('data-cal-mtab'); if(v === _calMobileTab) return; _calMobileTab = v; renderCalHeatmap(); }); });
@@ -13611,7 +13636,7 @@ Tell me your planned move-out date and I will set the inspection.`
     host.querySelectorAll('[data-nc-step]').forEach(function(b){ b.addEventListener('click', function(){ _ncStep += (parseInt(b.getAttribute('data-nc-step'), 10) || 0); try { renderCalHeatmap(); } catch(_){} }); });
     // Mobile Option C · week strip. A day chip only SELECTS the day (loads its agenda below);
     // it never opens a file, so tapping around the week stays cheap.
-    host.querySelectorAll('[data-cal-selday]').forEach(function(b){ b.addEventListener('click', function(){ _calSelDay = parseInt(this.getAttribute('data-cal-selday'), 10); renderCalHeatmap(); }); });
+    host.querySelectorAll('[data-cal-selday]').forEach(function(b){ b.addEventListener('click', function(){ _calSelDay = parseInt(this.getAttribute('data-cal-selday'), 10); window._calSelDayTapped = true; renderCalHeatmap(); }); });
     // Mobile Option C · page the week strip left/right one week at a time.
     host.querySelectorAll('[data-cal-wknav]').forEach(function(b){ b.addEventListener('click', function(){ const dir = parseInt(this.getAttribute('data-cal-wknav'), 10) || 0; const base = _calWeekStart ? new Date(_calWeekStart) : new Date(); base.setHours(0, 0, 0, 0); base.setDate(base.getDate() + 7 * dir); _calWeekStart = base; renderCalHeatmap(); }); });
     // Mobile Option C · a REAL checkbox. Ticking it records the completion through the same
