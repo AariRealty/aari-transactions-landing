@@ -151,18 +151,12 @@
           window.location.href = next;
           return;
         }
-        // Role-based routing · Eileen → BD cockpit; brokers + TCs land in the
+        // Role-based routing · brokers + TCs (including Eileen) land in the
         // transaction management portal (/files.html); agents → /portal.
-        // Marlenyi (July 28): the transaction site should send staff to the
-        // TC portal (files.html), not the brokerage CRM (/aari-crm). Mobile
-        // hub /portal is still an option, but files.html is the correct home
-        // on both mobile and desktop for anyone working transactions.
+        // Marlenyi (July 28): every TC uses the same file queue — no more
+        // special Eileen → /eileen.html carve-out.
         try {
           const profile = await global.AariAuth.getAgentProfile();
-          if (profile && profile.role === 'tc' && String(profile.first_name || '').toLowerCase() === 'eileen') {
-            window.location.href = '/eileen.html';
-            return;
-          }
           if (profile && (profile.role === 'tc' || profile.role === 'broker')) {
             window.location.href = '/files.html';
             return;
@@ -250,7 +244,6 @@
   async function portalDestination() {
     try {
       const profile = await global.AariAuth.getAgentProfile();
-      if (profile && profile.role === 'tc' && String(profile.first_name || '').toLowerCase() === 'eileen') return '/eileen.html';
       if (profile && (profile.role === 'tc' || profile.role === 'broker')) return '/files.html';
     } catch (_) {}
     return '/portal';
