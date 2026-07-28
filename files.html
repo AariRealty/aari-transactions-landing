@@ -14881,66 +14881,77 @@ Tell me your planned move-out date and I will set the inspection.`
   }
 
   // ============ OWNER DASHBOARD ============
-  // Marlenyi Jul 27 · replaces the TC pipeline view on mobile Board when
-  // the viewer is broker/owner. Money on top (this week + MTD + pipeline),
-  // needs-you tile, TC workload with rebalance hint, top agents, risk flags.
-  // All numbers are computed from the live _files array. No mocked values.
+  // Marlenyi Jul 28 · Aari Transactions is a TC company, not a brokerage —
+  // revenue is TC service fees ($399/599/249/99/79/149 per SERVICE_PRICE),
+  // NOT purchase price. Dashboard shows: pipeline (what's active + $), a
+  // per-service revenue breakdown (which service pays what), TC workload,
+  // risk flags. Everything computed from live _files via svcPrice.
   function renderOwnerDashboard(host){
     if(!host) return;
     const _esc = function(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); };
-    const _fmtDollars = function(n){
+    const _fmt$ = function(n){
       if(!n) return '$0';
-      if(n >= 1000000) return '$' + (n/1000000).toFixed(1) + 'M';
-      if(n >= 1000) return '$' + Math.round(n/1000) + 'K';
+      if(n >= 1000) return '$' + Math.round(n).toLocaleString('en-US');
       return '$' + Math.round(n);
     };
+    // Service labels · matches the SERVICE_PRICE keys in js/pay-engine.js.
+    const SVC_LABEL = {
+      tc_one_side: 'TC · one side',
+      tc_both_sides: 'TC · both sides',
+      tc: 'TC · one side',
+      listing_coordinator: 'Listing Coordinator',
+      listing_docs: 'Listing Docs',
+      mls_setup: 'MLS Setup',
+      file_organization: 'File Organization',
+      standalone_review: 'Standalone Review',
+      offer_prep_basic: 'Offer Prep · basic',
+      offer_prep_complete: 'Offer Prep · complete'
+    };
     const t0 = new Date(); t0.setHours(0,0,0,0);
-    const t0Time = t0.getTime();
-    const weekEnd = new Date(t0Time + 7 * 86400000);
     const monthStart = new Date(t0.getFullYear(), t0.getMonth(), 1);
-    const lastMonthStart = new Date(t0.getFullYear(), t0.getMonth() - 1, 1);
-    const lastMonthEnd = new Date(monthStart.getTime() - 1);
     const active = (_files || []).filter(function(f){
       if(!f) return false;
       if(f.status === 'archived' || f.archived_at) return false;
       if((f.raw_form_data || {}).test_pool) return false;
       return true;
     });
-    const parseDate = function(s){ if(!s) return null; try { return new Date(s.length === 10 ? (s + 'T12:00:00') : s); } catch(_){ return null; } };
-    // Money · closing this week (upcoming, not yet closed)
-    const closingThisWeek = active.filter(function(f){
-      if(f.actual_closing_date) return false;
-      const cd = parseDate(f.closing_date);
-      return cd && cd >= t0 && cd <= weekEnd;
+    const _svcKey = (typeof svcKey === 'function') ? svcKey : function(f){ return String((f && f.service_type) || '').toLowerCase(); };
+    const _svcPrice = (typeof svcPrice === 'function') ? svcPrice : function(f){ return (typeof SERVICE_PRICE === 'object' && SERVICE_PRICE[_svcKey(f)]) || 0; };
+    // Pipeline · sum of TC service fees across all active files.
+    let pipelineRev = 0;
+    const bySvc = {};
+    active.forEach(function(f){
+      const k = _svcKey(f) || 'other';
+      const p = _svcPrice(f) || 0;
+      pipelineRev += p;
+      if(!bySvc[k]) bySvc[k] = { key: k, label: SVC_LABEL[k] || k.replace(/_/g,' '), unit: p, count: 0, sum: 0 };
+      bySvc[k].count += 1;
+      bySvc[k].sum += p;
     });
-    const weekValue = closingThisWeek.reduce(function(s, f){ return s + ((f.purchase_price_cents || 0) / 100); }, 0);
-    // MTD sum (actual closings this month)
-    const mtdClosings = active.filter(function(f){
-      const cd = parseDate(f.actual_closing_date);
-      return cd && cd >= monthStart;
+    const svcRows = Object.values(bySvc).sort(function(a, b){ return b.sum - a.sum; });
+    // Booked this month · files whose actual_closing_date is in the current month
+    // OR upfront services (MLS, File Org, Offer Prep, Listing Coord) created this
+    // month (they invoice on start, not close).
+    const bookedThisMonth = (_files || []).filter(function(f){
+      if(!f) return false;
+      const acd = f.actual_closing_date ? new Date(String(f.actual_closing_date).length === 10 ? (f.actual_closing_date + 'T12:00:00') : f.actual_closing_date) : null;
+      if(acd && acd >= monthStart) return true;
+      const upfront = ['listing_docs','listing_coordinator','mls_setup','offer_prep_basic','offer_prep_complete','file_organization'];
+      if(upfront.indexOf(_svcKey(f)) !== -1 && f.created_at){
+        const cd = new Date(f.created_at);
+        if(cd >= monthStart) return true;
+      }
+      return false;
     });
-    const mtdValue = mtdClosings.reduce(function(s, f){ return s + ((f.purchase_price_cents || 0) / 100); }, 0);
-    const lastMonthClosings = (_files || []).filter(function(f){
-      const cd = parseDate(f.actual_closing_date);
-      return cd && cd >= lastMonthStart && cd <= lastMonthEnd;
-    });
-    const lastMonthValue = lastMonthClosings.reduce(function(s, f){ return s + ((f.purchase_price_cents || 0) / 100); }, 0);
-    // MoM %
-    let mtdDelta = '';
-    if(lastMonthValue > 0){
-      const pct = Math.round(((mtdValue - lastMonthValue) / lastMonthValue) * 100);
-      mtdDelta = (pct >= 0 ? '▲ ' : '▼ ') + Math.abs(pct) + '%';
-    }
-    // Pipeline (all active file value)
-    const pipelineValue = active.reduce(function(s, f){ return s + ((f.purchase_price_cents || 0) / 100); }, 0);
-    // Needs you · files in broker_review stage OR flagged for broker
+    const bookedMonthRev = bookedThisMonth.reduce(function(s, f){ return s + (_svcPrice(f) || 0); }, 0);
+    // Needs you · files in broker_review stage OR flagged
     const needsYou = active.filter(function(f){
       const st = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
       if(f.transaction_stage === 'broker_review') return true;
       if(st.broker_review_needed && !st.broker_review_done) return true;
       return false;
     });
-    // TC workload · count files per assigned_tc_id
+    // TC workload
     const tcCounts = {};
     let unassigned = 0;
     active.forEach(function(f){
@@ -14958,17 +14969,8 @@ Tell me your planned move-out date and I will set the inspection.`
     }).sort(function(a, b){ return b.n - a.n; });
     const overloaded = tcList.filter(function(t){ return t.n >= CAPACITY; });
     const roomFor = tcList.filter(function(t){ return t.n < CAPACITY * 0.6; }).sort(function(a, b){ return a.n - b.n; });
-    // Top agents (by active file count) · closed files this month prioritized
-    const agentCounts = {};
-    active.forEach(function(f){
-      if(!f.agent_id) return;
-      agentCounts[f.agent_id] = (agentCounts[f.agent_id] || 0) + 1;
-    });
-    const topAgents = Object.keys(agentCounts).map(function(id){
-      const nm = (typeof _agentNameById === 'object' && _agentNameById[id]) || 'Agent';
-      return { id: id, name: nm, n: agentCounts[id] };
-    }).sort(function(a, b){ return b.n - a.n; }).slice(0, 4);
-    // Risk flags · files with closing within 7 days that are missing critical stage tasks
+    // Risk flags · sale files closing within 14 days missing survey/title/loan
+    const parseDate = function(s){ if(!s) return null; try { return new Date(String(s).length === 10 ? (s + 'T12:00:00') : s); } catch(_){ return null; } };
     const risks = [];
     active.forEach(function(f){
       const cd = parseDate(f.closing_date);
@@ -14981,14 +14983,6 @@ Tell me your planned move-out date and I will set the inspection.`
       const missing = [];
       if(!st.uc_survey_received && !st.uc_survey_confirmed && f.contract_type !== 'builder') missing.push('Survey');
       if(!st.uc_title_commitment_reminder && !st.uc_title_received && days <= 10) missing.push('Title');
-      if(!st.uc_loan_approval_confirmed && !st.uc_loan_approval_acknowledged && f.transaction_stage === 'under_contract' && f.contract_type !== 'builder') {
-        const dls = (typeof fileDeadlines === 'function') ? fileDeadlines(f) : {};
-        if(dls.loan_approval && dls.loan_approval.date){
-          const ld = new Date(dls.loan_approval.date.getTime()); ld.setHours(0,0,0,0);
-          const ldays = Math.round((ld - t0) / 86400000);
-          if(ldays < 0) missing.push('Loan approval ' + Math.abs(ldays) + 'd late');
-        }
-      }
       if(missing.length){
         const addr = String(f.property_address || 'File').split(',')[0];
         risks.push({ file: f, addr: addr, why: missing[0], days: days });
@@ -15001,12 +14995,12 @@ Tell me your planned move-out date and I will set the inspection.`
       ? overloaded[0].name + ' at capacity — reassign to ' + roomFor[0].name
       : '';
     let html = '<div class="ownd">';
-    // Row 1 · money + needs you
+    // Row 1 · pipeline revenue + needs you
     html += '<div class="row-2">' +
       '<div class="tile ink">' +
-        '<div class="k">This week</div>' +
-        '<div class="big">' + _fmtDollars(weekValue) + '</div>' +
-        '<div class="caption">' + closingThisWeek.length + ' file' + (closingThisWeek.length === 1 ? '' : 's') + ' closing</div>' +
+        '<div class="k">In pipeline</div>' +
+        '<div class="big">' + _fmt$(pipelineRev) + '</div>' +
+        '<div class="caption">' + active.length + ' active file' + (active.length === 1 ? '' : 's') + '</div>' +
       '</div>' +
       '<div class="tile' + (needsYou.length ? ' warn' : '') + '">' +
         '<div class="k">Needs you</div>' +
@@ -15014,19 +15008,31 @@ Tell me your planned move-out date and I will set the inspection.`
         '<div class="caption">' + (needsYou.length ? 'broker review' : 'you\'re clear') + '</div>' +
       '</div>' +
     '</div>';
-    // Row 2 · MTD + pipeline (secondary)
+    // Booked this month (secondary metric)
     html += '<div class="row-2">' +
       '<div class="tile">' +
-        '<div class="k">MTD gross</div>' +
-        '<div class="big">' + _fmtDollars(mtdValue) + '</div>' +
-        '<div class="caption">' + (mtdDelta ? mtdDelta + ' vs last month' : (mtdClosings.length + ' closed')) + '</div>' +
+        '<div class="k">Booked this month</div>' +
+        '<div class="big">' + _fmt$(bookedMonthRev) + '</div>' +
+        '<div class="caption">' + bookedThisMonth.length + ' file' + (bookedThisMonth.length === 1 ? '' : 's') + '</div>' +
       '</div>' +
       '<div class="tile">' +
-        '<div class="k">Pipeline</div>' +
-        '<div class="big">' + _fmtDollars(pipelineValue) + '</div>' +
-        '<div class="caption">' + active.length + ' active</div>' +
+        '<div class="k">Avg per file</div>' +
+        '<div class="big">' + _fmt$(active.length ? pipelineRev / active.length : 0) + '</div>' +
+        '<div class="caption">across all services</div>' +
       '</div>' +
     '</div>';
+    // Revenue by service · the "income based on service" she asked for
+    if(svcRows.length){
+      html += '<div class="card">' +
+        '<div class="lb">Revenue by service</div>';
+      svcRows.forEach(function(r){
+        html += '<div class="ag-row">' +
+          '<span class="name">' + _esc(r.label) + ' <small style="color:#a9a49a;font:500 10.5px \'Playfair Display\',Georgia,serif;margin-left:4px">' + r.count + ' × ' + _fmt$(r.unit) + '</small></span>' +
+          '<span class="kpi">' + _fmt$(r.sum) + '</span>' +
+        '</div>';
+      });
+      html += '</div>';
+    }
     // TC workload
     if(tcList.length){
       html += '<div class="card">' +
@@ -15057,18 +15063,6 @@ Tell me your planned move-out date and I will set the inspection.`
       }
       html += '</div>';
     }
-    // Top agents
-    if(topAgents.length){
-      html += '<div class="card">' +
-        '<div class="lb">Top agents · active files</div>';
-      topAgents.forEach(function(a){
-        html += '<div class="ag-row">' +
-          '<span class="name">' + _esc(a.name) + '</span>' +
-          '<span class="kpi">' + a.n + '<small>file' + (a.n === 1 ? '' : 's') + '</small></span>' +
-        '</div>';
-      });
-      html += '</div>';
-    }
     // Risk flags
     if(riskTop.length){
       html += '<div class="card risks">' +
@@ -15081,8 +15075,6 @@ Tell me your planned move-out date and I will set the inspection.`
         '</div>';
       });
       html += '</div>';
-    } else {
-      html += '<div class="empty-line">No risk flags this week</div>';
     }
     html += '</div>';
     host.innerHTML = html;
