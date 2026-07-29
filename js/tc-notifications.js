@@ -132,7 +132,11 @@
       }
       var html = rows.map(function (n) {
         var unread = !n.read_at;
-        var href = n.related_file_id ? ('#file-' + n.related_file_id) : '#';
+        // Prefer an explicit assign_url from the notification payload (used by
+        // broker_website_lead_needs_tc), fall back to the related_file_id hash
+        // that the TC cockpit uses today.
+        var payloadUrl = (n.payload && n.payload.assign_url) ? n.payload.assign_url : null;
+        var href = payloadUrl || (n.related_file_id ? ('#file-' + n.related_file_id) : '#');
         return '<a class="tcn-item' + (unread ? ' unread' : '') + '" href="' + escapeHtml(href) + '" data-id="' + escapeHtml(n.id) + '">' +
           '<p class="tcn-item-title">' + escapeHtml(n.title) + '</p>' +
           (n.body ? '<p class="tcn-item-body">' + escapeHtml(n.body) + '</p>' : '') +
@@ -190,7 +194,10 @@
       t.addEventListener('click', function (e) {
         if (e.target.classList.contains('tcn-toast-close')) return;
         clearTimeout(timer);
-        if (n.related_file_id) {
+        var payloadUrl = (n.payload && n.payload.assign_url) ? n.payload.assign_url : null;
+        if (payloadUrl) {
+          window.location.href = payloadUrl;
+        } else if (n.related_file_id) {
           window.location.hash = 'file-' + n.related_file_id;
         }
         markRead(n.id);

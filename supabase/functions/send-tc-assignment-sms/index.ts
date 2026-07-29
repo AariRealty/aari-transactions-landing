@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
   // File first · plain query (FK joins are fragile)
   const { data: f, error: fileErr } = await admin
     .from("files")
-    .select("id, agent_id, assigned_tc_id, service_type, property_address, purchase_price_cents, priority, priority_reason")
+    .select("id, agent_id, assigned_tc_id, service_type, property_address, purchase_price_cents, priority, priority_reason, raw_form_data, client_name")
     .eq("id", body.file_id)
     .maybeSingle();
   if (fileErr) return j(500, { ok: false, error: "File lookup failed: " + fileErr.message });
@@ -65,7 +65,7 @@ Deno.serve(async (req) => {
   if (!tc.phone) return j(200, { ok: false, skipped: true, reason: "tc_no_phone" });
   if (tc.sms_opt_in === false) return j(200, { ok: false, skipped: true, reason: "tc_opted_out" });
 
-  // Agent name for context in the SMS
+  // Agent name for context in the SMS (agent-portal submissions only)
   const { data: agent } = await admin
     .from("agents")
     .select("first_name, last_name")
@@ -73,10 +73,16 @@ Deno.serve(async (req) => {
     .maybeSingle();
   const agentName = `${agent?.first_name ?? ""} ${agent?.last_name ?? ""}`.trim() || "an agent";
 
-  const fileShortId = String(f.id).slice(0, 4).toUpperCase();
   const propertyShort = (f.property_address || "property").split(",")[0].trim();
   const serviceLabel = SERVICE_LABELS[f.service_type] || f.service_type || "service";
   const price = f.purchase_price_cents ? `$${Math.round(f.purchase_price_cents / 100000)}K` : "";
+  const tcFirstName = tc.first_name || "there";
+
+  // Website leads (raw_form_data.submitted_via='public') get the warmer, no-file-ID
+  // copy Marlenyi approved. Agent-portal files keep the existing SMS.
+  // deno-lint-ignore no-explicit-any
+  const submittedVia = ((f as any).raw_form_data ?? {})?.submitted_via;
+  const isWebsiteLead = submittedVia === "public";
 
   // Emergency prefix when priority='emergency' · adds 🚨 + reason inline
   // deno-lint-ignore no-explicit-any
@@ -86,11 +92,24 @@ Deno.serve(async (req) => {
   const prefix = isEmergency
     ? `Aari 🚨 PRIORITY (${priorityReason}) · `
     : `Aari · `;
-  const expires = isEmergency ? "Expires in 15 min — respond fast." : "Expires in 30 min.";
+  const expires = isEmergency
+    ? "Expires in 15 min. Respond fast."
+    : "30 min on the clock.";
 
-  const message =
-    `${prefix}New file ${fileShortId} from ${agentName} · ${propertyShort}${price ? " · " + price : ""} · ${serviceLabel}.\n\n` +
-    `Reply Y to accept, N to pass.\n\n${expires}\n\n`;
+  let message: string;
+  if (isWebsiteLead) {
+    // deno-lint-ignore no-explicit-any
+    const clientName = (f as any).client_name || "a new client";
+    message =
+      `${prefix}Hey ${tcFirstName}, a fresh website lead just walked in 👀\n\n` +
+      `${clientName} · ${propertyShort}${price ? " · " + price : ""} · ${serviceLabel}\n\n` +
+      `Reply Y to grab it, N to pass. ${expires}\n\n`;
+  } else {
+    const fileShortId = String(f.id).slice(0, 4).toUpperCase();
+    message =
+      `${prefix}New file ${fileShortId} from ${agentName} · ${propertyShort}${price ? " · " + price : ""} · ${serviceLabel}.\n\n` +
+      `Reply Y to accept, N to pass.\n\n${expires}\n\n`;
+  }
 
   const result = await sendQuoSms({
     to: tc.phone,
