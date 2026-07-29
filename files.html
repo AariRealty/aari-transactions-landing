@@ -7841,6 +7841,7 @@ Tell me your planned move-out date and I will set the inspection.`
   let _verifs = [];          // verification records cache · used by renderPriorityQueue (was undeclared → threw, aborting loadAndRender)
   let _saByAgent = {};       // { agent_id: agreement_signed_at|null } · SA lock
   let _agentNameById = {};   // { agent_id: 'First Last' } · for SA briefing rows
+  let _agentMetaById = {};   // { agent_id: {name,email,brokerage} } · New file picker disambiguation
   // SA lock · a file is locked from any work until its agent has signed the SA.
   // Only locks when we KNOW the agent's status (id present in the map) and it's
   // null; unknown agents are never locked.
@@ -8063,12 +8064,14 @@ Tell me your planned move-out date and I will set the inspection.`
       // needed, so both are loaded, and this one is checked rather than swallowed, because an
       // empty picker sends a coordinator straight back to guessing.
       const { data: _ppl, error: _pplErr } = await _client.from('agents')
-        .select('id, first_name, last_name, email, role').in('role', ['agent','tc','broker']);
+        .select('id, first_name, last_name, email, role, brokerage_name, merged_into').in('role', ['agent','tc','broker']);
       if(_pplErr) console.error('agent roster load failed · the New file picker will be empty and file ownership cannot be set', _pplErr);
       (_ppl || []).forEach(a => {
+        if(a.merged_into) return; // merged duplicates never show in any picker
         const nm = [a.first_name, a.last_name].filter(Boolean).join(' ').trim();
         if(nm) _agentNameById[a.id] = nm;
         else if(a.email) _agentNameById[a.id] = a.email;
+        _agentMetaById[a.id] = { name:(nm || a.email || ''), email:a.email || '', brokerage:a.brokerage_name || '' };
       });
     }
     // Active Aari Transactions memberships · a member gets $50 off every TC file (the discount
@@ -25596,15 +25599,21 @@ Tell me your planned move-out date and I will set the inspection.`
       var _ai = document.getElementById('nf-agent-input');
       var _ar = document.getElementById('nf-agent-results');
       if(_ai && _ar){
-        var _aglist = Object.keys(_agentNameById || {}).map(function(id){ return { id:id, name:_agentNameById[id] }; }).filter(function(a){ return a.name; }).sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
+        var _aglist = Object.keys(_agentNameById || {}).map(function(id){ var mt = (_agentMetaById && _agentMetaById[id]) || {}; return { id:id, name:_agentNameById[id], email:mt.email || '', brokerage:mt.brokerage || '' }; }).filter(function(a){ return a.name; }).sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
         var _syncGo = function(){ var g = document.getElementById('nf-go'); if(g) g.disabled = !(_nfSide && _nfFile && _nfAgentId); };
         var _renderRes = function(){
           var q = (_ai.value || '').trim().toLowerCase();
           // Type-ahead · show nothing until she starts typing, then only the matches
           // (no dumping the whole roster on focus).
           if(!q){ _ar.innerHTML = ''; _ar.style.display = 'none'; return; }
-          var m = _aglist.filter(function(a){ return String(a.name).toLowerCase().indexOf(q) !== -1; });
-          var rows = m.slice(0, 8).map(function(a){ return '<div data-nf-pick="' + esc(a.id) + '" style="padding:9px 11px;cursor:pointer;font-size:13.5px;color:#0f0f0f;border-bottom:0.5px solid #f4f1ea">' + esc(a.name) + (a.id === (_profile && _profile.id) ? ' (me)' : '') + '</div>'; }).join('');
+          var m = _aglist.filter(function(a){ return String(a.name).toLowerCase().indexOf(q) !== -1 || String(a.email).toLowerCase().indexOf(q) !== -1; });
+          var rows = m.slice(0, 8).map(function(a){
+            var sub = [a.email, a.brokerage].filter(Boolean).join(' · ');
+            return '<div data-nf-pick="' + esc(a.id) + '" style="padding:9px 11px;cursor:pointer;border-bottom:0.5px solid #f4f1ea">' +
+              '<div style="font-size:13.5px;color:#0f0f0f">' + esc(a.name) + (a.id === (_profile && _profile.id) ? ' (me)' : '') + '</div>' +
+              (sub ? '<div style="font-size:11px;color:#8a857c;margin-top:1px">' + esc(sub) + '</div>' : '') +
+            '</div>';
+          }).join('');
           if(!m.length) rows = '<div style="padding:9px 11px;font-size:12.5px;color:#9a958c">No match in your agents</div>';
           _ar.innerHTML = rows; _ar.style.display = 'block';
         };
