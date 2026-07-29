@@ -12513,6 +12513,19 @@ Tell me your planned move-out date and I will set the inspection.`
   // Today / Board / Calendar all live on the one Overview page, so those tabs set
   // _activeView='board' and scroll to the section; Invoices flips to the invoice view.
   var _mnavDest = 'today';
+  // Persist the mobile bottom-nav destination so a reload / PWA relaunch
+  // doesn't reset the Calendar tab back to Today. Without this, the
+  // closings-only mode (which fires when _mnavDest === 'calendar') was
+  // silently defaulting off on every fresh load — the tab was highlighted
+  // Calendar in the nav but the render was using the initial 'today' value,
+  // so all deadlines + tasks showed up under the calendar instead of just
+  // closings (Marlenyi Jul 29 · IMG_8155 second report).
+  function _mnavDestKey(){ return 'aari_mnav_dest_' + ((_profile && _profile.id) ? _profile.id : 'anon'); }
+  function _mnavSaveDest(v){ try { localStorage.setItem(_mnavDestKey(), v); } catch(_){} }
+  try {
+    const _md = localStorage.getItem(_mnavDestKey());
+    if(_md === 'today' || _md === 'board' || _md === 'calendar' || _md === 'invoice') _mnavDest = _md;
+  } catch(_){}
   function _mnavSaveView(v){ try { localStorage.setItem('aari_active_view_' + ((_profile && _profile.id) ? _profile.id : 'anon'), v); } catch(_){} }
   function ensureMobileNav(){
     var nav = document.getElementById('mnav');
@@ -12565,12 +12578,14 @@ Tell me your planned move-out date and I will set the inspection.`
   function mobileNav(dest){
     if(dest === 'invoice'){
       if(_activeView !== 'invoice'){ _activeView = 'invoice'; _mnavSaveView('invoice'); try { renderTcCalendar(); } catch(_){} _syncBoardVisibility(); }
+      _mnavSaveDest('invoice');
       window.scrollTo({ top:0, behavior:'smooth' });
       ensureMobileNav();
       return;
     }
     if(_activeView !== 'board'){ _activeView = 'board'; _mnavSaveView('board'); try { renderTcCalendar(); } catch(_){} }
     _mnavDest = dest;
+    _mnavSaveDest(dest);
     // Always re-sync body[data-mnav-view] and inline show/hide even when
     // _activeView didn't change, so switching between Today / Board / Calendar
     // updates which section is visible (mobile CSS scopes hides by mnav view).
@@ -13158,7 +13173,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const host = document.getElementById('calHeatmap'); if(!host) return;
     // Per-user view preference · Marlenyi and Eileen each keep their own last
     // Month/Week choice (namespaced by user id, so a shared browser won't collide).
-    try { const _uid = (_profile && _profile.id) ? _profile.id : 'anon'; if(_calViewUser !== _uid){ const _sv = localStorage.getItem('aari_cal_view_' + _uid); _calView = (_sv === 'week') ? 'week' : 'month'; _calViewUser = _uid; } } catch(_){}
+    try { const _uid = (_profile && _profile.id) ? _profile.id : 'anon'; if(_calViewUser !== _uid){ const _sv = localStorage.getItem('aari_cal_view_' + _uid); _calView = (_sv === 'month') ? 'month' : 'week'; _calViewUser = _uid; } } catch(_){}
     // Marlenyi Jul 28 · On the mobile Calendar tab she wants ONLY closings on
     // the month grid (matching the hub.joinaari.com "Your calendar" look).
     // Read the JS state variable rather than body.dataset.mnavView — the
@@ -13168,13 +13183,10 @@ Tell me your planned move-out date and I will set the inspection.`
     // highlighted in the bottom nav but Week-strip + Month/Week toggle
     // showing above, Marlenyi Jul 29 · IMG_8141).
     const _closingsOnly = (typeof _mnavDest !== 'undefined' && _mnavDest === 'calendar');
-    // Closings-only mode has no Month/Week toggle — force the month grid so a
-    // stale 'week' preference from an earlier session can't strand her on the
-    // week strip with no way back (Marlenyi Jul 28 · IMG_8123).
-    if(_closingsOnly && _calView !== 'month'){
-      _calView = 'month';
-      try { const _uid = (_profile && _profile.id) ? _profile.id : 'anon'; localStorage.setItem('aari_cal_view_' + _uid, 'month'); } catch(_){}
-    }
+    // Closings-only mode used to force month + hide the toggle; that made the
+    // Month/Week choice second-class on the Calendar tab and stripped users of
+    // control. Toggle is now always visible (see _segBtn block below) and the
+    // mobile grid mode is driven by _calView, so no forcing is needed here.
     let all;
     if(_closingsOnly){
       all = [];
@@ -13238,7 +13250,7 @@ Tell me your planned move-out date and I will set the inspection.`
       '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:18px;font-weight:600;color:#0f0f0f;letter-spacing:-0.2px;line-height:1.1">' +
         (_closingsOnly ? 'Your calendar' : 'Calendar') +
       '</span>' +
-      (_closingsOnly ? '' : ('<span style="display:inline-flex;background:#f4f1ec;border-radius:20px;padding:2px">' + _segBtn('month', 'Month') + _segBtn('week', 'Week') + '</span>')) +
+      '<span style="display:inline-flex;background:#f4f1ec;border-radius:20px;padding:2px">' + _segBtn('month', 'Month') + _segBtn('week', 'Week') + '</span>' +
     '</div>';
     // Next closings strip · skipped in closings-only mode because the
     // #closings-list card below the grid already shows the same countdown.
@@ -13258,7 +13270,12 @@ Tell me your planned move-out date and I will set the inspection.`
       // week strip. When body[data-mnav-view]='calendar', render a compact
       // 7-column month grid. Otherwise (Today tab, etc.) keep the week strip
       // that Marlenyi picked for her daily driver.
-      const _mobileGridMode = (typeof _mnavDest !== 'undefined' && _mnavDest === 'calendar') ? 'month' : 'week';
+      // Drive the mobile grid mode from the Month/Week toggle (_calView), not
+      // from which bottom-nav tab is active. The old _mnavDest wiring meant
+      // tapping "Month" on the Today tab had no effect (mode stayed 'week')
+      // and tapping "Week" on the Calendar tab had no effect (mode stayed
+      // 'month'). Marlenyi Jul 29 · IMG_8155.
+      const _mobileGridMode = (_calView === 'week') ? 'week' : 'month';
       if(!_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(t0); base.setHours(0,0,0,0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; }
       const wk0 = new Date(_calWeekStart); wk0.setHours(0,0,0,0);
       // 3-business-day early flag · true when the due day is 1-3 business days out from today.
