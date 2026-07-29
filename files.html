@@ -18661,7 +18661,7 @@ Tell me your planned move-out date and I will set the inspection.`
     el.style.display = 'block';
     const cur = f.service_stage || track[0];
     el.innerHTML = '<div style="background:#fff;border:1px solid #ece8e0;border-radius:10px;padding:12px 14px;margin:0 0 14px">' +
-      '<p class="rail-svcstage-lbl" style="font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#8a857c;font-weight:700;margin:0 0 8px">Service stage<span class="rail-svcstage-meta"> · the agent sees this</span></p>' +
+      '<p class="rail-svcstage-lbl" style="font-size:10.5px;letter-spacing:.5px;text-transform:uppercase;color:#8a857c;font-weight:700;margin:0 0 8px">What the agent sees</p>' +
       '<select id="svc-stage-sel" style="width:100%;font-family:inherit;font-size:13px;padding:9px 11px;border:1px solid rgba(15,15,15,0.18);border-radius:8px;background:#fff;color:#0f0f0f">' +
         track.map(function(s){ return '<option' + (s===cur ? ' selected' : '') + '>' + esc(s) + '</option>'; }).join('') +
       '</select>' +
@@ -20889,6 +20889,7 @@ Tell me your planned move-out date and I will set the inspection.`
   const LOGISTICS_BY_TASK = {
     // Listing details · the dates that drive the Active-on-market countdown in the spine.
     lst_details: [
+      { key:'property_address', label:'Property address', type:'text', ph:'816 Frederick Reid St E, Lehigh Acres, FL', col:true, wide:true },
       { key:'list_price',      label:'List price',       type:'text', ph:'$385,000' },
       { key:'list_date',       label:'Listing date',     type:'date' },
       { key:'list_expiration', label:'Expiration date',  type:'date' },
@@ -20947,7 +20948,8 @@ Tell me your planned move-out date and I will set the inspection.`
     const lg = file.logistics || {};
     const inStyle = 'border:0.5px solid #dcdcdc;border-radius:7px;padding:6px 8px;font-size:12px;font-family:inherit;background:#fff';
     return '<div class="cklg-fields" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 6px 28px">' + fields.map(function(f){
-      const v = (lg[f.key] != null) ? lg[f.key] : '';
+      // f.col fields map to a top-level file column (e.g. property_address), not the logistics blob.
+      const v = f.col ? (file[f.key] != null ? file[f.key] : '') : ((lg[f.key] != null) ? lg[f.key] : '');
       let control;
       if(f.type === 'select'){
         control = '<select data-cklg-key="' + f.key + '" style="' + inStyle + '">' + (f.options || []).map(function(o){ return '<option value="' + esc(o[0]) + '"' + (String(v) === String(o[0]) ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>';
@@ -20957,13 +20959,22 @@ Tell me your planned move-out date and I will set the inspection.`
       } else {
         control = '<input type="' + f.type + '" data-cklg-key="' + f.key + '" placeholder="' + esc(f.ph || '') + '" value="' + esc(v) + '" style="' + inStyle + '">';
       }
-      return '<div style="display:flex;flex-direction:column;gap:3px">' +
+      return '<div style="display:flex;flex-direction:column;gap:3px' + (f.wide ? ';grid-column:1/-1' : '') + '">' +
         '<label style="font-size:10px;color:#8a877f">' + esc(f.label) + '</label>' + control +
       '</div>';
     }).join('') + '</div>';
   }
   async function saveLogisticsField(file, key, value){
     try {
+      // property_address is a top-level column, not part of the logistics blob.
+      if(key === 'property_address'){
+        const _v = value || '';
+        file.property_address = _v;
+        if(_currentFile && _currentFile.id === file.id) _currentFile.property_address = _v;
+        const _ff = (_files || []).find(function(x){ return x.id === file.id; }); if(_ff) _ff.property_address = _v;
+        await _client.from('files').update({ property_address: _v }).eq('id', file.id);
+        return;
+      }
       const lg = Object.assign({}, file.logistics || {});
       if(value === '' || value == null) delete lg[key]; else lg[key] = value;
       file.logistics = lg;
