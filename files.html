@@ -13508,7 +13508,15 @@ Tell me your planned move-out date and I will set the inspection.`
     // the day you tap — default today — so it isn't a duplicate.)
     const sel = new Date(_calSelDay), sd = byDay[_calSelDay] || [];
     const selLab = (_calSelDay === t0 ? 'Today · ' : '') + sel.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
-    html += '<div style="display:flex;align-items:center;gap:7px;margin-bottom:2px"><span style="font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#0f0f0f">' + esc(selLab) + '</span><span style="font-size:11px;font-weight:600;color:#fff;background:#0f0f0f;border-radius:20px;padding:1px 7px">' + sd.length + '</span></div>';
+    // Header A · big serif date, full date muted beneath, hairline under, count on the right.
+    const _isToday = (_calSelDay === t0);
+    const _bigLab = _isToday ? 'Today' : sel.toLocaleDateString('en-US', { weekday:'long' });
+    const _subLab = sel.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+    html += '<div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid #ece8e0;padding-bottom:12px;margin-bottom:12px">' +
+      '<div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;font-weight:500;line-height:1;color:#0f0f0f">' + esc(_bigLab) + '</div>' +
+      '<div style="font-size:11px;color:#8a857c;margin-top:3px;letter-spacing:.02em">' + esc(_subLab) + '</div></div>' +
+      '<span style="flex:none;font-size:11px;font-weight:600;color:#8a857c;white-space:nowrap">' + sd.length + ' due</span>' +
+    '</div>';
     // ===== The day's deadlines, split by side · Buyer | Seller | Not set =====
     // Every calendar item carries fileId, so the side resolves from the file itself and the
     // deadline engine stays untouched. A file whose client_type is anything other than buyer
@@ -13534,14 +13542,27 @@ Tell me your planned move-out date and I will set the inspection.`
     // NOT SET is a catch-all so an unsided file's deadline is never dropped. Show it ONLY when it
     // actually caught something — an empty "NOT SET 0" every day is just clutter. Buyer/Seller stay
     // fixed so the layout is stable; the grid drops to two columns when there's nothing unsided.
-    const _showNotset = _cols.notset.length > 0;
+    // Single list (Option D) · side as a small tag, day count folded into the address line
+    // (Mock A). Replaces the two-column Buyer/Seller split so an empty side no longer leaves
+    // a dead "None" column. Every item still carries its side via the tag.
+    const _sideTag = { buyer:'Buyer', seller:'Seller', notset:'Not set' };
+    const _dayCountTo = function(due){ try { const c=new Date();c.setHours(0,0,0,0); const t=new Date(due);t.setHours(0,0,0,0); let n=0; const w=new Date(c); while(w<t){ w.setDate(w.getDate()+1); const dw=w.getDay(); if(dw!==0&&dw!==6)n++; } return n; } catch(_){ return null; } };
+    const _listRow = function(d){
+      const side = _sideOf(d);
+      const isChase = !!(d.isChase && d.dueDate);
+      const nm = isChase ? String(d.label||'').replace(/^Reminder\s*·\s*/i,'') : (d.label||'Deadline');
+      let sub = esc(String(d.address||'').split(',')[0]);
+      if(isChase){ const n=_dayCountTo(d.dueDate); if(n!=null) sub += ' &middot; <span style="color:#8a6d1b">' + (n<=0?'due today':('due in '+n+' day'+(n===1?'':'s'))) + '</span>'; }
+      const tagCol = side==='notset' ? '#8a6d1b' : '#5f5e5a';
+      const tagBg = side==='notset' ? '#fbf7ee' : '#f1efe8';
+      return '<div data-cal-open="'+esc(d.fileId)+'" style="display:flex;align-items:baseline;gap:9px;padding:9px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
+        '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:'+tagCol+';background:'+tagBg+';border-radius:20px;padding:2px 8px">'+esc(_sideTag[side])+'</span>' +
+        '<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:#0f0f0f">'+esc(nm)+'</div><div style="font-size:11px;color:#8a857c;margin-top:2px">'+sub+'</div></div>' +
+      '</div>';
+    };
     html += sd.length
-      ? ('<div style="display:grid;grid-template-columns:' + (_showNotset ? '1fr 1fr 1fr' : '1fr 1fr') + ';gap:11px;margin-top:6px">' +
-          _colHtml(_cols.buyer,  'BUYERS',  _cols.buyer.length,  '#0f0f0f') +
-          _colHtml(_cols.seller, 'SELLERS', _cols.seller.length, '#0f0f0f') +
-          (_showNotset ? _colHtml(_cols.notset, 'NOT SET', _cols.notset.length, '#8a6d1b', '#efe4cf') : '') +
-        '</div>')
-      : '<div style="font-size:12px;color:#a39e95;padding:9px 0 2px;border-top:0.5px solid #f3f0ea">' + (_calSelDay === t0 ? 'Nothing due today. You’re ahead.' : 'Nothing due this day.') + '</div>';
+      ? sd.map(_listRow).join('')
+      : '<div style="font-size:12px;color:#a39e95;padding:9px 0 2px">' + (_calSelDay === t0 ? 'Nothing due today. You’re ahead.' : 'Nothing due this day.') + '</div>';
     html += '</div></div></div>';
     host.innerHTML = html; _wireCal(host);
   }
