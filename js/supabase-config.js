@@ -56,6 +56,12 @@
       if (!k) continue;
       if (k.indexOf('supabase.auth.token') === 0) return;
       if (/^sb-.*-auth-token$/.test(k)) return;
+      // The Supabase client is created in auth.js with storageKey
+      // 'aari-auth-session', so the persisted session key does NOT match
+      // the two patterns above. Without this line, every successful sign-in
+      // on aaritransactions.com/login.html was falsely detected as
+      // "no session" and bounced to hub.joinaari.com — Eileen's loop.
+      if (k === 'aari-auth-session') return;
     }
   } catch (_e) { return; }
   window.location.replace('https://hub.joinaari.com/');
