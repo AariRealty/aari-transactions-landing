@@ -470,6 +470,20 @@
   async function mount(){
     const url = window.location.pathname || '';
 
+    // Marlenyi Jul 29 · when TC is embedded inside hub.joinaari.com the hub
+    // already renders its own header + role pills, so this banner would be
+    // duplicate chrome. Skip the whole mount when we're in an iframe.
+    // Stamp .aari-embedded on <html>/<body> so page CSS can trim the top
+    // gap and honor iOS safe-area at the bottom nav. Fails open on any
+    // exception so a cross-origin quirk can never lock the banner out.
+    try {
+      if (window.top !== window.self) {
+        try { document.documentElement.classList.add('aari-embedded'); if (document.body) document.body.classList.add('aari-embedded'); } catch(_){}
+        var h = document.getElementById('aari-header'); if (h && h.parentNode) h.parentNode.removeChild(h);
+        return;
+      }
+    } catch(_){ /* cross-origin denial · fall through to normal mount */ }
+
     if(!document.getElementById('aari-banner-css')){
       const style = document.createElement('style');
       style.id = 'aari-banner-css';
