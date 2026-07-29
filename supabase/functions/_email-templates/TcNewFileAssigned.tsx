@@ -11,6 +11,10 @@ interface Props {
   serviceName: string;
   closingDate?: string;
   portalUrl: string;
+  // Website leads (public-submit) have no agent. When true, the Agent row is
+  // replaced with a "Source · Website lead" row so the TC knows this is a
+  // client-direct submission, not an agent handoff.
+  isWebsiteLead?: boolean;
 }
 
 export const TcNewFileAssigned: React.FC<Props> = ({
@@ -22,6 +26,7 @@ export const TcNewFileAssigned: React.FC<Props> = ({
   serviceName,
   closingDate,
   portalUrl,
+  isWebsiteLead,
 }) => (
   <div style={{
     fontFamily: "Inter, -apple-system, BlinkMacSystemFont, sans-serif",
@@ -70,10 +75,20 @@ export const TcNewFileAssigned: React.FC<Props> = ({
     }}>
       <table style={{ width: "100%", fontSize: 14, borderCollapse: "collapse" }}>
         <tbody>
-          <tr>
-            <td style={{ color: "#8a7f6a", padding: "5px 0", width: 110, verticalAlign: "top" }}>Agent</td>
-            <td style={{ padding: "5px 0", color: "#0f0f0f", fontWeight: 500 }}>{agentName}{agentEmail ? <span style={{ color: "#6b6b6b", fontWeight: 400, fontSize: 12, display: "block" }}>{agentEmail}</span> : null}</td>
-          </tr>
+          {isWebsiteLead ? (
+            <tr>
+              <td style={{ color: "#8a7f6a", padding: "5px 0", width: 110, verticalAlign: "top" }}>Source</td>
+              <td style={{ padding: "5px 0", color: "#0f0f0f", fontWeight: 500 }}>
+                Website lead
+                <span style={{ color: "#6b6b6b", fontWeight: 400, fontSize: 12, display: "block" }}>aaritransactions.com · no agent involved</span>
+              </td>
+            </tr>
+          ) : (
+            <tr>
+              <td style={{ color: "#8a7f6a", padding: "5px 0", width: 110, verticalAlign: "top" }}>Agent</td>
+              <td style={{ padding: "5px 0", color: "#0f0f0f", fontWeight: 500 }}>{agentName}{agentEmail ? <span style={{ color: "#6b6b6b", fontWeight: 400, fontSize: 12, display: "block" }}>{agentEmail}</span> : null}</td>
+            </tr>
+          )}
           <tr>
             <td style={{ color: "#8a7f6a", padding: "5px 0", verticalAlign: "top" }}>Property</td>
             <td style={{ padding: "5px 0", color: "#0f0f0f" }}>{propertyAddress}</td>
