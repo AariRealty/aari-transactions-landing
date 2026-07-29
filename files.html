@@ -25524,7 +25524,37 @@ Tell me your planned move-out date and I will set the inspection.`
     // keys off agent_id, so Samantha's credits could not apply and Eileen would have been billed
     // $80 a piece for work a credit had already paid for. There was no field, so there was no way
     // for her to get it right.
-    var _nfAgentId = null;
+    var _nfAgentId = null, _nfAddress = null;
+    // Property address · same Mapbox type-to-select lookup the offer intake uses, so a
+    // listing captures a standardized address up front (no more three-dots-later).
+    var _NF_MAPBOX = 'pk.eyJ1IjoibWFybGVueWliIiwiYSI6ImNtcHlya3FyZTBhNDkycXB5eHFxYWNuOHAifQ.6iJYZ3ApLhqJi9D2r9shlw';
+    function nfAddrHtml(){
+      return '<p class="nf-bigsub" style="text-align:left;margin:0 0 8px;font-weight:600;color:#0f0f0f;font-size:13px">Property address</p>' +
+        '<input id="nf-addr-input" type="text" autocomplete="off" placeholder="Start typing the address, then pick it" value="' + esc(_nfAddress || '') + '" style="width:100%;box-sizing:border-box;font-family:inherit;font-size:14.5px;padding:11px 12px;border:1px solid rgba(15,15,15,0.18);border-radius:8px;background:#fff;color:#0f0f0f">' +
+        '<p class="nf-note" style="text-align:left;margin:6px 0 18px">Start typing and pick from the list so the address is standardized.</p>';
+    }
+    function nfWireAddr(inp, onCommit){
+      if(!inp || inp.__nfAddrWired) return; inp.__nfAddrWired = true;
+      var wrap = document.createElement('div'); wrap.style.position = 'relative'; inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp);
+      var menu = document.createElement('div'); menu.style.cssText = 'display:none;position:absolute;left:0;right:0;top:calc(100% + 4px);background:#fff;border:1px solid #e3ddd1;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.14);z-index:60;overflow-y:auto;max-height:240px'; wrap.appendChild(menu);
+      var timer = null, seq = 0;
+      function hide(){ menu.style.display = 'none'; menu.innerHTML = ''; }
+      inp.addEventListener('input', function(){ var q = inp.value.trim(); if(timer) clearTimeout(timer); if(q.length < 4){ hide(); return; }
+        timer = setTimeout(function(){ var my = ++seq;
+          fetch('https://api.mapbox.com/search/geocode/v6/forward?q=' + encodeURIComponent(q) + '&autocomplete=true&country=us&types=address&limit=6&proximity=-81.87,26.64&access_token=' + encodeURIComponent(_NF_MAPBOX))
+          .then(function(r){ return r.json(); }).then(function(d){ if(my !== seq) return;
+            var seen = {}, rows = ((d && d.features) || []).map(function(f){ var p = f.properties || {}; return { s:(p.full_address || p.place_formatted || p.name || '').replace(/, United States$/, '') }; }).filter(function(o){ if(!o.s || seen[o.s]) return false; seen[o.s] = true; return true; });
+            if(!rows.length){ hide(); return; }
+            menu.innerHTML = rows.map(function(o, i){ return '<div data-i="' + i + '" style="padding:10px 12px;font-size:14px;color:#2b2b2b;cursor:pointer;border-bottom:0.5px solid #f2ede3">' + esc(o.s) + '</div>'; }).join('');
+            menu.style.display = 'block';
+            menu.querySelectorAll('[data-i]').forEach(function(b){ b.addEventListener('mousedown', function(e){ e.preventDefault(); var o = rows[parseInt(b.getAttribute('data-i'), 10)] || {}; inp.value = o.s || ''; hide(); if(onCommit) onCommit(o.s || ''); }); });
+          }).catch(function(){ if(my === seq) hide(); });
+        }, 300);
+      });
+      // Enter commits a typed address Mapbox doesn't list, so a valid address never dead-ends.
+      inp.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); hide(); var v = inp.value.trim(); if(v && onCommit) onCommit(v); } });
+      inp.addEventListener('blur', function(){ setTimeout(hide, 180); });
+    }
     function nfAgentPickHtml(){
       var val = (_nfAgentId && _agentNameById && _agentNameById[_nfAgentId]) || '';
       return '<p class="nf-bigsub" style="text-align:left;margin:0 0 8px;font-weight:600;color:#0f0f0f;font-size:13px">Whose file is this?</p>' +
@@ -25580,6 +25610,8 @@ Tell me your planned move-out date and I will set the inspection.`
           var bottom = '';
           if(!_nfAgentId){
             bottom = '<button type="button" class="nf-go" id="nf-go" disabled>Say whose file this is &rarr;</button>';
+          } else if(!_nfAddress){
+            bottom = '<button type="button" class="nf-go" id="nf-go" disabled>Add the property address &rarr;</button>';
           } else if(!_nfLstSvc){
             bottom = '<button type="button" class="nf-go" id="nf-go" disabled>Pick a service &rarr;</button>';
           } else if(needUpload){
@@ -25591,7 +25623,7 @@ Tell me your planned move-out date and I will set the inspection.`
             bottom = '<p class="nf-note">' + noteTxt + '</p><button type="button" class="nf-go" id="nf-go">Start the file &rarr;</button>';
           }
           html = '<p class="nf-bigq">Listing file</p><p class="nf-bigsub">Pick the service.</p>'
-            + nfAgentPickHtml() + rows + bottom + '<div class="nf-err" id="nf-err"></div>';
+            + nfAgentPickHtml() + nfAddrHtml() + rows + bottom + '<div class="nf-err" id="nf-err"></div>';
         } else {
           var sides = [['buyer','Buyer side','TC, one side'],['seller','Seller side','TC, one side · listing side'],['both','Both sides','TC, both sides']];
           var rows2 = sides.map(function(s){ return '<div class="nf-row' + (_nfSide === s[0] ? ' sel' : '') + '" data-side="' + s[0] + '"><div class="rt">' + s[1] + '<div class="rp">' + s[2] + '</div></div></div>'; }).join('');
@@ -25633,6 +25665,8 @@ Tell me your planned move-out date and I will set the inspection.`
         _ai.addEventListener('blur', function(){ setTimeout(function(){ if(_ar) _ar.style.display = 'none'; }, 160); });
         _ar.addEventListener('mousedown', function(e){ var p = e.target.closest && e.target.closest('[data-nf-pick]'); if(!p) return; e.preventDefault(); _nfAgentId = p.getAttribute('data-nf-pick'); _ai.value = _agentNameById[_nfAgentId] || ''; _ar.style.display = 'none'; _syncGo(); });
       }
+      var _addrIn = document.getElementById('nf-addr-input');
+      if(_addrIn){ nfWireAddr(_addrIn, function(addr){ _nfAddress = (addr || '').trim() || null; nfRenderStep(); }); }
       nfWireDrop();
       var go = document.getElementById('nf-go'); if(go) go.onclick = function(){ if(go.disabled) return; _nfSkip = !_nfFile; nfScan(); };
       var rm = document.getElementById('nf-rmv'); if(rm) rm.onclick = function(e){ e.stopPropagation(); _nfFile = null; nfRenderStep(); };
@@ -25741,7 +25775,7 @@ Tell me your planned move-out date and I will set the inspection.`
       return 250 + n*step + 350;
     }
     function resetNewFileModal(){
-      _nfFile=null; _nfSide=null; _nfLstSvc=null; _nfSkip=false; _nfBusy=false; _nfStep=1; _nfPath='';
+      _nfFile=null; _nfSide=null; _nfLstSvc=null; _nfSkip=false; _nfBusy=false; _nfStep=1; _nfPath=''; _nfAgentId=null; _nfAddress=null;
       try{ nfRenderStep(); }catch(_){}
     }
     function openNewFileFlow(){
@@ -25816,7 +25850,7 @@ Tell me your planned move-out date and I will set the inspection.`
           var fr = document.getElementById('nf-frame'); if(fr && signed){ try{ fr.src = signed + '#toolbar=0&view=FitH&navpanes=0'; }catch(_){ } }
         }
         var _clientSide = (_nfSide === 'buyer') ? 'buyer' : (_nfSide === 'both') ? 'both' : 'seller'; // seller + listing → seller side
-        var row = { id:id, agent_id:_nfAgentId, service_type:svcId, file_type:svcFileType, property_address:'', assigned_tc_id:uid, is_aari_engaged:true, status:'intake_received', transaction_stage:'new', client_type:_clientSide,
+        var row = { id:id, agent_id:_nfAgentId, service_type:svcId, file_type:svcFileType, property_address:(_nfAddress || ''), assigned_tc_id:uid, is_aari_engaged:true, status:'intake_received', transaction_stage:'new', client_type:_clientSide,
           raw_form_data:{ submitted_by_tc:true, tc_submitter_id:uid, represents:_nfSide, agent_name:((_agentNameById||{})[_nfAgentId]||''), submitted_for_agent_id:_nfAgentId, contract_url:signed, contract_filename:safe, contract_path:path, submission_id:id } };
         var ins = await _client.from('files').insert(row).select('id').single();
         if(ins && ins.error) throw new Error(ins.error.message);
