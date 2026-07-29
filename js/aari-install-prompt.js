@@ -2,19 +2,17 @@
    Aari Transactions · Add-to-Home-Screen prompt
    ============================================================================
    Slides in a friendly bottom sheet that walks the user through pinning the
-   portal to their home screen. Handles iOS Safari (manual instructions with
-   the Share-sheet icon), Android Chrome (native beforeinstallprompt), and
-   quietly hides on desktop or when the site is already installed.
+   portal to their home screen (mobile) or bookmarking/installing it (desktop).
+
+   - Runs once. Any dismissal — "Yes, I saved it", "Maybe later", the X, or
+     tapping the scrim — sets a permanent localStorage flag so it never nags
+     again on that device.
+   - Detects iOS Safari, Android Chrome, desktop Chrome/Edge (native install),
+     desktop Safari (Add to Dock), and everything else (bookmark instructions).
+   - Auto-hides on already-standalone (i.e. already installed).
 
    Usage:
-     AariInstallPrompt.autoShow({
-       role: 'tc' | 'broker' | 'agent',   // pick the copy
-       storageKey: 'aari.install.dismissed.tc'  // optional dedupe key
-     });
-
-   The prompt shows at most once per storageKey (localStorage). If the browser
-   is already in standalone mode (icon opened from the home screen) it never
-   shows.
+     AariInstallPrompt.autoShow({ role: 'tc' | 'broker' | 'agent' });
    ============================================================================ */
 (function () {
   'use strict';
@@ -24,6 +22,8 @@
     '.aip-scrim.show{opacity:1;pointer-events:auto}',
     '.aip-sheet{position:fixed;left:0;right:0;bottom:0;background:#ffffff;border-radius:20px 20px 0 0;padding:28px 24px 32px;box-shadow:0 -12px 40px rgba(0,0,0,.24);z-index:9999;font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;transform:translateY(100%);transition:transform .34s cubic-bezier(.22,.61,.36,1);max-width:520px;margin:0 auto}',
     '.aip-sheet.show{transform:translateY(0)}',
+    // Desktop: center the sheet instead of docking to bottom.
+    '@media(min-width:720px){.aip-sheet{left:50%;right:auto;bottom:auto;top:50%;transform:translate(-50%,-40%);border-radius:20px;max-width:480px;width:calc(100vw - 40px)}.aip-sheet.show{transform:translate(-50%,-50%)}}',
     '.aip-close{position:absolute;top:14px;right:14px;background:#f2f2f0;border:none;color:#0f0f0f;font-size:20px;cursor:pointer;width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;line-height:1;padding:0}',
     '.aip-close:hover{background:#e6e6e2}',
     '.aip-row{display:flex;gap:14px;align-items:center;margin-bottom:22px;padding-right:44px}',
@@ -43,6 +43,8 @@
     '.aip-later:hover{color:#0f0f0f}',
     '.aip-nudge{position:fixed;left:14px;right:14px;bottom:14px;background:#0f0f0f;color:#fff;border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:12px;box-shadow:0 8px 28px rgba(0,0,0,.28);z-index:9997;font-family:Inter,sans-serif;transform:translateY(140%);transition:transform .3s cubic-bezier(.22,.61,.36,1);cursor:pointer;max-width:520px;margin:0 auto}',
     '.aip-nudge.show{transform:translateY(0)}',
+    // Desktop nudge: right-aligned, more compact.
+    '@media(min-width:720px){.aip-nudge{left:auto;right:20px;bottom:20px;max-width:360px;margin:0}}',
     '.aip-nudge-icon{flex-shrink:0;width:38px;height:38px;border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center}',
     '.aip-nudge-icon img{width:30px;height:30px;object-fit:contain}',
     '.aip-nudge-body{flex:1;min-width:0}',
@@ -54,22 +56,22 @@
 
   var COPY = {
     tc: {
-      title: 'Save Aari to your home screen',
-      sub: 'Get file alerts on your lock screen and open the app in one tap.',
-      nudgeTitle: 'Save Aari to your home screen',
-      nudgeSub: 'One-tap access + lock-screen alerts'
+      title: 'Save the Aari TC hub to your device',
+      sub: 'One tap to your file board, lock-screen alerts when a client submits.',
+      nudgeTitle: 'Save Aari TC hub for one-tap access',
+      nudgeSub: 'Tap to see how'
     },
     broker: {
-      title: 'Save Aari to your home screen',
-      sub: 'One-tap access to the broker cockpit + lock-screen alerts for website leads.',
-      nudgeTitle: 'Save Aari to your home screen',
-      nudgeSub: 'For lock-screen website-lead alerts'
+      title: 'Save Aari Broker to your device',
+      sub: 'One-tap access to the cockpit plus lock-screen alerts for website leads.',
+      nudgeTitle: 'Save Aari Broker for one-tap access',
+      nudgeSub: 'Tap to see how'
     },
     agent: {
-      title: 'Save Aari to your home screen',
+      title: 'Save Aari to your device',
       sub: 'One tap to check on your files, no browser fumbling.',
-      nudgeTitle: 'Save Aari to your home screen',
-      nudgeSub: 'One-tap access from your home screen'
+      nudgeTitle: 'Save Aari to your device',
+      nudgeSub: 'Tap to see how'
     }
   };
 
@@ -87,55 +89,94 @@
   }
 
   function isStandalone() {
-    // iOS: navigator.standalone. Everywhere else: display-mode media query.
     if (window.navigator && window.navigator.standalone === true) return true;
     if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) return true;
     return false;
   }
 
-  function isIos() {
-    return /iP(hone|ad|od)/.test(navigator.userAgent) && !window.MSStream;
+  var UA = navigator.userAgent;
+  function isIos() { return /iP(hone|ad|od)/.test(UA) && !window.MSStream; }
+  function isAndroid() { return /Android/.test(UA); }
+  function isMac() { return /Macintosh/.test(UA) && !isIos(); }
+  function isChromiumDesktop() {
+    // Chrome, Edge, Brave, Arc — anything Blink-based on desktop.
+    return !isIos() && !isAndroid() && /(Chrome|Chromium|Edg|OPR)\//.test(UA);
   }
-
-  function isAndroidChrome() {
-    return /Android/.test(navigator.userAgent) && /Chrome/.test(navigator.userAgent);
-  }
-
-  function isMobile() {
-    return isIos() || /Android|Mobile/.test(navigator.userAgent);
+  function isSafariDesktop() {
+    return isMac() && /Safari/.test(UA) && !/Chrome|Chromium|Edg|OPR/.test(UA);
   }
 
   var _deferredPrompt = null;
   window.addEventListener('beforeinstallprompt', function (e) {
-    // Android Chrome: stash the event so we can trigger the native prompt on tap.
+    // Chrome/Edge (Android + desktop): stash the event so we can trigger the
+    // native prompt when the user taps the CTA.
     e.preventDefault();
     _deferredPrompt = e;
   });
 
-  function showSheet(copy) {
+  function stepsForEnvironment() {
+    if (isIos()) {
+      return [
+        'Tap the <span class="aip-share">' + SHARE_SVG + 'Share</span> button at the bottom of Safari.',
+        'Scroll down and tap <b>Add to Home Screen</b>.',
+        'Tap <b>Add</b> in the top-right corner.'
+      ];
+    }
+    if (isAndroid() && _deferredPrompt) {
+      return [
+        'Tap <b>Install app</b> below.',
+        'Confirm in the Chrome prompt.'
+      ];
+    }
+    if (isAndroid()) {
+      return [
+        'Open the Chrome menu (⋮).',
+        'Tap <b>Install app</b> or <b>Add to Home Screen</b>.'
+      ];
+    }
+    if (isChromiumDesktop() && _deferredPrompt) {
+      return [
+        'Tap <b>Install app</b> below.',
+        'Confirm in the browser prompt.'
+      ];
+    }
+    if (isChromiumDesktop()) {
+      return [
+        'Click the install icon in the address bar (looks like a small monitor).',
+        'Or open the browser menu (⋮) and choose <b>Install Aari</b>.'
+      ];
+    }
+    if (isSafariDesktop()) {
+      return [
+        'Open the <b>File</b> menu at the top of Safari.',
+        'Choose <b>Add to Dock…</b> and confirm.'
+      ];
+    }
+    // Generic fallback.
+    return [
+      'Open your browser menu.',
+      'Choose <b>Install app</b>, <b>Add to Home Screen</b>, or bookmark this page.'
+    ];
+  }
+
+  function ctaLabel() {
+    if ((isChromiumDesktop() || isAndroid()) && _deferredPrompt) return 'Install app';
+    return 'Yes, I saved it';
+  }
+
+  function showSheet(copy, permanentDismiss) {
     injectCss();
     var scrim = document.createElement('div');
     scrim.className = 'aip-scrim';
     var sheet = document.createElement('div');
     sheet.className = 'aip-sheet';
     sheet.setAttribute('role', 'dialog');
-    sheet.setAttribute('aria-label', 'Add to Home Screen');
+    sheet.setAttribute('aria-label', 'Save Aari to your device');
 
-    var stepsHtml = '';
-    if (isIos()) {
-      stepsHtml =
-        '<li class="aip-step"><span class="aip-step-num">1</span><div>Tap the <span class="aip-share">' + SHARE_SVG + 'Share</span> button at the bottom of Safari.</div></li>' +
-        '<li class="aip-step"><span class="aip-step-num">2</span><div>Scroll down and tap <b>Add to Home Screen</b>.</div></li>' +
-        '<li class="aip-step"><span class="aip-step-num">3</span><div>Tap <b>Add</b> in the top-right corner.</div></li>';
-    } else if (isAndroidChrome() && _deferredPrompt) {
-      stepsHtml =
-        '<li class="aip-step"><span class="aip-step-num">1</span><div>Tap <b>Install</b> below.</div></li>' +
-        '<li class="aip-step"><span class="aip-step-num">2</span><div>Confirm in the Chrome prompt.</div></li>';
-    } else {
-      stepsHtml =
-        '<li class="aip-step"><span class="aip-step-num">1</span><div>Open your browser menu.</div></li>' +
-        '<li class="aip-step"><span class="aip-step-num">2</span><div>Tap <b>Add to Home Screen</b> (Safari) or <b>Install app</b> (Chrome).</div></li>';
-    }
+    var steps = stepsForEnvironment();
+    var stepsHtml = steps.map(function (t, i) {
+      return '<li class="aip-step"><span class="aip-step-num">' + (i + 1) + '</span><div>' + t + '</div></li>';
+    }).join('');
 
     sheet.innerHTML =
       '<button type="button" class="aip-close" aria-label="Dismiss">&times;</button>' +
@@ -147,10 +188,8 @@
         '</div>' +
       '</div>' +
       '<ul class="aip-steps">' + stepsHtml + '</ul>' +
-      (isAndroidChrome() && _deferredPrompt
-        ? '<button type="button" class="aip-cta" id="aip-install">Install app</button>'
-        : '<button type="button" class="aip-cta" id="aip-install">Got it</button>') +
-      '<button type="button" class="aip-later">Maybe later</button>';
+      '<button type="button" class="aip-cta" id="aip-install">' + ctaLabel() + '</button>' +
+      '<button type="button" class="aip-later">Don’t show this again</button>';
 
     document.body.appendChild(scrim);
     document.body.appendChild(sheet);
@@ -159,7 +198,8 @@
       sheet.classList.add('show');
     });
 
-    function dismiss() {
+    function dismiss(markDone) {
+      permanentDismiss();
       scrim.classList.remove('show');
       sheet.classList.remove('show');
       setTimeout(function () {
@@ -168,9 +208,9 @@
       }, 360);
     }
 
-    scrim.addEventListener('click', dismiss);
-    sheet.querySelector('.aip-close').addEventListener('click', dismiss);
-    sheet.querySelector('.aip-later').addEventListener('click', dismiss);
+    scrim.addEventListener('click', function () { dismiss(false); });
+    sheet.querySelector('.aip-close').addEventListener('click', function () { dismiss(false); });
+    sheet.querySelector('.aip-later').addEventListener('click', function () { dismiss(false); });
     sheet.querySelector('#aip-install').addEventListener('click', async function () {
       if (_deferredPrompt) {
         try {
@@ -179,11 +219,11 @@
         } catch (_) {}
         _deferredPrompt = null;
       }
-      dismiss();
+      dismiss(true);
     });
   }
 
-  function showNudge(copy, onOpen) {
+  function showNudge(copy, onOpen, permanentDismiss) {
     injectCss();
     var nudge = document.createElement('div');
     nudge.className = 'aip-nudge';
@@ -204,16 +244,20 @@
       setTimeout(function () { if (nudge.parentNode) nudge.parentNode.removeChild(nudge); }, 320);
     }
 
+    // Explicit X: permanently dismiss so it never comes back.
     nudge.querySelector('.aip-nudge-x').addEventListener('click', function (e) {
       e.stopPropagation();
+      permanentDismiss();
       hide();
     });
+    // Tap the body: open the full sheet.
     nudge.addEventListener('click', function () {
       hide();
       onOpen();
     });
 
-    // Auto-hide after 14s if the user ignores.
+    // Auto-hide after 14s without marking dismissed — so it can nudge again
+    // on the next visit if the user ignored it entirely.
     setTimeout(hide, 14000);
   }
 
@@ -223,25 +267,40 @@
     var storageKey = opts.storageKey || ('aari.install.dismissed.' + role);
     var copy = COPY[role] || COPY.tc;
 
-    if (isStandalone()) return;      // already installed
-    if (!isMobile()) return;         // desktop doesn't need home-screen pinning
+    if (isStandalone()) return; // already installed
     try {
-      if (localStorage.getItem(storageKey)) return;  // already dismissed once
-    } catch (_) { /* localStorage may be disabled — continue */ }
+      if (localStorage.getItem(storageKey)) return;
+    } catch (_) { /* localStorage disabled — continue */ }
+
+    function permanentDismiss() {
+      try { localStorage.setItem(storageKey, String(Date.now())); } catch (_) {}
+    }
 
     // Delay a beat so we don't fight the page's own onload work.
     setTimeout(function () {
       showNudge(copy, function () {
-        showSheet(copy);
-        try { localStorage.setItem(storageKey, String(Date.now())); } catch (_) {}
-      });
+        showSheet(copy, permanentDismiss);
+      }, permanentDismiss);
     }, 2200);
   }
 
   window.AariInstallPrompt = {
     autoShow: autoShow,
-    showSheet: function (role) { showSheet(COPY[role] || COPY.tc); },
-    isStandalone: isStandalone,
-    isMobile: isMobile
+    showSheet: function (role) {
+      var copy = COPY[role] || COPY.tc;
+      var storageKey = 'aari.install.dismissed.' + role;
+      showSheet(copy, function () {
+        try { localStorage.setItem(storageKey, String(Date.now())); } catch (_) {}
+      });
+    },
+    reset: function (role) {
+      // Handy escape hatch: AariInstallPrompt.reset('tc') from the console
+      // clears the dismissal flag so the nudge appears again on next load.
+      try {
+        var key = 'aari.install.dismissed.' + (role || 'tc');
+        localStorage.removeItem(key);
+      } catch (_) {}
+    },
+    isStandalone: isStandalone
   };
 })();
