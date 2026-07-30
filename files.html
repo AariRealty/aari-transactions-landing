@@ -13742,20 +13742,31 @@ Tell me your planned move-out date and I will set the inspection.`
       const _items = byDay[ts] || [];
       const c = _items.length, isToday = ts === t0, isSel = ts === _calSelDay;
       const _real = _items.filter(function(x){ return !x.isChase; });    // real contract deadlines
-      const _hasReal = _real.length > 0;
-      const isOver = ts < t0 && _hasReal;                               // a real deadline already passed
-      const rep = _hasReal ? _real[0] : _items[0];                      // representative item for the chip
-      let s = 'min-height:100px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:8px 9px;font-size:15px;position:relative;border-radius:9px;cursor:pointer;color:#0f0f0f;';
+      let s = 'min-height:100px;display:flex;flex-direction:column;align-items:flex-start;gap:5px;padding:8px 9px;font-size:15px;position:relative;border-radius:9px;cursor:pointer;color:#0f0f0f;';
       if(isToday) s += 'font-weight:700;box-shadow:inset 0 0 0 2px #0f0f0f;';
       else if(isSel) s += 'box-shadow:inset 0 0 0 1.5px #0f0f0f;';
+      // As many task chips as fit (real deadlines first, then follow-ups), then a "+N more".
+      // Completed items stay on the day as a muted, struck-through reference chip.
       let chip = '';
-      if(rep){
-        const tag = _calChipTag(rep.key, rep.label) + (c > 1 ? ' +' + (c - 1) : '');
-        let cs;
-        if(isOver) cs = 'background:#a3402f;color:#fff;';               // overdue · red, only when truly late
-        else if(rep.isChase) cs = 'background:#f6edd9;color:#8a6a1f;';  // follow-up · the one amber accent
-        else cs = 'background:#0f0f0f;color:#fff;';                     // deadline · ink
-        chip = '<span style="max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8.5px;font-weight:800;letter-spacing:.2px;text-transform:uppercase;line-height:1;padding:3px 6px;border-radius:5px;' + cs + '">' + esc(tag) + '</span>';
+      if(_items.length){
+        const MAXC = 2;
+        const _dstat = (typeof _deadlinesByFile !== 'undefined' && _deadlinesByFile) || {};
+        const _cellDone = function(it){ try { const bk = String(it.key||'').replace(/__chase$/,''); const st = _dstat[it.fileId] || {}; const rc = (typeof _dlRecFor === 'function') ? _dlRecFor(st, bk) : null; return !!(rc && rc.completed_at); } catch(_){ return false; } };
+        const ordered = _real.concat(_items.filter(function(x){ return x.isChase; }));
+        const shownItems = ordered.slice(0, MAXC);
+        const moreN = _items.length - shownItems.length;
+        const chipBase = 'max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8.5px;font-weight:800;letter-spacing:.2px;text-transform:uppercase;line-height:1;padding:3px 6px;border-radius:5px;';
+        chip = shownItems.map(function(it){
+          const done = _cellDone(it);
+          const over = !it.isChase && (ts < t0) && !done;
+          let cs;
+          if(done) cs = 'background:#eef1ea;color:#8a938a;text-decoration:line-through;';   // completed · kept for reference
+          else if(over) cs = 'background:#f3ddd6;color:#8a4b2f;';                             // overdue · soft clay
+          else if(it.isChase) cs = 'background:#f6edd9;color:#8a6a1f;';                       // follow-up · amber
+          else cs = 'background:#0f0f0f;color:#fff;';                                         // deadline · ink
+          return '<span style="' + chipBase + cs + '">' + esc(_calChipTag(it.key, it.label)) + '</span>';
+        }).join('');
+        if(moreN > 0) chip += '<span style="' + chipBase + 'background:#efece6;color:#5f5e5a;">+' + moreN + ' more</span>';
       }
       cells += '<div data-cal-day="' + ts + '" style="' + s + '"><span style="line-height:1">' + d + '</span>' + chip + '</div>';
     }
@@ -13843,11 +13854,12 @@ Tell me your planned move-out date and I will set the inspection.`
         bubble = '<span style="flex:none;font-size:10px;font-weight:600;color:#2f6b4f;background:#e8f3ec;border:0.5px solid #cfe4d6;border-radius:20px;padding:3px 11px;white-space:nowrap">Done &#10003;</span>';
       } else if(n != null){
         bubble = (n <= 0)
-          ? '<span style="flex:none;font-size:10px;font-weight:700;color:#fff;background:#9a3a2c;border-radius:20px;padding:3px 11px;white-space:nowrap">Due today</span>'
+          ? '<span style="flex:none;font-size:10px;font-weight:700;color:#993c1d;background:#faece7;border:0.5px solid #f3d9d0;border-radius:20px;padding:3px 11px;white-space:nowrap">Due today</span>'
           : '<span style="flex:none;font-size:10px;font-weight:600;color:#8a6d1b;background:#faf3e6;border:0.5px solid #ecdfc4;border-radius:20px;padding:3px 11px;white-space:nowrap">Due in ' + n + ' day' + (n === 1 ? '' : 's') + '</span>';
       }
-      const tagCol = side==='notset' ? '#8a6d1b' : '#5f5e5a';
-      const tagBg = side==='notset' ? '#fbf7ee' : '#f1efe8';
+      // Pastel side pills · buyer cream, seller sage, not-set soft gold — all distinct.
+      const tagCol = side==='buyer' ? '#5f5e5a' : side==='seller' ? '#085041' : '#8a6d1b';
+      const tagBg  = side==='buyer' ? '#f1efe8' : side==='seller' ? '#e1f5ee' : '#fbf7ee';
       return '<div data-cal-open="'+esc(d.fileId)+'" style="display:flex;align-items:center;gap:9px;padding:9px 0;border-top:0.5px solid #f3f0ea;cursor:pointer;' + (done ? 'opacity:.55;' : '') + '">' +
         '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:'+tagCol+';background:'+tagBg+';border-radius:20px;padding:2px 8px">'+esc(_sideTag[side])+'</span>' +
         '<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:#0f0f0f">'+esc(nm)+'</div><div style="font-size:11px;color:#8a857c;margin-top:2px">'+addr+'</div></div>' +
