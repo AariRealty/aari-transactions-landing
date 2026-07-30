@@ -29,6 +29,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<script>
+  // Mobile URL clean-up · Marlenyi Jul 30: "make the website go to this url on
+  // mobile https://aaritransactions.com/tc-portal". /tc-portal is a Netlify 200
+  // rewrite to this exact file (same content, see _redirects) — this just swaps
+  // what shows in the address bar on a phone, so any old bookmark, home-screen
+  // icon, or push-notification tap that lands on /files.html silently becomes
+  // /tc-portal instead. As early as possible, before anything else runs.
+  // Mobile-only (matches the ≤600px breakpoint used elsewhere on this page) —
+  // desktop keeps /files.html untouched, per the "don't touch web" rule.
+  try {
+    if (window.innerWidth <= 600 && /^\/files\.html\/?$/.test(location.pathname)) {
+      history.replaceState(null, '', '/tc-portal');
+    }
+  } catch(_){}
+</script>
 <title>Files &middot; Aari Transactions</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#0f0f0f">
@@ -8055,7 +8070,7 @@ Tell me your planned move-out date and I will set the inspection.`
       // needed, so both are loaded, and this one is checked rather than swallowed, because an
       // empty picker sends a coordinator straight back to guessing.
       const { data: _ppl, error: _pplErr } = await _client.from('agents')
-        .select('id, first_name, last_name, email, role, brokerage_name, merged_into, default_confidential_remarks, tc_may_email_client, tc_may_publish_mls, tc_may_order_paid').in('role', ['agent','tc','broker']);
+        .select('id, first_name, last_name, email, role, brokerage_name, merged_into, default_confidential_remarks').in('role', ['agent','tc','broker']);
       if(_pplErr) console.error('agent roster load failed · the New file picker will be empty and file ownership cannot be set', _pplErr);
       (_ppl || []).forEach(a => {
         if(a.merged_into) return; // merged duplicates never show in any picker
@@ -8063,9 +8078,7 @@ Tell me your planned move-out date and I will set the inspection.`
         if(nm) _agentNameById[a.id] = nm;
         else if(a.email) _agentNameById[a.id] = a.email;
         // remarks = the agent's saved default confidential remarks (set in their own portal · Listing defaults)
-        _agentMetaById[a.id] = { name:(nm || a.email || ''), email:a.email || '', brokerage:a.brokerage_name || '', remarks:a.default_confidential_remarks || '',
-          // TC authority · smooth (permissive) default when the column is missing/undefined.
-          authority:{ email_client: a.tc_may_email_client !== false, publish_mls: a.tc_may_publish_mls !== false, order_paid: a.tc_may_order_paid !== false } };
+        _agentMetaById[a.id] = { name:(nm || a.email || ''), email:a.email || '', brokerage:a.brokerage_name || '', remarks:a.default_confidential_remarks || '' };
       });
     }
     // Active Aari Transactions memberships · a member gets $50 off every TC file (the discount
@@ -19867,16 +19880,6 @@ Tell me your planned move-out date and I will set the inspection.`
   // The task the TC checks IS the signal, so there is no second place to declare
   // the same thing. service_stage is still the value the board, billing and agent
   // portal read — we just compute it from the work instead of asking for it.
-  // TC authority · does this file's agent let the TC take an action without asking first?
-  // Permissive default (true) when the agent or setting is unknown — the Aari standard floor.
-  // Keys: 'email_client', 'publish_mls', 'order_paid'. Set in the agent portal · Working with your TC.
-  function tcAuthority(file, key){
-    try {
-      const m = (file && _agentMetaById && _agentMetaById[file.agent_id]) || null;
-      if(!m || !m.authority) return true;
-      return m.authority[key] !== false;
-    } catch(_){ return true; }
-  }
   function deriveListingServiceStage(file){
     var track = svcTrack(file);
     if(!track || !track.length) return null;
@@ -24445,25 +24448,6 @@ Tell me your planned move-out date and I will set the inspection.`
       if(rA && rA.error){ _currentFile.stage_tasks = prevST; _currentFile.tc_accepted_at = prevAcc; renderStageChecklist(_currentFile); alert('Could not save acceptance — check your connection and try again.'); }
       else { try { renderKanban(); } catch(_){} }
       return;
-    }
-    // TC authority gate · this agent asked to approve go-live before the listing publishes.
-    // lst_mls_input is the live trigger, so hold it until the TC confirms the agent's okay.
-    if(taskId === 'lst_mls_input' && cb.checked && !tcAuthority(_currentFile, 'publish_mls')){
-      const _an = stdAgentFirstName(_currentFile);
-      if(!confirm(_an + ' asked to give the okay before this listing goes live on MLS. Have you confirmed with ' + _an + ' that it can publish now?')){
-        cb.checked = false;
-        return;
-      }
-    }
-    // TC authority gate · this agent asked to approve any paid third-party order first.
-    // These tasks all put money out on the file (HOA docs, lien search, estoppels, elevation cert).
-    const PAID_TASK_IDS = { wtc_hoa_request:1, lst_hoa:1, uc_lien_search:1, uc_elevation_cert:1, uc_tenant_estoppel_request:1 };
-    if(PAID_TASK_IDS[taskId] && cb.checked && !tcAuthority(_currentFile, 'order_paid')){
-      const _an = stdAgentFirstName(_currentFile);
-      if(!confirm(_an + ' asked to give the okay before paid items are ordered. Have you confirmed with ' + _an + ' before ordering this?')){
-        cb.checked = false;
-        return;
-      }
     }
     const cur = (_currentFile.stage_tasks && typeof _currentFile.stage_tasks === 'object') ? { ..._currentFile.stage_tasks } : {};
     if(cb.checked){
