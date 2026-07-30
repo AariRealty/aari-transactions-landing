@@ -8064,14 +8064,14 @@ Tell me your planned move-out date and I will set the inspection.`
       // needed, so both are loaded, and this one is checked rather than swallowed, because an
       // empty picker sends a coordinator straight back to guessing.
       const { data: _ppl, error: _pplErr } = await _client.from('agents')
-        .select('id, first_name, last_name, email, role, brokerage_name, merged_into').in('role', ['agent','tc','broker']);
+        .select('id, first_name, last_name, email, role, brokerage_name, merged_into, preferred_listing_remarks').in('role', ['agent','tc','broker']);
       if(_pplErr) console.error('agent roster load failed · the New file picker will be empty and file ownership cannot be set', _pplErr);
       (_ppl || []).forEach(a => {
         if(a.merged_into) return; // merged duplicates never show in any picker
         const nm = [a.first_name, a.last_name].filter(Boolean).join(' ').trim();
         if(nm) _agentNameById[a.id] = nm;
         else if(a.email) _agentNameById[a.id] = a.email;
-        _agentMetaById[a.id] = { name:(nm || a.email || ''), email:a.email || '', brokerage:a.brokerage_name || '' };
+        _agentMetaById[a.id] = { name:(nm || a.email || ''), email:a.email || '', brokerage:a.brokerage_name || '', remarks:a.preferred_listing_remarks || '' };
       });
     }
     // Active Aari Transactions memberships · a member gets $50 off every TC file (the discount
@@ -20941,6 +20941,52 @@ Tell me your planned move-out date and I will set the inspection.`
       { key:'hoa_docs_received_date', label:'HOA docs received date', type:'date' },
     ],
   };
+  // Aari's default listing remarks · offered as the example in the ask email and one-tap
+  // fill on the checklist when an agent has no saved preference.
+  var AARI_STD_REMARKS = `Please allow seller a minimum of 2 DAYS to respond to all offers. Closing date is firm. NO 'ON OR BEFORE' language accepted. Please submit all offers using the Florida Realtors/Florida Bar AS-IS Residential Contract or Vacant Land Contract for Sale and Purchase, along with proof of funds or pre-approval letter. Buyer and buyer's agent to perform all due diligence and verify all information including lot dimensions, zoning, utilities, and buildability. Information is deemed reliable but not guaranteed and subject to errors, omissions, and changes.`;
+  // Alex-voice ask email · optional example block flips in for a brand-new agent, and the
+  // email still flows when it is left out.
+  function remarksAskEmail(file, includeExample){
+    var raw = file.raw_form_data || {};
+    var agentFirst = String((_agentNameById[file.agent_id] || raw.agent_name || 'there')).split(' ')[0] || 'there';
+    var street = String(file.property_address || 'your listing').split(',')[0];
+    var subject = 'Quick one on your ' + street + ' listing';
+    var body = 'Hi ' + agentFirst + ',\n\n' +
+      'Getting your listing at ' + street + ' ready for the MLS.\n\n' +
+      'One thing before it goes live…\n\n' +
+      "Do you have remarks you'd like to use? The description buyers and agents read on the listing.\n\n" +
+      "If you've got a go-to, send it my way and I'll drop it right in.\n\n" +
+      (includeExample ? ('Not sure what to put? Here is what we often use, keep it as is or tweak it:\n\n"' + AARI_STD_REMARKS + '"\n\n') : '') +
+      'And I can save it to your profile so every future listing uses it automatically. One less thing on your plate.\n\n' +
+      "Or if it's just for this one, no problem at all, just say so.\n\n" +
+      'Prefer to leave remarks blank? That works too. Totally your call.\n\n' +
+      'Talk soon,\nMarlenyi';
+    return { subject: subject, body: body };
+  }
+  function remarksBlockHtml(file){
+    var lg = file.logistics || {};
+    var meta = (_agentMetaById && _agentMetaById[file.agent_id]) || {};
+    var profileRemarks = meta.remarks || '';
+    var agentFirst = String((_agentNameById[file.agent_id] || 'the agent')).split(' ')[0] || 'the agent';
+    var blank = (lg.remarks_blank === '1' || lg.remarks_blank === true);
+    var val = (lg.listing_remarks != null && lg.listing_remarks !== '') ? lg.listing_remarks : (blank ? '' : profileRemarks);
+    var note = (!lg.listing_remarks && profileRemarks && !blank) ? (" &middot; <span style=\"color:#8a6d1b\">using " + esc(agentFirst) + "'s saved remarks</span>") : (blank ? ' &middot; <span style="color:#8a6d1b">agent leaves blank</span>' : '');
+    var ta = 'width:100%;box-sizing:border-box;border:0.5px solid #dcdcdc;border-radius:7px;padding:8px 10px;font-size:12px;font-family:inherit;background:#fff;min-height:68px;resize:vertical';
+    var btn = 'font-size:11px;font-weight:600;border-radius:7px;padding:5px 11px;cursor:pointer;font-family:inherit;border:1px solid #d9d4ca;background:#fff;color:#5f5e5a';
+    return '<div class="cklg-remarks" style="margin:10px 0 6px 28px">' +
+      '<label style="font-size:10px;color:#8a877f;display:block;margin-bottom:4px">Listing remarks' + note + '</label>' +
+      '<textarea data-cklg-key="listing_remarks" placeholder="What goes on the MLS listing" style="' + ta + '">' + esc(val) + '</textarea>' +
+      '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:7px">' +
+        '<button type="button" data-remarks-std="1" style="' + btn + '">Use Aari standard</button>' +
+        '<button type="button" data-remarks-blank="1" style="' + btn + (blank ? ';background:#0f0f0f;color:#fff;border-color:#0f0f0f' : '') + '">Agent leaves blank</button>' +
+      '</div>' +
+      '<label style="display:flex;align-items:center;gap:7px;font-size:11px;color:#5f5e5a;margin-top:9px"><input type="checkbox" data-remarks-saveprofile="1"> Save to ' + esc(agentFirst) + "'s profile as default</label>" +
+      '<div style="display:flex;align-items:center;gap:10px;margin-top:9px;flex-wrap:wrap">' +
+        '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#5f5e5a"><input type="checkbox" data-remarks-example="1"> Include an example</label>' +
+        '<button type="button" data-remarks-draft="1" style="' + btn + ';background:#0f0f0f;color:#fff;border-color:#0f0f0f">Draft &amp; copy the ask email</button>' +
+      '</div>' +
+    '</div>';
+  }
   function logisticsFieldsHtml(file, taskId){
     const fields = LOGISTICS_BY_TASK[taskId];
     if(!fields) return '';
@@ -20962,7 +21008,7 @@ Tell me your planned move-out date and I will set the inspection.`
       return '<div style="display:flex;flex-direction:column;gap:3px' + (f.wide ? ';grid-column:1/-1' : '') + '">' +
         '<label style="font-size:10px;color:#8a877f">' + esc(f.label) + '</label>' + control +
       '</div>';
-    }).join('') + '</div>';
+    }).join('') + '</div>' + (taskId === 'lst_details' ? remarksBlockHtml(file) : '');
   }
   async function saveLogisticsField(file, key, value){
     try {
@@ -21016,9 +21062,31 @@ Tell me your planned move-out date and I will set the inspection.`
         saveLogisticsField(_drawerFile, suppEl.getAttribute('data-mls-supp'), suppEl.checked ? '1' : '');
         return;
       }
+      const spEl = e.target.closest && e.target.closest('[data-remarks-saveprofile]');
+      if(spEl && _drawerFile){
+        if(spEl.checked){
+          var _tar = document.querySelector('[data-cklg-key="listing_remarks"]');
+          var _rv = _tar ? (_tar.value || '').trim() : ((_drawerFile.logistics || {}).listing_remarks || '');
+          try { await _client.from('agents').update({ preferred_listing_remarks: _rv || null }).eq('id', _drawerFile.agent_id); if(_agentMetaById[_drawerFile.agent_id]) _agentMetaById[_drawerFile.agent_id].remarks = _rv; }
+          catch(err){ console.warn('[files] save remarks to profile failed', err); }
+        }
+        return;
+      }
       const el = e.target.closest && e.target.closest('[data-cklg-key]');
       if(!el || !_drawerFile) return;
       saveLogisticsField(_drawerFile, el.getAttribute('data-cklg-key'), (el.value || '').trim());
+    });
+    // Listing-remarks quick actions · Use Aari standard, Agent leaves blank, Draft + copy the ask email.
+    document.addEventListener('click', async function(e){
+      if(!e.target || !e.target.closest || !_drawerFile) return;
+      var std = e.target.closest('[data-remarks-std]');
+      if(std){ e.preventDefault(); var t = document.querySelector('[data-cklg-key="listing_remarks"]'); if(t){ t.value = AARI_STD_REMARKS; } saveLogisticsField(_drawerFile, 'remarks_blank', ''); saveLogisticsField(_drawerFile, 'listing_remarks', AARI_STD_REMARKS); try { renderStageChecklist(_currentFile || _drawerFile); } catch(_){} return; }
+      var bl = e.target.closest('[data-remarks-blank]');
+      if(bl){ e.preventDefault(); var cur = ((_drawerFile.logistics || {}).remarks_blank === '1'); saveLogisticsField(_drawerFile, 'remarks_blank', cur ? '' : '1'); if(!cur) saveLogisticsField(_drawerFile, 'listing_remarks', ''); try { renderStageChecklist(_currentFile || _drawerFile); } catch(_){} return; }
+      var dr = e.target.closest('[data-remarks-draft]');
+      if(dr){ e.preventDefault(); var ex = document.querySelector('[data-remarks-example]'); var em = remarksAskEmail(_drawerFile, !!(ex && ex.checked)); var txt = em.subject + '\n\n' + em.body;
+        try { await navigator.clipboard.writeText(txt); } catch(_){ var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch(__){} document.body.removeChild(ta); }
+        var _o = dr.textContent; dr.textContent = '✓ Copied · paste into your email'; setTimeout(function(){ dr.textContent = _o; }, 1600); return; }
     });
   }
   // ===== Stage 2 · Task 3 · inline contact-confirmation panel =====
@@ -25850,7 +25918,11 @@ Tell me your planned move-out date and I will set the inspection.`
           var fr = document.getElementById('nf-frame'); if(fr && signed){ try{ fr.src = signed + '#toolbar=0&view=FitH&navpanes=0'; }catch(_){ } }
         }
         var _clientSide = (_nfSide === 'buyer') ? 'buyer' : (_nfSide === 'both') ? 'both' : 'seller'; // seller + listing → seller side
-        var row = { id:id, agent_id:_nfAgentId, service_type:svcId, file_type:svcFileType, property_address:(_nfAddress || ''), assigned_tc_id:uid, is_aari_engaged:true, status:'intake_received', transaction_stage:'new', client_type:_clientSide,
+        // Auto-fill listing remarks from the agent's saved default, so they generate the moment
+        // a TC inputs a listing on the agent's behalf.
+        var _lgInit = {};
+        if(_nfSide === 'listing'){ var _pr = (((_agentMetaById || {})[_nfAgentId]) || {}).remarks || ''; if(_pr){ _lgInit.listing_remarks = _pr; _lgInit.remarks_source = 'profile'; } }
+        var row = { id:id, agent_id:_nfAgentId, service_type:svcId, file_type:svcFileType, property_address:(_nfAddress || ''), logistics:_lgInit, assigned_tc_id:uid, is_aari_engaged:true, status:'intake_received', transaction_stage:'new', client_type:_clientSide,
           raw_form_data:{ submitted_by_tc:true, tc_submitter_id:uid, represents:_nfSide, agent_name:((_agentNameById||{})[_nfAgentId]||''), submitted_for_agent_id:_nfAgentId, contract_url:signed, contract_filename:safe, contract_path:path, submission_id:id } };
         var ins = await _client.from('files').insert(row).select('id').single();
         if(ins && ins.error) throw new Error(ins.error.message);
