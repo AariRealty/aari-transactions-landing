@@ -115,9 +115,10 @@ function bodyHtml(first:string, files:any[], pct:number){
     ? shown.sort((a,b)=> (isBillable(b)?1:0)-(isBillable(a)?1:0)).map((f)=> fileRowHtml(f, pct)).join("")
     : `<p style='margin:0 0 16px;font-size:13px;color:${MUTED}'>Nothing active on your board right now. When a file comes in, you'll see it here.</p>`;
   const foot = readyCents>0
-    ? `<p style='margin:0 0 6px;font-size:13px'><b style='color:${GREEN}'>${money(readyCents)} is ready to invoice.</b> Submit Thursday, paid Friday.</p>`+
-      `<div style='text-align:center;margin:12px 0 4px'><a href='https://aaritransactions.com/files.html?view=invoice' style='display:inline-block;background:${INK};color:#fff;text-decoration:none;font-size:13px;font-weight:bold;padding:11px 22px;border-radius:8px'>Submit my invoice</a></div>`
+    ? `<p style='margin:0 0 10px;font-size:13px'><b style='color:${GREEN}'>${money(readyCents)} is ready to invoice.</b></p>`+
+      `<div style='text-align:center;margin:0 0 2px'><a href='https://aaritransactions.com/files.html?view=invoice' style='display:inline-block;background:${INK};color:#fff;text-decoration:none;font-size:13px;font-weight:bold;padding:11px 22px;border-radius:8px'>Submit my invoice</a></div>`
     : `<p style='margin:0;font-size:13px;color:${MUTED}'>Nothing is ready to invoice this week, so nothing to submit. You're all set.</p>`;
+  const payRule = `<div style='margin-top:14px;background:#f7f5ef;border-radius:8px;padding:11px 13px;font-size:11px;line-height:1.55;color:#5f5e5a'><b style='color:#0f0f0f'>Submit by Thursday, paid Friday.</b> If your invoice isn't in by Thursday, it rolls to the next payment cycle.</div>`;
   const intro = pipeline>0
     ? `You've got <b>${money(pipeline)}</b> moving through your pipeline. Here's where each one is at.`
     : `Here's where your files stand this week.`;
@@ -127,6 +128,7 @@ function bodyHtml(first:string, files:any[], pct:number){
     `<p style='margin:0 0 20px;font-size:13px'>${intro}</p>`+
     rows +
     `<div style='margin-top:6px;padding-top:14px;border-top:0.5px solid #e6e2d8'>${foot}</div>`+
+    payRule +
     `<div style='margin-top:20px;padding-top:12px;border-top:0.5px solid #e6e2d8'><div style='font-family:Georgia,serif;font-size:18px'>Aari Transactions</div><div style='font-size:10px;letter-spacing:2px;color:${MUTED};margin-top:4px'>FLORIDA TRANSACTION COORDINATION</div></div>`+
     `</td></tr></table></td></tr></table>`;
 }
