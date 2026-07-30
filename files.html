@@ -19848,6 +19848,39 @@ Tell me your planned move-out date and I will set the inspection.`
   function lstDrafts(f){ return _lstSvc(f) !== 'mls_setup'; }   // coordinator + docs draft the package
   function lstMls(f){ return _lstSvc(f) !== 'listing_docs'; }   // coordinator + mls-setup do the MLS
   function lstMlsOnly(f){ return _lstSvc(f) === 'mls_setup'; }
+  // Agent-facing status is DERIVED from the checklist now, not a manual dropdown.
+  // The task the TC checks IS the signal, so there is no second place to declare
+  // the same thing. service_stage is still the value the board, billing and agent
+  // portal read — we just compute it from the work instead of asking for it.
+  function deriveListingServiceStage(file){
+    var track = svcTrack(file);
+    if(!track || !track.length) return null;
+    var svc = (typeof svcKey === 'function') ? svcKey(file) : String((file && file.service_type) || '').toLowerCase();
+    var st = (file && file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+    var done = function(id){ return !!st[id]; };
+    if(svc === 'mls_setup'){
+      if(done('lst_mls_input')) return 'Live';                       // entered on MLS = live
+      if(done('lst_prepublish_review') || done('lst_required_disclosures') || done('lst_hoa') || done('lst_collect_docs')) return 'MLS input';
+      return 'Received';
+    }
+    if(svc === 'listing_docs'){
+      if(done('lst_package_executed')) return 'Signed & reviewed';   // package executed = done
+      if(done('lst_agreement') || done('lst_disclosures') || done('lst_brokerage_docs')) return 'Package prep';
+      return 'Received';
+    }
+    return null; // listing_coordinator rides the numbered spine; nothing to derive
+  }
+  async function syncListingServiceStage(file){
+    try {
+      if(!file || (file.file_type || '') !== 'listing') return;
+      var want = deriveListingServiceStage(file);
+      if(!want || file.service_stage === want) return;
+      file.service_stage = want;
+      if(_currentFile && _currentFile.id === file.id) _currentFile.service_stage = want;
+      var r = await _client.from('files').update({ service_stage: want }).eq('id', file.id);
+      if(!(r && r.error)){ try { renderKanban(); } catch(_){} }
+    } catch(_){}
+  }
   const LISTING_TASKS = [
     { id:'lst_details', label:'Confirm listing details',
       sub:'Address, seller, and the dates below. The listing and expiration dates drive the on-market countdown. Request anything missing from the agent.' },
@@ -24420,6 +24453,10 @@ Tell me your planned move-out date and I will set the inspection.`
       // Board auto-advance · only on CHECK (never on uncheck), only for the approved TC-driven
       // transitions, and only past the gates. Listing goes live → Active; sale finishes UC → CTC.
       if(cb.checked){ try { await maybeAutoAdvanceStage(_currentFile); } catch(_){} }
+      // Agent status follows the checklist · recompute + persist service_stage from the tasks
+      // (listings only). Runs on check AND uncheck so it advances to Live and walks back. Only
+      // fires on a real toggle — never retroactively on a passive open — so nothing bills itself.
+      if((_currentFile.file_type || '') === 'listing'){ try { await syncListingServiceStage(_currentFile); } catch(_){} }
     }
   });
 
