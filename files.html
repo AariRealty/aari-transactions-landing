@@ -13181,16 +13181,222 @@ Tell me your planned move-out date and I will set the inspection.`
     try { renderCalHeatmap(); } catch(_){}
     try { renderTcCalendar(); } catch(_){}
   });
+  // ===== BROKER MOBILE CALENDAR · closings + file-review checkpoints ONLY =====
+  // Marlenyi Jul 30: "I want calendar to just show me as a broker when the
+  // closings are to happen and when I'm doing the file review. That is it.
+  // I want a month and a weekly view. They can talk from one to the other."
+  //
+  // Deliberately narrow and separate from _tcCalDeadlines() (the TC's full
+  // contract-deadline agenda — EMD, loan, survey, title...). Reactivating
+  // that dense feed on mobile is exactly what caused the Jul 29 teardown
+  // (see MOBILE PAUSE below). This is two event types only, computed fresh
+  // client-side, broker role + mobile only. TC / agent on mobile keep the
+  // paused placeholder untouched. Desktop is untouched for everyone.
+  //
+  // Checkpoint math mirrors supabase/functions/broker-review-ping/index.ts
+  // EXACTLY (keep in sync — that edge function is what actually pings her
+  // bell/phone; this just lays the same three dates on a calendar ahead of
+  // time). Reuses window.AariDeadlineEngine for FL business-day/holiday math
+  // instead of re-deriving it a third time.
+  function _brokerReviewCheckpoints(f){
+    const ENG = window.AariDeadlineEngine;
+    if(!ENG) return [];
+    const eff = ENG.parseDate(f.effective_date || null);
+    const C = ENG.parseDate(f.closing_date || null);
+    const created = f.created_at ? ENG.parseDate(String(f.created_at).slice(0, 10)) : null;
+    if(!eff || !C) return [];
+    // 1. Intake · 2 business days after the later of (created, effective).
+    let base = (created && eff) ? (created.getTime() > eff.getTime() ? created : eff) : (eff || created);
+    const intake = base ? ENG.flBusinessDay(ENG.addDays(base, 2)) : null;
+    // 2. Mid · explicit inspection-end override wins; else effective + inspection
+    //    days (FL-rolled); else the calendar midpoint between effective and closing.
+    const ov = (f.deadline_overrides && typeof f.deadline_overrides === 'object') ? f.deadline_overrides : {};
+    const ovDates = (ov._dates && typeof ov._dates === 'object') ? ov._dates : {};
+    const lg = (f.logistics && typeof f.logistics === 'object') ? f.logistics : {};
+    const exf = (((f.raw_form_data || {}).extracted_contract || {}).fields) || {};
+    const rawInsp = (lg.inspection_days != null && lg.inspection_days !== '') ? lg.inspection_days : exf.inspection_days;
+    const inspDays = (function(){ const n = parseInt(String(rawInsp == null ? '' : rawInsp).replace(/[^0-9]/g, ''), 10); return isNaN(n) ? 15 : n; })();
+    let mid = ovDates.inspection_end ? ENG.parseDate(ovDates.inspection_end) : null;
+    if(!mid && eff) mid = ENG.flBusinessDay(ENG.addDays(eff, inspDays));
+    if(!mid && eff && C) mid = new Date((eff.getTime() + C.getTime()) / 2);
+    // 3. Pre-close · 7 calendar days before closing.
+    const pre = C ? ENG.addDays(C, -7) : null;
+    return [
+      { key:'broker_review_intake',   label:'Review · Intake',    date: intake },
+      { key:'broker_review_mid',      label:'Review · Mid',       date: mid },
+      { key:'broker_review_preclose', label:'Review · Pre-close', date: pre }
+    ].filter(function(x){ return x.date instanceof Date && !isNaN(x.date.getTime()); });
+  }
+  function _brokerCalItems(){
+    const out = [];
+    (_files || []).forEach(function(f){
+      if(!f) return;
+      if(['closed', 'cancelled', 'archived'].indexOf(f.status) !== -1) return;
+      if(f.transaction_stage === 'closed') return;
+      if(!f.effective_date || !f.closing_date) return; // same gate broker-review-ping uses
+      const address = f.property_address || '';
+      const C = new Date(String(f.closing_date).slice(0, 10) + 'T12:00:00');
+      if(!isNaN(C.getTime())) out.push({ fileId: f.id, date: C, key: 'closing', label: 'Closing', address: address });
+      _brokerReviewCheckpoints(f).forEach(function(cp){
+        out.push({ fileId: f.id, date: cp.date, key: cp.key, label: cp.label, address: address });
+      });
+    });
+    out.sort(function(a, b){ return a.date - b.date; });
+    return out;
+  }
+  // Own render + own wiring (data-bcal-* attrs, never data-cal-*) so this stays fully
+  // independent of _wireCal's TC-facing side effects (gcal self-heal, one-shot overdue
+  // auto-clear via markDeadlineDone, etc.) — none of that belongs to a broker glance view.
+  function _renderBrokerMobileCal(host){
+    try { const _uid = (_profile && _profile.id) ? _profile.id : 'anon'; if(_calViewUser !== _uid){ const _sv = localStorage.getItem('aari_cal_view_' + _uid); _calView = (_sv === 'month') ? 'month' : 'week'; _calViewUser = _uid; } } catch(_){}
+    const items = _brokerCalItems();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const t0 = today.getTime();
+    if(!_calMonth) _calMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    if(_calSelDay == null) _calSelDay = t0;
+    const byDay = {};
+    items.forEach(function(d){ const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); const k = x.getTime(); (byDay[k] = byDay[k] || []).push(d); });
+    const _segBtn = function(v, label){ const on = _calView === v; return '<button type="button" data-bcal-view="' + v + '" style="border:0;background:' + (on ? '#fff' : 'transparent') + ';' + (on ? 'box-shadow:0 1px 2px rgba(0,0,0,.06);color:#0f0f0f;' : 'color:#7a756c;') + 'font:inherit;font-size:10.5px;font-weight:600;padding:5px 11px;border-radius:18px;cursor:pointer">' + label + '</button>'; };
+    let html = '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px">' +
+      '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:18px;font-weight:600;color:#0f0f0f;letter-spacing:-0.2px;line-height:1.1">Your calendar</span>' +
+      '<span style="display:inline-flex;background:#f4f1ec;border-radius:20px;padding:2px">' + _segBtn('month', 'Month') + _segBtn('week', 'Week') + '</span>' +
+    '</div>';
+    if(!_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(t0); base.setHours(0, 0, 0, 0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; }
+    const wk0 = new Date(_calWeekStart); wk0.setHours(0, 0, 0, 0);
+    const _md = function(dt){ return dt.toLocaleDateString('en-US', { month:'short', day:'numeric' }); };
+    let grid = '';
+    if(_calView === 'month'){
+      const Y = _calMonth.getFullYear(), M = _calMonth.getMonth();
+      const monthLabel = _calMonth.toLocaleDateString('en-US', { month:'long', year:'numeric' });
+      grid += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">' +
+        '<button type="button" data-bcal-nav="prev" aria-label="Previous month" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:32px;height:32px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8249;</button>' +
+        '<span style="flex:1;text-align:center;font-family:Georgia,\'Times New Roman\',serif;font-size:15px;font-weight:600;color:#0f0f0f">' + esc(monthLabel) + '</span>' +
+        '<button type="button" data-bcal-nav="next" aria-label="Next month" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:32px;height:32px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8250;</button></div>';
+      grid += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:4px">' +
+        ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(function(x){ return '<div style="font-size:9px;text-transform:uppercase;color:#a9a49a;text-align:center;font-weight:700;letter-spacing:.05em;padding:4px 0">' + x + '</div>'; }).join('') + '</div>';
+      const startDow = new Date(Y, M, 1).getDay();
+      const daysInMonth = new Date(Y, M + 1, 0).getDate();
+      const prevDays = new Date(Y, M, 0).getDate();
+      const totalCells = Math.ceil((startDow + daysInMonth) / 7) * 7;
+      grid += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:14px">';
+      for(let i = 0; i < totalCells; i++){
+        const dayNum = i - startDow + 1;
+        const isCurMonth = dayNum >= 1 && dayNum <= daysInMonth;
+        const cellDate = isCurMonth ? new Date(Y, M, dayNum) : (dayNum < 1 ? new Date(Y, M - 1, prevDays + dayNum) : new Date(Y, M + 1, dayNum - daysInMonth));
+        cellDate.setHours(0, 0, 0, 0);
+        const cts = cellDate.getTime();
+        const dayItems = byDay[cts] || [];
+        const hasClosing = dayItems.some(function(x){ return x.key === 'closing'; });
+        const hasReview = dayItems.some(function(x){ return x.key !== 'closing'; });
+        const isToday = cts === t0, isSel = cts === _calSelDay;
+        let cs = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:46px;border-radius:8px;cursor:pointer;padding:4px 0;position:relative;';
+        if(!isCurMonth) cs += 'opacity:.28;';
+        if(isSel) cs += 'background:#0f0f0f;color:#fff;';
+        else { cs += 'color:#0f0f0f;'; if(isToday) cs += 'box-shadow:inset 0 0 0 1.5px #0f0f0f;'; }
+        let dots = dayItems.length ? '<span style="display:flex;gap:2px">' : '<span style="width:5px;height:5px;display:block"></span>';
+        if(dayItems.length){
+          if(hasClosing) dots += '<span style="width:5px;height:5px;border-radius:5px;background:' + (isSel ? '#fff' : '#0f0f0f') + ';display:block"></span>';
+          if(hasReview) dots += '<span style="width:5px;height:5px;border-radius:5px;background:' + (isSel ? '#fff' : '#8a6d1b') + ';display:block"></span>';
+          dots += '</span>';
+        }
+        grid += '<button type="button" data-bcal-selday="' + cts + '" style="border:0;font-family:inherit;' + cs + '">' +
+          '<span style="font-size:13px;font-weight:' + (isToday ? '700' : '500') + ';line-height:1">' + cellDate.getDate() + '</span>' + dots + '</button>';
+      }
+      grid += '</div>';
+    } else {
+      const wkEnd = new Date(wk0); wkEnd.setDate(wkEnd.getDate() + 6);
+      grid += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">' +
+        '<button type="button" data-bcal-wknav="-1" aria-label="Previous week" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:30px;height:30px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8249;</button>' +
+        '<span style="flex:1;text-align:center;font-size:12px;font-weight:600;color:#0f0f0f">' + esc(_md(wk0)) + ' &ndash; ' + esc(_md(wkEnd)) + '</span>' +
+        '<button type="button" data-bcal-wknav="1" aria-label="Next week" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:30px;height:30px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8250;</button></div>';
+      grid += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:14px">';
+      for(let i = 0; i < 7; i++){
+        const cd = new Date(wk0); cd.setDate(cd.getDate() + i); cd.setHours(0, 0, 0, 0); const cts = cd.getTime();
+        const dayItems = byDay[cts] || [];
+        const isToday = cts === t0, isSel = cts === _calSelDay;
+        let cs = 'display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 0 6px;border-radius:10px;cursor:pointer;min-height:52px;';
+        if(isSel) cs += 'background:#0f0f0f;color:#fff;';
+        else { cs += 'color:#0f0f0f;'; if(isToday) cs += 'box-shadow:inset 0 0 0 1.5px #0f0f0f;'; }
+        const dot = dayItems.length
+          ? '<span style="width:16px;height:16px;border-radius:9px;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;background:' + (isSel ? '#fff' : '#0f0f0f') + ';color:' + (isSel ? '#0f0f0f' : '#fff') + '">' + dayItems.length + '</span>'
+          : '<span style="width:16px;height:16px"></span>';
+        grid += '<button type="button" data-bcal-selday="' + cts + '" style="border:0;font-family:inherit;' + cs + '">' +
+          '<span style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;opacity:.7">' + ['S', 'M', 'T', 'W', 'T', 'F', 'S'][i] + '</span>' +
+          '<span style="font-size:15px;font-weight:600;line-height:1">' + cd.getDate() + '</span>' + dot + '</button>';
+      }
+      grid += '</div>';
+    }
+    html += grid;
+    // Agenda panel · a tapped day wins; otherwise every item in the visible month/week.
+    const Ycur = _calMonth.getFullYear(), Mcur = _calMonth.getMonth();
+    const inVisibleRange = _calView === 'month'
+      ? function(ts){ const dd = new Date(ts); return dd.getFullYear() === Ycur && dd.getMonth() === Mcur; }
+      : function(ts){ return ts >= wk0.getTime() && ts <= wk0.getTime() + 6 * 86400000; };
+    const tapped = !!window._calSelDayTapped && (byDay[_calSelDay] || []).length > 0;
+    let agendaItems, agendaLabel;
+    if(tapped){
+      const selD = new Date(_calSelDay);
+      agendaLabel = (_calSelDay === t0 ? 'Today &middot; ' : '') + selD.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+      agendaItems = (byDay[_calSelDay] || []).slice();
+    } else {
+      agendaItems = [];
+      Object.keys(byDay).forEach(function(k){ if(inVisibleRange(parseInt(k, 10))) agendaItems = agendaItems.concat(byDay[k]); });
+      agendaItems.sort(function(a, b){ return a.date - b.date; });
+      agendaLabel = _calView === 'month' ? _calMonth.toLocaleDateString('en-US', { month:'long', year:'numeric' }) : (esc(_md(wk0)) + ' – ' + esc(_md(new Date(wk0.getTime() + 6 * 86400000))));
+    }
+    let cbody = '<div style="display:flex;align-items:center;justify-content:space-between;margin:14px 2px 8px">' +
+      '<span style="font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:#0f0f0f">' + agendaLabel + ' &middot; ' + agendaItems.length + '</span>' +
+      (tapped ? '<button type="button" data-bcal-clear-tap style="border:0;background:none;font-family:inherit;font-size:11px;color:#8a857c;text-decoration:underline;cursor:pointer;padding:2px 0">See all</button>' : '') +
+    '</div>';
+    if(agendaItems.length){
+      cbody += agendaItems.map(function(d){
+        const isClosing = d.key === 'closing';
+        const addr = String(d.address || '').split(',')[0] || (isClosing ? 'Closing' : 'File review');
+        const dt = new Date(d.date.getTime()); dt.setHours(0, 0, 0, 0);
+        const days = Math.round((dt.getTime() - t0) / 86400000);
+        const dchip = (days === 0) ? 'Today' : (days === 1 ? 'Tomorrow' : (days === -1 ? 'Yesterday' : (days < 0 ? Math.abs(days) + 'd ago' : days + ' days')));
+        const dcolor = isClosing ? (days < 0 ? '#a3402f' : (days <= 2 ? '#a3402f' : (days <= 7 ? '#8a6d1b' : '#8a857c'))) : '#8a6d1b';
+        const dateBadge = dt.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+        return '<div data-bcal-open="' + esc(d.fileId) + '" style="display:flex;align-items:center;gap:10px;padding:11px 4px;border-top:0.5px solid #f3f0ea;cursor:pointer;min-height:44px">' +
+          '<span style="flex:none;font-family:Georgia,\'Times New Roman\',serif;font-size:12px;font-weight:600;color:#5f5e5a;min-width:44px">' + esc(dateBadge) + '</span>' +
+          '<div style="flex:1;min-width:0;line-height:1.25">' +
+            '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:14px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(addr) + '</div>' +
+            '<div style="font-size:10.5px;color:#8a857c;margin-top:2px;letter-spacing:.4px;text-transform:uppercase;font-weight:600">' + esc(isClosing ? 'Closing' : d.label) + '</div>' +
+          '</div>' +
+          '<span style="flex:none;font-family:\'Playfair Display\',Georgia,serif;font-size:14px;font-weight:600;color:' + dcolor + '">' + dchip + '</span>' +
+        '</div>';
+      }).join('');
+    } else {
+      cbody += '<div style="font-size:12px;color:#a39e95;padding:11px 4px;border-top:0.5px solid #f3f0ea">Nothing ' + (tapped ? 'on this day.' : (_calView === 'month' ? 'this month.' : 'this week.')) + '</div>';
+    }
+    html += '<div style="padding:8px 0 0;border-top:1px solid #f3ede0;margin-top:2px">' + cbody + '</div>';
+    host.innerHTML = html;
+    host.querySelectorAll('[data-bcal-view]').forEach(function(b){ b.addEventListener('click', function(){ const v = this.getAttribute('data-bcal-view'); if(v === _calView) return; _calView = v; try { localStorage.setItem('aari_cal_view_' + ((_profile && _profile.id) ? _profile.id : 'anon'), v); } catch(_){} if(v === 'week' && !_calWeekStart){ const base = (_calSelDay != null) ? new Date(_calSelDay) : new Date(); base.setHours(0, 0, 0, 0); base.setDate(base.getDate() - base.getDay()); _calWeekStart = base; } renderCalHeatmap(); }); });
+    host.querySelectorAll('[data-bcal-nav]').forEach(function(b){ b.addEventListener('click', function(){ const dir = this.getAttribute('data-bcal-nav') === 'next' ? 1 : -1; _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() + dir, 1); window._calSelDayTapped = false; renderCalHeatmap(); }); });
+    host.querySelectorAll('[data-bcal-wknav]').forEach(function(b){ b.addEventListener('click', function(){ const dir = parseInt(this.getAttribute('data-bcal-wknav'), 10) || 0; const base = _calWeekStart ? new Date(_calWeekStart) : new Date(); base.setHours(0, 0, 0, 0); base.setDate(base.getDate() + 7 * dir); _calWeekStart = base; window._calSelDayTapped = false; renderCalHeatmap(); }); });
+    host.querySelectorAll('[data-bcal-selday]').forEach(function(b){ b.addEventListener('click', function(){ _calSelDay = parseInt(this.getAttribute('data-bcal-selday'), 10); window._calSelDayTapped = true; renderCalHeatmap(); }); });
+    const clr = host.querySelector('[data-bcal-clear-tap]');
+    if(clr) clr.addEventListener('click', function(){ window._calSelDayTapped = false; renderCalHeatmap(); });
+    host.querySelectorAll('[data-bcal-open]').forEach(function(r){ r.addEventListener('click', function(){ const id = this.getAttribute('data-bcal-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f){ try { openPlaybook(f); } catch(_){} } }); });
+  }
   function renderCalHeatmap(){
     const host = document.getElementById('calHeatmap'); if(!host) return;
     // MOBILE PAUSE · Marlenyi Jul 29 · the mobile calendar had too many
     // interlocking bugs (mode toggle, closings-only race, week freezes on
     // desktop timeline) so it's being torn down and rebuilt from scratch.
-    // Show a calm placeholder card in its place. Desktop rendering below is
-    // untouched — brokers on laptops keep the full heatmap. Deadline data,
-    // Google Calendar sync, and the Today panel countdowns all still run
-    // because they don't depend on this function's output.
+    // Rebuilt Jul 30, scoped down on purpose: broker role + mobile gets
+    // closings + file-review checkpoints ONLY (see _renderBrokerMobileCal) —
+    // no contract-deadline agenda, that density is what caused the teardown.
+    // TC / agent on mobile keep the calm placeholder below, untouched.
+    // Desktop rendering further down is untouched either way — brokers on
+    // laptops keep the full heatmap. Deadline data, Google Calendar sync, and
+    // the Today panel countdowns all still run because they don't depend on
+    // this function's output.
     if(_calIsMobile()){
+      const _mobRole = (_profile && String(_profile.role || '').toLowerCase()) || '';
+      if(_mobRole === 'broker'){
+        try { _renderBrokerMobileCal(host); return; } catch(_){ /* fall through to placeholder on any error */ }
+      }
       host.innerHTML =
         '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:26px 22px;text-align:center">' +
           '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:19px;font-weight:600;color:#0f0f0f;margin-bottom:6px">Calendar</div>' +
@@ -18650,7 +18856,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // the services that actually duplicate the spine instead of to the whole file type.
     // SPINE_DUP_SERVICES lives at module scope now · the invoice panel has to agree with this
     // exact rule, otherwise it tells the coordinator to move a dropdown this branch just hid.
-    if(tcSvcIsTc(f) || !track || svcRidesSpine(f)){ if(el) el.style.display = 'none'; return; }
+    if(tcSvcIsTc(f) || !track || svcRidesSpine(f) || (f.file_type === 'listing')){ if(el) el.style.display = 'none'; return; }
     if(!el){
       el = document.createElement('div'); el.id = 'rail-service-stage';
       const after = document.getElementById('rail-agent-requests');
