@@ -17,8 +17,8 @@
 //                               between effective and closing if no inspection.
 //   3. broker_review_preclose · 7 calendar days before closing.
 //
-// Cron fires daily 12:00 + 13:00 UTC (+ :10 retry sweeps); the America/New_York
-// hour gate only lets a run proceed at 8am ET — DST-proof, same pattern as
+// Cron fires daily 15:00 + 16:00 UTC (+ :10 retry sweeps); the America/New_York
+// hour gate only lets a run proceed at 11am ET — DST-proof, same pattern as
 // loan-deadline-ping.
 //
 // Dedup is by existence: one row per (recipient, file, kind) ever. A checkpoint
@@ -137,7 +137,7 @@ Deno.serve(async (req) => {
   try { const b = await req.json(); force = !!b?.force; dryRun = !!b?.dry_run; } catch { /* cron sends {} */ }
 
   const hour = nyHour();
-  if (!force && hour !== 8) return json({ ok: true, skipped: "outside_window", ny_hour: hour });
+  if (!force && hour !== 11) return json({ ok: true, skipped: "outside_window", ny_hour: hour });
 
   const today = nyToday();
 
