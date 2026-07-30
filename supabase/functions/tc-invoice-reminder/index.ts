@@ -25,6 +25,7 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const SUBJECT = "Where your files stand this week";
+const OWNER_SUBJECT = "Aari pipeline · Thursday";
 
 function esc(s: string){ return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 const INK = "#0f0f0f", LIGHT = "#e2ddd2", MUTED = "#8a857c", GREEN = "#2f6b4f";
@@ -133,6 +134,85 @@ function bodyHtml(first:string, files:any[], pct:number){
     `</td></tr></table></td></tr></table>`;
 }
 
+// ---- OWNER report · whole-team pipeline (Option A ledger + payables/flag line) ----
+// deno-lint-ignore no-explicit-any
+async function computeTeam(admin:any, pctById:Record<string,number>){
+  // deno-lint-ignore no-explicit-any
+  const roll = async (id:string, name:string, sendTo:string|null) => {
+    const files = await filesForTc(admin, id);
+    const pct = pctById[id] ?? 40;
+    const shown = files.filter((f:any)=> payCents(f,pct)>0 || isBillable(f));
+    const pipe = shown.reduce((s:number,f:any)=> s+payCents(f,pct), 0);
+    const ready = shown.filter(isBillable).reduce((s:number,f:any)=> s+payCents(f,pct), 0);
+    return { name, files:shown.length, pipe, ready, sendTo, allFiles:files, pct };
+  };
+  const { data: tcs } = await admin.from("agents").select("id, first_name, email").eq("role","tc");
+  const perTc:{name:string;files:number;pipe:number;ready:number}[] = [];
+  const tcRuns:{email:string;first:string;allFiles:any[];pct:number}[] = [];
+  let teamCents=0, readyCents=0;
+  for (const t of (tcs||[])) {
+    if(!t.email) continue;
+    const r = await roll(t.id, t.first_name||"TC", t.email);
+    if(r.files>0){ perTc.push({name:r.name, files:r.files, pipe:r.pipe, ready:r.ready}); teamCents+=r.pipe; readyCents+=r.ready; }
+    tcRuns.push({ email:t.email, first:t.first_name||"there", allFiles:r.allFiles, pct:r.pct });
+  }
+  // Broker's own coordinated files show as a "You" line (never a TC email).
+  const { data: brokers } = await admin.from("agents").select("id, first_name").eq("role","broker");
+  for (const b of (brokers||[])) {
+    const r = await roll(b.id, "You", null);
+    if(r.files>0){ perTc.push({name:"You", files:r.files, pipe:r.pipe, ready:r.ready}); teamCents+=r.pipe; readyCents+=r.ready; }
+  }
+  const { data: invs } = await admin.from("tc_invoices").select("total_cents,status").eq("status","submitted");
+  const payablesCents = (invs||[]).reduce((s:number,i:any)=> s+(i.total_cents||0), 0);
+  const { data: act } = await admin.from("files")
+    .select("property_address, closing_date, transaction_stage, status")
+    .not("status","in",'("archived","cancelled")').not("closing_date","is",null);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const wk = new Date(today); wk.setDate(wk.getDate()+7);
+  const closings:{street:string;date:Date}[] = []; const flagged:string[] = [];
+  for (const f of (act||[])) {
+    if(f.transaction_stage==="closed" || f.status==="closed") continue;
+    const c = new Date(String(f.closing_date).slice(0,10)+"T12:00:00"); if(isNaN(c.getTime())) continue;
+    const street = String(f.property_address||"").split(",")[0];
+    if(c>=today && c<=wk) closings.push({ street, date:c });
+    else if(c<today) flagged.push(street);
+  }
+  closings.sort((a,b)=> a.date.getTime()-b.date.getTime());
+  return { perTc, teamCents, readyCents, payablesCents, closings, flagged, tcRuns };
+}
+// deno-lint-ignore no-explicit-any
+function ownerReportHtml(first:string, team:any){
+  const fmtD = (d:Date)=> d.toLocaleDateString("en-US",{ month:"short", day:"numeric" });
+  const today = fmtD(new Date());
+  // deno-lint-ignore no-explicit-any
+  const ledger = team.perTc.length
+    ? team.perTc.map((t:any)=>
+        `<tr><td style='padding:8px 0;border-top:0.5px solid #e6e2d8;font-size:12px;font-family:Arial,Helvetica,sans-serif'>${esc(t.name)} <span style='color:${MUTED}'>&middot; ${t.files} file${t.files===1?"":"s"}</span></td>`+
+        `<td align='right' style='padding:8px 0;border-top:0.5px solid #e6e2d8;font-size:12px;font-family:Arial,Helvetica,sans-serif'><b>${money(t.pipe)}</b>${t.ready>0?` <span style='color:${GREEN}'>&middot; ${money(t.ready)} ready</span>`:` <span style='color:${MUTED}'>&middot; 0 ready</span>`}</td></tr>`
+      ).join("")
+    : `<tr><td style='padding:8px 0;font-size:12px;color:${MUTED}'>No active coordinator files.</td></tr>`;
+  const topLine = (team.payablesCents>0 || team.flagged.length)
+    ? `<div style='background:#f2ede3;border-radius:8px;padding:11px 13px;margin:0 0 16px;font-size:12px;line-height:1.55'>`+
+      (team.payablesCents>0 ? `<div><b>${money(team.payablesCents)} in payables go out Friday.</b> Approve in the invoice board.</div>` : "")+
+      (team.flagged.length ? `<div style='color:#a3402f;margin-top:${team.payablesCents>0?"4px":"0"}'>${team.flagged.length} file${team.flagged.length===1?"":"s"} past a closing date: ${esc(team.flagged.slice(0,3).join(", "))}${team.flagged.length>3?"...":""}</div>` : "")+
+      `</div>`
+    : "";
+  const closingLine = team.closings.length
+    ? `<p style='margin:16px 0 3px;font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:${MUTED}'>Closing this week</p>`+
+      `<p style='margin:0;font-size:11px;color:${MUTED}'>` + team.closings.slice(0,6).map((c:any)=> `${esc(c.street)} &middot; ${fmtD(c.date)}`).join("&nbsp;&nbsp;&nbsp;") + `</p>`
+    : "";
+  return `<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background:#fff'><tr><td align='center' style='padding:26px 12px'>`+
+    `<table role='presentation' width='520' cellpadding='0' cellspacing='0' style='max-width:520px;width:100%;background:#fff;border:0.5px solid #e8e6e0;border-radius:14px'><tr><td style='padding:28px 26px;font-family:Arial,Helvetica,sans-serif;color:${INK}'>`+
+    `<div style='font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:${MUTED}'>Aari pipeline &middot; Thu ${today}</div>`+
+    `<div style='font-family:Georgia,serif;font-size:30px;line-height:1.1;margin:3px 0 3px'>${money(team.teamCents)}</div>`+
+    `<div style='font-size:11px;color:#5f5e5a;margin:0 0 18px'>across ${team.perTc.reduce((s:number,t:any)=>s+t.files,0)} active files &middot; <b style='color:${GREEN}'>${money(team.readyCents)} ready to invoice</b> &middot; ${money(team.payablesCents)} payables Friday</div>`+
+    topLine +
+    `<table role='presentation' width='100%' cellpadding='0' cellspacing='0'>${ledger}</table>`+
+    closingLine +
+    `<div style='margin-top:22px;padding-top:12px;border-top:0.5px solid #e6e2d8'><div style='font-family:Georgia,serif;font-size:18px'>Aari Transactions</div><div style='font-size:10px;letter-spacing:2px;color:${MUTED};margin-top:4px'>OWNER PIPELINE REPORT</div></div>`+
+    `</td></tr></table></td></tr></table>`;
+}
+
 function j(status:number, obj:unknown){ return new Response(JSON.stringify(obj), { status, headers:{...CORS,"Content-Type":"application/json"} }); }
 
 // deno-lint-ignore no-explicit-any
@@ -153,17 +233,22 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   (rates||[]).forEach((r:any)=>{ pctById[r.tc_id] = Number(r.pct); });
 
-  // TEST · preview for one known agent, using their real files.
+  // TEST · preview for one known agent. Broker gets the owner report, a TC gets their status.
   if (body && body.to) {
-    const { data: who } = await admin.from("agents").select("id, first_name, email").ilike("email", String(body.to)).limit(1);
+    const { data: who } = await admin.from("agents").select("id, first_name, email, role").ilike("email", String(body.to)).limit(1);
     if (!who || !who.length) return j(400, { ok:false, error:"no agent with that email" });
     const t = who[0];
+    if (String(t.role||"")==="broker") {
+      const team = await computeTeam(admin, pctById);
+      const ok = await sendEmail(t.email, OWNER_SUBJECT, ownerReportHtml(t.first_name||"there", team));
+      return j(ok?200:502, { ok, test:true, owner:true, sent_to:t.email, coordinators:team.perTc.length });
+    }
     const files = await filesForTc(admin, t.id);
     const ok = await sendEmail(t.email, SUBJECT, bodyHtml(t.first_name||"there", files, pctById[t.id] ?? 40));
     return j(ok?200:502, { ok, test:true, sent_to:t.email, files:files.length });
   }
 
-  // REAL weekly run · every coordinator.
+  // REAL weekly run · every coordinator gets a status, every broker gets the owner report.
   const { data: tcs } = await admin.from("agents").select("id, first_name, email").eq("role","tc");
   // deno-lint-ignore no-explicit-any
   const list = (tcs||[]).filter((t:any)=> t.email);
@@ -173,7 +258,11 @@ Deno.serve(async (req) => {
     const ok = await sendEmail(t.email, SUBJECT, bodyHtml(t.first_name||"there", files, pctById[t.id] ?? 40));
     if (ok) sent++;
   }
-  return j(200, { ok:true, coordinators:list.length, sent });
+  const team = await computeTeam(admin, pctById);
+  const { data: brokers } = await admin.from("agents").select("first_name, email").eq("role","broker");
+  let ownerSent = 0;
+  for (const b of (brokers||[])) { if(!b.email) continue; const ok = await sendEmail(b.email, OWNER_SUBJECT, ownerReportHtml(b.first_name||"there", team)); if(ok) ownerSent++; }
+  return j(200, { ok:true, coordinators:list.length, sent, owner_reports:ownerSent });
 });
 
 async function sendEmail(to:string, subject:string, html:string): Promise<boolean>{
