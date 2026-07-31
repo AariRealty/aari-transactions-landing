@@ -122,7 +122,7 @@
     tenant_lease:    ['leases_provided', 'lease_terminate', 'tenant_lease'],
     title_commitment:['title_evidence', 'title_policy', 'buyer_title_rev', 'title_commitment'],
     estoppel:        ['estoppel', 'estoppels_due'],
-    survey:          ['survey_seller', 'survey_existing', 'survey'],
+    survey:          ['survey_seller', 'survey_existing', 'survey', 'survey_notice'],
     compensation:    ['compensation_agreement'],
     walkthrough:     ['walk_through', 'walkthrough'],
   };
