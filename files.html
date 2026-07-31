@@ -15067,6 +15067,7 @@ Tell me your planned move-out date and I will set the inspection.`
   // a file reads identically here and on a card. Renders into #listScreen; wired in _syncBoardVisibility.
   var _listOntrackOpen = false;
   var _listQuery = '';
+  var _listMode = 'priority'; // 'priority' = the three groups · 'closing' = flat, every dated file soonest first
   function _listBaseFiles(){
     var type = _fileTypeFilter || 'sale';
     return (_files || []).filter(function(f){
@@ -15107,7 +15108,11 @@ Tell me your planned move-out date and I will set the inspection.`
     var stageLabel = ''; try { stageLabel = (fileProgress(f) || {}).label || ''; } catch(_){}
     var prog = null; try { prog = stageProgress(f); } catch(_){}
     var dtc = (typeof daysToClose === 'function') ? daysToClose(f) : null;
-    var right = (prog && prog.total > 0) ? (prog.done + '/' + prog.total) : ((dtc != null && dtc >= 0) ? (dtc + 'd') : '');
+    // Closing date leads the right column when the file has one (that is the thing she wants to see
+    // at a glance); progress is the fallback for files with no close (listings, MLS setup).
+    var closeStr = '';
+    if(f.closing_date && dtc != null && dtc >= 0){ try { closeStr = fmtDate(f.closing_date) + ' · ' + dtc + 'd'; } catch(_){ closeStr = dtc + 'd'; } }
+    var right = closeStr || ((prog && prog.total > 0) ? (prog.done + '/' + prog.total) : '');
     var grp = _listGroupOf(f);
     var dot = grp === 'needsyou' ? '#c96b6b' : (grp === 'closing' ? '#c9932f' : '#cbbf9f');
     var flagChip = flag ? (' <span style="font-size:9px;font-weight:700;border-radius:5px;padding:2px 6px;background:' + (flag === 'Review' ? '#eef1ee' : '#fbeee6') + ';color:' + (flag === 'Review' ? '#3d6b4d' : '#9a4a1f') + ';letter-spacing:.2px;text-transform:uppercase">' + esc(flag) + '</span>') : '';
@@ -15153,20 +15158,30 @@ Tell me your planned move-out date and I will set the inspection.`
   function renderListScreen(){
     var host = document.getElementById('listScreen'); if(!host) return;
     var base = _listBaseFiles();
-    var groups = { needsyou: [], closing: [], ontrack: [] };
-    base.forEach(function(f){ (groups[_listGroupOf(f)] || groups.ontrack).push(f); });
-    groups.closing.sort(function(a, b){ var da = daysToClose(a), db = daysToClose(b); return (da == null ? 999 : da) - (db == null ? 999 : db); });
-    var html = '<input id="list-search" value="' + esc(_listQuery) + '" placeholder="Search address or client…" style="width:100%;box-sizing:border-box;font-size:12.5px;color:#14110c;border:0.5px solid #e6ddca;border-radius:9px;padding:9px 12px;font-family:inherit;background:#fcfaf5;margin:2px 0 12px">';
+    var html = '<input id="list-search" value="' + esc(_listQuery) + '" placeholder="Search address or client…" style="width:100%;box-sizing:border-box;font-size:12.5px;color:#14110c;border:0.5px solid #e6ddca;border-radius:9px;padding:9px 12px;font-family:inherit;background:#fcfaf5;margin:2px 0 10px">';
+    // Mode chips · All (priority groups) vs Closing soon (flat, every file with a closing date, soonest first).
+    var _chip = function(mode, label){ var on = _listMode === mode; return '<span data-list-mode="' + mode + '" style="cursor:pointer;font-size:11px;font-weight:600;border-radius:999px;padding:5px 13px;margin-right:6px;border:0.5px solid ' + (on ? '#14110c' : '#e6ddca') + ';background:' + (on ? '#14110c' : '#fff') + ';color:' + (on ? '#fff' : '#5f5647') + '">' + label + '</span>'; };
+    html += '<div style="margin:0 0 12px">' + _chip('priority', 'All') + _chip('closing', 'Closing soon') + '</div>';
     if(!base.length){
       html += '<div style="background:#fff;border:0.5px solid #eeeae0;border-radius:12px;padding:26px;text-align:center;font-size:13px;color:#a39e95">No active files in this tab.</div>';
-      host.innerHTML = html; return;
+    } else if(_listMode === 'closing'){
+      var closing = base.filter(function(f){ var d = daysToClose(f); return d != null && d >= 0; })
+                        .sort(function(a, b){ return daysToClose(a) - daysToClose(b); });
+      html += closing.length
+        ? _listSection('Closing soon · soonest first', '#8a6d1b', '#faf1dc', '#ece0c4', closing, false, true)
+        : '<div style="background:#fff;border:0.5px solid #eeeae0;border-radius:12px;padding:26px;text-align:center;font-size:13px;color:#a39e95">No files with an upcoming closing date in this tab.</div>';
+    } else {
+      var groups = { needsyou: [], closing: [], ontrack: [] };
+      base.forEach(function(f){ (groups[_listGroupOf(f)] || groups.ontrack).push(f); });
+      groups.closing.sort(function(a, b){ var da = daysToClose(a), db = daysToClose(b); return (da == null ? 999 : da) - (db == null ? 999 : db); });
+      html += _listSection('Needs you', '#a3402f', '#fbecea', '#f2ddd8', groups.needsyou, false, true);
+      html += _listSection('Closing this week', '#8a6d1b', '#faf1dc', '#ece0c4', groups.closing, false, true);
+      html += _listSection('On track', '#14110c', '#f1efe8', '#eeeae0', groups.ontrack, true, _listOntrackOpen);
     }
-    html += _listSection('Needs you', '#a3402f', '#fbecea', '#f2ddd8', groups.needsyou, false, true);
-    html += _listSection('Closing this week', '#8a6d1b', '#faf1dc', '#ece0c4', groups.closing, false, true);
-    html += _listSection('On track', '#14110c', '#f1efe8', '#eeeae0', groups.ontrack, true, _listOntrackOpen);
     host.innerHTML = html;
     host.querySelectorAll('[data-lfile]').forEach(function(r){ r.addEventListener('click', function(){ var id = this.getAttribute('data-lfile'); var f = (_files || []).find(function(x){ return x.id === id; }); if(f){ try { openPlaybook(f); } catch(_){} } }); });
     host.querySelectorAll('[data-list-toggle]').forEach(function(b){ b.addEventListener('click', function(){ _listOntrackOpen = !_listOntrackOpen; renderListScreen(); }); });
+    host.querySelectorAll('[data-list-mode]').forEach(function(b){ b.addEventListener('click', function(){ _listMode = this.getAttribute('data-list-mode'); renderListScreen(); }); });
     var si = document.getElementById('list-search');
     if(si) si.addEventListener('input', function(){ _listQuery = this.value; _listApplySearch(); });
     _listApplySearch();
