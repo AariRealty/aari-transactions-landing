@@ -12195,6 +12195,27 @@ Tell me your planned move-out date and I will set the inspection.`
     out.sort(function(a, b){ return a.date - b.date; });
     return out;
   }
+  // Completed deadlines that fell on a given calendar day · the counterpart to _tcCalDeadlines,
+  // which drops done ones. The Today panel uses this to show the day's finished items struck
+  // through under a "Done" divider instead of letting them vanish. Same file/side rules.
+  function _doneDeadlinesForDay(dayTs){
+    const out = [];
+    (_files || []).forEach(function(f){
+      try {
+        if(deriveStage(f) === 'closed' || f.status === 'archived') return;
+        if((f.file_type || 'sale') !== 'sale') return;
+        const status = _deadlinesByFile[f.id] || {};
+        (fileContractDeadlines(f) || []).forEach(function(d){
+          if(!(d && d.date instanceof Date) || isNaN(d.date.getTime())) return;
+          const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0);
+          if(x.getTime() !== dayTs) return;
+          if(!_dlDoneFor(status, d.key)) return;
+          out.push({ date:d.date, key:d.key, label:d.name || 'Deadline', address:f.property_address || '', fileId:f.id });
+        });
+      } catch(_){}
+    });
+    return out;
+  }
   function _calIcs(){
     let s = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Aari Transactions//TC//EN\r\n';
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
@@ -13169,29 +13190,48 @@ Tell me your planned move-out date and I will set the inspection.`
     const _subLab = sel.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
     const _sideOf = function(d){ try { const f=(_files||[]).find(function(x){return x.id===d.fileId;}); const s=String((f||{}).client_type||'').toLowerCase(); return (s==='buyer'||s==='seller')?s:'notset'; } catch(_){ return 'notset'; } };
     const _sideTag = { buyer:'Buyer', seller:'Seller', notset:'Not set' };
+    // Done detection · a deadline is done when its completion record (alias-resolved) has a date.
+    const _isDone = function(d){ try { const _bk=String(d.key||'').replace(/__chase$/,''); const _st=(typeof _deadlinesByFile!=='undefined'&&_deadlinesByFile[d.fileId])||{}; const _rec=(typeof _dlRecFor==='function')?_dlRecFor(_st,_bk):null; return !!(_rec&&_rec.completed_at); } catch(_){ return false; } };
+    // Who checked it off · the coordinator behind completed_by, shown as "First L." on the done row.
+    const _whoDone = function(d){ try { const _bk=String(d.key||'').replace(/__chase$/,''); const _st=_deadlinesByFile[d.fileId]||{}; const _rec=_dlRecFor(_st,_bk); const uid=_rec&&_rec.completed_by; const tc=(uid&&typeof _tcsById!=='undefined')?_tcsById[uid]:null; return tc?((tc.first_name||'')+(tc.last_name?' '+tc.last_name.charAt(0).toUpperCase()+'.':'')).trim():''; } catch(_){ return ''; } };
     const _row = function(d){
       const side=_sideOf(d);
       const isChase=!!(d.isChase && d.dueDate);
       const nm=isChase?String(d.label||'').replace(/^Reminder\s*·\s*/i,''):(d.label||'Deadline');
       const n=_dayCountTo(_dueOf(d));
       const addr=esc(String(d.address||'').split(',')[0]);
-      let done=false;
-      try { const _bk=String(d.key||'').replace(/__chase$/,''); const _st=(typeof _deadlinesByFile!=='undefined'&&_deadlinesByFile[d.fileId])||{}; const _rec=(typeof _dlRecFor==='function')?_dlRecFor(_st,_bk):null; done=!!(_rec&&_rec.completed_at); } catch(_){ done=false; }
       let bubble='';
-      if(done){ bubble='<span style="flex:none;font-size:10px;font-weight:600;color:#2f6b4f;background:#e8f3ec;border:0.5px solid #cfe4d6;border-radius:20px;padding:3px 11px;white-space:nowrap">Done &#10003;</span>'; }
-      else if(n!=null){ bubble=(n<=0)?'<span style="flex:none;font-size:10px;font-weight:700;color:#993c1d;background:#faece7;border:0.5px solid #f3d9d0;border-radius:20px;padding:3px 11px;white-space:nowrap">Due today</span>':'<span style="flex:none;font-size:10px;font-weight:600;color:#8a6d1b;background:#faf3e6;border:0.5px solid #ecdfc4;border-radius:20px;padding:3px 11px;white-space:nowrap">Due in '+n+' day'+(n===1?'':'s')+'</span>'; }
+      if(n!=null){ bubble=(n<=0)?'<span style="flex:none;font-size:10px;font-weight:700;color:#993c1d;background:#faece7;border:0.5px solid #f3d9d0;border-radius:20px;padding:3px 11px;white-space:nowrap">Due today</span>':'<span style="flex:none;font-size:10px;font-weight:600;color:#8a6d1b;background:#faf3e6;border:0.5px solid #ecdfc4;border-radius:20px;padding:3px 11px;white-space:nowrap">Due in '+n+' day'+(n===1?'':'s')+'</span>'; }
       const tagCol=side==='buyer'?'#5f5e5a':side==='seller'?'#085041':'#8a6d1b';
       const tagBg=side==='buyer'?'#f1efe8':side==='seller'?'#e1f5ee':'#fbf7ee';
-      return '<div data-cal-open="'+esc(d.fileId)+'" style="display:flex;align-items:center;gap:9px;padding:9px 0;border-top:0.5px solid #f3f0ea;cursor:pointer;'+(done?'opacity:.55;':'')+'">'+
+      return '<div data-cal-open="'+esc(d.fileId)+'" style="display:flex;align-items:center;gap:9px;padding:9px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">'+
         '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:'+tagCol+';background:'+tagBg+';border-radius:20px;padding:2px 8px">'+esc(_sideTag[side])+'</span>'+
         '<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:#0f0f0f">'+esc(nm)+'</div><div style="font-size:11px;color:#8a857c;margin-top:2px">'+addr+'</div></div>'+
         bubble+'</div>';
     };
+    // Completed rows (Muck B) · struck through, dimmed, a green check, and who finished it. Still
+    // tappable so you can open the file. They stay on screen as a record instead of vanishing.
+    const _doneRow = function(d){
+      const isChase=!!(d.isChase && d.dueDate);
+      const nm=isChase?String(d.label||'').replace(/^Reminder\s*·\s*/i,''):(d.label||'Deadline');
+      const addr=esc(String(d.address||'').split(',')[0]);
+      const who=_whoDone(d);
+      return '<div data-cal-open="'+esc(d.fileId)+'" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:0.5px solid #f3f0ea;cursor:pointer;opacity:.5">'+
+        '<span style="flex:none;color:#2f6b4f;font-size:13px;line-height:1">&#10003;</span>'+
+        '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:500;color:#8a857c;text-decoration:line-through">'+esc(nm)+'</div>'+
+        '<div style="font-size:11px;color:#a39e95;margin-top:2px">'+addr+(who?' &middot; '+esc(who):'')+'</div></div></div>';
+    };
+    // byDay carries only LIVE deadlines (_tcCalDeadlines drops done ones, and it also feeds the
+    // .ics export + week timeline, so it must stay that way). The completed ones for this day are
+    // looked up separately so they can sit under the "Done" divider, struck through, as a record.
+    const _pending=_shown;
+    const _done=_doneDeadlinesForDay(_selTs);
     let h='<div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid #ece8e0;padding-bottom:12px;margin-bottom:12px">'+
       '<div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;font-weight:500;line-height:1;color:#0f0f0f">'+esc(_bigLab)+'</div>'+
       '<div style="font-size:11px;color:#8a857c;margin-top:3px;letter-spacing:.02em">'+esc(_subLab)+'</div></div>'+
-      '<span style="flex:none;font-size:11px;font-weight:600;color:#8a857c;white-space:nowrap">'+_shown.length+' due</span></div>';
-    h += _shown.length ? _shown.map(_row).join('') : '<div style="font-size:12px;color:#a39e95;padding:9px 0 2px">'+(_isToday?'Nothing due in the next 3 days. You’re ahead.':'Nothing due this day.')+'</div>';
+      '<span style="flex:none;font-size:11px;font-weight:600;color:#8a857c;white-space:nowrap">'+_pending.length+' due'+(_done.length?' &middot; '+_done.length+' done':'')+'</span></div>';
+    h += _pending.length ? _pending.map(_row).join('') : '<div style="font-size:12px;color:#a39e95;padding:9px 0 2px">'+(_isToday?'Nothing due in the next 3 days. You’re ahead.':'Nothing due this day.')+'</div>';
+    if(_done.length){ h += '<div style="font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#a99a78;margin:16px 0 2px">Done</div>'+_done.map(_doneRow).join(''); }
     return h;
   }
   // Compact 7-day week grid (Option B, matching the mock) · day columns with the same small
