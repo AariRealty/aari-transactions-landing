@@ -15060,6 +15060,116 @@ Tell me your planned move-out date and I will set the inspection.`
           paidInv.length ? paidInv.slice(0, 8).map(function(i){ return invCardHtml(i, false); }).join('') : _invEmptyColHtml('No invoice has ever<br>been submitted.')) +
       '</div>';
   }
+  // ===== List view · Variant 2 · priority groups (Jul 30 2026, Marlenyi) =====
+  // The scale view for 100+ files, where the board becomes an endless scroll. Every active file is
+  // sorted by what it needs from the reader: Needs you (flagged / overdue / today / no TC), Closing
+  // this week (closes within 7 days), On track (collapsed). Reuses the board's OWN field helpers so
+  // a file reads identically here and on a card. Renders into #listScreen; wired in _syncBoardVisibility.
+  var _listOntrackOpen = false;
+  var _listQuery = '';
+  function _listBaseFiles(){
+    var type = _fileTypeFilter || 'sale';
+    return (_files || []).filter(function(f){
+      if(!f) return false;
+      if((f.raw_form_data || {}).test_pool) return false;
+      if(f.archived_at) return false;
+      var st = String(f.status || '').toLowerCase();
+      if(st === 'closed' || st === 'cancelled' || st === 'archived') return false;
+      try { if(deriveStage(f) === 'closed') return false; } catch(_){}
+      if((f.file_type || 'sale') !== type) return false;
+      if(_serviceFilter && typeof svcKey === 'function' && svcKey(f) !== _serviceFilter) return false;
+      return true;
+    });
+  }
+  function _listFlag(f){
+    var lg = f.logistics || {};
+    if(lg.reply_review) return 'Reply';
+    if(lg.broker_review && lg.broker_review.status === 'needs_docs') return 'Needs docs';
+    if(f.status === 'awaiting_broker_review') return 'Review';
+    return '';
+  }
+  function _listGroupOf(f){
+    var flag = _listFlag(f);
+    var tier = 'ontrack';
+    try { tier = (fileTriage(f) || {}).tier || 'ontrack'; } catch(_){}
+    var dtc = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+    if(!f.assigned_tc_id || flag || tier === 'today') return 'needsyou';
+    if(tier === 'week' || (dtc != null && dtc >= 0 && dtc <= 7)) return 'closing';
+    return 'ontrack';
+  }
+  function _listRowHtml(f){
+    var flag = _listFlag(f);
+    var addr = String(f.property_address || 'Untitled file').split(',')[0];
+    var raw = f.raw_form_data || {};
+    var client = f.client_name || raw.buyer_name || raw.seller_name || 'Client not set';
+    var tc = f.assigned_tc_id ? _tcsById[f.assigned_tc_id] : null;
+    var tcName = tc ? ((tc.first_name || '') + (tc.last_name ? ' ' + tc.last_name.charAt(0).toUpperCase() + '.' : '')).trim() : 'No TC';
+    var stageLabel = ''; try { stageLabel = (fileProgress(f) || {}).label || ''; } catch(_){}
+    var prog = null; try { prog = stageProgress(f); } catch(_){}
+    var dtc = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+    var right = (prog && prog.total > 0) ? (prog.done + '/' + prog.total) : ((dtc != null && dtc >= 0) ? (dtc + 'd') : '');
+    var grp = _listGroupOf(f);
+    var dot = grp === 'needsyou' ? '#c96b6b' : (grp === 'closing' ? '#c9932f' : '#cbbf9f');
+    var flagChip = flag ? (' <span style="font-size:9px;font-weight:700;border-radius:5px;padding:2px 6px;background:' + (flag === 'Review' ? '#eef1ee' : '#fbeee6') + ';color:' + (flag === 'Review' ? '#3d6b4d' : '#9a4a1f') + ';letter-spacing:.2px;text-transform:uppercase">' + esc(flag) + '</span>') : '';
+    var sub = [esc(client), esc(tcName), esc(stageLabel)].filter(Boolean).join(' &middot; ');
+    var searchText = (addr + ' ' + client).toLowerCase();
+    return '<div data-lfile="' + esc(f.id) + '" data-lsearch="' + esc(searchText) + '" style="display:flex;align-items:center;gap:11px;padding:9px 12px;border-top:0.5px solid #f2eee4;cursor:pointer">' +
+      '<span style="flex:none;width:7px;height:7px;border-radius:50%;background:' + dot + '"></span>' +
+      '<span style="flex:1;min-width:0"><span style="font-size:12.5px;font-weight:600;color:#14110c">' + esc(addr) + '</span>' + flagChip +
+        '<span style="display:block;font-size:10.5px;color:#9a8c6d;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + sub + '</span></span>' +
+      '<span style="flex:none;font-size:11px;color:#9a8c6d;font-variant-numeric:tabular-nums">' + esc(right) + '</span>' +
+    '</div>';
+  }
+  function _listSection(label, color, countBg, borderCol, rows, collapsible, open){
+    if(!rows.length) return '';
+    var count = '<span style="font-size:11px;font-weight:700;color:' + color + ';background:' + countBg + ';border-radius:20px;padding:1px 8px">' + rows.length + '</span>';
+    if(collapsible){
+      var chev = '<span style="font-size:13px;color:#a99a78">' + (open ? '&#9662;' : '&#8250;') + '</span>';
+      var head = '<div data-list-toggle="1" style="display:flex;align-items:center;gap:8px;cursor:pointer">' +
+        '<span style="flex:1;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:' + color + '">' + label + '</span>' +
+        '<span style="font-size:11px;color:#a99a78;font-weight:600">' + rows.length + '</span>' + chev + '</div>';
+      return '<div data-list-section="1" style="background:#fff;border:0.5px solid ' + borderCol + ';border-radius:12px;padding:12px 15px;margin-bottom:10px">' + head +
+        (open ? rows.map(_listRowHtml).join('') : '') + '</div>';
+    }
+    var head2 = '<div style="display:flex;align-items:center;gap:8px;padding:0 0 4px">' +
+      '<span style="flex:1;font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:' + color + '">' + label + '</span>' + count + '</div>';
+    return '<div data-list-section="1" style="background:#fff;border:0.5px solid ' + borderCol + ';border-radius:12px;padding:12px 15px;margin-bottom:10px">' + head2 +
+      rows.map(_listRowHtml).join('') + '</div>';
+  }
+  function _listApplySearch(){
+    var host = document.getElementById('listScreen'); if(!host) return;
+    var q = (_listQuery || '').trim().toLowerCase();
+    host.querySelectorAll('[data-lfile]').forEach(function(r){
+      var t = r.getAttribute('data-lsearch') || '';
+      r.style.display = (!q || t.indexOf(q) !== -1) ? '' : 'none';
+    });
+    host.querySelectorAll('[data-list-section]').forEach(function(sec){
+      var rows = sec.querySelectorAll('[data-lfile]');
+      var vis = Array.prototype.filter.call(rows, function(r){ return r.style.display !== 'none'; }).length;
+      sec.style.display = (rows.length && !vis) ? 'none' : '';
+    });
+  }
+  function renderListScreen(){
+    var host = document.getElementById('listScreen'); if(!host) return;
+    var base = _listBaseFiles();
+    var groups = { needsyou: [], closing: [], ontrack: [] };
+    base.forEach(function(f){ (groups[_listGroupOf(f)] || groups.ontrack).push(f); });
+    groups.closing.sort(function(a, b){ var da = daysToClose(a), db = daysToClose(b); return (da == null ? 999 : da) - (db == null ? 999 : db); });
+    var html = '<input id="list-search" value="' + esc(_listQuery) + '" placeholder="Search address or client…" style="width:100%;box-sizing:border-box;font-size:12.5px;color:#14110c;border:0.5px solid #e6ddca;border-radius:9px;padding:9px 12px;font-family:inherit;background:#fcfaf5;margin:2px 0 12px">';
+    if(!base.length){
+      html += '<div style="background:#fff;border:0.5px solid #eeeae0;border-radius:12px;padding:26px;text-align:center;font-size:13px;color:#a39e95">No active files in this tab.</div>';
+      host.innerHTML = html; return;
+    }
+    html += _listSection('Needs you', '#a3402f', '#fbecea', '#f2ddd8', groups.needsyou, false, true);
+    html += _listSection('Closing this week', '#8a6d1b', '#faf1dc', '#ece0c4', groups.closing, false, true);
+    html += _listSection('On track', '#14110c', '#f1efe8', '#eeeae0', groups.ontrack, true, _listOntrackOpen);
+    host.innerHTML = html;
+    host.querySelectorAll('[data-lfile]').forEach(function(r){ r.addEventListener('click', function(){ var id = this.getAttribute('data-lfile'); var f = (_files || []).find(function(x){ return x.id === id; }); if(f){ try { openPlaybook(f); } catch(_){} } }); });
+    host.querySelectorAll('[data-list-toggle]').forEach(function(b){ b.addEventListener('click', function(){ _listOntrackOpen = !_listOntrackOpen; renderListScreen(); }); });
+    var si = document.getElementById('list-search');
+    if(si) si.addEventListener('input', function(){ _listQuery = this.value; _listApplySearch(); });
+    _listApplySearch();
+  }
   function renderInvoiceScreen(){
     var host = document.getElementById('invoiceScreen'); if(!host) return;
     var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
