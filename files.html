@@ -15590,7 +15590,9 @@ Tell me your planned move-out date and I will set the inspection.`
         laneEl.innerHTML = '<div class="lane-empty">—</div>';
         return;
       }
-      laneEl.innerHTML = buckets[stage].map(cardHtml).join('');
+      // Calm cards (Muck B) · float what needs a person to the top of its lane so the flagged
+      // ones never hide in a tall stack. Stable sort keeps the existing order within each rank.
+      laneEl.innerHTML = buckets[stage].slice().sort(function(a, b){ return _cardRank(a) - _cardRank(b); }).map(cardHtml).join('');
     });
     wireKanbanDelegation();
     // List view mirrors every kanban refresh · honors the saved toggle.
@@ -17900,7 +17902,10 @@ Tell me your planned move-out date and I will set the inspection.`
       ? '<button type="button" data-claim-file="' + esc(f.id) + '" style="background:#0f0f0f;color:#fff;border:0;font-size:10px;font-weight:600;letter-spacing:.02em;padding:3px 12px;border-radius:999px;cursor:pointer;font-family:inherit">Claim file</button>'
       : '<span class="cardv2-tc"><span class="cardv2-ava">' + esc(tcInit) + '</span>' + esc(tcName) + '</span>';
     var prog = stageProgress(f);
-    var progHtml2 = prog ? '<span class="cardv2-tasks">' + prog.done + '/' + prog.total + ' done</span>' : '<span class="cardv2-tasks"></span>';
+    // Calm cards (Muck B) · the "X/12 done" text was repeated on every card and read as noise;
+    // the hairline bar under the face already shows progress. Keep the empty span so the foot's
+    // space-between layout still pins the TC left.
+    var progHtml2 = '<span class="cardv2-tasks"></span>';
 
     var cashBadge = cash ? '<span class="card-tag-cash">Cash</span>' : '';
     var payBadge = f.payment_pending ? '<span class="card-tag-pay">Awaiting payment</span>' : '';
@@ -17928,9 +17933,11 @@ Tell me your planned move-out date and I will set the inspection.`
     var lineBits = [];
     if(clientName) lineBits.push(esc(clientName));
     if(closeBit) lineBits.push(closeBit);
+    // Calm cards (Muck B) · no "Client not set" placeholder. The line shows only when there is a
+    // real client name or a closing countdown; otherwise it stays out of the way.
     var nameLine = lineBits.length
       ? '<p class="cardv2-name" title="' + esc(clientName || '') + '">' + lineBits.join(' · ') + '</p>'
-      : '<p class="cardv2-name" style="color:#bbb">Client not set</p>';
+      : '';
 
     return '<div class="card' + (cash ? ' cash' : '') + '" draggable="true" data-file-id="' + esc(f.id) + '">' +
       '<div class="cardv2-face">' +
@@ -17939,7 +17946,10 @@ Tell me your planned move-out date and I will set the inspection.`
           scoreBadge +
         '</div>' +
         nameLine +
-        '<p class="cardv2-action ' + act.tone + '">' + esc(act.text) + '</p>' +
+        // Calm cards (Muck B) · a green "On track" is silence, not a line. Only render the action
+        // line when it actually needs a person (amber / rose), or when it carries real info like a
+        // closing date or a locked-until-paid note. Kills the "On track" repeated down every lane.
+        ((act.tone === 'green' && /^On track/.test(act.text)) ? '' : '<p class="cardv2-action ' + act.tone + '">' + esc(act.text) + '</p>') +
       '</div>' +
       _cardBar(f) +
       '<div class="cardv2-foot">' +
@@ -17947,6 +17957,19 @@ Tell me your planned move-out date and I will set the inspection.`
         progHtml2 +
       '</div>' +
     '</div>';
+  }
+
+  // Lane sort rank (Muck B) · 0 = flagged and needs a person, 1 = due today, 2 = due this week,
+  // 3 = calm. Lower floats to the top of its lane. Cheap and pure so the sort stays fast.
+  function _cardRank(f){
+    try {
+      var lg = f.logistics || {};
+      if(lg.reply_review || (lg.broker_review && lg.broker_review.status === 'needs_docs') || f.status === 'awaiting_broker_review') return 0;
+      var a = cardAction(f);
+      if(a.tone === 'rose') return 1;
+      if(a.tone === 'amber') return 2;
+    } catch(_){}
+    return 3;
   }
 
   // ============== CLOSING CERTAINTY SCORE ==============
