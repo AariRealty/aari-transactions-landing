@@ -12275,6 +12275,51 @@ Tell me your planned move-out date and I will set the inspection.`
     });
     return out;
   }
+  // Every deadline whose date has PASSED while still unchecked, across all files — the safety net so
+  // nothing slips (Marlenyi Aug 1). Same historical-noise filters as the month grid: skip reminders,
+  // completed ones, deadlines dated before their file's intake, and files whose closing already went by.
+  function _calOverdueItems(){
+    const t0 = (function(){ const t = new Date(); t.setHours(0, 0, 0, 0); return t.getTime(); })();
+    const intake = {}, closing = {};
+    (_files || []).forEach(function(f){ if(!f || !f.id) return;
+      if(f.created_at){ const c = new Date(f.created_at); if(!isNaN(c)){ c.setHours(0, 0, 0, 0); intake[f.id] = c.getTime(); } }
+      if(f.closing_date){ const cl = new Date(String(f.closing_date).slice(0, 10) + 'T12:00:00'); if(!isNaN(cl)){ cl.setHours(0, 0, 0, 0); closing[f.id] = cl.getTime(); } }
+    });
+    const out = [];
+    (_tcCalDeadlines() || []).forEach(function(d){
+      if(d.isChase || d.done) return;
+      const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); const xt = x.getTime();
+      if(xt >= t0) return;
+      const ik = intake[d.fileId]; if(ik != null && xt < ik) return;
+      const cm = closing[d.fileId]; if(cm != null && cm < t0) return;
+      out.push(d);
+    });
+    out.sort(function(a, b){ return a.date - b.date; });
+    return out;
+  }
+  // Red "Overdue" block pinned at the top of the calendar's day panel · stays until each item is
+  // checked off, so a passed deadline can never be missed just because you're looking at another day.
+  function _calOverdueBlockHtml(items){
+    if(!items || !items.length) return '';
+    const t0 = (function(){ const t = new Date(); t.setHours(0, 0, 0, 0); return t.getTime(); })();
+    const row = function(d){
+      const addr = esc(String(d.address || '').split(',')[0]);
+      const nm = esc(d.label || 'Deadline');
+      const dd = new Date(d.date.getTime()); dd.setHours(0, 0, 0, 0);
+      const late = Math.round((t0 - dd.getTime()) / 86400000);
+      const lateTxt = late <= 0 ? 'Due today' : (late + 'd late');
+      return '<div data-cal-open="' + esc(d.fileId) + '" style="display:flex;align-items:center;gap:9px;padding:8px 0;border-top:0.5px solid #f6e3dc;cursor:pointer">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:#0f0f0f">' + nm + '</div><div style="font-size:11px;color:#a36b58;margin-top:2px">' + addr + '</div></div>' +
+        '<span style="flex:none;font-size:10px;font-weight:700;color:#993c1d;background:#faece7;border:0.5px solid #f3d9d0;border-radius:20px;padding:3px 11px;white-space:nowrap">' + lateTxt + '</span></div>';
+    };
+    return '<div style="background:#fdf4f1;border:0.5px solid #f3d9d0;border-radius:12px;padding:12px 14px;margin-bottom:14px">' +
+      '<div style="display:flex;align-items:baseline;justify-content:space-between">' +
+        '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:600;color:#993c1d">Overdue</span>' +
+        '<span style="flex:none;font-size:11px;font-weight:700;color:#993c1d">' + items.length + ' late</span></div>' +
+      '<div style="font-size:11px;color:#a36b58;margin:2px 0 2px">Past due and not checked off — these stay here until you clear them.</div>' +
+      items.map(row).join('') +
+    '</div>';
+  }
   function _calIcs(){
     let s = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Aari Transactions//TC//EN\r\n';
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
@@ -13295,7 +13340,8 @@ Tell me your planned move-out date and I will set the inspection.`
     // looked up separately so they can sit under the "Done" divider, struck through, as a record.
     const _pending=_shown.filter(function(d){ return !d.done; }); // done ones render under the Done divider, not as pending
     const _done=_doneDeadlinesForDay(_selTs);
-    let h='<div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid #ece8e0;padding-bottom:12px;margin-bottom:12px">'+
+    // Overdue safety net pinned above the day (same as the desktop panel) so nothing passed slips.
+    let h=_calOverdueBlockHtml(_calOverdueItems())+'<div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid #ece8e0;padding-bottom:12px;margin-bottom:12px">'+
       '<div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;font-weight:500;line-height:1;color:#0f0f0f">'+esc(_bigLab)+'</div>'+
       '<div style="font-size:11px;color:#8a857c;margin-top:3px;letter-spacing:.02em">'+esc(_subLab)+'</div></div>'+
       '<span style="flex:none;font-size:11px;font-weight:600;color:#8a857c;white-space:nowrap">'+_pending.length+' due'+(_done.length?' &middot; '+_done.length+' done':'')+'</span></div>';
@@ -14021,8 +14067,9 @@ Tell me your planned move-out date and I will set the inspection.`
         rightHtml + '</div>';
     };
     html += '<div>';
-    // (Overdue lives in the Active-files list above; the calendar panel just shows
-    // the day you tap — default today — so it isn't a duplicate.)
+    // Overdue safety net · pinned at the top of the panel, always visible no matter which day is
+    // selected, so a deadline that passed unchecked never gets missed (Marlenyi Aug 1).
+    html += _calOverdueBlockHtml(overdue);
     const sel = new Date(_calSelDay), sd = byDay[_calSelDay] || [];
     // Countdown, in business days, from TODAY to a deadline's real due date. Chase/reminder
     // items carry the real due date on d.dueDate; actual deadlines are due on d.date.
