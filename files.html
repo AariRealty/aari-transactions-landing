@@ -11074,38 +11074,38 @@ Tell me your planned move-out date and I will set the inspection.`
     var t0 = new Date(); t0.setHours(0, 0, 0, 0);
     var fmt = function(d){ try { return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } };
     var daysTo = function(dt){ var dd = new Date(dt.getTime()); dd.setHours(0, 0, 0, 0); return Math.round((dd - t0) / 86400000); };
-    // Pool = live (not done) contract deadlines + the derived inspection check-in.
+    // Live (not done) contract deadlines only. The existing "Today" task section above already owns
+    // Today, and it already carries the inspection work, so this adds only the two sections she asked
+    // for RIGHT UNDER it: "Next 3 days" and "Later". No second Today, no duplicated inspection item.
     var pool = [];
-    items.forEach(function(d){ var rec = _dlRecFor(status, d.key); if(rec && rec.completed_at) return; pool.push({ key:d.key, name:d.name || 'Deadline', date:d.date, checkin:false }); });
-    try { (_calExtraItems(file) || []).forEach(function(x){ if(x && x.key === 'insp_checkin') pool.push({ key:'insp_checkin', name:'Inspection check-in · on track or extend?', date:x.date, checkin:true }); }); } catch(_){}
+    items.forEach(function(d){ var rec = _dlRecFor(status, d.key); if(rec && rec.completed_at) return; pool.push({ key:d.key, name:d.name || 'Deadline', date:d.date }); });
     if(!pool.length) return '';
     pool.sort(function(a, b){ return a.date - b.date; });
-    // Three groups: Today (overdue or due today), Next 3 days (1-3), Later (everything past that).
-    var today = [], soon = [], later = [];
-    pool.forEach(function(p){ var n = daysTo(p.date); if(n <= 0) today.push(p); else if(n <= 3) soon.push(p); else later.push(p); });
-    var btn = '<button type="button" style="flex:none;font-size:10.5px;font-weight:700;color:#fff;background:#14110c;border:0;border-radius:7px;padding:5px 11px;cursor:pointer;font-family:inherit"';
-    var ctlOf = function(p){ return p.checkin ? (btn + ' data-sdl-checkin="1">Reviewed</button>') : (btn + ' data-sdl-done="' + esc(p.key) + '">Mark done</button>'); };
-    var pill = function(p, tier){
+    // Next 3 days = overdue or due within 3 (a taskless deadline due today lands here since the task
+    // Today only holds tasks). Later = everything past that, folded.
+    var soon = [], later = [];
+    pool.forEach(function(p){ (daysTo(p.date) <= 3 ? soon : later).push(p); });
+    if(!soon.length && !later.length) return '';
+    var pill = function(p){
       var n = daysTo(p.date);
       var txt = (n < 0) ? (Math.abs(n) + 'd late') : (n === 0 ? 'Due today' : (n <= 3 ? 'In ' + n + ' day' + (n === 1 ? '' : 's') : fmt(p.date)));
-      var col = tier === 'today' ? '#f7ece8;color:#a3402f' : (tier === 'soon' ? '#fbf3e2;color:#8a6d1b' : '#f1efe8;color:#8a857c');
+      var col = (n <= 0) ? '#f7ece8;color:#a3402f' : (n <= 3 ? '#fbf3e2;color:#8a6d1b' : '#f1efe8;color:#8a857c');
       return '<span style="flex:none;font-size:10px;font-weight:700;border-radius:999px;padding:3px 9px;background:' + col + '">' + txt + '</span>';
     };
-    var row = function(p, tier){
-      return '<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-top:0.5px solid #f2eee4">' +
-        '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:600;color:#14110c">' + esc(p.name) + '</span>' + pill(p, tier) + ctlOf(p) + '</div>';
+    var row = function(p){
+      return '<div style="display:flex;align-items:center;gap:9px;padding:8px 0;border-top:0.5px solid #f2eee2">' +
+        '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:600;color:#0a0a0a">' + esc(p.name) + '</span>' + pill(p) +
+        '<button type="button" data-sdl-done="' + esc(p.key) + '" style="flex:none;font-size:10.5px;font-weight:700;color:#fff;background:#0f0f0f;border:0;border-radius:8px;padding:6px 12px;cursor:pointer;font-family:inherit">Mark done</button></div>';
     };
-    var CARD = 'background:#fff;border:0.5px solid #e9e4d9;border-radius:10px;padding:9px 12px;margin:8px 0 0;box-shadow:0 1px 2px rgba(20,17,12,.03)';
-    var section = function(label, color, arr, tier){
-      if(!arr.length) return '';
-      return '<div style="' + CARD + '"><p style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;color:' + color + ';margin:0 0 2px">' + label + '</p>' +
-        arr.map(function(p){ return row(p, tier); }).join('') + '</div>';
-    };
-    var html = section('Today', '#a3402f', today, 'today') + section('Next 3 days', '#8a6d1b', soon, 'soon');
+    // White cards + serif headings, the same look as the "Today" card above (uc-week style).
+    var CARD = 'background:#fff;border:0.5px solid rgba(15,15,15,0.06);border-radius:12px;padding:10px 14px;margin:0 0 12px;box-shadow:0 1px 3px rgba(15,15,15,0.04)';
+    var hd = function(label, count){ return '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:2px"><span style="font-family:Georgia,\'Times New Roman\',serif;font-size:14px;font-weight:600;letter-spacing:-.1px;color:#0f0f0f">' + label + '</span><span style="font-family:\'Playfair Display\',Georgia,serif;font-size:12px;font-weight:500;color:#7a756c">' + count + '</span></div>'; };
+    var html = '';
+    if(soon.length){ html += '<div style="' + CARD + '">' + hd('Next 3 days', soon.length) + soon.map(row).join('') + '</div>'; }
     if(later.length){
       html += _sdlLaterOpen
-        ? '<div style="' + CARD + '"><div data-sdl-later="1" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;color:#8a857c">Later</span><span style="font-size:11px;color:#a99a78">' + later.length + '</span><span style="font-size:12px;color:#a99a78">&#9662;</span></div>' + later.map(function(p){ return row(p, 'later'); }).join('') + '</div>'
-        : '<div data-sdl-later="1" style="' + CARD + ';display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#7a7263;font-weight:600"><span style="flex:1">Later</span><span style="color:#a99a78">' + later.length + '</span><span style="color:#a99a78">&#8250;</span></div>';
+        ? '<div style="' + CARD + '"><div data-sdl-later="1" style="cursor:pointer">' + hd('Later', later.length + ' &#9662;') + '</div>' + later.map(row).join('') + '</div>'
+        : '<div data-sdl-later="1" style="' + CARD + ';cursor:pointer">' + hd('Later', later.length + ' &#8250;') + '</div>';
     }
     return html;
   }
