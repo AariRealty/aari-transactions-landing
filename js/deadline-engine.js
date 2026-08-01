@@ -729,7 +729,7 @@
     { key:'cd_earliest', category:'Closing', name:'Earliest Closing (CD + 3 business days)',
       compute:(E,C,c)=>{ if(!c || !c.cd_received) return null; const d = parseDate(c.cd_received); return d ? addTridDays(d, 3) : null; }, bizDay:false,
       note:()=>'TRID: closing may not occur until 3 business days after the buyer receives the Closing Disclosure (Saturdays count; Sundays and federal holidays do not). Only appears once the CD-received date is logged.' },
-    { key:'appraisal', category:'Financing', name:'Appraisal Completed',
+    { key:'appraisal', category:'Financing', name:'Appraisal',
       compute:(E,C,c)=>addBizIfShort(C, -5), bizDay:true,
       note:()=>'Lender schedules the actual date · target a few days before the final walk-through. Update with the real date once the lender confirms.' },
     { key:'additional_deposit', category:'Deposits', name:'Additional Deposit Deadline',
