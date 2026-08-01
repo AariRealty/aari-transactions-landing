@@ -23972,11 +23972,20 @@ Tell me your planned move-out date and I will set the inspection.`
     // also render as its own spine row — the task IS the actionable version (checkbox, sub,
     // soft-complete). Otherwise survey / title would appear twice now that tasks carry dates.
     var _taskDlKeys = {}; ordered.forEach(function(t){ if(t.dl) _taskDlKeys[t.dl] = 1; });
+    var _todayYmd = (function(){ var t = new Date(); return t.getFullYear() + '-' + String(t.getMonth() + 1).padStart(2, '0') + '-' + String(t.getDate()).padStart(2, '0'); })();
     var _dlAll = [];
     try { (fileContractDeadlines(file) || []).forEach(function(d){
       if(!(d && d.date instanceof Date) || isNaN(d.date.getTime())) return;
       if(_taskDlKeys[d.key]) return;
-      var _r = _dlRecFor(_dlStat, d.key); if(_r && _r.completed_at) return;
+      var _r = _dlRecFor(_dlStat, d.key);
+      if(_r && _r.completed_at){
+        // A just-checked deadline stays visible + struck for the rest of today (immediate
+        // confirmation, same as a checked task) instead of vanishing. Completions from an
+        // earlier day fold away so the list stays clean.
+        if(String(_r.completed_at).slice(0, 10) !== _todayYmd) return;
+        _dlAll.push({ key:d.key, name:d.name || 'Deadline', date:d.date, done:true });
+        return;
+      }
       _dlAll.push({ key:d.key, name:d.name || 'Deadline', date:d.date });
     }); } catch(_){}
     var _dlDays = function(dt){ return _bizDaysTo(dt); };
@@ -23985,11 +23994,20 @@ Tell me your planned move-out date and I will set the inspection.`
     var _dlLater = _dlAll.filter(function(x){ return _dlDays(x.date) > 3; }).sort(function(a, b){ return a.date - b.date; });
     var _dlTagFor = function(k){ k = String(k || ''); if(/loan/.test(k)) return 'Loan'; if(/title/.test(k)) return 'Title'; if(/survey/.test(k)) return 'Survey'; if(/insp|feasib|due_dilig/.test(k)) return 'Insp'; if(/apprais/.test(k)) return 'Appr'; if(/estoppel/.test(k)) return 'Estoppel'; if(/hoa/.test(k)) return 'HOA'; if(/emd|deposit/.test(k)) return 'EMD'; if(/compensation|comp/.test(k)) return 'Comp'; if(/clos/.test(k)) return 'Closing'; if(/lease|tenant/.test(k)) return 'Lease'; return 'Date'; };
     var _dlRowH = function(p){
+      // Drop the tag when the name already leads with it, so no "Insp · Inspection…".
+      var _tg = _dlTagFor(p.key);
+      // Checked deadline · struck + grey, box stays ticked, quiet green "done" instead of a
+      // countdown. Unticking re-opens it (the change handler clears the completion).
+      if(p.done){
+        var _tagHD = (new RegExp('^' + _tg, 'i').test(p.name)) ? '' : ('<span style="flex:none;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border-radius:4px;padding:2px 6px;color:#9a958c;background:#f1efe8">' + esc(_tg) + '</span>');
+        return '<div class="ck-task adhd-task ck-done" style="display:flex;align-items:center;gap:11px;padding:11px 0;border-top:0.5px solid #f2eee2">' +
+          '<input type="checkbox" class="adhd-cb" data-sdl-check="' + esc(p.key) + '" checked>' + _tagHD +
+          '<span style="flex:1;min-width:0;font-weight:600;color:#8a857c;font-size:13.5px;text-decoration:line-through">' + esc(p.name) + '</span>' +
+          '<span style="flex:none;font-size:10.5px;font-weight:700;color:#2f7a4f">&#10003; done</span></div>';
+      }
       var n = _dlDays(p.date);
       var txt = (n < 0) ? (Math.abs(n) + 'd late') : (n === 0 ? 'Due today' : (n <= 3 ? 'In ' + n + ' day' + (n === 1 ? '' : 's') : p.date.toLocaleDateString('en-US', { month:'short', day:'numeric' })));
       var col = (n <= 0) ? '#f7ece8;color:#a3402f' : (n <= 3 ? '#fbf3e2;color:#8a6d1b' : '#f1efe8;color:#8a857c');
-      // Drop the tag when the name already leads with it, so no "Insp · Inspection…".
-      var _tg = _dlTagFor(p.key);
       var _tagH = (new RegExp('^' + _tg, 'i').test(p.name)) ? '' : ('<span style="flex:none;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border-radius:4px;padding:2px 6px;color:#3d6b4d;background:#eef1ee">' + esc(_tg) + '</span>');
       return '<div class="ck-task adhd-task" style="display:flex;align-items:center;gap:11px;padding:11px 0;border-top:0.5px solid #f2eee2">' +
         '<input type="checkbox" class="adhd-cb" data-sdl-check="' + esc(p.key) + '">' + _tagH +
