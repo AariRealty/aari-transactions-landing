@@ -11063,42 +11063,51 @@ Tell me your planned move-out date and I will set the inspection.`
   // Marking done here writes a real completion, so it crosses off the calendar AND counts in the
   // end-of-day report. The inspection check-in reminder rides here too, so it stops being a
   // calendar-only ghost. Buttons: data-sdl-done / data-sdl-undo / data-sdl-checkin (wired below).
-  function _sdlRow(name, due, ctl){
-    return '<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-top:0.5px solid #efe6d2">' +
-      '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:600;color:#14110c">' + name + '</span>' +
-      '<span style="flex:none;font-size:10px;font-weight:700;border-radius:999px;padding:3px 9px;background:' + (due.hot ? '#f7ece8;color:#a3402f' : '#fbf3e2;color:#8a6d1b') + '">' + due.txt + '</span>' + ctl + '</div>';
-  }
+  // Later fold · collapsed by default so the far-out deadlines stay out of the way until they get
+  // closer and graduate up into Next 3 days, then Today. Toggled by data-sdl-later (handler below).
+  var _sdlLaterOpen = false;
   function stageDeadlinesCardHtml(file){
     if((file.file_type || 'sale') !== 'sale') return '';
-    let items = []; try { items = fileContractDeadlines(file) || []; } catch(_){ }
+    var items = []; try { items = fileContractDeadlines(file) || []; } catch(_){ }
     items = items.filter(function(d){ return d && d.date instanceof Date && !isNaN(d.date.getTime()); });
-    const status = _deadlinesByFile[file.id] || {};
-    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
-    const fmt = function(d){ try { return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } };
-    const dueOf = function(dt){ const dd = new Date(dt.getTime()); dd.setHours(0, 0, 0, 0); const n = Math.round((dd - t0) / 86400000);
-      if(n < 0) return { txt: Math.abs(n) + 'd late', hot:true };
-      if(n === 0) return { txt:'Due today', hot:true };
-      if(n <= 5) return { txt:'Due in ' + n + ' day' + (n === 1 ? '' : 's'), hot:false };
-      return { txt:'Due ' + fmt(dt), hot:false };
+    var status = _deadlinesByFile[file.id] || {};
+    var t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    var fmt = function(d){ try { return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } };
+    var daysTo = function(dt){ var dd = new Date(dt.getTime()); dd.setHours(0, 0, 0, 0); return Math.round((dd - t0) / 86400000); };
+    // Pool = live (not done) contract deadlines + the derived inspection check-in.
+    var pool = [];
+    items.forEach(function(d){ var rec = _dlRecFor(status, d.key); if(rec && rec.completed_at) return; pool.push({ key:d.key, name:d.name || 'Deadline', date:d.date, checkin:false }); });
+    try { (_calExtraItems(file) || []).forEach(function(x){ if(x && x.key === 'insp_checkin') pool.push({ key:'insp_checkin', name:'Inspection check-in · on track or extend?', date:x.date, checkin:true }); }); } catch(_){}
+    if(!pool.length) return '';
+    pool.sort(function(a, b){ return a.date - b.date; });
+    // Three groups: Today (overdue or due today), Next 3 days (1-3), Later (everything past that).
+    var today = [], soon = [], later = [];
+    pool.forEach(function(p){ var n = daysTo(p.date); if(n <= 0) today.push(p); else if(n <= 3) soon.push(p); else later.push(p); });
+    var btn = '<button type="button" style="flex:none;font-size:10.5px;font-weight:700;color:#fff;background:#14110c;border:0;border-radius:7px;padding:5px 11px;cursor:pointer;font-family:inherit"';
+    var ctlOf = function(p){ return p.checkin ? (btn + ' data-sdl-checkin="1">Reviewed</button>') : (btn + ' data-sdl-done="' + esc(p.key) + '">Mark done</button>'); };
+    var pill = function(p, tier){
+      var n = daysTo(p.date);
+      var txt = (n < 0) ? (Math.abs(n) + 'd late') : (n === 0 ? 'Due today' : (n <= 3 ? 'In ' + n + ' day' + (n === 1 ? '' : 's') : fmt(p.date)));
+      var col = tier === 'today' ? '#f7ece8;color:#a3402f' : (tier === 'soon' ? '#fbf3e2;color:#8a6d1b' : '#f1efe8;color:#8a857c');
+      return '<span style="flex:none;font-size:10px;font-weight:700;border-radius:999px;padding:3px 9px;background:' + col + '">' + txt + '</span>';
     };
-    // Only what's DUE SOON · overdue or due within the next 3 days, matching the calendar's Today
-    // window. Far-out deadlines (loan approval, closing weeks away) and already-done ones are not
-    // "due", so they stay off this card. When nothing is due in 3 days the card doesn't render, so
-    // it agrees with "Today · Nothing urgent · you're ahead" instead of contradicting it.
-    const WINDOW = 3;
-    const _within = function(dt){ const dd = new Date(dt.getTime()); dd.setHours(0, 0, 0, 0); return Math.round((dd - t0) / 86400000) <= WINDOW; };
-    let live = [];
-    items.forEach(function(d){ const rec = _dlRecFor(status, d.key); if(rec && rec.completed_at) return; if(_within(d.date)) live.push(d); });
-    let checkin = null;
-    try { (_calExtraItems(file) || []).forEach(function(x){ if(x && x.key === 'insp_checkin' && _within(x.date)) checkin = x; }); } catch(_){}
-    if(!live.length && !checkin) return '';
-    live.sort(function(a, b){ return a.date - b.date; });
-    let rows = '';
-    if(checkin){ rows += _sdlRow('Inspection check-in · on track or extend?', dueOf(checkin.date), '<button type="button" data-sdl-checkin="1" style="flex:none;font-size:10.5px;font-weight:700;color:#fff;background:#14110c;border:0;border-radius:7px;padding:5px 11px;cursor:pointer;font-family:inherit">Reviewed</button>'); }
-    live.forEach(function(d){ rows += _sdlRow(esc(d.name || 'Deadline'), dueOf(d.date), '<button type="button" data-sdl-done="' + esc(d.key) + '" style="flex:none;font-size:10.5px;font-weight:700;color:#fff;background:#14110c;border:0;border-radius:7px;padding:5px 11px;cursor:pointer;font-family:inherit">Mark done</button>'); });
-    return '<div style="background:#faf7f0;border:0.5px solid #ece0c4;border-radius:10px;padding:10px 12px;margin:10px 0 4px">' +
-      '<p style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#8a6d1b;font-weight:700;margin:0 0 3px">Deadlines · due in the next 3 days</p>' + rows +
-      '<p style="font-size:10px;color:#a99a78;margin:8px 0 0">Mark done here and it crosses off the calendar and counts in the end of day report.</p></div>';
+    var row = function(p, tier){
+      return '<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-top:0.5px solid #f2eee4">' +
+        '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:600;color:#14110c">' + esc(p.name) + '</span>' + pill(p, tier) + ctlOf(p) + '</div>';
+    };
+    var CARD = 'background:#fff;border:0.5px solid #e9e4d9;border-radius:10px;padding:9px 12px;margin:8px 0 0;box-shadow:0 1px 2px rgba(20,17,12,.03)';
+    var section = function(label, color, arr, tier){
+      if(!arr.length) return '';
+      return '<div style="' + CARD + '"><p style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;color:' + color + ';margin:0 0 2px">' + label + '</p>' +
+        arr.map(function(p){ return row(p, tier); }).join('') + '</div>';
+    };
+    var html = section('Today', '#a3402f', today, 'today') + section('Next 3 days', '#8a6d1b', soon, 'soon');
+    if(later.length){
+      html += _sdlLaterOpen
+        ? '<div style="' + CARD + '"><div data-sdl-later="1" style="display:flex;align-items:center;gap:8px;cursor:pointer"><span style="flex:1;font-size:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:700;color:#8a857c">Later</span><span style="font-size:11px;color:#a99a78">' + later.length + '</span><span style="font-size:12px;color:#a99a78">&#9662;</span></div>' + later.map(function(p){ return row(p, 'later'); }).join('') + '</div>'
+        : '<div data-sdl-later="1" style="' + CARD + ';display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#7a7263;font-weight:600"><span style="flex:1">Later</span><span style="color:#a99a78">' + later.length + '</span><span style="color:#a99a78">&#8250;</span></div>';
+    }
+    return html;
   }
   // ===== Deadline WATCH (past Setup) · the dates live inside step 4 of the spine.
   // A read-only countdown grouped Late / Due soon / Coming up / Done — no confirm
@@ -18642,6 +18651,9 @@ Tell me your planned move-out date and I will set the inspection.`
       Promise.resolve(_client.from('files').update({ logistics: lg }).eq('id', _currentFile.id)).then(function(){ try { renderStageChecklist(_currentFile); } catch(_){} try { renderKanban(); } catch(_){} });
       return;
     }
+    // Later fold in the Deadlines section · open/close the far-out deadlines.
+    const sdlLater = e.target.closest('[data-sdl-later]');
+    if(sdlLater && _currentFile){ _sdlLaterOpen = !_sdlLaterOpen; try { renderStageChecklist(_currentFile); } catch(_){} return; }
     // Tap a completed listing/compliance step to review and edit its tasks inline.
     const spRev = e.target.closest('[data-spine-review]');
     if(spRev && !e.target.closest('input,label')){
