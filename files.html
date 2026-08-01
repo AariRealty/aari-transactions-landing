@@ -23864,13 +23864,11 @@ Tell me your planned move-out date and I will set the inspection.`
     const _allNow = _stage === 'ctc';
     const _isNow = function(t){
       if(_allNow) return true;
+      // Opening tasks have no deadline but are immediate · they belong in Today.
       if(typeof isOpeningTaskId === 'function' && isOpeningTaskId(t.id)) return true;
-      // Chase-able task surfaces from its follow-up date (3 business days before due).
-      if(t.dl && CHASE_KEYS[t.dl] && dls[t.dl] && dls[t.dl].date){
-        const cd = chaseDateFor(dls[t.dl].date);
-        if(cd){ const c = new Date(cd.getTime()); c.setHours(0, 0, 0, 0); return c <= _t0; }
-      }
-      const d = _days(t); return d != null && d <= 3;
+      // Marlenyi Aug 1 · Today = due today or overdue ONLY. Anything due in 1-3 days goes to
+      // "Next 3 days" (no more pulling it into Today via the chase window).
+      const d = _days(t); return d != null && d <= 0;
     };
     let nowTasks = openTasks.filter(_isNow);
     const laterTasks = openTasks.filter(function(t){ return !_isNow(t); });
@@ -23932,7 +23930,35 @@ Tell me your planned move-out date and I will set the inspection.`
     // Today + This week headers · she doesn't need to see the running
     // tally. Section titles stand alone. When Today is empty show the
     // quiet "Nothing urgent" line; otherwise the title alone is enough.
-    var _todayHeadCt = _todayTasks.length ? '' : 'Nothing urgent &middot; you&rsquo;re ahead';
+    // Deadlines fold into the SAME Today / Next 3 days / Later spine as the tasks, bucketed by due
+    // date (Marlenyi Aug 1). Overdue/today → Today, 1-3 days → Next 3 days, beyond → Later. This
+    // replaces the separate deadline card so there is one list, in date order, under Today.
+    var _dlStat = _deadlinesByFile[file.id] || {};
+    var _dlAll = [];
+    try { (fileContractDeadlines(file) || []).forEach(function(d){
+      if(!(d && d.date instanceof Date) || isNaN(d.date.getTime())) return;
+      var _r = _dlRecFor(_dlStat, d.key); if(_r && _r.completed_at) return;
+      _dlAll.push({ key:d.key, name:d.name || 'Deadline', date:d.date });
+    }); } catch(_){}
+    var _dlDays = function(dt){ var x = new Date(dt.getTime()); x.setHours(0, 0, 0, 0); return Math.round((x - _t0) / 86400000); };
+    var _dlToday = _dlAll.filter(function(x){ return _dlDays(x.date) <= 0; }).sort(function(a, b){ return a.date - b.date; });
+    var _dlSoon = _dlAll.filter(function(x){ var n = _dlDays(x.date); return n > 0 && n <= 3; }).sort(function(a, b){ return a.date - b.date; });
+    var _dlLater = _dlAll.filter(function(x){ return _dlDays(x.date) > 3; }).sort(function(a, b){ return a.date - b.date; });
+    var _dlTagFor = function(k){ k = String(k || ''); if(/loan/.test(k)) return 'Loan'; if(/title/.test(k)) return 'Title'; if(/survey/.test(k)) return 'Survey'; if(/insp|feasib|due_dilig/.test(k)) return 'Insp'; if(/apprais/.test(k)) return 'Appr'; if(/estoppel/.test(k)) return 'Estoppel'; if(/hoa/.test(k)) return 'HOA'; if(/emd|deposit/.test(k)) return 'EMD'; if(/compensation|comp/.test(k)) return 'Comp'; if(/clos/.test(k)) return 'Closing'; if(/lease|tenant/.test(k)) return 'Lease'; return 'Date'; };
+    var _dlRowH = function(p){
+      var n = _dlDays(p.date);
+      var txt = (n < 0) ? (Math.abs(n) + 'd late') : (n === 0 ? 'Due today' : (n <= 3 ? 'In ' + n + ' day' + (n === 1 ? '' : 's') : p.date.toLocaleDateString('en-US', { month:'short', day:'numeric' })));
+      var col = (n <= 0) ? '#f7ece8;color:#a3402f' : (n <= 3 ? '#fbf3e2;color:#8a6d1b' : '#f1efe8;color:#8a857c');
+      // Drop the tag when the name already leads with it, so no "Insp · Inspection…".
+      var _tg = _dlTagFor(p.key);
+      var _tagH = (new RegExp('^' + _tg, 'i').test(p.name)) ? '' : ('<span style="flex:none;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border-radius:4px;padding:2px 6px;color:#3d6b4d;background:#eef1ee">' + esc(_tg) + '</span>');
+      return '<div class="ck-task adhd-task" style="display:flex;align-items:center;gap:11px;padding:11px 0;border-top:0.5px solid #f2eee2">' +
+        '<input type="checkbox" class="adhd-cb" data-sdl-check="' + esc(p.key) + '">' + _tagH +
+        '<span style="flex:1;min-width:0;font-weight:600;color:#0a0a0a;font-size:13.5px">' + esc(p.name) + '</span>' +
+        '<span style="flex:none;font-size:10.5px;font-weight:700;border-radius:999px;padding:4px 10px;background:' + col + '">' + txt + '</span></div>';
+    };
+
+    var _todayHeadCt = (_todayTasks.length || _dlToday.length) ? '' : 'Nothing urgent &middot; you&rsquo;re ahead';
     html += '<section class="uc-today"><div class="uc-today-hd"><span class="uc-today-lbl">Today</span>' +
       (_todayHeadCt ? '<span class="uc-today-ct">' + _todayHeadCt + '</span>' : '') +
       '</div>';
@@ -23943,27 +23969,24 @@ Tell me your planned move-out date and I will set the inspection.`
           : adhdCompactRow(file, t, dls, done, 'today', true);
       }).join('');
     }
+    html += _dlToday.map(_dlRowH).join('');
     html += '</section>';
 
-    // Deadlines (Next 3 days / Later) sit RIGHT under Today, before the task "This week" strip and
-    // the "N more · later this stage" pill + Move footer · Marlenyi Aug 1 wanted them contiguous
-    // under Today, not stranded below Move anyway.
-    try { html += stageDeadlinesCardHtml(file); } catch(_){}
-
-    // THIS WEEK · slim strip · compact rows only. Done tasks (including
-    // today's just-checked) drop into the collapsed "N done" footer
-    // instead of showing inline · Marlenyi Jul 28 preference.
-    if(_weekTasks.length){
-      html += '<section class="uc-week"><div class="uc-week-hd"><span class="uc-week-lbl">This week</span></div>' +
+    // NEXT 3 DAYS · tasks due 1-3 days + deadlines due 1-3 days, in one section.
+    if(_weekTasks.length || _dlSoon.length){
+      html += '<section class="uc-week"><div class="uc-week-hd"><span class="uc-week-lbl">Next 3 days</span><span class="uc-week-ct">' + (_weekTasks.length + _dlSoon.length) + '</span></div>' +
         _weekTasks.map(function(t){ return adhdCompactRow(file, t, dls, done, 'week', false); }).join('') +
+        _dlSoon.map(_dlRowH).join('') +
         '</section>';
     }
 
-    // LATER · a single collapse pill · compact rows inside
-    if(_laterTasks.length){
-      html += '<div class="uc-later-wrap"><button type="button" class="uc-later-pill" data-wt-toggle="later">&#128337; ' + _laterTasks.length + ' more &middot; later this stage &rarr;</button>' +
+    // LATER · everything further out (tasks + deadlines) · one collapse pill.
+    var _laterN = _laterTasks.length + _dlLater.length;
+    if(_laterN){
+      html += '<div class="uc-later-wrap"><button type="button" class="uc-later-pill" data-wt-toggle="later">&#128337; ' + _laterN + ' &middot; later &rarr;</button>' +
         '<div data-wt-list="later" hidden style="margin-top:8px">' +
         _laterTasks.map(function(t){ return adhdCompactRow(file, t, dls, done, 'later', false); }).join('') +
+        _dlLater.map(_dlRowH).join('') +
         '</div></div>';
     }
 
