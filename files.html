@@ -21217,6 +21217,7 @@ Tell me your planned move-out date and I will set the inspection.`
       // FIRPTA — any type, if seller is a foreign person.
       { id:'s_uc_firpta', owner:'Seller',
         label:'Confirm FIRPTA status + affidavit',
+        dueFrom:'closing',
         sub:'Obtain the seller’s non-foreign affidavit before closing, or if the seller is a foreign person, coordinate the 15 percent withholding workflow with title early. This holds up disbursement if left to the end.',
         softComplete:{ label:'Affidavit received', chip:'Received', flag:'firpta' } },
       // CCCL — coastal CRSP.
@@ -22735,6 +22736,27 @@ Tell me your planned move-out date and I will set the inspection.`
       return n;
     } catch(_){ return null; }
   }
+  // ONE task-due-date resolver used by every row renderer + the bucketer, so a task's date,
+  // its countdown pill, and which section it lands in never disagree. Resolution order:
+  //   1) dls[t.dl] — the legacy fileDeadlines key map.
+  //   2) the FULL contract schedule (fileContractDeadlines carries keys dls omits, e.g.
+  //      survey_seller / title_evidence) so those tasks get their real contract date.
+  //   3) a contract anchor for tasks that have no deadline key but a known timing, via
+  //      t.dueFrom ('closing' | 'effective') + optional t.dueOffset (e.g. FIRPTA = Closing).
+  function _taskDueDate(file, t, dls){
+    try {
+      if(t && t.dl){
+        if(dls && dls[t.dl] && dls[t.dl].date) return dls[t.dl].date;
+        var rows = fileContractDeadlines(file) || [];
+        for(var i = 0; i < rows.length; i++){ if(rows[i] && rows[i].key === t.dl && rows[i].date instanceof Date && !isNaN(rows[i].date)) return rows[i].date; }
+      }
+      if(t && t.dueFrom){
+        var base = (t.dueFrom === 'closing') ? _asDate(file.closing_date) : (t.dueFrom === 'effective' ? _asDate(file.effective_date) : null);
+        if(base && !isNaN(base)){ var d = new Date(base.getTime()); d.setDate(d.getDate() + (t.dueOffset || 0)); return d; }
+      }
+    } catch(_){}
+    return null;
+  }
   function ckRow(file, t, dls, done, tagHtml, muteDl){
     let rec = done[t.id];
     tagHtml = tagHtml || '';
@@ -22781,18 +22803,19 @@ Tell me your planned move-out date and I will set the inspection.`
       ? '<span style="display:inline-block;font-size:10.5px;font-weight:600;color:#0f0f0f;background:#efece6;border-radius:6px;padding:3px 9px;margin:5px 0 0">This file: ' + (file.client_type === 'buyer' ? 'Buyer side' : (file.client_type === 'seller' ? 'Seller side' : 'Both sides')) + '</span>'
       : '';
     let dlChip = '';
-    if(t.dl && dls[t.dl]){
+    var _ckDlDate = _taskDueDate(file, t, dls);
+    if(_ckDlDate){
       // Done tasks drop the alarm — the Done timestamp already records lateness.
       if(rec){
         dlChip = '';
       } else if(muteDl){
         // Single-urgency mode · the alarm color lives on the anchor card only, so
         // list rows show a neutral date instead of red/amber.
-        dlChip = '<span class="ck-dl ck-dl-mute">Due ' + fmtDl(dls[t.dl].date) + '</span>';
+        dlChip = '<span class="ck-dl ck-dl-mute">Due ' + fmtDl(_ckDlDate) + '</span>';
       } else {
         // ALWAYS a countdown pill, matching the other rows exactly (Marlenyi Aug 1): rose for
         // overdue/today, amber for the 3-day window, quiet neutral beyond. Same shape everywhere.
-        const _days = _bizDaysTo(dls[t.dl].date);
+        const _days = _bizDaysTo(_ckDlDate);
         const _ptxt = (_days < 0) ? (Math.abs(_days) + 'd late') : (_days === 0 ? 'Due today' : ('In ' + _days + ' day' + (_days === 1 ? '' : 's')));
         const _pcol = (_days <= 0) ? '#f7ece8;color:#a3402f' : (_days <= 3 ? '#fbf3e2;color:#8a6d1b' : '#f1efe8;color:#8a857c');
         dlChip = '<span class="ck-dl" style="border-radius:999px!important;padding:4px 10px!important;font-size:10.5px!important;font-weight:700!important;letter-spacing:0!important;text-transform:none!important;background:' + _pcol + '">' + _ptxt + '</span>';
@@ -23776,21 +23799,21 @@ Tell me your planned move-out date and I will set the inspection.`
     var isSent = primaryEmail && sends[primaryEmail.id];
     // Meta line for Today rows · humanized "Due in 2 days" style
     var meta = '';
-    if(t.dl && dls[t.dl] && dls[t.dl].date){
-      var t0 = new Date(); t0.setHours(0, 0, 0, 0);
-      var dd = new Date(dls[t.dl].date.getTime()); dd.setHours(0, 0, 0, 0);
-      var days = Math.round((dd - t0) / 86400000);
-      if(days < 0) meta = 'Overdue &middot; ' + fmtDl(dls[t.dl].date);
+    var _mDate = _taskDueDate(file, t, dls);
+    if(_mDate){
+      var days = _bizDaysTo(_mDate);
+      if(days < 0) meta = 'Overdue &middot; ' + fmtDl(_mDate);
       else if(days === 0) meta = 'Due today';
       else if(days === 1) meta = 'Due tomorrow';
       else if(days <= 7) meta = 'Due in ' + days + ' days';
-      else meta = 'Due ' + fmtDl(dls[t.dl].date);
+      else meta = 'Due ' + fmtDl(_mDate);
     }
     // Right-side date pill for This week / Later rows · countdown bubble,
     // never a raw date (Marlenyi Jul 28 · match mobile Today vocabulary).
     var dateChip = '';
-    if(t.dl && dls[t.dl] && dls[t.dl].date){
-      var _days2 = _bizDaysTo(dls[t.dl].date);
+    var _dcDate = _taskDueDate(file, t, dls);
+    if(_dcDate){
+      var _days2 = _bizDaysTo(_dcDate);
       if(_days2 < 0){
         dateChip = '<span class="ck-dl ck-dl-overdue">' + Math.abs(_days2) + ' day' + (_days2 === -1 ? '' : 's') + ' late</span>';
       } else if(_days2 === 0){
@@ -23830,8 +23853,9 @@ Tell me your planned move-out date and I will set the inspection.`
       // Countdown as a right-side pill (same look as the deadline rows and the This week rows)
       // instead of a "Due in N days" line under the name · Marlenyi Aug 1.
       var _todayPill = '';
-      if(t.dl && dls[t.dl] && dls[t.dl].date){
-        var _tpn = _bizDaysTo(dls[t.dl].date);
+      var _tpDate = _taskDueDate(file, t, dls);
+      if(_tpDate){
+        var _tpn = _bizDaysTo(_tpDate);
         var _tptxt = (_tpn < 0) ? (Math.abs(_tpn) + 'd late') : (_tpn === 0 ? 'Due today' : ('In ' + _tpn + ' day' + (_tpn === 1 ? '' : 's')));
         var _tpcol = (_tpn <= 0) ? '#f7ece8;color:#a3402f' : (_tpn <= 3 ? '#fbf3e2;color:#8a6d1b' : '#f1efe8;color:#8a857c');
         _todayPill = '<span style="flex:none;font-size:10.5px;font-weight:700;border-radius:999px;padding:4px 10px;background:' + _tpcol + '">' + _tptxt + '</span>';
@@ -23864,8 +23888,8 @@ Tell me your planned move-out date and I will set the inspection.`
     const doneTasks = ordered.filter(function(t){ return done[t.id]; });
     const _t0 = new Date(); _t0.setHours(0, 0, 0, 0);
     const _days = function(t){
-      if(t.dl && dls[t.dl] && dls[t.dl].date){ return _bizDaysTo(dls[t.dl].date); }
-      return null;
+      var dt = _taskDueDate(file, t, dls);
+      return dt ? _bizDaysTo(dt) : null;
     };
     const _stage = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || '');
     // Clear to Close is the closing sprint — everything is on you now, so don't split
@@ -23943,13 +23967,18 @@ Tell me your planned move-out date and I will set the inspection.`
     // date (Marlenyi Aug 1). Overdue/today → Today, 1-3 days → Next 3 days, beyond → Later. This
     // replaces the separate deadline card so there is one list, in date order, under Today.
     var _dlStat = _deadlinesByFile[file.id] || {};
+    // A deadline that a checklist task already represents (task.dl === deadline key) must NOT
+    // also render as its own spine row — the task IS the actionable version (checkbox, sub,
+    // soft-complete). Otherwise survey / title would appear twice now that tasks carry dates.
+    var _taskDlKeys = {}; ordered.forEach(function(t){ if(t.dl) _taskDlKeys[t.dl] = 1; });
     var _dlAll = [];
     try { (fileContractDeadlines(file) || []).forEach(function(d){
       if(!(d && d.date instanceof Date) || isNaN(d.date.getTime())) return;
+      if(_taskDlKeys[d.key]) return;
       var _r = _dlRecFor(_dlStat, d.key); if(_r && _r.completed_at) return;
       _dlAll.push({ key:d.key, name:d.name || 'Deadline', date:d.date });
     }); } catch(_){}
-    var _dlDays = function(dt){ var x = new Date(dt.getTime()); x.setHours(0, 0, 0, 0); return Math.round((x - _t0) / 86400000); };
+    var _dlDays = function(dt){ return _bizDaysTo(dt); };
     var _dlToday = _dlAll.filter(function(x){ return _dlDays(x.date) <= 0; }).sort(function(a, b){ return a.date - b.date; });
     var _dlSoon = _dlAll.filter(function(x){ var n = _dlDays(x.date); return n > 0 && n <= 3; }).sort(function(a, b){ return a.date - b.date; });
     var _dlLater = _dlAll.filter(function(x){ return _dlDays(x.date) > 3; }).sort(function(a, b){ return a.date - b.date; });
@@ -23989,15 +24018,12 @@ Tell me your planned move-out date and I will set the inspection.`
         '</section>';
     }
 
-    // LATER · everything further out (tasks + deadlines) · one collapse pill.
-    var _laterN = _laterTasks.length + _dlLater.length;
-    if(_laterN){
-      html += '<div class="uc-later-wrap"><button type="button" class="uc-later-pill" data-wt-toggle="later">&#128337; ' + _laterN + ' &middot; later &rarr;</button>' +
-        '<div data-wt-list="later" hidden style="margin-top:8px">' +
-        _laterTasks.map(function(t){ return adhdCompactRow(file, t, dls, done, 'later', false); }).join('') +
-        _dlLater.map(_dlRowH).join('') +
-        '</div></div>';
-    }
+    // LATER · intentionally NOT rendered (Marlenyi Aug 1). The card shows only Today +
+    // Next 3 days; anything further out is hidden and resurfaces on its own when its
+    // contract date lands inside the 3-day window. No "N later" fold, no "Move anyway".
+    // Every task now carries a contract-derived date (survey / title from the contract
+    // schedule, FIRPTA anchored to Closing) so nothing gets silently lost by hiding this.
+    void _laterTasks; void _dlLater;
 
     // Consolidated footer (Marlenyi picked Mock 3 · Jul 27):
     //  · quiet grey row: "N done · Move anyway"
