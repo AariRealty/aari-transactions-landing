@@ -8373,6 +8373,7 @@ Tell me your planned move-out date and I will set the inspection.`
       const calItems = (typeof _tcCalDeadlines === 'function') ? _tcCalDeadlines() : [];
       calItems.forEach(function(ci){
         if(!ci || !(ci.date instanceof Date)) return;
+        if(ci.done) return; // a completed deadline is not "due today"
         const d = new Date(ci.date.getTime()); d.setHours(0, 0, 0, 0);
         const days = Math.round((d - _t0) / 86400000);
         // Marlenyi Jul 27 (strict) · today ONLY. No overdue reminders,
@@ -12231,9 +12232,13 @@ Tell me your planned move-out date and I will set the inspection.`
         const status = _deadlinesByFile[f.id] || {};
         fileContractDeadlines(f).forEach(function(d){
           if(!(d && d.date instanceof Date) || isNaN(d.date.getTime())) return;
-          if(_dlDoneFor(status, d.key)) return; // done (alias-resolved) · no longer a live deadline
-          out.push({ date:d.date, key:d.key, label:d.name || 'Deadline', address:f.property_address || '', fileId:f.id });
-          // EVERY deadline gets an early-warning entry 3 business days before the due
+          // Completed deadlines STAY on the calendar (Marlenyi Aug 1: "bring back everything
+          // completed"), flagged done so the grid can render them struck. They just don't get
+          // an early-warning reminder and never count as overdue.
+          const _isDone = _dlDoneFor(status, d.key);
+          out.push({ date:d.date, key:d.key, label:d.name || 'Deadline', address:f.property_address || '', fileId:f.id, done:_isDone });
+          if(_isDone) return;
+          // EVERY live deadline gets an early-warning entry 3 business days before the due
           // date (weekend and holiday safe), so nothing is flagged only on the due date.
           // Skipped only when that early date is already in the past.
           {
@@ -12274,6 +12279,7 @@ Tell me your planned move-out date and I will set the inspection.`
     let s = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Aari Transactions//TC//EN\r\n';
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
     _tcCalDeadlines().forEach(function(d){
+      if(d.done) return; // completed deadlines show in-app struck, but are not exported to the .ics feed
       const dt = d.date, y = dt.getFullYear(), m = ('0' + (dt.getMonth() + 1)).slice(-2), day = ('0' + dt.getDate()).slice(-2);
       const uid = String(d.fileId + '-' + d.key).replace(/[^a-zA-Z0-9-]/g, '');
       const sum = (d.label + ' · ' + d.address).replace(/[\\,;]/g, ' ');
@@ -12349,6 +12355,7 @@ Tell me your planned move-out date and I will set the inspection.`
     try {
       if(!_client || !_client.functions) return { ok:false, error:'no client' };
       let items = _tcCalDeadlines() || [];
+      items = items.filter(function(d){ return !d.done; }); // never push completed deadlines to Google Calendar
       if(fileIdOpt) items = items.filter(function(d){ return d.fileId === fileIdOpt; });
       try { _persistFileDeadlines(items); } catch(_){}
       const _fileById = {}; (_files || []).forEach(function(f){ _fileById[f.id] = f; });
@@ -13278,7 +13285,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // byDay carries only LIVE deadlines (_tcCalDeadlines drops done ones, and it also feeds the
     // .ics export + week timeline, so it must stay that way). The completed ones for this day are
     // looked up separately so they can sit under the "Done" divider, struck through, as a record.
-    const _pending=_shown;
+    const _pending=_shown.filter(function(d){ return !d.done; }); // done ones render under the Done divider, not as pending
     const _done=_doneDeadlinesForDay(_selTs);
     let h='<div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid #ece8e0;padding-bottom:12px;margin-bottom:12px">'+
       '<div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;font-weight:500;line-height:1;color:#0f0f0f">'+esc(_bigLab)+'</div>'+
@@ -13686,6 +13693,7 @@ Tell me your planned move-out date and I will set the inspection.`
     }); } catch(_){}
     all.forEach(function(d){ const x = dayOf(d); (byDay[x] = byDay[x] || []).push(d);
       if(x < t0){
+        if(d.done) return; // completed · shown struck, never overdue
         const ik = _fileIntakeMs[d.fileId]; if(ik != null && x < ik) return;
         const cm = _fileClosingMs[d.fileId]; if(cm != null && cm < t0) return;
         overdue.push(d);
@@ -13775,7 +13783,7 @@ Tell me your planned move-out date and I will set the inspection.`
           cellDate.setHours(0, 0, 0, 0);
           const cts = cellDate.getTime();
           const items = byDay[cts] || [];
-          const realN = items.filter(function(x){ return !x.isChase; }).length;
+          const realN = items.filter(function(x){ return !x.isChase && !x.done; }).length;
           const isToday = cts === t0, isSel = cts === _calSelDay, isOver = cts < t0 && realN > 0;
           let cs = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:46px;border-radius:8px;cursor:pointer;padding:4px 0;position:relative;';
           if(!isCurMonth) cs += 'opacity:.28;';
@@ -13799,7 +13807,7 @@ Tell me your planned move-out date and I will set the inspection.`
         for(let i = 0; i < 7; i++){
           const cd = new Date(wk0); cd.setDate(cd.getDate() + i); cd.setHours(0,0,0,0); const cts = cd.getTime();
           const items = byDay[cts] || [];
-          const realN = items.filter(function(x){ return !x.isChase; }).length;
+          const realN = items.filter(function(x){ return !x.isChase && !x.done; }).length;
           const isToday = cts === t0, isSel = cts === _calSelDay, isOver = cts < t0 && realN > 0;
           let cs = 'display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 0 6px;border-radius:10px;cursor:pointer;min-height:52px;';
           if(isSel) cs += 'background:#0f0f0f;color:#fff;';
@@ -13933,7 +13941,10 @@ Tell me your planned move-out date and I will set the inspection.`
     html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:15px 16px"><div style="display:grid;grid-template-columns:1.4fr 1fr;gap:22px;align-items:start">';
     // LEFT · month heatmap
     const Y = _calMonth.getFullYear(), M = _calMonth.getMonth();
-    html += '<div><div style="font-family:Georgia,\'Times New Roman\',serif;font-size:15px;font-weight:600;color:#0f0f0f;margin-bottom:9px">' + _calMonth.toLocaleDateString('en-US', { month:'long', year:'numeric' }) + '</div>';
+    html += '<div><div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">' +
+      '<button type="button" data-cal-nav="prev" aria-label="Previous month" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:30px;height:30px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8249;</button>' +
+      '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:15px;font-weight:600;color:#0f0f0f">' + _calMonth.toLocaleDateString('en-US', { month:'long', year:'numeric' }) + '</span>' +
+      '<button type="button" data-cal-nav="next" aria-label="Next month" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:30px;height:30px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8250;</button></div>';
     html += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:5px">' + ['S','M','T','W','T','F','S'].map(function(x){ return '<div style="font-size:9px;text-transform:uppercase;color:#9a958c;text-align:center;font-weight:600">' + x + '</div>'; }).join('') + '</div>';
     const startDow = new Date(Y, M, 1).getDay(), daysInMonth = new Date(Y, M + 1, 0).getDate(), prevDays = new Date(Y, M, 0).getDate();
     let cells = '';
@@ -13942,7 +13953,7 @@ Tell me your planned move-out date and I will set the inspection.`
       const ts = new Date(Y, M, d).setHours(0, 0, 0, 0);
       const _items = byDay[ts] || [];
       const c = _items.length, isToday = ts === t0, isSel = ts === _calSelDay;
-      const _real = _items.filter(function(x){ return !x.isChase; });    // real contract deadlines
+      const _real = _items.filter(function(x){ return !x.isChase; });    // real contract deadlines (incl. completed, shown struck)
       let s = 'min-height:100px;display:flex;flex-direction:column;align-items:flex-start;gap:5px;padding:8px 9px;font-size:15px;position:relative;border-radius:9px;cursor:pointer;color:#0f0f0f;';
       if(isToday) s += 'font-weight:700;box-shadow:inset 0 0 0 2px #0f0f0f;';
       else if(isSel) s += 'box-shadow:inset 0 0 0 1.5px #0f0f0f;';
@@ -14154,6 +14165,7 @@ Tell me your planned move-out date and I will set the inspection.`
             var fileById = {}; (_files || []).forEach(function(f){ if(f) fileById[f.id] = f; });
             var overdue = (_tcCalDeadlines() || []).filter(function(d){
               if(!d || !(d.date instanceof Date) || isNaN(d.date.getTime())) return false;
+              if(d.done) return false; // completed · not overdue
               if(d.isChase) return false;
               if(d.key === 'insp_checkin') return false;
               if(typeof d.key === 'string' && d.key.slice(-7) === '__chase') return false;
@@ -14199,7 +14211,7 @@ Tell me your planned move-out date and I will set the inspection.`
     host.querySelectorAll('[data-cal-day]').forEach(function(b){ b.addEventListener('click', function(){
       const ts = parseInt(this.getAttribute('data-cal-day'), 10);
       // One deadline on the day → open that file directly (like Week). Several → preview them on the right to pick.
-      const items = (_tcCalDeadlines() || []).filter(function(d){ const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); return x.getTime() === ts; });
+      const items = (_tcCalDeadlines() || []).filter(function(d){ if(d.done) return false; const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); return x.getTime() === ts; });
       if(items.length === 1){ const f = (_files || []).find(function(x){ return x.id === items[0].fileId; }); if(f){ openPlaybook(f); return; } }
       _calSelDay = ts; renderCalHeatmap();
     }); });
