@@ -724,6 +724,9 @@
       req:"Add the MLS number.", skip:function(){ return oState.prop_mode!=="mls"; },
       auto:"We pull the address and county from the listing before drafting." },
     { sec:1, key:"ptype", q:"Residential or vacant land?", type:"seg", opts:[["residential","Residential"],["vacant","Vacant land"]],
+      // Skip when public records already classified the parcel. oParcelLookup sets ptype from
+      // land_use — asking a second time is the exact re-question TCs called out ("you already found this, why are you asking me").
+      skip:function(){ return !!(oState.parcel && oState.parcel.land_use); },
       rec:function(v){ return v==="vacant" ? "Vacant Land Contract logic. Structure disclosures are skipped and a survey is strongly recommended." : "AS IS Residential Contract logic."; } },
     { sec:2, key:"buyer_type", q:"Is the buyer a person, a company, or a trust?", type:"seg",
       opts:[["person","Person"],["entity","Company or LLC"],["trust","Trust"]],
@@ -791,6 +794,10 @@
     { sec:6, key:"d_flood", q:"Flood zone and elevation", type:"ack",
       text:"Buyer has verified flood zone, insurance availability and cost with the lender or an insurer." },
     { sec:6, key:"d_hoa", q:"Is the property in an HOA or condo association?", type:"seg",
+      // Skip when public records already classified the parcel as a condo. oParcelLookup sets
+      // d_hoa="condo" from land_use — same "don't re-ask what public records answered" rule.
+      // HOA (not condo) isn't reliably classified in the parcel data, so keep asking there.
+      skip:function(){ return oState.d_hoa==="condo"; },
       opts:[["hoa","HOA"],["condo","Condo"],["none","None"]],
       rec:function(v){ return v==="hoa" ? "The Homeowners Association rider attaches automatically and the seller provides the disclosure. [PENDING FORM VERIFICATION]" : (v==="condo" ? "The Condominium rider attaches automatically. [PENDING FORM VERIFICATION]" : ""); } },
     { sec:6, key:"d_energy", q:"Energy efficiency brochure", type:"ack", skip:isVacant,
@@ -804,7 +811,11 @@
       note:"Plain words only. Custom clause language comes from you or your broker, not from Aari." },
     { sec:8, key:"email", q:"Your email?", type:"email", ph:"you@brokerage.com", req:"Add a valid email so we can send your draft.",
       note:"Your drafted offer and checkout receipt go here." },
-    { sec:8, key:"plan", q:"Pick your package", type:"tier" }
+    // In-house TC files are covered by the agent's membership — no per-file package to pick and
+    // no Stripe link at the end. The whole tier step (and its "Continue to payment" button) drops
+    // out when a coordinator picked "In-house · Aari agent" on the portal-only setup step.
+    { sec:8, key:"plan", q:"Pick your package", type:"tier",
+      skip:function(){ return PORTAL && oState.billing_model==="in_house"; } }
   ];
   /* Portal-only setup steps · prepended so the TC answers billing + agent first, then the
      SAME steps home-page agents get. Section 0 renders as File setup, numbering untouched. */
@@ -835,14 +846,38 @@
         var a=d&&d.features&&d.features[0]&&d.features[0].attributes; if(!a) return;
         var p=src.map(a); p.source=src.county+" County public records"; p.at=new Date().toISOString();
         oState.parcel=p;
+        // County flows to the title-payer rec that already reads by-county custom.
+        if(p.county) oState.county=p.county;
+        // Owner on record is the seller in nearly every case. Not a form answer (the offer
+        // wizard doesn't ask "who is the seller?" — that comes from the listing), but the
+        // coordinator uses it at drafting, so surface it on the file record.
+        if(p.owner) oState.seller_on_record=p.owner;
         // Year built answers the lead based paint question before it is ever asked.
         if(p.year_built){ oState.d_lead = (p.year_built>=1978) ? "post" : "pre"; }
-        // Vacant parcels preselect the vacant land contract path. The agent still confirms it.
-        if(/VACANT/i.test(p.land_use||"")) oState.ptype="vacant";
+        // Land use answers the property-type question (vacant vs residential) AND, when the
+        // classification is CONDOMINIUM, the HOA/condo question too. Every one of these gets
+        // a skip clause on its OQ step so we do not re-ask what public records already said.
+        var lu=String(p.land_use||"");
+        if(/VACANT/i.test(lu)) oState.ptype="vacant";
+        else if(/CONDO/i.test(lu)){
+          oState.ptype="residential"; oState.d_hoa="condo";
+          // Skipping the d_hoa question skips the rider-attach in oSave. Attach it here so the
+          // condo rider still lands on the drafted addenda list.
+          var add=oState.addenda||[]; if(add.indexOf("Condo Rider")===-1) add.push("Condo Rider"); oState.addenda=add;
+        }
+        else if(lu) oState.ptype="residential";
+        // Autofill call-out · list exactly what got filled and from where, so the TC can trust
+        // the skipped questions were answered from public records and not silently dropped.
+        var filled=[];
+        if(oState.ptype) filled.push('property type = '+oState.ptype);
+        if(p.year_built) filled.push('year built = '+p.year_built);
+        if(oState.d_lead) filled.push('lead-based paint disclosure = '+(oState.d_lead==="pre"?"required (pre-1978)":"not required"));
+        if(oState.d_hoa==="condo") filled.push('condo/HOA = condo rider');
         var card=document.getElementById("parcel-card");
         var html='<b>Found in '+esc(p.source)+'.</b><br>Owner on record: '+esc(p.owner)+
           (p.year_built?('<br>Year built: '+p.year_built):'')+
           (p.parcel_id?('<br>Parcel: '+esc(p.parcel_id)):'')+
+          (filled.length?('<br><br><b>Filled from public records so you are not asked again:</b><br>'+esc(filled.join('; '))):'')+
           '<br><span style="color:#8a857c">Pre fills the drafted contract. Your coordinator verifies at drafting.</span>';
         if(!card){
           card=document.createElement("div"); card.id="parcel-card"; card.className="found";
@@ -891,16 +926,26 @@
     var autoHtml=s.auto?'<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#8a857c;margin-top:12px;line-height:1.5"><span style="width:7px;height:7px;border-radius:50%;background:var(--green);flex:0 0 auto;margin-top:4px"></span><span>'+s.auto+'</span></div>':"";
     var noteHtml=s.note?'<div class="sidenote" style="margin-top:10px">'+s.note+'</div>':"";
     var total=steps.length, pct=Math.round(((_oi)/Math.max(total-1,1))*100);
+    // Terminal step detection · when the plan/tier step is skipped (in-house TC files bill through
+    // the agent's membership, no per-file checkout), the email step becomes the last non-skipped
+    // step and needs to submit instead of trying to advance to a step that no longer exists.
+    var isLast=(_oi>=steps.length-1);
+    var isInHouseFinish=(s.type!=="tier" && isLast && PORTAL && oState.billing_model==="in_house");
+    var btnLabel = s.type==="tier" ? "Add and continue to payment"
+                 : isInHouseFinish ? "Submit file"
+                 : (s.optional?"Next, or skip":"Next");
+    var termsHtml = isInHouseFinish ? termsRow("terms-o") : "";
     W.innerHTML='<div class="rowbar"><span class="back" id="o-back">&lsaquo; Back</span><span class="stepmeta">'+(s.sec===0?'File setup &middot; Portal':OSEC[s.sec-1]+' &middot; Section '+s.sec+' of 8')+'</span></div>'+
       '<div style="height:4px;background:#eee8da;border-radius:3px;margin:0 0 18px;overflow:hidden"><i style="display:block;height:100%;width:'+pct+'%;background:var(--ink);border-radius:3px"></i></div>'+
       '<h1 style="font-size:26px">'+qText+'</h1>'+
-      '<div style="max-width:420px;margin:14px auto 0">'+body+recHtml+noteHtml+autoHtml+
-      '<button class="btn" id="o-next">'+(s.type==="tier"?"Add and continue to payment":(s.optional?"Next, or skip":"Next"))+'</button>'+
+      '<div style="max-width:420px;margin:14px auto 0">'+body+recHtml+noteHtml+autoHtml+termsHtml+
+      '<button class="btn" id="o-next">'+btnLabel+'</button>'+
       '<div class="msg" id="o-err"></div></div>';
     document.getElementById("o-back").addEventListener("click",function(){ oSave(s); if(_oi===0){ if(PORTAL){ try{ (window.parent||window).postMessage({type:"aari-portal-close"},"*"); }catch(_){} } else { show("step-door"); } } else { _oi--; oRender(); } });
     document.getElementById("o-next").addEventListener("click",function(){
       if(!oSave(s,true)) return;
       if(s.type==="tier"){ if(!termsOK("terms-o","o-err")) return; offerSubmit(this); return; }
+      if(isInHouseFinish){ if(!termsOK("terms-o","o-err")) return; offerSubmit(this); return; }
       _oi++; oRender();
     });
     if(s.addr) wireAddr(document.getElementById("oq"),{hint:true, onPick:function(label,coords){ oState.property=label; oParcelLookup(coords); }});
