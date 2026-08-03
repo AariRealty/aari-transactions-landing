@@ -7927,8 +7927,16 @@ Tell me your planned move-out date and I will set the inspection.`
       }
     } catch(_){}
 
+    // Dual-role support: is_tc is a boolean flag on public.agents that
+    // rides alongside the primary role. Anyone with is_tc=true gets
+    // into the TC portal regardless of what their role column says,
+    // so an agent-and-TC can access both portals without one blocking
+    // the other. Trigger on realty_members keeps is_tc in sync from
+    // the Hub side, so a broker toggling the Hub flag reflects here
+    // without a manual DB touch.
     const role = (_profile.role || 'agent').toLowerCase();
-    if(role !== 'tc' && role !== 'broker'){
+    const isTc = !!_profile.is_tc || role === 'tc';
+    if(!isTc && role !== 'broker'){
       return showGate('Staff access only.', 'This page is for TCs and brokers. Agents use /portal.html.', '/portal.html');
     }
     document.getElementById('auth-gate').style.display = 'none';
@@ -8032,7 +8040,10 @@ Tell me your planned move-out date and I will set the inspection.`
   async function loadAndRender(){
     if(!_client || !_profile) return;
     showKanbanSkeleton(); // visual cue while the query runs
-    const role = (_profile.role || '').toLowerCase();
+    // Effective role: is_tc=true acts as 'tc' for file scoping, so a
+    // dual agent+TC sees TC files here. Broker is unchanged (sees all).
+    const rawRole = (_profile.role || '').toLowerCase();
+    const role = (rawRole === 'agent' && _profile.is_tc) ? 'tc' : rawRole;
     let q = _client.from('files').select('*').order('created_at',{ascending:false});
     if(role === 'tc'){
       // A TC sees files where they're the service TC OR the File-Org conductor,
