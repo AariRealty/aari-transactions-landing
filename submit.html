@@ -696,11 +696,15 @@
      Sections follow the AS IS Residential / Vacant Land contract order.
      COMPLIANCE: disclosure screens marked [PENDING FORM VERIFICATION] carry placeholder
      text and MUST be swapped for verbatim statutory / form language before launch. */
+  // Field defaults kept for the ones the trim removed from the wizard so the payload shape
+  // stays stable: buyer_signer / buyer_signer_title / buyer_email / buyer_phone / preapproval /
+  // title_days / assessments_ack all live here as empty defaults; title_payer defaults to
+  // "seller" (SWFL norm; coordinator flips for Miami/Broward custom).
   var oState={ ptype:"residential", prop_mode:"address", property:"", mls:"", buyer_type:"person", buyer:"", buyer_entity:"", buyer_signer:"", buyer_signer_title:"", buyer_email:"", buyer_phone:"",
     price:"", emd:"", emd_timing_days:"3", addl_deposit:"",
     financing:"Conventional", loan_days:"30", preapproval:"", pre_b64:null, pre_name:null,
     inspection_days:"15", appraisal:"yes", survey:"", title_days:"15",
-    close_date:"", title_payer:"", assessments_ack:false,
+    close_date:"", title_payer:"seller", assessments_ack:false,
     d_radon:false, d_firpta:"", d_lead:"", d_flood:false, d_hoa:"", d_energy:false,
     contingencies:[], addenda:[], additional_terms:"", email:"", plan:"basic", parcel:null,
     billing_model:"", for_agent_name:"", for_agent_email:"" };
@@ -758,18 +762,10 @@
       ph:function(){ return oState.buyer_type==="trust" ? "The Smith Family Revocable Trust dated January 5 2020" : "Smith Holding LLC"; },
       skip:function(){ return oState.buyer_type==="person"; },
       note:"Exactly as registered. The contract must match it letter for letter." },
-    { sec:2, key:"buyer_signer", type:"text", req:"Add the name of the person who signs.",
-      q:function(){ return oState.buyer_type==="trust" ? "Who signs as trustee?" : "Who signs on behalf of the company?"; },
-      ph:"Full legal name", skip:function(){ return oState.buyer_type==="person"; } },
-    { sec:2, key:"buyer_signer_title", type:"seg", req:"Pick the signer's title.",
-      q:"What is their title?",
-      opts:function(){ return oState.buyer_type==="trust" ? [["Trustee","Trustee"],["Co Trustee","Co Trustee"],["Successor Trustee","Successor Trustee"]] : [["Member","Member"],["Manager","Manager"],["Member/Manager","Member/Manager"],["President","President"],["Other","Other"]]; },
-      skip:function(){ return oState.buyer_type==="person"; },
-      rec:function(v){ if(!v||!oState.buyer_signer||!oState.buyer_entity) return v?"The signature line composes once the signer and entity name are in.":""; return "Signature line on the contract: <b>"+esc(oState.buyer_signer)+", "+esc(v)+" of "+esc(oState.buyer_entity)+"</b>"; } },
-    { sec:2, key:"buyer_email", type:"email", ph:"buyer@email.com", optional:true,
-      q:function(){ return oState.buyer_type==="person" ? "Buyer email?" : "Signer email?"; } },
-    { sec:2, key:"buyer_phone", type:"tel", ph:"(239) 555 0100", optional:true,
-      q:function(){ return oState.buyer_type==="person" ? "Buyer phone?" : "Signer phone?"; } },
+    // Buyer signer name/title, buyer email, and buyer phone all removed. Signer + title get
+    // captured by the coordinator at drafting when they verify the entity with Sunbiz or the
+    // trust docs — asking the agent to type them at intake was duplicate data entry. Buyer
+    // contact belongs in the client contact record, not the offer intake.
     { sec:2, key:"price", q:"Offer price?", type:"currency", ph:"$", req:"Add the offer price." },
     { sec:2, key:"emd", q:"Earnest money deposit?", type:"currency", ph:"$", req:"Add the deposit amount.",
       note:"No default on purpose. You size the deposit to the deal." },
@@ -787,26 +783,32 @@
     { sec:3, key:"loan_days", q:"Loan approval period?", type:"days", skip:isCash,
       def:function(){ return oState.financing==="Conventional"?"30":"45"; },
       rec:function(){ return oState.financing==="Conventional" ? "Conventional typically requires 30 days. Adjust if the lender commits faster." : "FHA and VA typically require 45 days. Adjust if the lender commits faster."; } },
-    { sec:3, key:"preapproval", q:"Preapproval status?", type:"seg", skip:isCash,
-      opts:[["yes","Letter in hand"],["pending","Pending"],["no","Not yet"]] },
-    { sec:3, key:"pre", q:"Drop the preapproval letter", type:"upload", skip:isCash, optional:true },
+    // Preapproval status seg (Letter in hand / Pending / Not yet) collapsed into the upload
+    // itself. Letter uploaded = letter in hand; nothing uploaded = coordinator confirms with the
+    // lender. One screen instead of two, and the upload zone is the answer.
+    { sec:3, key:"pre", q:"Drop the preapproval letter", type:"upload", skip:isCash, optional:true,
+      note:"If you don't have it yet, skip and your coordinator gets it from the lender." },
     { sec:4, key:"inspection_days", q:"Inspection period?", type:"days", def:function(){ return "15"; },
       auto:"Contract standard is 15 days when left blank. Edit if the deal needs different." },
     { sec:4, key:"appraisal", q:"Appraisal contingency?", type:"seg",
+      // Cash offers have no appraisal contingency by definition; skipping this step for cash
+      // stops asking a question that only has one answer.
+      skip:isCash,
       opts:[["yes","Yes"],["no","No"]],
       rec:function(v){ return v==="no" ? "Waiving appraisal strengthens the offer and shifts value risk to the buyer. Confirm the buyer understands." : "Added by rider. The AS IS base contract has no built in appraisal contingency, so the rider language governs. [PENDING FORM VERIFICATION]"; } },
     { sec:4, key:"survey", q:"Survey?", type:"seg",
+      // Condos don't have unit surveys — the association surveys the common elements, unit owners
+      // don't. Skip when public records classified the parcel as a condo.
+      skip:function(){ return oState.d_hoa==="condo"; },
       opts:[["yes","Yes"],["no","No"],["optional","Optional"]],
       rec:function(){ return isVacant() ? "Strongly recommended for vacant land. Typical cost runs $400 to $800." : "Typical cost runs $400 to $800. Recommended for land or boundary questions, optional for improved residential."; } },
-    { sec:4, key:"title_days", q:"Title evidence period?", type:"days", def:function(){ return "15"; },
-      auto:"Contract standard is 15 days. Edit if the title agent needs different." },
+    // Title evidence period removed — 15 days is the contract standard and the title agent
+    // drives it, not the buyer's agent at intake. Default in oState carries the 15.
     { sec:5, key:"close_date", q:"Desired closing date?", type:"date", def:function(){ return plusDays(30); },
       auto:"Defaults to 30 days out, the contract standard when left blank." },
-    { sec:5, key:"title_payer", q:"Who pays for the owner's title policy?", type:"seg",
-      opts:[["seller","Seller pays"],["buyer","Buyer pays"]],
-      rec:function(){ return "In most of Southwest Florida the seller pays and picks the title agent. Miami Dade and Broward custom runs the opposite. Cost estimate shows by county on the drafted offer."; } },
-    { sec:5, key:"assessments_ack", q:"Special assessments", type:"ack",
-      text:"Assessment allocation follows the contract default unless you flag different terms in Additional terms. [PENDING FORM VERIFICATION · exact contract language inserts here from the verified Feb 2026 form]" },
+    // Title-payer question removed — SWFL default is seller pays and picks; oState default is
+    // "seller" so drafting has the value. Coordinator flips if the deal is Miami/Broward custom
+    // or otherwise atypical. Special-assessments ack was placeholder-language filler; deleted.
     // Florida disclosures section removed. Radon, FIRPTA, lead paint, flood, HOA/condo, and
     // energy brochure are all notice/acknowledgment items that either (a) attach to the contract
     // by statute regardless of what the buyer's agent clicks here, (b) come from the seller side,
@@ -1024,11 +1026,12 @@
   }
   function offerSubmit(btn){ btn.disabled=true; btn.textContent="Sending…"; err("o-err","");
     var q={}; Object.keys(oState).forEach(function(k){ if(k!=="pre_b64") q[k]=oState[k]; });
-    // Entity and trust buyers: the contract buyer is the entity, with a composed signature block.
+    // Entity and trust buyers: the contract buyer is the entity name. The composed signature
+    // block used to be built here from buyer_signer + buyer_signer_title, but those two fields
+    // were dropped from the wizard (coordinator captures at drafting when they verify with
+    // Sunbiz / trust docs). Buyer field on the drafted offer says the entity; the coordinator
+    // writes the signature line at draft time.
     var buyerDisplay = oState.buyer_type==="person" ? oState.buyer : oState.buyer_entity;
-    if(oState.buyer_type!=="person" && oState.buyer_signer && oState.buyer_signer_title){
-      q.buyer_signature_block = oState.buyer_signer+", "+oState.buyer_signer_title+" of "+oState.buyer_entity;
-    }
     // Cash purchase by an entity or trust: FinCEN residential transfer reporting may apply. TC flags for title.
     q.fincen_review = (oState.buyer_type!=="person" && oState.financing==="Cash");
     var propLabel = oState.prop_mode==="mls" ? ("MLS "+oState.mls) : oState.property;
