@@ -723,11 +723,29 @@
     { sec:1, key:"mls", q:"What is the MLS number?", type:"text", ph:"MLS number",
       req:"Add the MLS number.", skip:function(){ return oState.prop_mode!=="mls"; },
       auto:"We pull the address and county from the listing before drafting." },
-    { sec:1, key:"ptype", q:"Residential or vacant land?", type:"seg", opts:[["residential","Residential"],["vacant","Vacant land"]],
-      // Skip when public records already classified the parcel. oParcelLookup sets ptype from
-      // land_use — asking a second time is the exact re-question TCs called out ("you already found this, why are you asking me").
-      skip:function(){ return !!(oState.parcel && oState.parcel.land_use); },
-      rec:function(v){ return v==="vacant" ? "Vacant Land Contract logic. Structure disclosures are skipped and a survey is strongly recommended." : "AS IS Residential Contract logic."; } },
+    // Florida contract types · Marlenyi's call. The binary Residential/Vacant chopped every
+    // deal into two buckets that don't match what agents actually write in this state. Full list
+    // covers the FR/BAR forms in real use: AS IS residential (the default resale form),
+    // standard residential (non-AS IS, repair-negotiation path), vacant land, commercial,
+    // and new construction (builder-supplied paper, we structure the offer around it).
+    { sec:1, key:"ptype", q:"Which Florida contract?", type:"seg",
+      opts:[["residential","AS IS Residential"],["standard_residential","Residential (Standard)"],["vacant","Vacant Land"],["commercial","Commercial"],["new_construction","New Construction"]],
+      // Skip ONLY when land_use is unambiguously VACANT — vacant land forces the Vacant Land
+      // Contract, no choice. CONDO (or any residential classification) still shows the picker
+      // because AS IS vs Standard vs New Construction is orthogonal to condo/single-family and
+      // public records can't distinguish them.
+      skip:function(){ return !!(oState.parcel && oState.parcel.land_use && /VACANT/i.test(oState.parcel.land_use)); },
+      rec:function(v){
+        if(v==="vacant") return "Vacant Land Contract logic. Structure disclosures are skipped and a survey is strongly recommended.";
+        if(v==="commercial") return "Commercial Contract logic. Residential disclosures (lead paint, energy brochure) don't apply; commercial due diligence and estoppel language do.";
+        if(v==="new_construction") return "New Construction. The builder typically supplies their own contract; we structure your offer for that context and flag it for coordinator review.";
+        if(v==="standard_residential") return "Standard Residential Contract logic. Repairs are negotiated at inspection, not waived. Use when the seller has agreed to a repair budget or a scope of work.";
+        return "AS IS Residential Contract logic. Buyer inspects and cancels; seller owes no repairs. Most common resale path in Florida.";
+      },
+      // Escape hatch · if you already have the executed contract, the wizard is the wrong flow.
+      // Rather than dead-end the TC into a 39-question drafting form when the contract is DONE,
+      // link straight to the scan flow (step-drop). Same door the tc-submit.html screen 0 offers.
+      after:'<div style="margin-top:14px;padding:12px 14px;background:#f5f0e8;border:1px solid #e5dfd2;border-radius:8px;font-size:12.5px;line-height:1.55;color:#0f0f0f"><b>Already have the executed contract?</b> <a href="#" id="oq-upload-jump" style="color:#0c447c;text-decoration:underline;font-weight:600">Upload it and I&rsquo;ll scan every line instead &rarr;</a></div>' },
     { sec:2, key:"buyer_type", q:"Is the buyer a person, a company, or a trust?", type:"seg",
       opts:[["person","Person"],["entity","Company or LLC"],["trust","Trust"]],
       rec:function(v){ if(v==="entity") return "The contract names the company as the buyer, exactly as registered with Sunbiz, and an authorized person signs for it."; if(v==="trust") return "The contract names the trust as the buyer, exactly as titled in the trust document, and the trustee signs for it."; return ""; } },
@@ -930,6 +948,9 @@
     if(s.rec){ var rv=(typeof s.rec==="function")?s.rec(v):s.rec; if(rv) recHtml='<div class="rec-card found" id="oq-rec" style="margin-top:14px;font-size:12.5px;line-height:1.65">'+rv+'</div>'; }
     var autoHtml=s.auto?'<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#8a857c;margin-top:12px;line-height:1.5"><span style="width:7px;height:7px;border-radius:50%;background:var(--green);flex:0 0 auto;margin-top:4px"></span><span>'+s.auto+'</span></div>':"";
     var noteHtml=s.note?'<div class="sidenote" style="margin-top:10px">'+s.note+'</div>':"";
+    // step.after · raw HTML rendered below the note/auto blocks. Used for step-scoped hooks
+    // like the "upload the executed contract instead" escape hatch on the contract-type picker.
+    var afterHtml=s.after?s.after:"";
     var total=steps.length, pct=Math.round(((_oi)/Math.max(total-1,1))*100);
     // Terminal step detection · when the plan/tier step is skipped (in-house TC files bill through
     // the agent's membership, no per-file checkout), the email step becomes the last non-skipped
@@ -943,9 +964,13 @@
     W.innerHTML='<div class="rowbar"><span class="back" id="o-back">&lsaquo; Back</span><span class="stepmeta">'+(s.sec===0?'File setup &middot; Portal':OSEC[s.sec-1]+' &middot; Section '+s.sec+' of 8')+'</span></div>'+
       '<div style="height:4px;background:#eee8da;border-radius:3px;margin:0 0 18px;overflow:hidden"><i style="display:block;height:100%;width:'+pct+'%;background:var(--ink);border-radius:3px"></i></div>'+
       '<h1 style="font-size:26px">'+qText+'</h1>'+
-      '<div style="max-width:420px;margin:14px auto 0">'+body+recHtml+noteHtml+autoHtml+termsHtml+
+      '<div style="max-width:420px;margin:14px auto 0">'+body+recHtml+noteHtml+autoHtml+afterHtml+termsHtml+
       '<button class="btn" id="o-next">'+btnLabel+'</button>'+
       '<div class="msg" id="o-err"></div></div>';
+    // Wire the executed-contract escape hatch when present. Jumps to step-drop (the scan flow
+    // on this same page) — the wizard state is drafting-only, so hopping to intake is safe.
+    var _jump=document.getElementById("oq-upload-jump");
+    if(_jump){ _jump.addEventListener("click",function(ev){ ev.preventDefault(); show("step-drop"); }); }
     document.getElementById("o-back").addEventListener("click",function(){ oSave(s); if(_oi===0){ if(PORTAL){ try{ (window.parent||window).postMessage({type:"aari-portal-close"},"*"); }catch(_){} } else { show("step-door"); } } else { _oi--; oRender(); } });
     document.getElementById("o-next").addEventListener("click",function(){
       if(!oSave(s,true)) return;
