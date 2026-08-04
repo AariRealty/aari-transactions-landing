@@ -71,6 +71,12 @@
   .gobtn.ready{opacity:1;pointer-events:auto}
   .status{font-size:12.5px;margin-top:12px;min-height:16px}
   .status.err{color:#a32d2d}
+  /* door · screen 0 · two stacked pick-a-path buttons */
+  .doorwrap{display:flex;flex-direction:column;gap:12px;margin-top:16px}
+  .door{background:#fff;border:0.5px solid var(--line);border-radius:12px;padding:18px 20px;text-align:left;cursor:pointer;font-family:inherit;transition:.15s;display:flex;flex-direction:column;gap:6px}
+  .door:hover{background:var(--soft);border-color:rgba(15,15,15,.32)}
+  .door .dt{font-size:15px;font-weight:600;color:var(--ink)}
+  .door .dd{font-size:13px;color:var(--muted);line-height:1.5}
 </style>
 </head>
 <body>
@@ -82,6 +88,26 @@
   </div>
 
   <div id="gate" class="gate">Checking your session&hellip;</div>
+
+  <!-- SCREEN 0: door · one entry, two paths.
+       Before this door, coordinators had to know that "executed contract" lived here and
+       "drafting an offer" lived on the outside-agent form. Same job (put a transaction in the
+       system on behalf of an agent), two URLs, different questions. This asks the one question
+       that decides which flow to run and routes there. -->
+  <div id="s0" class="card hide">
+    <h1>Put a transaction in the system</h1>
+    <p class="sub" id="s0Name">Two paths, one door. Pick what you have and I run the right flow.</p>
+    <div class="doorwrap">
+      <button type="button" class="door" id="doorExec">
+        <span class="dt">I have the executed contract</span>
+        <span class="dd">Drop the PDF, I scan every line and set up the file. Parties, price, deposit, dates — filled from the contract. No questions.</span>
+      </button>
+      <button type="button" class="door" id="doorDraft">
+        <span class="dt">I'm drafting a new offer</span>
+        <span class="dd">No contract yet. I walk you through the offer builder — same wizard the outside agents get, but signed in as you so it lands in your queue.</span>
+      </button>
+    </div>
+  </div>
 
   <!-- SCREEN 1: compact upload -->
   <div id="s1" class="card hide">
@@ -158,8 +184,8 @@
   var client=null, uid=null, profile=null;
   var _file=null, _side=null, _timers=[], _submitting=false, _subId=null;
 
-  function showGate(html){ $('gate').innerHTML=html; $('gate').classList.remove('hide'); $('s1').classList.add('hide'); }
-  function show(id){ ['s1','s2'].forEach(function(s){ $(s).classList.add('hide'); }); $(id).classList.remove('hide'); }
+  function showGate(html){ $('gate').innerHTML=html; $('gate').classList.remove('hide'); $('s0').classList.add('hide'); $('s1').classList.add('hide'); }
+  function show(id){ ['s0','s1','s2'].forEach(function(s){ $(s).classList.add('hide'); }); $(id).classList.remove('hide'); }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
   function money(v){ if(v==null||v==='') return ''; var s=String(v).replace(/^\$/,'').replace(/\.00$/,''); return '$'+s; }
 
@@ -172,9 +198,12 @@
       if(!uid){ showGate('Please <a href="/login.html?next=/tc-submit.html">sign in</a> to submit a file.'); return; }
       try{ profile = await window.AariAuth.getAgentProfile(); }catch(_){ profile=null; }
       var nm = profile ? ([profile.first_name, profile.last_name].filter(Boolean).join(' ')) : '';
-      if(nm) $('tcName').textContent = 'Submitting as ' + nm + '. Say whose file it is, drop it, pick the side, scan. I read every line and fill the file for you to confirm.';
+      if(nm){
+        $('s0Name').textContent = 'Submitting as ' + nm + '. Pick what you have and I run the right flow.';
+        $('tcName').textContent = 'Submitting as ' + nm + '. Say whose file it is, drop it, pick the side, scan. I read every line and fill the file for you to confirm.';
+      }
       await loadAgents();
-      $('gate').classList.add('hide'); show('s1');
+      $('gate').classList.add('hide'); show('s0');
     }catch(err){ showGate('Something went wrong loading the form. <a href="/login.html">Sign in</a> and try again.'); }
   }
 
@@ -193,6 +222,27 @@
       // the one question that decides whether a membership credit applies, and the old code would
       // have silently defaulted the agent to her.
       if(!rows.length){ $('agentHint').textContent = 'Could not load the agent list. Do not submit; tell Marlenyi.'; $('agentHint').style.color = '#c0392b'; return; }
+      // Same roster feeds both paths. The scan flow uses the dropdown below; the draft-an-offer
+      // flow (submit.html?flow=offer&via=portal) reads it from sessionStorage as
+      // aari_portal_agents — {name,email} pairs — so the wizard's agentpick step lands ready.
+      //
+      // Dedup by lowercased full name (with email fallback) so two rows for the same person
+      // don't both surface — Marlenyi's account has broker@aarirealty.com (role=agent) AND
+      // marlenyi@aarirealty.com (role=broker) in public.agents; dedup collapses them here.
+      // Within a name-group we prefer the row whose email is set and, if both are set, whichever
+      // one came in first (Supabase returns them ordered by first_name).
+      var byKey = {}, order = [];
+      rows.forEach(function(a){
+        var nm = [a.first_name, a.last_name].filter(Boolean).join(' ');
+        var em = String(a.email || '').trim().toLowerCase();
+        if(!nm && !em) return;
+        var k = nm ? nm.toLowerCase() : em;
+        var existing = byKey[k];
+        if(!existing){ byKey[k] = { name: nm || em || 'Agent', email: em }; order.push(k); return; }
+        if(!existing.email && em) existing.email = em;
+      });
+      var portalRoster = order.map(function(k){ return byKey[k]; });
+      try { sessionStorage.setItem('aari_portal_agents', JSON.stringify(portalRoster)); } catch(_){}
       rows.forEach(function(a){
         var label = [a.first_name, a.last_name].filter(Boolean).join(' ') || a.email || 'Agent';
         if(a.id === uid) label += ' (me)';
@@ -364,6 +414,16 @@
       });
     });
     $('startBtn').addEventListener('click', startReading);
+
+    // Door wiring · one entry, two paths. Executed contract → the scan flow on this page.
+    // Drafting an offer → the outside-agent offer wizard, opened in portal mode so it recognizes
+    // the signed-in TC session, honors on_behalf, and reads the agent roster we just stashed in
+    // sessionStorage. Same submit engine, same "who is this for" question — no duplicate wizard.
+    $('doorExec').addEventListener('click', function(){ show('s1'); });
+    $('doorDraft').addEventListener('click', function(){
+      window.location.href = '/submit.html?flow=offer&via=portal';
+    });
+
     boot();
   });
 })();

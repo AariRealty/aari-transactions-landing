@@ -5,15 +5,19 @@
  *   <script src="/js/aari-footer.js" defer></script>
  *
  * Injects:
- *   · CSS (cream newsletter hero + dark link columns + folded contact/legal row)
- *   · HTML markup (newsletter form, link cols, copyright, privacy/terms/instagram)
+ *   · CSS (dark link columns + folded contact/legal row)
+ *   · HTML markup (link cols, copyright, privacy/terms/instagram)
  *   · Year stamp
  *
  * Notes:
  *   · Hash anchors (#pricing, #faq, etc.) resolve to /index.html#XXX so they
  *     work from any interior page.
- *   · Newsletter form posts to Netlify (form-name: aari-newsletter) — same
- *     bucket as the index page form so submissions consolidate.
+ *   · Newsletter capture is turned OFF here per the owner's request. The hero
+ *     block, the subscriber-memory helper, and the submit handler that posted
+ *     to /rest/v1/rpc/subscribe_blog + Netlify are all removed. Leaving the
+ *     .aari-foot-hero and .aari-foot-form CSS in place is harmless (nothing
+ *     renders them) but keeps the file cleanly reversible if we ever want it
+ *     back — just add the hero markup and the memory block returns.
  */
 (function () {
   'use strict';
@@ -117,20 +121,10 @@
   var year = new Date().getFullYear();
   var HTML = [
     '<footer class="aari-shared-footer">',
-    '  <div class="aari-foot-hero">',
-    '    <h3 class="aari-foot-h">Join the Aari Blog.<br><em>Florida TC notes.</em></h3>',
-    '    <p class="aari-foot-sub">FR/Bar changes, compliance traps, operating notes. Built for agents who actually run files.</p>',
-    '    <form class="aari-foot-form" name="aari-newsletter" method="POST" enctype="multipart/form-data" data-netlify="true" netlify-honeypot="bot-field" action="/thank-you.html">',
-    '      <input type="hidden" name="form-name" value="aari-newsletter">',
-    '      <p hidden><label>Don\'t fill this out: <input name="bot-field"></label></p>',
-    '      <input type="email" name="email" class="aari-foot-input" placeholder="your@email.com" aria-label="Email" required>',
-    '      <button type="submit" class="aari-foot-btn">Subscribe &rarr;</button>',
-    '    </form>',
-    '    <p class="aari-foot-consent">',
-    '      <label><input type="checkbox" name="photo_consent" value="yes" form="aari-newsletter"> I agree Aari may use my submitted photo in marketing (optional)</label>',
-    '    </p>',
-    '  </div>',
-    '',
+    // Newsletter hero removed. The cream "Join the Aari Blog" banner + email form used to live
+    // right here — every page rendered it, which is what kept prompting the owner for an email.
+    // Deleting the markup is enough to kill the prompt; the CSS below is now orphaned and
+    // renders nothing.
     '  <div class="aari-foot-cols">',
     '    <div class="aari-foot-col">',
     '      <h5>Site</h5>',
@@ -196,55 +190,7 @@
     });
   });
 
-  // ── Subscriber memory ─────────────────────────────────────────────────
-  // After someone subscribes on this device, the capture form swaps to a
-  // "You're on the list → Read the latest" state. New visitors always see
-  // the email capture. Per-browser flag only — never blocks the capture.
-  (function () {
-    var KEY = 'aari_blog_subscribed';
-    var form = document.querySelector('.aari-foot-form');
-    if (!form) return;
-    var consent = document.querySelector('.aari-foot-consent');
-    var subscribed = false;
-    try { subscribed = !!localStorage.getItem(KEY); } catch (e) {}
-    if (subscribed) {
-      // Known-subscriber hint BELOW the capture block — quiet status note,
-      // never interrupts the pitch → form flow. Form always stays visible
-      // (shared/office devices must still collect emails).
-      var d = document.createElement('p');
-      d.style.cssText = 'position:relative;z-index:2;font-size:12.5px;color:#6b6b6b;margin:18px 0 0';
-      d.innerHTML = '&#10003; You&rsquo;re on the list. <a href="/blog/" style="color:#0a0a0a;font-weight:600;text-decoration:underline;text-underline-offset:3px">Read the latest &rarr;</a>';
-      (consent || form).insertAdjacentElement('afterend', d);
-    }
-    // Email-aware submit: check the subscriber table first. Already on the
-    // list → straight to the blog. New → capture via Netlify → thank-you.
-    // If the check is unreachable, fall back to the plain Netlify submit.
-    var SB_URL = 'https://fnlrgmuvtgwzjsihqxcn.supabase.co';
-    var SB_KEY = 'sb_publishable_OsZVC29HKhFAZRNVo3yKqQ_wM7r2ANd';
-    form.addEventListener('submit', function (ev) {
-      ev.preventDefault();
-      var email = (form.querySelector('input[name="email"]') || {}).value || '';
-      var btn = form.querySelector('button[type="submit"]');
-      if (btn) { btn.disabled = true; btn.textContent = 'One sec…'; }
-      fetch(SB_URL + '/rest/v1/rpc/subscribe_blog', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY },
-        body: JSON.stringify({ p_email: email })
-      })
-      .then(function (r) { if (!r.ok) throw new Error('rpc ' + r.status); return r.json(); })
-      .then(function (already) {
-        try { localStorage.setItem(KEY, '1'); } catch (e) {}
-        if (already === true) { window.location.href = '/blog/'; return; }
-        var params = new URLSearchParams();
-        new FormData(form).forEach(function (v, k) { params.append(k, v); });
-        return fetch('/', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: params.toString() })
-          .catch(function () {})
-          .then(function () { window.location.href = '/thank-you.html'; });
-      })
-      .catch(function () {
-        try { localStorage.setItem(KEY, '1'); } catch (e) {}
-        form.submit(); // native submit bypasses this handler → Netlify capture
-      });
-    });
-  })();
+  // Subscriber-memory helper and email-aware submit handler removed with the newsletter hero.
+  // Both bailed out on `if (!form) return;` when the hero was gone anyway; deleting them makes
+  // the intent obvious and removes a fetch to /rest/v1/rpc/subscribe_blog that nothing calls.
 })();

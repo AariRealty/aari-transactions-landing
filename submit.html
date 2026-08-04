@@ -696,16 +696,22 @@
      Sections follow the AS IS Residential / Vacant Land contract order.
      COMPLIANCE: disclosure screens marked [PENDING FORM VERIFICATION] carry placeholder
      text and MUST be swapped for verbatim statutory / form language before launch. */
+  // Field defaults kept for the ones the trim removed from the wizard so the payload shape
+  // stays stable: buyer_signer / buyer_signer_title / buyer_email / buyer_phone / preapproval /
+  // title_days / assessments_ack all live here as empty defaults; title_payer defaults to
+  // "seller" (SWFL norm; coordinator flips for Miami/Broward custom).
   var oState={ ptype:"residential", prop_mode:"address", property:"", mls:"", buyer_type:"person", buyer:"", buyer_entity:"", buyer_signer:"", buyer_signer_title:"", buyer_email:"", buyer_phone:"",
-    price:"", emd:"", emd_timing:"With the offer", addl_deposit:"",
+    price:"", emd:"", emd_timing_days:"3", addl_deposit:"",
     financing:"Conventional", loan_days:"30", preapproval:"", pre_b64:null, pre_name:null,
     inspection_days:"15", appraisal:"yes", survey:"", title_days:"15",
-    close_date:"", title_payer:"", assessments_ack:false,
+    close_date:"", title_payer:"seller", assessments_ack:false,
     d_radon:false, d_firpta:"", d_lead:"", d_flood:false, d_hoa:"", d_energy:false,
     contingencies:[], addenda:[], additional_terms:"", email:"", plan:"basic", parcel:null,
     billing_model:"", for_agent_name:"", for_agent_email:"" };
   var W=document.getElementById("step-offer");
-  var OSEC=["Property","Parties and offer","Financing","Inspections and due diligence","Closing","Florida disclosures","Contingencies and addenda","Your offer package"];
+  // Florida disclosures dropped from the wizard (see the disclosures-removal note further down),
+  // so this list is now 7 sections and Section-N-of-N in the header reads from OSEC.length.
+  var OSEC=["Property","Parties and offer","Financing","Inspections and due diligence","Closing","Contingencies and addenda","Your offer package"];
   function plusDays(n){ var d=new Date(Date.now()+n*86400000); return d.toISOString().slice(0,10); }
   var isVacant=function(){ return oState.ptype==="vacant"; };
   var isCash=function(){ return oState.financing==="Cash"; };
@@ -723,8 +729,29 @@
     { sec:1, key:"mls", q:"What is the MLS number?", type:"text", ph:"MLS number",
       req:"Add the MLS number.", skip:function(){ return oState.prop_mode!=="mls"; },
       auto:"We pull the address and county from the listing before drafting." },
-    { sec:1, key:"ptype", q:"Residential or vacant land?", type:"seg", opts:[["residential","Residential"],["vacant","Vacant land"]],
-      rec:function(v){ return v==="vacant" ? "Vacant Land Contract logic. Structure disclosures are skipped and a survey is strongly recommended." : "AS IS Residential Contract logic."; } },
+    // Florida contract types · Marlenyi's call. The binary Residential/Vacant chopped every
+    // deal into two buckets that don't match what agents actually write in this state. Full list
+    // covers the FR/BAR forms in real use: AS IS residential (the default resale form),
+    // standard residential (non-AS IS, repair-negotiation path), vacant land, commercial,
+    // and new construction (builder-supplied paper, we structure the offer around it).
+    { sec:1, key:"ptype", q:"Which Florida contract?", type:"seg",
+      opts:[["residential","AS IS Residential"],["standard_residential","Residential (Standard)"],["vacant","Vacant Land"],["commercial","Commercial"],["new_construction","New Construction"]],
+      // Skip ONLY when land_use is unambiguously VACANT — vacant land forces the Vacant Land
+      // Contract, no choice. CONDO (or any residential classification) still shows the picker
+      // because AS IS vs Standard vs New Construction is orthogonal to condo/single-family and
+      // public records can't distinguish them.
+      skip:function(){ return !!(oState.parcel && oState.parcel.land_use && /VACANT/i.test(oState.parcel.land_use)); },
+      rec:function(v){
+        if(v==="vacant") return "Vacant Land Contract logic. Structure disclosures are skipped and a survey is strongly recommended.";
+        if(v==="commercial") return "Commercial Contract logic. Residential disclosures (lead paint, energy brochure) don't apply; commercial due diligence and estoppel language do.";
+        if(v==="new_construction") return "New Construction. The builder typically supplies their own contract; we structure your offer for that context and flag it for coordinator review.";
+        if(v==="standard_residential") return "Standard Residential Contract logic. Repairs are negotiated at inspection, not waived. Use when the seller has agreed to a repair budget or a scope of work.";
+        return "AS IS Residential Contract logic. Buyer inspects and cancels; seller owes no repairs. Most common resale path in Florida.";
+      },
+      // Escape hatch · if you already have the executed contract, the wizard is the wrong flow.
+      // Rather than dead-end the TC into a 39-question drafting form when the contract is DONE,
+      // link straight to the scan flow (step-drop). Same door the tc-submit.html screen 0 offers.
+      after:'<div style="margin-top:14px;padding:12px 14px;background:#f5f0e8;border:1px solid #e5dfd2;border-radius:8px;font-size:12.5px;line-height:1.55;color:#0f0f0f"><b>Already have the executed contract?</b> <a href="#" id="oq-upload-jump" style="color:#0c447c;text-decoration:underline;font-weight:600">Upload it and I&rsquo;ll scan every line instead &rarr;</a></div>' },
     { sec:2, key:"buyer_type", q:"Is the buyer a person, a company, or a trust?", type:"seg",
       opts:[["person","Person"],["entity","Company or LLC"],["trust","Trust"]],
       rec:function(v){ if(v==="entity") return "The contract names the company as the buyer, exactly as registered with Sunbiz, and an authorized person signs for it."; if(v==="trust") return "The contract names the trust as the buyer, exactly as titled in the trust document, and the trustee signs for it."; return ""; } },
@@ -735,23 +762,20 @@
       ph:function(){ return oState.buyer_type==="trust" ? "The Smith Family Revocable Trust dated January 5 2020" : "Smith Holding LLC"; },
       skip:function(){ return oState.buyer_type==="person"; },
       note:"Exactly as registered. The contract must match it letter for letter." },
-    { sec:2, key:"buyer_signer", type:"text", req:"Add the name of the person who signs.",
-      q:function(){ return oState.buyer_type==="trust" ? "Who signs as trustee?" : "Who signs on behalf of the company?"; },
-      ph:"Full legal name", skip:function(){ return oState.buyer_type==="person"; } },
-    { sec:2, key:"buyer_signer_title", type:"seg", req:"Pick the signer's title.",
-      q:"What is their title?",
-      opts:function(){ return oState.buyer_type==="trust" ? [["Trustee","Trustee"],["Co Trustee","Co Trustee"],["Successor Trustee","Successor Trustee"]] : [["Member","Member"],["Manager","Manager"],["Member/Manager","Member/Manager"],["President","President"],["Other","Other"]]; },
-      skip:function(){ return oState.buyer_type==="person"; },
-      rec:function(v){ if(!v||!oState.buyer_signer||!oState.buyer_entity) return v?"The signature line composes once the signer and entity name are in.":""; return "Signature line on the contract: <b>"+esc(oState.buyer_signer)+", "+esc(v)+" of "+esc(oState.buyer_entity)+"</b>"; } },
-    { sec:2, key:"buyer_email", type:"email", ph:"buyer@email.com", optional:true,
-      q:function(){ return oState.buyer_type==="person" ? "Buyer email?" : "Signer email?"; } },
-    { sec:2, key:"buyer_phone", type:"tel", ph:"(239) 555 0100", optional:true,
-      q:function(){ return oState.buyer_type==="person" ? "Buyer phone?" : "Signer phone?"; } },
+    // Buyer signer name/title, buyer email, and buyer phone all removed. Signer + title get
+    // captured by the coordinator at drafting when they verify the entity with Sunbiz or the
+    // trust docs — asking the agent to type them at intake was duplicate data entry. Buyer
+    // contact belongs in the client contact record, not the offer intake.
     { sec:2, key:"price", q:"Offer price?", type:"currency", ph:"$", req:"Add the offer price." },
     { sec:2, key:"emd", q:"Earnest money deposit?", type:"currency", ph:"$", req:"Add the deposit amount.",
       note:"No default on purpose. You size the deposit to the deal." },
-    { sec:2, key:"emd_timing", q:"When does the deposit land in escrow?", type:"seg",
-      opts:[["With the offer","With the offer"],["Within 3 days","Within 3 days"],["Within 5 days","Within 5 days"]] },
+    // EMD timing used to be a 3-button chooser (With the offer / Within 3 days / Within 5 days),
+    // which locked out every other timeframe Florida deals actually use (1, 2, 7, 10 days, "with
+    // acceptance", etc.). Free days field with a 3-day default matches the loan/inspection/title
+    // question shape and lets the agent write the timing the deal needs.
+    { sec:2, key:"emd_timing_days", q:"Deposit due — how many days from acceptance?", type:"days",
+      def:function(){ return "3"; },
+      auto:"Common is 3 days from acceptance. Enter 0 for 'with the offer'. Adjust to whatever the deal actually requires." },
     { sec:2, key:"addl_deposit", q:"Additional deposit?", type:"currency", ph:"$0 if none", optional:true },
     { sec:3, key:"financing", q:"How is the buyer paying?", type:"seg",
       opts:[["Cash","Cash"],["Conventional","Conventional"],["FHA","FHA"],["VA","VA"]],
@@ -759,52 +783,52 @@
     { sec:3, key:"loan_days", q:"Loan approval period?", type:"days", skip:isCash,
       def:function(){ return oState.financing==="Conventional"?"30":"45"; },
       rec:function(){ return oState.financing==="Conventional" ? "Conventional typically requires 30 days. Adjust if the lender commits faster." : "FHA and VA typically require 45 days. Adjust if the lender commits faster."; } },
-    { sec:3, key:"preapproval", q:"Preapproval status?", type:"seg", skip:isCash,
-      opts:[["yes","Letter in hand"],["pending","Pending"],["no","Not yet"]] },
-    { sec:3, key:"pre", q:"Drop the preapproval letter", type:"upload", skip:isCash, optional:true },
+    // Preapproval status seg (Letter in hand / Pending / Not yet) collapsed into the upload
+    // itself. Letter uploaded = letter in hand; nothing uploaded = coordinator confirms with the
+    // lender. One screen instead of two, and the upload zone is the answer.
+    { sec:3, key:"pre", q:"Drop the preapproval letter", type:"upload", skip:isCash, optional:true,
+      note:"If you don't have it yet, skip and your coordinator gets it from the lender." },
     { sec:4, key:"inspection_days", q:"Inspection period?", type:"days", def:function(){ return "15"; },
       auto:"Contract standard is 15 days when left blank. Edit if the deal needs different." },
     { sec:4, key:"appraisal", q:"Appraisal contingency?", type:"seg",
+      // Cash offers have no appraisal contingency by definition; skipping this step for cash
+      // stops asking a question that only has one answer.
+      skip:isCash,
       opts:[["yes","Yes"],["no","No"]],
       rec:function(v){ return v==="no" ? "Waiving appraisal strengthens the offer and shifts value risk to the buyer. Confirm the buyer understands." : "Added by rider. The AS IS base contract has no built in appraisal contingency, so the rider language governs. [PENDING FORM VERIFICATION]"; } },
     { sec:4, key:"survey", q:"Survey?", type:"seg",
+      // Condos don't have unit surveys — the association surveys the common elements, unit owners
+      // don't. Skip when public records classified the parcel as a condo.
+      skip:function(){ return oState.d_hoa==="condo"; },
       opts:[["yes","Yes"],["no","No"],["optional","Optional"]],
       rec:function(){ return isVacant() ? "Strongly recommended for vacant land. Typical cost runs $400 to $800." : "Typical cost runs $400 to $800. Recommended for land or boundary questions, optional for improved residential."; } },
-    { sec:4, key:"title_days", q:"Title evidence period?", type:"days", def:function(){ return "15"; },
-      auto:"Contract standard is 15 days. Edit if the title agent needs different." },
+    // Title evidence period removed — 15 days is the contract standard and the title agent
+    // drives it, not the buyer's agent at intake. Default in oState carries the 15.
     { sec:5, key:"close_date", q:"Desired closing date?", type:"date", def:function(){ return plusDays(30); },
       auto:"Defaults to 30 days out, the contract standard when left blank." },
-    { sec:5, key:"title_payer", q:"Who pays for the owner's title policy?", type:"seg",
-      opts:[["seller","Seller pays"],["buyer","Buyer pays"]],
-      rec:function(){ return "In most of Southwest Florida the seller pays and picks the title agent. Miami Dade and Broward custom runs the opposite. Cost estimate shows by county on the drafted offer."; } },
-    { sec:5, key:"assessments_ack", q:"Special assessments", type:"ack",
-      text:"Assessment allocation follows the contract default unless you flag different terms in Additional terms. [PENDING FORM VERIFICATION · exact contract language inserts here from the verified Feb 2026 form]" },
-    { sec:6, key:"d_radon", q:"Radon gas notice", type:"ack", skip:isVacant,
-      text:"[PENDING FORM VERIFICATION · statutory radon notice, Section 404.056(5) Florida Statutes, inserted verbatim before launch]" },
-    { sec:6, key:"d_firpta", q:"Is the seller a US person?", type:"seg",
-      opts:[["us","Yes, US person"],["foreign","No, foreign seller"],["unknown","Not sure"]],
-      rec:function(v){ return v==="foreign" ? "FIRPTA withholding applies. Your coordinator flags this for the title agent at drafting." : (v==="unknown" ? "We flag it and the listing side confirms. Withholding only applies to foreign sellers." : ""); } },
-    { sec:6, key:"d_lead", q:"Was the home built before 1978?", type:"seg",
-      skip:function(){ return isVacant() || (oState.parcel && oState.parcel.year_built && oState.parcel.year_built>=1978); },
-      opts:[["post","1978 or later"],["pre","Before 1978"],["unknown","Not sure"]],
-      rec:function(v){ return (v==="pre"||v==="unknown") ? "The federal lead based paint disclosure attaches automatically. [PENDING FORM VERIFICATION · federal form language inserts verbatim]" : ""; } },
-    { sec:6, key:"d_flood", q:"Flood zone and elevation", type:"ack",
-      text:"Buyer has verified flood zone, insurance availability and cost with the lender or an insurer." },
-    { sec:6, key:"d_hoa", q:"Is the property in an HOA or condo association?", type:"seg",
-      opts:[["hoa","HOA"],["condo","Condo"],["none","None"]],
-      rec:function(v){ return v==="hoa" ? "The Homeowners Association rider attaches automatically and the seller provides the disclosure. [PENDING FORM VERIFICATION]" : (v==="condo" ? "The Condominium rider attaches automatically. [PENDING FORM VERIFICATION]" : ""); } },
-    { sec:6, key:"d_energy", q:"Energy efficiency brochure", type:"ack", skip:isVacant,
-      text:"Buyer acknowledges receipt of the Florida energy efficiency rating information brochure." },
-    { sec:7, key:"contingencies", q:"Any additional contingencies?", type:"chips", optional:true,
+    // Title-payer question removed — SWFL default is seller pays and picks; oState default is
+    // "seller" so drafting has the value. Coordinator flips if the deal is Miami/Broward custom
+    // or otherwise atypical. Special-assessments ack was placeholder-language filler; deleted.
+    // Florida disclosures section removed. Radon, FIRPTA, lead paint, flood, HOA/condo, and
+    // energy brochure are all notice/acknowledgment items that either (a) attach to the contract
+    // by statute regardless of what the buyer's agent clicks here, (b) come from the seller side,
+    // or (c) are the coordinator's job to verify from the executed contract / listing. Asking
+    // them at offer-draft time was premature and slowed every submission for no useful signal.
+    // Condo Rider auto-attach still happens in oParcelLookup when land_use is CONDO.
+    { sec:6, key:"contingencies", q:"Any additional contingencies?", type:"chips", optional:true,
       opts:["Sale of buyer's home","HOA or condo approval","Insurance at acceptable cost","Well and septic","Other"] },
-    { sec:7, key:"addenda", q:"Any addenda?", type:"chips", optional:true,
+    { sec:6, key:"addenda", q:"Any addenda?", type:"chips", optional:true,
       opts:["Homeowners Assn Rider","Condo Rider","Seller Financing","Back up Contract","Kick out Clause","Other"] },
-    { sec:7, key:"additional_terms", q:"Additional terms?", type:"textarea", optional:true,
+    { sec:6, key:"additional_terms", q:"Additional terms?", type:"textarea", optional:true,
       ph:"Anything non standard, in plain words. Your coordinator drafts from your words, we do not invent clause language.",
       note:"Plain words only. Custom clause language comes from you or your broker, not from Aari." },
-    { sec:8, key:"email", q:"Your email?", type:"email", ph:"you@brokerage.com", req:"Add a valid email so we can send your draft.",
+    { sec:7, key:"email", q:"Your email?", type:"email", ph:"you@brokerage.com", req:"Add a valid email so we can send your draft.",
       note:"Your drafted offer and checkout receipt go here." },
-    { sec:8, key:"plan", q:"Pick your package", type:"tier" }
+    // In-house TC files are covered by the agent's membership — no per-file package to pick and
+    // no Stripe link at the end. The whole tier step (and its "Continue to payment" button) drops
+    // out when a coordinator picked "In-house · Aari agent" on the portal-only setup step.
+    { sec:7, key:"plan", q:"Pick your package", type:"tier",
+      skip:function(){ return PORTAL && oState.billing_model==="in_house"; } }
   ];
   /* Portal-only setup steps · prepended so the TC answers billing + agent first, then the
      SAME steps home-page agents get. Section 0 renders as File setup, numbering untouched. */
@@ -818,11 +842,32 @@
   /* County public records autofill · address pick → point query against the county
      parcel layer → owner on record, year built, legal description, parcel id.
      Public data, fail silent, enhancement only. Lee covers Cape Coral, Fort Myers
-     and Lehigh. Charlotte and Collier adapters follow the same shape. */
+     and Lehigh. Charlotte and Collier adapters live below.
+
+     VERIFY-BEFORE-TRUST: county property appraisers publish public ArcGIS parcel
+     layers but the exact host, service name, and field aliases change over time.
+     The Charlotte and Collier URLs and field maps below are the best-known public
+     endpoints; the parcel-lookup runs them in parallel with fail-silent .catch()
+     handlers, so a wrong URL just produces no hit and the wizard asks the questions
+     it would have asked without the autofill. To verify: pick a real address in
+     that county on the wizard and check the browser console — a hit populates
+     oState.parcel; nothing there means the endpoint changed and needs an update. */
   var PARCEL_SRC=[
     { county:"Lee", url:"https://services2.arcgis.com/LvWGAAhHwbCJ2GMP/arcgis/rest/services/Lee_County_Parcels/FeatureServer/0/query",
       fields:"O_NAME,MAXBUILTY,LEGAL,STRAP,FOLIOID,SITEADDR,SITECITY,SITEZIP,LANDUSEDES",
-      map:function(a){ return { owner:a.O_NAME||"", year_built:a.MAXBUILTY||null, legal:a.LEGAL||"", parcel_id:a.STRAP||"", folio:a.FOLIOID||null, land_use:a.LANDUSEDES||"", county:"Lee" }; } }
+      map:function(a){ return { owner:a.O_NAME||"", year_built:a.MAXBUILTY||null, legal:a.LEGAL||"", parcel_id:a.STRAP||"", folio:a.FOLIOID||null, land_use:a.LANDUSEDES||"", county:"Lee" }; } },
+    // Charlotte County · public property appraiser GIS. Field names follow the CCPA
+    // parcel layer schema (OWNER1, YRBLT, LEGAL1, PARCELID, USE_CODE_DESC). Verify
+    // against Punta Gorda / Port Charlotte addresses before relying on the autofill.
+    { county:"Charlotte", url:"https://ccgis.charlottecountyfl.gov/arcgis/rest/services/Parcels/MapServer/0/query",
+      fields:"OWNER1,YRBLT,LEGAL1,PARCELID,SITE_ADDR,SITE_CITY,SITE_ZIP,USE_CODE_DESC",
+      map:function(a){ return { owner:a.OWNER1||"", year_built:a.YRBLT||null, legal:a.LEGAL1||"", parcel_id:a.PARCELID||"", folio:null, land_use:a.USE_CODE_DESC||"", county:"Charlotte" }; } },
+    // Collier County · public property appraiser GIS. Field names follow the CCPAO
+    // parcel layer schema (OWNER_NAME, YEAR_BUILT, LEGAL_DESC, PARCEL_NO, USE_DESC).
+    // Verify against Naples / Marco Island / Immokalee addresses before relying on it.
+    { county:"Collier", url:"https://gis.collierappraiser.com/arcgis/rest/services/PropertyAppraiser/PropertyInfo/MapServer/0/query",
+      fields:"OWNER_NAME,YEAR_BUILT,LEGAL_DESC,PARCEL_NO,SITE_ADDR,SITE_CITY,SITE_ZIP,USE_DESC",
+      map:function(a){ return { owner:a.OWNER_NAME||"", year_built:a.YEAR_BUILT||null, legal:a.LEGAL_DESC||"", parcel_id:a.PARCEL_NO||"", folio:null, land_use:a.USE_DESC||"", county:"Collier" }; } }
   ];
   function oParcelLookup(coords){
     if(!coords) return;
@@ -835,14 +880,38 @@
         var a=d&&d.features&&d.features[0]&&d.features[0].attributes; if(!a) return;
         var p=src.map(a); p.source=src.county+" County public records"; p.at=new Date().toISOString();
         oState.parcel=p;
+        // County flows to the title-payer rec that already reads by-county custom.
+        if(p.county) oState.county=p.county;
+        // Owner on record is the seller in nearly every case. Not a form answer (the offer
+        // wizard doesn't ask "who is the seller?" — that comes from the listing), but the
+        // coordinator uses it at drafting, so surface it on the file record.
+        if(p.owner) oState.seller_on_record=p.owner;
         // Year built answers the lead based paint question before it is ever asked.
         if(p.year_built){ oState.d_lead = (p.year_built>=1978) ? "post" : "pre"; }
-        // Vacant parcels preselect the vacant land contract path. The agent still confirms it.
-        if(/VACANT/i.test(p.land_use||"")) oState.ptype="vacant";
+        // Land use answers the property-type question (vacant vs residential) AND, when the
+        // classification is CONDOMINIUM, the HOA/condo question too. Every one of these gets
+        // a skip clause on its OQ step so we do not re-ask what public records already said.
+        var lu=String(p.land_use||"");
+        if(/VACANT/i.test(lu)) oState.ptype="vacant";
+        else if(/CONDO/i.test(lu)){
+          oState.ptype="residential"; oState.d_hoa="condo";
+          // Skipping the d_hoa question skips the rider-attach in oSave. Attach it here so the
+          // condo rider still lands on the drafted addenda list.
+          var add=oState.addenda||[]; if(add.indexOf("Condo Rider")===-1) add.push("Condo Rider"); oState.addenda=add;
+        }
+        else if(lu) oState.ptype="residential";
+        // Autofill call-out · list exactly what got filled and from where, so the TC can trust
+        // the skipped questions were answered from public records and not silently dropped.
+        var filled=[];
+        if(oState.ptype) filled.push('property type = '+oState.ptype);
+        if(p.year_built) filled.push('year built = '+p.year_built);
+        if(oState.d_lead) filled.push('lead-based paint disclosure = '+(oState.d_lead==="pre"?"required (pre-1978)":"not required"));
+        if(oState.d_hoa==="condo") filled.push('condo/HOA = condo rider');
         var card=document.getElementById("parcel-card");
         var html='<b>Found in '+esc(p.source)+'.</b><br>Owner on record: '+esc(p.owner)+
           (p.year_built?('<br>Year built: '+p.year_built):'')+
           (p.parcel_id?('<br>Parcel: '+esc(p.parcel_id)):'')+
+          (filled.length?('<br><br><b>Filled from public records so you are not asked again:</b><br>'+esc(filled.join('; '))):'')+
           '<br><span style="color:#8a857c">Pre fills the drafted contract. Your coordinator verifies at drafting.</span>';
         if(!card){
           card=document.createElement("div"); card.id="parcel-card"; card.className="found";
@@ -890,17 +959,34 @@
     if(s.rec){ var rv=(typeof s.rec==="function")?s.rec(v):s.rec; if(rv) recHtml='<div class="rec-card found" id="oq-rec" style="margin-top:14px;font-size:12.5px;line-height:1.65">'+rv+'</div>'; }
     var autoHtml=s.auto?'<div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#8a857c;margin-top:12px;line-height:1.5"><span style="width:7px;height:7px;border-radius:50%;background:var(--green);flex:0 0 auto;margin-top:4px"></span><span>'+s.auto+'</span></div>':"";
     var noteHtml=s.note?'<div class="sidenote" style="margin-top:10px">'+s.note+'</div>':"";
+    // step.after · raw HTML rendered below the note/auto blocks. Used for step-scoped hooks
+    // like the "upload the executed contract instead" escape hatch on the contract-type picker.
+    var afterHtml=s.after?s.after:"";
     var total=steps.length, pct=Math.round(((_oi)/Math.max(total-1,1))*100);
-    W.innerHTML='<div class="rowbar"><span class="back" id="o-back">&lsaquo; Back</span><span class="stepmeta">'+(s.sec===0?'File setup &middot; Portal':OSEC[s.sec-1]+' &middot; Section '+s.sec+' of 8')+'</span></div>'+
+    // Terminal step detection · when the plan/tier step is skipped (in-house TC files bill through
+    // the agent's membership, no per-file checkout), the email step becomes the last non-skipped
+    // step and needs to submit instead of trying to advance to a step that no longer exists.
+    var isLast=(_oi>=steps.length-1);
+    var isInHouseFinish=(s.type!=="tier" && isLast && PORTAL && oState.billing_model==="in_house");
+    var btnLabel = s.type==="tier" ? "Add and continue to payment"
+                 : isInHouseFinish ? "Submit file"
+                 : (s.optional?"Next, or skip":"Next");
+    var termsHtml = isInHouseFinish ? termsRow("terms-o") : "";
+    W.innerHTML='<div class="rowbar"><span class="back" id="o-back">&lsaquo; Back</span><span class="stepmeta">'+(s.sec===0?'File setup &middot; Portal':OSEC[s.sec-1]+' &middot; Section '+s.sec+' of '+OSEC.length)+'</span></div>'+
       '<div style="height:4px;background:#eee8da;border-radius:3px;margin:0 0 18px;overflow:hidden"><i style="display:block;height:100%;width:'+pct+'%;background:var(--ink);border-radius:3px"></i></div>'+
       '<h1 style="font-size:26px">'+qText+'</h1>'+
-      '<div style="max-width:420px;margin:14px auto 0">'+body+recHtml+noteHtml+autoHtml+
-      '<button class="btn" id="o-next">'+(s.type==="tier"?"Add and continue to payment":(s.optional?"Next, or skip":"Next"))+'</button>'+
+      '<div style="max-width:420px;margin:14px auto 0">'+body+recHtml+noteHtml+autoHtml+afterHtml+termsHtml+
+      '<button class="btn" id="o-next">'+btnLabel+'</button>'+
       '<div class="msg" id="o-err"></div></div>';
+    // Wire the executed-contract escape hatch when present. Jumps to step-drop (the scan flow
+    // on this same page) — the wizard state is drafting-only, so hopping to intake is safe.
+    var _jump=document.getElementById("oq-upload-jump");
+    if(_jump){ _jump.addEventListener("click",function(ev){ ev.preventDefault(); show("step-drop"); }); }
     document.getElementById("o-back").addEventListener("click",function(){ oSave(s); if(_oi===0){ if(PORTAL){ try{ (window.parent||window).postMessage({type:"aari-portal-close"},"*"); }catch(_){} } else { show("step-door"); } } else { _oi--; oRender(); } });
     document.getElementById("o-next").addEventListener("click",function(){
       if(!oSave(s,true)) return;
       if(s.type==="tier"){ if(!termsOK("terms-o","o-err")) return; offerSubmit(this); return; }
+      if(isInHouseFinish){ if(!termsOK("terms-o","o-err")) return; offerSubmit(this); return; }
       _oi++; oRender();
     });
     if(s.addr) wireAddr(document.getElementById("oq"),{hint:true, onPick:function(label,coords){ oState.property=label; oParcelLookup(coords); }});
@@ -954,20 +1040,19 @@
     if(s.req && !oState[s.key]){ err("o-err",s.req); return false; }
     if(s.type==="email" && !s.optional && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(oState[s.key])){ err("o-err",s.req||"Add a valid email."); return false; }
     if(s.type==="ack" && !oState[s.key]){ err("o-err","Please acknowledge to continue."); return false; }
-    // HOA and condo answers auto attach the matching rider so drafting never misses it.
-    if(s.key==="d_hoa"){ var add=oState.addenda||[];
-      if(oState.d_hoa==="hoa" && add.indexOf("Homeowners Assn Rider")===-1) add.push("Homeowners Assn Rider");
-      if(oState.d_hoa==="condo" && add.indexOf("Condo Rider")===-1) add.push("Condo Rider");
-      oState.addenda=add; }
+    // The d_hoa rider auto-attach that used to live here is gone with the disclosures section.
+    // Condo Rider still auto-attaches in oParcelLookup when land_use is CONDO; HOA riders can be
+    // added by the agent on the addenda chips step and by the coordinator at drafting.
     return true;
   }
   function offerSubmit(btn){ btn.disabled=true; btn.textContent="Sending…"; err("o-err","");
     var q={}; Object.keys(oState).forEach(function(k){ if(k!=="pre_b64") q[k]=oState[k]; });
-    // Entity and trust buyers: the contract buyer is the entity, with a composed signature block.
+    // Entity and trust buyers: the contract buyer is the entity name. The composed signature
+    // block used to be built here from buyer_signer + buyer_signer_title, but those two fields
+    // were dropped from the wizard (coordinator captures at drafting when they verify with
+    // Sunbiz / trust docs). Buyer field on the drafted offer says the entity; the coordinator
+    // writes the signature line at draft time.
     var buyerDisplay = oState.buyer_type==="person" ? oState.buyer : oState.buyer_entity;
-    if(oState.buyer_type!=="person" && oState.buyer_signer && oState.buyer_signer_title){
-      q.buyer_signature_block = oState.buyer_signer+", "+oState.buyer_signer_title+" of "+oState.buyer_entity;
-    }
     // Cash purchase by an entity or trust: FinCEN residential transfer reporting may apply. TC flags for title.
     q.fincen_review = (oState.buyer_type!=="person" && oState.financing==="Cash");
     var propLabel = oState.prop_mode==="mls" ? ("MLS "+oState.mls) : oState.property;

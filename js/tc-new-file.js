@@ -1,25 +1,15 @@
 /* Aari Transactions · TC cockpit "+ New File" launcher
    ---------------------------------------------------------------------------
    Adds a floating "+ New File" button to a TC cockpit (Eileen / Milennys /
-   Marlenyi). Clicking it opens the EXISTING public intake full-screen via the
-   index.html "?modal-only=1" mode (chrome hidden, intake modal only).
+   Marlenyi). Clicking it opens the coordinator's submit flow at /tc-submit.html.
 
-   Why navigation and not an iframe: index.html's modal-only close (×) logic is
-   written for window.top === window.self (full page) and returns the user to
-   the portal. Embedding it in an iframe is the path the codebase explicitly
-   abandoned ("loads full-screen now, not in an iframe"), so the iframe rendered
-   blank. Full-page navigation is the supported pattern — and matches the
-   original window.open(..., '_self') instinct.
-
-   Why it's still safe:
-   - Same origin => the TC's Supabase session in localStorage carries through, so
-     the intake auto-routes to the signed-in flow. No re-login, no auth token in
-     the URL.
-   - It does NOT modify index.html, the intake code, the Kanban, or any table.
-
-   NOT YET DONE (separate step, by design): the post-submit "payment link" screen
-   for TC submissions (needs submit-completion detection + the business rule that
-   TC services bill at closing and have no Stripe link; only a-la-carte do). */
+   Why /tc-submit.html and not the public intake: the public intake at
+   /index.html?modal-only=1#apply runs the outside-agent path and always ends at
+   Stripe checkout. TC services bill at closing — a coordinator submitting on
+   behalf of an in-house agent should never be prompted to pay. /tc-submit.html
+   opens with the contract upload first, asks whose file it is (so credit
+   attaches to the right agent's membership), scans the PDF, and drops the
+   coordinator on the new file to confirm. No checkout screen. */
 (function () {
   if (window.__aariNewFileLauncher) return;
   window.__aariNewFileLauncher = true;
@@ -39,7 +29,7 @@
       'cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.25)';
 
     btn.addEventListener('click', function () {
-      window.location.href = '/index.html?modal-only=1#apply';
+      window.location.href = '/tc-submit.html';
     });
 
     document.body.appendChild(btn);

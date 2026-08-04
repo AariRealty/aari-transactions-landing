@@ -26772,19 +26772,29 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     function nfEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
     // Agent list for the portal questionnaire's "Who is this file for?" picker.
-    // Sourced from the files this TC can already see (no new RLS surface), deduped by email,
-    // handed to the iframe via same-origin sessionStorage. Manual entry always remains available.
+    // Sourced from the files this TC can already see (no new RLS surface), handed to the iframe
+    // via same-origin sessionStorage. Manual entry always remains available.
+    //
+    // Dedup rule (fixed from the "two Marlenyis" bug): key on lowercased full name first, fall
+    // back to email only when name is missing. Old rule keyed on "email OR name", which let a
+    // historical submission with agent_name but empty agent_email coexist alongside the same
+    // agent's row from a later submission with the email filled in — the picker showed both.
+    // Within each name-group, keep the row that carries an email (or the first if none does).
     function nfPortalAgents(){
-      var seen = {}, out = [];
+      var byKey = {}, order = [];
       (_files || []).forEach(function(f){
         var raw = (f && f.raw_form_data) || {};
         var nm = String(raw.agent_name || f.agent_name || '').trim();
         var em = String(raw.agent_email || '').trim().toLowerCase();
         if(!nm && !em) return;
-        var k = em || nm.toLowerCase();
-        if(seen[k]) return; seen[k] = 1;
-        out.push({ name: nm, email: em });
+        var k = nm ? nm.toLowerCase() : em;
+        var existing = byKey[k];
+        if(!existing){ byKey[k] = { name: nm, email: em }; order.push(k); return; }
+        // Same person seen again — merge, preferring populated fields.
+        if(!existing.email && em) existing.email = em;
+        if(!existing.name && nm) existing.name = nm;
       });
+      var out = order.map(function(k){ return byKey[k]; });
       out.sort(function(a,b){ return String(a.name||a.email).localeCompare(String(b.name||b.email)); });
       try{ sessionStorage.setItem('aari_portal_agents', JSON.stringify(out)); }catch(_){}
     }
