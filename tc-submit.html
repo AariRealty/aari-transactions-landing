@@ -225,10 +225,23 @@
       // Same roster feeds both paths. The scan flow uses the dropdown below; the draft-an-offer
       // flow (submit.html?flow=offer&via=portal) reads it from sessionStorage as
       // aari_portal_agents — {name,email} pairs — so the wizard's agentpick step lands ready.
-      var portalRoster = rows.map(function(a){
-        var nm = [a.first_name, a.last_name].filter(Boolean).join(' ') || a.email || 'Agent';
-        return { name: nm, email: a.email || '' };
+      //
+      // Dedup by lowercased full name (with email fallback) so two rows for the same person
+      // don't both surface — Marlenyi's account has broker@aarirealty.com (role=agent) AND
+      // marlenyi@aarirealty.com (role=broker) in public.agents; dedup collapses them here.
+      // Within a name-group we prefer the row whose email is set and, if both are set, whichever
+      // one came in first (Supabase returns them ordered by first_name).
+      var byKey = {}, order = [];
+      rows.forEach(function(a){
+        var nm = [a.first_name, a.last_name].filter(Boolean).join(' ');
+        var em = String(a.email || '').trim().toLowerCase();
+        if(!nm && !em) return;
+        var k = nm ? nm.toLowerCase() : em;
+        var existing = byKey[k];
+        if(!existing){ byKey[k] = { name: nm || em || 'Agent', email: em }; order.push(k); return; }
+        if(!existing.email && em) existing.email = em;
       });
+      var portalRoster = order.map(function(k){ return byKey[k]; });
       try { sessionStorage.setItem('aari_portal_agents', JSON.stringify(portalRoster)); } catch(_){}
       rows.forEach(function(a){
         var label = [a.first_name, a.last_name].filter(Boolean).join(' ') || a.email || 'Agent';
