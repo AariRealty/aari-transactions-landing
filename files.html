@@ -26663,7 +26663,12 @@ Tell me your planned move-out date and I will set the inspection.`
           // compat, but now anyone (brokers, coordinators, dual-role agents) can pick file org
           // deliberately for docs-cleanup / compliance-audit work on a file already in motion.
           // Lands in the compliance lane with the light checklist — no full-TC deadlines.
-          + '<div class="nf-blk" data-go="file_org"><div class="bt">File organization</div><div class="bp">Docs cleanup, compliance audit, or paperwork for a deal already in motion</div></div>';
+          + '<div class="nf-blk" data-go="file_org"><div class="bt">File organization</div><div class="bp">Docs cleanup, compliance audit, or paperwork for a deal already in motion</div></div>'
+          // Standalone review · fifth option, one-time compliance review. Rounds out the
+          // aaritransactions.com service catalog (offer prep, listing services, file org already
+          // covered; this was the last gap). Same minimal shape as file org — agent + address,
+          // docs go in via the drawer once the file opens.
+          + '<div class="nf-blk" data-go="standalone_review"><div class="bt">Standalone review</div><div class="bp">One-time compliance review of an existing file — coordinator produces a report</div></div>';
       } else {
         if(bk){ bk.innerHTML = '&larr; Back'; bk.onclick = function(){ _nfStep = 1; _nfFile = null; _nfSkip = false; nfRenderStep(); }; }
         if(_nfPath === 'offer'){
@@ -26672,7 +26677,9 @@ Tell me your planned move-out date and I will set the inspection.`
           nfPortalAgents();
           html = '<iframe id="nf-offer-frame" src="/submit.html?flow=offer&via=portal" style="width:100%;height:max(540px,calc(100vh - 220px));border:0;background:#fff"></iframe>';
         } else if(_nfPath === 'listing'){
-          var svcs = [['listing_coordinator','Listing Coordinator','End to end. Package, compliance, MLS.','$225'],['listing_docs','Listing Docs Only','Package prep and signed review.','$99'],['mls_setup','MLS Setup Only','MLS input, ShowingTime, syndication.','$99']];
+          // Listing Coordinator label used to say $225 while the a-la-carte catalog on
+          // aaritransactions.com says $249 — the site's price is the source of truth, so align here.
+          var svcs = [['listing_coordinator','Listing Coordinator','End to end. Package, compliance, MLS.','$249'],['listing_docs','Listing Docs Only','Package prep and signed review.','$99'],['mls_setup','MLS Setup Only','MLS input, ShowingTime, syndication.','$99']];
           var rows = svcs.map(function(s){ return '<div class="nf-row' + (_nfLstSvc === s[0] ? ' sel' : '') + '" data-lsvc="' + s[0] + '"><div class="rt">' + s[1] + '<div class="rp">' + s[2] + '</div></div><span class="rpr">' + s[3] + '</span></div>'; }).join('');
           // Only MLS Setup needs documents from the agent (their signed package + photos).
           // For Coordinator and Docs Only, Aari prepares the docs, so we don't ask for them.
@@ -26694,13 +26701,16 @@ Tell me your planned move-out date and I will set the inspection.`
           }
           html = '<p class="nf-bigq">Listing file</p><p class="nf-bigsub">Pick the service.</p>'
             + nfAgentPickHtml() + nfAddrHtml() + rows + bottom + '<div class="nf-err" id="nf-err"></div>';
-        } else if(_nfPath === 'file_org'){
-          // File organization · docs cleanup / compliance audit / paperwork on an existing deal.
-          // No side to pick, no service tier, no upload here — docs land inside the drawer once
-          // the file opens (that's where cleanup actually happens; a single upfront upload is the
-          // wrong mental model for file org). Agent + address is all we need to start the file.
+        } else if(_nfPath === 'file_org' || _nfPath === 'standalone_review'){
+          // Two minimal-intake paths that share identical inputs (agent + address) and drop
+          // straight into the drawer where docs get uploaded and the coordinator works. Only
+          // the copy and the downstream service_type differ; nfScan handles the routing.
+          var _foBig = (_nfPath === 'standalone_review') ? 'Standalone review' : 'File organization';
+          var _foSub = (_nfPath === 'standalone_review')
+            ? 'Start the file — attach the executed contract from inside the drawer once it opens.'
+            : 'Start the file — upload docs from inside the drawer once it opens.';
           var canStartFO = !!(_nfAgentId && _nfAddress);
-          html = '<p class="nf-bigq">File organization</p><p class="nf-bigsub">Start the file — upload docs from inside the drawer once it opens.</p>'
+          html = '<p class="nf-bigq">' + _foBig + '</p><p class="nf-bigsub">' + _foSub + '</p>'
             + nfAgentPickHtml() + nfAddrHtml()
             + '<button type="button" class="nf-go" id="nf-go"' + (canStartFO ? '' : ' disabled') + '>Start the file &rarr;</button>'
             + '<div class="nf-err" id="nf-err"></div>';
@@ -26724,11 +26734,11 @@ Tell me your planned move-out date and I will set the inspection.`
       if(_ai && _ar){
         var _aglist = Object.keys(_agentNameById || {}).map(function(id){ var mt = (_agentMetaById && _agentMetaById[id]) || {}; return { id:id, name:_agentNameById[id], email:mt.email || '', brokerage:mt.brokerage || '' }; }).filter(function(a){ return a.name; }).sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
         // Ready-state per path · sale needs side+file+agent, listing needs the outer render
-        // to redraw with its own inline label, file organization only needs agent+address (file
-        // is optional — coordinator can collect docs later).
+        // to redraw with its own inline label, file organization + standalone review only need
+        // agent+address (docs land inside the drawer after the file opens).
         var _syncGo = function(){
           var g = document.getElementById('nf-go'); if(!g) return;
-          if(_nfPath === 'file_org') g.disabled = !(_nfAgentId && _nfAddress);
+          if(_nfPath === 'file_org' || _nfPath === 'standalone_review') g.disabled = !(_nfAgentId && _nfAddress);
           else g.disabled = !(_nfSide && _nfFile && _nfAgentId);
         };
         var _renderRes = function(){
@@ -26906,8 +26916,9 @@ Tell me your planned move-out date and I will set the inspection.`
     async function nfScan(){
       if(_nfBusy) return;
       // Ready-check per path · sale needs file+side+service, listing (skip path) needs side+
-      // service, file organization needs only agent+address (upload is optional).
-      if(_nfPath === 'file_org'){
+      // service, file organization + standalone review need only agent+address.
+      var _isMinimal = (_nfPath === 'file_org' || _nfPath === 'standalone_review');
+      if(_isMinimal){
         if(!(_nfAgentId && _nfAddress)) return;
       } else {
         if(!_nfSkip && !nfReady()) return;
@@ -26918,7 +26929,7 @@ Tell me your planned move-out date and I will set the inspection.`
       var _sb=document.getElementById('nf-go');
       if(_sb){
         _sb.disabled=true;
-        _sb.innerHTML='<span class="nf-spin" style="vertical-align:-2px;margin-right:8px"></span>' + (_nfPath === 'file_org' ? (_nfFile ? 'Uploading the doc&hellip;' : 'Creating the file&hellip;') : 'Uploading &amp; reading the contract&hellip;');
+        _sb.innerHTML='<span class="nf-spin" style="vertical-align:-2px;margin-right:8px"></span>' + (_isMinimal ? 'Creating the file&hellip;' : 'Uploading &amp; reading the contract&hellip;');
       }
       try{
         var svcId, svcFileType;
@@ -26927,6 +26938,12 @@ Tell me your planned move-out date and I will set the inspection.`
           // broker-downgrade below produces, but chosen deliberately by the TC instead of
           // silently substituted, so anyone (not just brokers) can start a file-org file.
           svcId = 'file_organization';
+          svcFileType = 'compliance';
+        } else if(_nfPath === 'standalone_review'){
+          // One-time compliance review. Same compliance file_type as file organization, but a
+          // distinct service_type so the coordinator queue and any downstream reporting/pricing
+          // can tell "review" work from ongoing "org" work.
+          svcId = 'standalone_review';
           svcFileType = 'compliance';
         } else {
           // Listing side carries the specific service the TC picked ($225/$99/$149);
@@ -26964,10 +26981,10 @@ Tell me your planned move-out date and I will set the inspection.`
           // Render the real contract on the left (signed URL renders where a local blob preview is blocked).
           var fr = document.getElementById('nf-frame'); if(fr && signed){ try{ fr.src = signed + '#toolbar=0&view=FitH&navpanes=0'; }catch(_){ } }
         }
-        // client_type maps to the deal side. File-org files aren't tied to a side, so pass null
-        // instead of guessing "seller" (which would misleadingly imply we know who Marlenyi's
-        // agent represents on the deal).
-        var _clientSide = (_nfPath === 'file_org') ? null
+        // client_type maps to the deal side. File-org and standalone-review files aren't tied
+        // to a side, so pass null instead of guessing "seller" (which would misleadingly imply
+        // we know who Marlenyi's agent represents on the deal).
+        var _clientSide = _isMinimal ? null
                          : (_nfSide === 'buyer') ? 'buyer'
                          : (_nfSide === 'both') ? 'both'
                          : 'seller'; // seller + listing → seller side
@@ -26988,9 +27005,9 @@ Tell me your planned move-out date and I will set the inspection.`
         // set the contract type and dates, so the file lands on "3 of 4 confirmed" with
         // only Terms & dates left to confirm and the deadline ledger computed.
         // Sale-only: a listing has no purchase contract, financing, or price to confirm; a
-        // file-organization file has no purchase contract at all (docs cleanup, not a deal),
-        // so the auto-confirm skips these too.
-        if(_nfSide !== 'listing' && _nfPath !== 'file_org') try{
+        // file-organization or standalone-review file has no purchase contract at all (docs
+        // cleanup / compliance review, not a deal), so the auto-confirm skips these too.
+        if(_nfSide !== 'listing' && !_isMinimal) try{
           var _iso=function(s){ if(!s) return null; var d=new Date(s); return isNaN(d)?null:d.toISOString().slice(0,10); };
           var _cents=function(s){ if(!s) return null; var n=parseFloat(String(s).replace(/[^0-9.]/g,'')); return isNaN(n)?null:Math.round(n*100); };
           var _exf=fields||{}; var _now=new Date().toISOString();
