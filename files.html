@@ -26653,10 +26653,17 @@ Tell me your planned move-out date and I will set the inspection.`
       var html = '';
       if(_nfStep === 1){
         if(bk){ bk.innerHTML = '&larr; All files'; bk.onclick = closeNewFileModal; }
-        html = '<p class="nf-bigq">Listing, a sale, or an offer?</p><p class="nf-bigsub">Start with the big one.</p>'
+        html = '<p class="nf-bigq">Listing, a sale, an offer, or file organization?</p><p class="nf-bigsub">Start with the big one.</p>'
           + '<div class="nf-blk" data-go="listing"><div class="bt">Listing</div><div class="bp">A seller listing you are running</div></div>'
           + '<div class="nf-blk" data-go="sale"><div class="bt">A sale</div><div class="bp">Buyer or both sides, transaction coordination</div></div>'
-          + '<div class="nf-blk" data-go="offer"><div class="bt">An offer</div><div class="bp">Not under contract yet. Same questionnaire agents get on the home page</div></div>';
+          + '<div class="nf-blk" data-go="offer"><div class="bt">An offer</div><div class="bp">Not under contract yet. Same questionnaire agents get on the home page</div></div>'
+          // File organization · explicit fourth option. Used to be implicit: brokers who picked
+          // "A sale" got their file silently downgraded to service_type=file_organization
+          // (see the broker-downgrade block in nfScan below). That still works for backwards
+          // compat, but now anyone (brokers, coordinators, dual-role agents) can pick file org
+          // deliberately for docs-cleanup / compliance-audit work on a file already in motion.
+          // Lands in the compliance lane with the light checklist — no full-TC deadlines.
+          + '<div class="nf-blk" data-go="file_org"><div class="bt">File organization</div><div class="bp">Docs cleanup, compliance audit, or paperwork for a deal already in motion</div></div>';
       } else {
         if(bk){ bk.innerHTML = '&larr; Back'; bk.onclick = function(){ _nfStep = 1; _nfFile = null; _nfSkip = false; nfRenderStep(); }; }
         if(_nfPath === 'offer'){
@@ -26687,6 +26694,17 @@ Tell me your planned move-out date and I will set the inspection.`
           }
           html = '<p class="nf-bigq">Listing file</p><p class="nf-bigsub">Pick the service.</p>'
             + nfAgentPickHtml() + nfAddrHtml() + rows + bottom + '<div class="nf-err" id="nf-err"></div>';
+        } else if(_nfPath === 'file_org'){
+          // File organization · docs cleanup / compliance audit / paperwork on an existing deal.
+          // No side to pick (not tied to buyer/seller/both), no service tier (single flat lane),
+          // file upload is optional (coordinator often collects the docs pack async). Agent +
+          // address is all that's required to start; button stays disabled until both are set.
+          var canStartFO = !!(_nfAgentId && _nfAddress);
+          html = '<p class="nf-bigq">File organization</p><p class="nf-bigsub">Add the docs now, or start the file and upload them later.</p>'
+            + nfAgentPickHtml() + nfAddrHtml()
+            + '<div style="margin-top:6px">' + nfDropHtml(true) + '</div>'
+            + '<button type="button" class="nf-go" id="nf-go"' + (canStartFO ? '' : ' disabled') + '>Start the file &rarr;</button>'
+            + '<div class="nf-err" id="nf-err"></div>';
         } else {
           var sides = [['buyer','Buyer side','TC, one side'],['seller','Seller side','TC, one side · listing side'],['both','Both sides','TC, both sides']];
           var rows2 = sides.map(function(s){ return '<div class="nf-row' + (_nfSide === s[0] ? ' sel' : '') + '" data-side="' + s[0] + '"><div class="rt">' + s[1] + '<div class="rp">' + s[2] + '</div></div></div>'; }).join('');
@@ -26706,7 +26724,14 @@ Tell me your planned move-out date and I will set the inspection.`
       var _ar = document.getElementById('nf-agent-results');
       if(_ai && _ar){
         var _aglist = Object.keys(_agentNameById || {}).map(function(id){ var mt = (_agentMetaById && _agentMetaById[id]) || {}; return { id:id, name:_agentNameById[id], email:mt.email || '', brokerage:mt.brokerage || '' }; }).filter(function(a){ return a.name; }).sort(function(a,b){ return String(a.name).localeCompare(String(b.name)); });
-        var _syncGo = function(){ var g = document.getElementById('nf-go'); if(g) g.disabled = !(_nfSide && _nfFile && _nfAgentId); };
+        // Ready-state per path · sale needs side+file+agent, listing needs the outer render
+        // to redraw with its own inline label, file organization only needs agent+address (file
+        // is optional — coordinator can collect docs later).
+        var _syncGo = function(){
+          var g = document.getElementById('nf-go'); if(!g) return;
+          if(_nfPath === 'file_org') g.disabled = !(_nfAgentId && _nfAddress);
+          else g.disabled = !(_nfSide && _nfFile && _nfAgentId);
+        };
         var _renderRes = function(){
           var q = (_ai.value || '').trim().toLowerCase();
           // Type-ahead · show nothing until she starts typing, then only the matches
@@ -26881,33 +26906,51 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     async function nfScan(){
       if(_nfBusy) return;
-      // Normal path needs a file + side + service. The skip path (Listing Coordinator, no
-      // doc yet) bypasses the file requirement but still needs the side + service chosen.
-      if(!_nfSkip && !nfReady()) return;
-      if(_nfSkip && !(_nfSide === 'listing' && _nfLstSvc)) return;
+      // Ready-check per path · sale needs file+side+service, listing (skip path) needs side+
+      // service, file organization needs only agent+address (upload is optional).
+      if(_nfPath === 'file_org'){
+        if(!(_nfAgentId && _nfAddress)) return;
+      } else {
+        if(!_nfSkip && !nfReady()) return;
+        if(_nfSkip && !(_nfSide === 'listing' && _nfLstSvc)) return;
+      }
       _nfBusy = true;
       // No loading screen — the button itself shows it's working, then the list appears.
-      var _sb=document.getElementById('nf-go'); if(_sb){ _sb.disabled=true; _sb.innerHTML='<span class="nf-spin" style="vertical-align:-2px;margin-right:8px"></span>Uploading &amp; reading the contract&hellip;'; }
+      var _sb=document.getElementById('nf-go');
+      if(_sb){
+        _sb.disabled=true;
+        _sb.innerHTML='<span class="nf-spin" style="vertical-align:-2px;margin-right:8px"></span>' + (_nfPath === 'file_org' ? (_nfFile ? 'Uploading the doc&hellip;' : 'Creating the file&hellip;') : 'Uploading &amp; reading the contract&hellip;');
+      }
       try{
-        // Listing side carries the specific service the TC picked ($225/$99/$149);
-        // the sale sides keep their fixed TC service. service_type drives spine + checklist + pricing.
-        var svcId = (_nfSide === 'listing') ? _nfLstSvc : ((NF_SIDE_SVC[_nfSide] || NF_SIDE_SVC.buyer).id);
-        var svcFileType = (_nfSide === 'listing') ? 'listing' : ((NF_SIDE_SVC[_nfSide] || NF_SIDE_SVC.buyer).file_type);
-        // Marlenyi Jul 27 · "Any transactions I input myself default to
-        // file organization unless I assign a TC or TC requests to run
-        // it as a full TC service on behalf of the agent." When the
-        // submitter is a broker, downgrade the service to File Org so
-        // the file lands in the compliance lane with a light checklist
-        // instead of the full-TC deadline set. Upgrading later happens
-        // via the drawer's service-type editor (or by assigning a TC
-        // who requests full-TC handling).
-        try {
-          var _submitterRole = (_profile && String(_profile.role || '').toLowerCase()) || '';
-          if(_submitterRole === 'broker' && _nfSide !== 'listing'){
-            svcId = 'file_organization';
-            svcFileType = 'compliance';
-          }
-        } catch(_){}
+        var svcId, svcFileType;
+        if(_nfPath === 'file_org'){
+          // Explicit file organization pick from the top-level card. Same service_type the
+          // broker-downgrade below produces, but chosen deliberately by the TC instead of
+          // silently substituted, so anyone (not just brokers) can start a file-org file.
+          svcId = 'file_organization';
+          svcFileType = 'compliance';
+        } else {
+          // Listing side carries the specific service the TC picked ($225/$99/$149);
+          // the sale sides keep their fixed TC service. service_type drives spine + checklist + pricing.
+          svcId = (_nfSide === 'listing') ? _nfLstSvc : ((NF_SIDE_SVC[_nfSide] || NF_SIDE_SVC.buyer).id);
+          svcFileType = (_nfSide === 'listing') ? 'listing' : ((NF_SIDE_SVC[_nfSide] || NF_SIDE_SVC.buyer).file_type);
+          // Marlenyi Jul 27 · "Any transactions I input myself default to
+          // file organization unless I assign a TC or TC requests to run
+          // it as a full TC service on behalf of the agent." When the
+          // submitter is a broker, downgrade the service to File Org so
+          // the file lands in the compliance lane with a light checklist
+          // instead of the full-TC deadline set. Upgrading later happens
+          // via the drawer's service-type editor (or by assigning a TC
+          // who requests full-TC handling). Kept for backward compat; the
+          // explicit file_org card above is the preferred discoverable path.
+          try {
+            var _submitterRole = (_profile && String(_profile.role || '').toLowerCase()) || '';
+            if(_submitterRole === 'broker' && _nfSide !== 'listing'){
+              svcId = 'file_organization';
+              svcFileType = 'compliance';
+            }
+          } catch(_){}
+        }
         var ures = await _client.auth.getUser();
         var uid = (ures && ures.data && ures.data.user && ures.data.user.id) || _profile.id;
         var id = (crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-'+Date.now());
@@ -26922,7 +26965,13 @@ Tell me your planned move-out date and I will set the inspection.`
           // Render the real contract on the left (signed URL renders where a local blob preview is blocked).
           var fr = document.getElementById('nf-frame'); if(fr && signed){ try{ fr.src = signed + '#toolbar=0&view=FitH&navpanes=0'; }catch(_){ } }
         }
-        var _clientSide = (_nfSide === 'buyer') ? 'buyer' : (_nfSide === 'both') ? 'both' : 'seller'; // seller + listing → seller side
+        // client_type maps to the deal side. File-org files aren't tied to a side, so pass null
+        // instead of guessing "seller" (which would misleadingly imply we know who Marlenyi's
+        // agent represents on the deal).
+        var _clientSide = (_nfPath === 'file_org') ? null
+                         : (_nfSide === 'buyer') ? 'buyer'
+                         : (_nfSide === 'both') ? 'both'
+                         : 'seller'; // seller + listing → seller side
         // Auto-fill listing remarks from the agent's saved default, so they generate the moment
         // a TC inputs a listing on the agent's behalf.
         var _lgInit = {};
@@ -26939,8 +26988,10 @@ Tell me your planned move-out date and I will set the inspection.`
         // Auto-confirm what the scan reliably reads (contract type, parties, financing) +
         // set the contract type and dates, so the file lands on "3 of 4 confirmed" with
         // only Terms & dates left to confirm and the deadline ledger computed.
-        // Sale-only: a listing has no purchase contract, financing, or price to confirm.
-        if(_nfSide !== 'listing') try{
+        // Sale-only: a listing has no purchase contract, financing, or price to confirm; a
+        // file-organization file has no purchase contract at all (docs cleanup, not a deal),
+        // so the auto-confirm skips these too.
+        if(_nfSide !== 'listing' && _nfPath !== 'file_org') try{
           var _iso=function(s){ if(!s) return null; var d=new Date(s); return isNaN(d)?null:d.toISOString().slice(0,10); };
           var _cents=function(s){ if(!s) return null; var n=parseFloat(String(s).replace(/[^0-9.]/g,'')); return isNaN(n)?null:Math.round(n*100); };
           var _exf=fields||{}; var _now=new Date().toISOString();
