@@ -24054,6 +24054,92 @@ Tell me your planned move-out date and I will set the inspection.`
     try { if(label && new RegExp('^' + tag.lab, 'i').test(String(label).trim())) return ''; } catch(_){}
     return '<span class="uc-tag ' + tag.cls + '">' + tag.lab + '</span>';
   }
+  // Marlenyi 2026-08-06 · grouped Previously-done list. Every row same shape
+  // (checkbox + category chip + name struck + date on the right), items chunked
+  // into Deadlines hit / Tasks handled / Emails sent so the block reads like
+  // three small lists instead of one long uneven one.
+  const _COMPACT_TAG_MAP = [
+    [/title/,'TITLE'],[/loan|financ/,'LOAN'],[/survey/,'SURVEY'],[/insp|feasib|due_dilig/,'INSP'],
+    [/apprais|^app_/,'APPR'],[/permit/,'PERMIT'],[/walk/,'WALK'],[/warranty|warr/,'WARR'],
+    [/wire/,'WIRE'],[/cd_|^cd$/,'CD'],[/estoppel/,'ESTOP'],[/hoa/,'HOA'],[/emd|deposit/,'EMD'],
+    [/comp/,'COMP'],[/fincen/,'FINCEN'],[/firpta/,'FIRPTA'],[/weekly/,'UPDATE'],
+    [/tenant|lease/,'LEASE'],[/keys|key_/,'KEYS'],[/personal_property|prop_clear/,'PROP'],
+    [/google|review_24|review_/,'REVIEW'],[/clos|^cl_/,'CLOSE'],[/wtc_|opening/,'OPEN']
+  ];
+  function _compactTaskTag(t){
+    const s = String((t && t.id) || '').toLowerCase();
+    for (const [re, lab] of _COMPACT_TAG_MAP){ if(re.test(s)) return lab; }
+    return 'TASK';
+  }
+  // Deadline tag · module-level twin of _dlTagFor (which is scoped inside
+  // buildUcTracksHtml). Kept in sync manually; same categories, upper-cased.
+  function _compactDlTag(k){
+    k = String(k || '').toLowerCase();
+    if(/loan/.test(k)) return 'LOAN';
+    if(/title/.test(k)) return 'TITLE';
+    if(/survey/.test(k)) return 'SURVEY';
+    if(/insp|feasib|due_dilig/.test(k)) return 'INSP';
+    if(/apprais/.test(k)) return 'APPR';
+    if(/estoppel/.test(k)) return 'ESTOP';
+    if(/hoa/.test(k)) return 'HOA';
+    if(/emd|deposit/.test(k)) return 'EMD';
+    if(/comp/.test(k)) return 'COMP';
+    if(/clos/.test(k)) return 'CLOSE';
+    if(/lease|tenant/.test(k)) return 'LEASE';
+    return 'DATE';
+  }
+  function _compactDoneDate(iso){
+    if(!iso) return '';
+    try {
+      const d = new Date(iso);
+      if(isNaN(d.getTime())) return '';
+      return d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+    } catch(_){ return ''; }
+  }
+  function _compactRowHtml(tag, name, date){
+    return '<div style="display:flex;align-items:center;gap:9px;padding:9px 0;border-top:0.5px solid #f2eee2">'
+      + '<input type="checkbox" checked style="width:15px;height:15px;accent-color:#0f0f0f;flex:none">'
+      + '<span style="flex:none;font-size:8.5px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;padding:2px 6px;border-radius:4px;color:#9a958c;background:#f1efe8;min-width:44px;text-align:center">' + esc(tag) + '</span>'
+      + '<span style="flex:1;min-width:0;font-size:12px;font-weight:500;color:#8a857c;text-decoration:line-through">' + esc(name) + '</span>'
+      + (date ? '<span style="flex:none;font-size:10.5px;color:#a39e93;white-space:nowrap">' + esc(date) + '</span>' : '')
+    + '</div>';
+  }
+  // Build the grouped Previously-done markup. file is used for completion timestamps;
+  // emailByTask is optional (defaults to module-level _emailByTask). A task with any
+  // matched email counts as an email; the rest are plain tasks. Deadlines come pre-flagged.
+  function _groupedDoneHtml(file, doneTasks, doneDeadlines, emailByTask, totalN){
+    const emb = emailByTask || (typeof _emailByTask !== 'undefined' ? _emailByTask : {}) || {};
+    const stateById = (file && file.stage_tasks) || {};
+    const emailTasks = [], plainTasks = [];
+    (doneTasks || []).forEach(function(t){
+      const ems = emb[t.id];
+      (ems && ems.length ? emailTasks : plainTasks).push(t);
+    });
+    const _by = function(t){ return ((stateById[t.id] || {}).at || ''); };
+    emailTasks.sort(function(a, b){ return _by(b).localeCompare(_by(a)); });
+    plainTasks.sort(function(a, b){ return _by(b).localeCompare(_by(a)); });
+    const deadlines = (doneDeadlines || []).slice().sort(function(a, b){ return (b.date - a.date); });
+    const _grp = function(label, rows){
+      if(!rows.length) return '';
+      return '<div style="margin-top:10px">'
+        + '<div style="font-size:9.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#7a756c;padding:6px 0 2px">' + esc(label) + ' &middot; ' + rows.length + '</div>'
+        + rows.join('')
+      + '</div>';
+    };
+    const dlRows = deadlines.map(function(d){
+      return _compactRowHtml(_compactDlTag(d.key || ''), d.name || 'Deadline', _compactDoneDate(d.date instanceof Date ? d.date.toISOString() : d.date));
+    });
+    const plainRows = plainTasks.map(function(t){
+      return _compactRowHtml(_compactTaskTag(t), t.label || t.id, _compactDoneDate(_by(t)));
+    });
+    const emailRows = emailTasks.map(function(t){
+      return _compactRowHtml(_compactTaskTag(t), t.label || t.id, _compactDoneDate(_by(t)));
+    });
+    return '<div data-wt-list="done" hidden style="margin-top:14px;padding-top:10px;border-top:0.5px solid #e6e2d8">'
+      + '<div style="font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#7a756c;padding:0 0 4px">Previously done &middot; ' + totalN + '</div>'
+      + _grp('Deadlines hit', dlRows) + _grp('Tasks handled', plainRows) + _grp('Emails sent', emailRows)
+    + '</div>';
+  }
   // Time anchor (ADHD orientation) · one quiet text line, "Day 5 of 30 · closing
   // Jul 21". No bar, no progress — just where today sits. Reuses Effective + Closing.
   function ucTimelineHtml(file){
@@ -24107,11 +24193,10 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     if(doneTasks && doneTasks.length){
       items.push('<button type="button" class="wt-link" data-wt-toggle="done">' + doneTasks.length + ' done &rsaquo;</button>');
-      // Marlenyi 2026-08-06: expanded done list needs its own header + top rule so it
-      // visually detaches from Due-today above, matching the buyer track path.
-      lists += '<div data-wt-list="done" hidden style="margin-top:14px;padding-top:10px;border-top:0.5px solid #e6e2d8">' +
-        '<div style="font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#7a756c;padding:0 0 8px">Previously done &middot; ' + doneTasks.length + '</div>' +
-        doneTasks.map(function(t){ return ckRow(file, t, dls, done, tagFn ? tagFn(t.id) : ''); }).join('') + '</div>';
+      // Marlenyi 2026-08-06 · same grouped Previously-done shape as the buyer track
+      // path (buildUcTracksHtml). No done deadlines here — wtFooter is only used for
+      // listing / compliance flows that don't carry a contract-deadline list.
+      lists += _groupedDoneHtml(file, doneTasks, [], typeof _emailByTask !== 'undefined' ? _emailByTask : {}, doneTasks.length);
     }
     var n = 0; Object.keys(done).forEach(function(k){ if(done[k]) n++; });
     if(((file.file_type || 'sale') === 'sale' || (file.file_type || '') === 'rental') && n){
@@ -24428,14 +24513,11 @@ Tell me your planned move-out date and I will set the inspection.`
       }
       html += '</div><div id="upd-draft-host"></div>';
       if(_doneN){
-        // Marlenyi 2026-08-06: without a header the expanded done list read as if it belonged
-        // to the Due-today section above. Own header + top rule + muted "Previously done" label
-        // so nothing done on other days can be mistaken for done-today.
-        html += '<div data-wt-list="done" hidden style="margin-top:14px;padding-top:10px;border-top:0.5px solid #e6e2d8">' +
-          '<div style="font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#7a756c;padding:0 0 8px">Previously done &middot; ' + _doneN + '</div>' +
-          doneTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id)); }).join('') +
-          _dlDone.map(_dlRowH).join('') +
-          '</div>';
+        // Marlenyi 2026-08-06 · grouped Previously-done list. Every row is one uniform
+        // shape (checkbox + category chip + name struck + date), items chunked into
+        // Deadlines hit / Tasks handled / Emails sent so the whole block reads as
+        // three small lists instead of one long uneven wall.
+        html += _groupedDoneHtml(file, doneTasks, _dlDone, _emailByTask, _doneN);
       }
     }
     return html;
