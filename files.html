@@ -7956,7 +7956,7 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     wireUi();
     await loadAndRender();
-    try { await loadInvoices(); renderFileList(); } catch(_){}
+    try { await loadInvoices(); await loadAtArBills(); renderFileList(); } catch(_){}
     try { await syncCreditUses(); } catch(_){}
     maybeShowCalendarSetup();
   }
@@ -14468,6 +14468,15 @@ Tell me your planned move-out date and I will set the inspection.`
     try { const { data } = await _client.from('tc_invoices').select('*').order('submitted_at', { ascending:false }); _invoices = data || []; }
     catch(_){ _invoices = []; }
   }
+  // Realty Bills · what AT bills Aari Realty for the TC work Milennys and Eileen do at the internal
+  // negotiated rate. Separate ledger from tc_invoices (money out to TCs) and payments (Stripe money
+  // in from outside agents). Broker-only via RLS; loader is safe to call for any role because the
+  // query will just return [] for non-brokers.
+  var _atArBills = [];
+  async function loadAtArBills(){
+    try { const { data } = await _client.from('at_ar_bills').select('*').order('bill_date', { ascending:false }); _atArBills = data || []; }
+    catch(_){ _atArBills = []; }
+  }
   // Keep the member-facing credit meter honest: every file the cockpit computes as
   // credit-covered gets a row in membership_credit_uses (deduped on file_id), so the
   // agent's portal reflects credits used even when a coordinator input the work.
@@ -15097,7 +15106,64 @@ Tell me your planned move-out date and I will set the inspection.`
         '</details>';
       });
     }
-    return head + payRun + notSent + ledger + pipeSection + history;
+    return head + payRun + notSent + ledger + pipeSection + history + realtyBillsSectionHtml();
+  }
+
+  // Realty Bills section · rendered inside the broker's Invoices view (both mobile + desktop).
+  // Reads _atArBills (loaded from public.at_ar_bills). Broker-only content — non-brokers see
+  // nothing because the query returns [] under RLS. Layout mirrors the existing invoice cards:
+  // header row, small money strip, unpaid list with "Mark paid" per row, collapsed paid history.
+  function realtyBillsSectionHtml(){
+    var bills = _atArBills || [];
+    if(!bills.length) return '';
+    var unpaid = bills.filter(function(b){ return b.status === 'unpaid'; });
+    var paid   = bills.filter(function(b){ return b.status === 'paid'; });
+    var outstanding = unpaid.reduce(function(s, b){ return s + Math.round((parseFloat(b.amount) || 0) * 100); }, 0);
+    var paidTotal   = paid.reduce(function(s, b){ return s + Math.round((parseFloat(b.amount) || 0) * 100); }, 0);
+
+    // Money strip · matches the pattern of the invoice-view KPI tiles right above.
+    var kpi = function(label, amt, hot){
+      return '<div style="background:#fff;border:0.5px solid #eeeae0;' + (hot ? 'border-left:2px solid #14110c;' : '') + 'border-radius:9px;padding:9px 12px">' +
+        '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#a99a78;font-weight:700">' + label + '</div>' +
+        '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:19px;font-variant-numeric:tabular-nums;margin-top:2px">' + amt + '</div></div>';
+    };
+    var strip = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:0 0 12px">' +
+        kpi('Outstanding', _money(outstanding), outstanding > 0) +
+        kpi('Paid to date', _money(paidTotal), false) +
+        kpi('Bills on file', String(bills.length), false) +
+      '</div>';
+
+    var addr = function(b){ return String(b.file_property || '').split(',')[0]; };
+    var billRow = function(b, showPay){
+      var when = new Date(b.bill_date + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' });
+      var life = b.lifecycle_note ? ' <span style="color:#a99a78;font-weight:400;font-size:10.5px">(' + esc(b.lifecycle_note) + ')</span>' : '';
+      var svc  = String(b.service_type || '').replace(/_/g, ' ');
+      var actor = esc(b.tc_name || '');
+      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 4px;border-top:0.5px solid #f0ebe0">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;color:#0f0f0f">' + esc(addr(b)) + life + '</div>' +
+        '<div style="font-size:11px;color:#8a857c;margin-top:2px">' + esc(when) + ' &middot; ' + actor + ' &middot; ' + esc(svc) + '</div></div>' +
+        '<span style="font-size:13.5px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums">' + _money(Math.round((parseFloat(b.amount) || 0) * 100)) + '</span>' +
+        (showPay ? '<button type="button" data-mark-ar-bill-paid="' + esc(b.id) + '" style="font-size:11.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:7px;padding:7px 12px;cursor:pointer;font-family:inherit;white-space:nowrap">Mark paid</button>' : '') +
+        '</div>';
+    };
+
+    var unpaidBlock = unpaid.length
+      ? '<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#a3402f;font-weight:700;margin:16px 0 2px">Outstanding &middot; ' + unpaid.length + '</div>' +
+        unpaid.map(function(b){ return billRow(b, true); }).join('')
+      : '<div style="font-size:12.5px;color:#6f6656;padding:14px 4px 4px;text-align:center">All bills paid. Clean slate.</div>';
+
+    var paidBlock = paid.length
+      ? '<details style="margin-top:16px"><summary style="cursor:pointer;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8a857c;font-weight:700;padding:6px 0;list-style:none">Paid history &middot; ' + paid.length + ' &middot; ' + _money(paidTotal) + ' &middot; click to expand</summary>' +
+        paid.map(function(b){ return billRow(b, false); }).join('') +
+        '</details>'
+      : '';
+
+    return '<div style="margin-top:18px;background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:16px 18px">' +
+      '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:12px">' +
+        '<span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Realty Bills &middot; AT &rarr; AR</span>' +
+        '<span style="font-size:11.5px;color:#a39e93">Bills AT sends to Aari Realty for TC work</span></div>' +
+      strip + unpaidBlock + paidBlock +
+      '</div>';
   }
 
   function brokerInvoiceBoardHtml(){
@@ -15234,7 +15300,7 @@ Tell me your planned move-out date and I will set the inspection.`
           subs.length ? subs.map(function(i){ return invCardHtml(i, true); }).join('') : _invEmptyColHtml('Nothing waiting on you.<br>Invoices land here Thursday.')) +
         _invColHtml('Paid', _cnt(paidInv.length),
           paidInv.length ? paidInv.slice(0, 8).map(function(i){ return invCardHtml(i, false); }).join('') : _invEmptyColHtml('No invoice has ever<br>been submitted.')) +
-      '</div>';
+      '</div>' + realtyBillsSectionHtml();
   }
   // ===== List view · Variant 2 · priority groups (Jul 30 2026, Marlenyi) =====
   // The scale view for 100+ files, where the board becomes an endless scroll. Every active file is
@@ -15524,11 +15590,26 @@ Tell me your planned move-out date and I will set the inspection.`
       try { if(typeof ensureMobileNav === 'function') ensureMobileNav(); } catch(_){}
     } catch(_){ alert('Not saved.'); }
   }
+  // Mark an AR bill paid. Same shape as markInvoicePaid but hits at_ar_bills and re-loads
+  // that ledger so the Realty Bills section updates in place.
+  async function markArBillPaid(id){
+    if(!id) return;
+    try {
+      var res = await _client.from('at_ar_bills').update({ status:'paid', paid_at:new Date().toISOString() }).eq('id', id);
+      if(res.error){ alert('Not saved: ' + res.error.message); return; }
+      await loadAtArBills();
+      try { renderInvoiceScreen(); } catch(_){}
+    } catch(_){ alert('Not saved.'); }
+  }
   document.addEventListener('click', function(e){
     var s = e.target && e.target.closest && e.target.closest('[data-submit-invoice]');
     if(s){ submitMyInvoice(); return; }
     var m = e.target && e.target.closest && e.target.closest('[data-mark-invoice-paid]');
     if(m){ markInvoicePaid(m.getAttribute('data-mark-invoice-paid')); return; }
+    // Realty Bills · mark a single AR bill paid. Optimistic local update, then re-render;
+    // reloads at_ar_bills in the background so any concurrent broker session sees fresh state.
+    var mb = e.target && e.target.closest && e.target.closest('[data-mark-ar-bill-paid]');
+    if(mb){ markArBillPaid(mb.getAttribute('data-mark-ar-bill-paid')); return; }
     // Details is a way of reading, not a thing you do. It survives the reload.
     var d = e.target && e.target.closest && e.target.closest('[data-invoice-details]');
     if(d){
