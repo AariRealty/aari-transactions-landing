@@ -19046,26 +19046,47 @@ Tell me your planned move-out date and I will set the inspection.`
   // Move anyway · the escape hatch on the hard gate. Advances the file even with
   // tasks still open (e.g. waiting on a slow lender) and logs an audit note so the
   // early move is on the record. Still respects the protective hardStageGate locks.
-  document.addEventListener('click', async function(e){
-    const mb = e.target && e.target.closest && e.target.closest('[data-move-anyway]');
-    if(!mb || !_currentFile) return;
+  // Marlenyi 2026-08-06 · Preview [stage] → replaces the old Move anyway one-click bypass.
+  // Read-only modal showing the stage's checklist + descriptions so the TC can see what's
+  // waiting after this stage. Zero writes to the file — no state change, no audit log,
+  // no accidental force-close. The actual advance happens via the primary "Move to X →"
+  // button when the real closing gate opens.
+  document.addEventListener('click', function(e){
+    const btn = e.target && e.target.closest && e.target.closest('[data-preview-stage]');
+    if(!btn || !_currentFile) return;
     const file = _currentFile;
-    const newStage = mb.getAttribute('data-move-anyway');
-    // override=true · bypass the PROTECTIVE gates (loan approval, appraisal, conditions, closing
-    // tasks) since that is what Move anyway is for. The ABSOLUTE locks (unsigned SA, unpaid) still
-    // block and still return a message here.
-    const _gateMsg = (typeof hardStageGate === 'function') ? hardStageGate(file, newStage, true) : '';
-    if(_gateMsg){ alert(_gateMsg); return; }
-    if(!(await appConfirm('Move to ' + (STAGE_LABELS[newStage] || newStage) + ' with tasks still open? A note is logged on the file.', { ok:'Move anyway' }))) return;
-    const _from = file.transaction_stage;
-    file.transaction_stage = newStage;
-    try { renderKanban(); } catch(_){}
+    const nextStage = btn.getAttribute('data-preview-stage');
+    const ft = file.file_type || 'sale';
+    const label = STAGE_LABELS[nextStage] || nextStage;
+    let taskListHtml = '';
     try {
-      const r = await _client.from('files').update({ transaction_stage: newStage }).eq('id', file.id);
-      if(r && r.error){ file.transaction_stage = _from; alert('Not saved — the database rejected the move (RLS).'); return; }
-    } catch(_){}
-    try { writeAuditLog('stage_moved_early', file.id, { from:_from, to:newStage }); } catch(_){}
-    try { renderPlaybook(file); } catch(_){}
+      const stageTasks = (STAGE_CHECKLISTS[ft] && STAGE_CHECKLISTS[ft][nextStage]) || [];
+      const visible = stageTasks.filter(function(t){ return !t.showIf || t.showIf(file); });
+      if(!visible.length){
+        taskListHtml = '<p style="font-size:12.5px;color:#7a756c;font-style:italic;margin:0">No tasks defined for this stage yet.</p>';
+      } else {
+        taskListHtml = visible.map(function(t){
+          const _sub = t.sub ? '<div style="font-size:11.5px;color:#7a756c;line-height:1.5;margin-top:3px">' + t.sub + '</div>' : '';
+          return '<div style="padding:12px 0;border-top:0.5px solid #f2eee2">' +
+            '<div style="font-size:13px;font-weight:600;color:#0f0f0f">' + esc(t.label || t.id) + '</div>' +
+            _sub +
+          '</div>';
+        }).join('');
+      }
+    } catch(_){ taskListHtml = '<p style="font-size:12.5px;color:#a3402f;margin:0">Unable to load preview.</p>'; }
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,0.45);display:flex;align-items:center;justify-content:center;z-index:99999;padding:20px';
+    ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;max-height:80vh;overflow-y:auto;padding:22px 24px;box-shadow:0 12px 40px rgba(0,0,0,0.25);font-family:inherit">' +
+      '<div style="font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#7a756c;margin-bottom:6px">Preview &middot; nothing is being changed</div>' +
+      '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;letter-spacing:-0.3px;color:#0f0f0f;margin-bottom:14px">' + esc(label) + '</div>' +
+      '<div>' + taskListHtml + '</div>' +
+      '<div style="margin-top:18px;padding-top:14px;border-top:0.5px solid #eee7d5;display:flex;justify-content:flex-end">' +
+        '<button type="button" data-preview-close style="font-size:12.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:8px;padding:9px 18px;cursor:pointer;font-family:inherit">Close preview</button>' +
+      '</div></div>';
+    document.body.appendChild(ov);
+    const close = function(){ try { ov.remove(); } catch(_){} };
+    ov.querySelector('[data-preview-close]').addEventListener('click', close);
+    ov.addEventListener('click', function(ev){ if(ev.target === ov) close(); });
   });
 
   // ============== PLAYBOOK ==============
@@ -24362,7 +24383,12 @@ Tell me your planned move-out date and I will set the inspection.`
         _quiet.push('<button type="button" class="adhd-quiet-link" data-wt-toggle="done">' + _doneN + ' done</button>');
       }
       if(_showMove){
-        _quiet.push('<button type="button" class="adhd-quiet-link" data-move-anyway="' + esc(_nextStage) + '">Move anyway</button>');
+        // Marlenyi 2026-08-06 · replaced "Move anyway" (one-click bypass, easy to hit
+        // by accident) with a read-only preview of what the next stage looks like.
+        // Nothing writes to the file — the TC gets to see the checklist ahead of time
+        // and closes the preview when done. Actual stage move still happens via the
+        // primary "Move to X →" button once the real closing tasks tick off.
+        _quiet.push('<button type="button" class="adhd-quiet-link" data-preview-stage="' + esc(_nextStage) + '">Preview ' + esc(STAGE_LABELS[_nextStage] || _nextStage) + ' &rarr;</button>');
       }
       if(_quiet.length){
         html += '<div class="adhd-quiet">' + _quiet.join('<span class="adhd-quiet-sep">&middot;</span>') + '</div>';
