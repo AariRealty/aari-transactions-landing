@@ -19118,80 +19118,10 @@ Tell me your planned move-out date and I will set the inspection.`
     try { renderPlaybook(file); } catch(_){}
   });
 
-  // Move anyway · the escape hatch on the hard gate. Advances the file even with
-  // tasks still open (e.g. waiting on a slow lender) and logs an audit note so the
-  // early move is on the record. Still respects the protective hardStageGate locks.
-  // Marlenyi 2026-08-06 · Preview [stage] → replaces the old Move anyway one-click bypass.
-  // Read-only modal showing the stage's checklist + descriptions so the TC can see what's
-  // waiting after this stage. Zero writes to the file — no state change, no audit log,
-  // no accidental force-close. The actual advance happens via the primary "Move to X →"
-  // button when the real closing gate opens.
-  document.addEventListener('click', function(e){
-    const btn = e.target && e.target.closest && e.target.closest('[data-preview-stage]');
-    if(!btn || !_currentFile) return;
-    const file = _currentFile;
-    const nextStage = btn.getAttribute('data-preview-stage');
-    const ft = file.file_type || 'sale';
-    const label = STAGE_LABELS[nextStage] || nextStage;
-    let taskListHtml = '';
-    try {
-      const stageTasks = (STAGE_CHECKLISTS[ft] && STAGE_CHECKLISTS[ft][nextStage]) || [];
-      const visible = stageTasks.filter(function(t){ return !t.showIf || t.showIf(file); });
-      // Marlenyi 2026-08-06 · lift email pills out of the live drawer into the preview
-      // so the TC can see "which emails will I need to send at this stage" ahead of
-      // time. Read-only — same pill style as the real Send button, but not clickable.
-      const stageEmails = ((EMAIL_PLAYBOOK[ft] || {})[nextStage] || []).filter(function(e){
-        return typeof e.showIf === 'function' ? e.showIf(file) : true;
-      });
-      const emailsByTask = {};
-      stageEmails.forEach(function(e){
-        const keys = (Array.isArray(e.tasks) && e.tasks.length) ? e.tasks : [e.task || e.id];
-        keys.forEach(function(k){ (emailsByTask[k] = emailsByTask[k] || []).push(e); });
-      });
-      // Marlenyi 2026-08-06 · trim pill text to just the recipient. Playbook labels
-      // conventionally end with "· <recipient>" (e.g. "Closing confirmation · title"),
-      // so the last segment is what matters at a glance. Falls through to the whole
-      // label when there is no separator.
-      const shortPill = function(lbl){
-        const s = String(lbl || '').trim();
-        const i = s.lastIndexOf('·');
-        const tail = i >= 0 ? s.slice(i + 1).trim() : s;
-        return tail.charAt(0).toUpperCase() + tail.slice(1);
-      };
-      if(!visible.length){
-        taskListHtml = '<p style="font-size:12.5px;color:#7a756c;font-style:italic;margin:0">No tasks defined for this stage yet.</p>';
-      } else {
-        taskListHtml = visible.map(function(t){
-          const _sub = t.sub ? '<div style="font-size:11.5px;color:#7a756c;line-height:1.5;margin-top:3px">' + t.sub + '</div>' : '';
-          const _ems = emailsByTask[t.id] || [];
-          // Slim pills laid out horizontally in a single row. When the row overflows
-          // the modal width it scrolls sideways instead of wrapping — one row per task,
-          // always, so a task with 4 recipients doesn't visually inflate its row height.
-          const _pills = _ems.map(function(e){
-            return '<span style="flex:none;display:inline-flex;align-items:center;gap:4px;background:#faf7ef;border:0.5px solid #e6dfcd;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:600;color:#5f5647;white-space:nowrap"><span style="font-size:10px;opacity:.7">&#9993;</span>' + esc(shortPill(e.label || e.id)) + '</span>';
-          }).join('');
-          return '<div style="padding:10px 0;border-top:0.5px solid #f2eee2">' +
-            '<div style="font-size:13px;font-weight:600;color:#0f0f0f">' + esc(t.label || t.id) + '</div>' +
-            _sub +
-            (_pills ? '<div style="display:flex;flex-wrap:nowrap;gap:5px;margin-top:6px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch">' + _pills + '</div>' : '') +
-          '</div>';
-        }).join('');
-      }
-    } catch(_){ taskListHtml = '<p style="font-size:12.5px;color:#a3402f;margin:0">Unable to load preview.</p>'; }
-    const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,0.45);display:flex;align-items:center;justify-content:center;z-index:99999;padding:20px';
-    ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:480px;width:100%;max-height:80vh;overflow-y:auto;padding:22px 24px;box-shadow:0 12px 40px rgba(0,0,0,0.25);font-family:inherit">' +
-      '<div style="font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#7a756c;margin-bottom:6px">Preview &middot; nothing is being changed</div>' +
-      '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;letter-spacing:-0.3px;color:#0f0f0f;margin-bottom:14px">' + esc(label) + '</div>' +
-      '<div>' + taskListHtml + '</div>' +
-      '<div style="margin-top:18px;padding-top:14px;border-top:0.5px solid #eee7d5;display:flex;justify-content:flex-end">' +
-        '<button type="button" data-preview-close style="font-size:12.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:8px;padding:9px 18px;cursor:pointer;font-family:inherit">Close preview</button>' +
-      '</div></div>';
-    document.body.appendChild(ov);
-    const close = function(){ try { ov.remove(); } catch(_){} };
-    ov.querySelector('[data-preview-close]').addEventListener('click', close);
-    ov.addEventListener('click', function(ev){ if(ev.target === ov) close(); });
-  });
+  // Marlenyi 2026-08-06 · dropped the Preview modal entirely (was itself a replacement
+  // for the earlier one-click "Move anyway" bypass). The next stage's tasks land in
+  // the drawer when the file actually moves into that stage via the primary
+  // "Move to X →" button. No override, no forward-looking view.
 
   // ============== PLAYBOOK ==============
   // Inbound agent → TC requests (direction='to_tc') · banner at the top of the rail
@@ -24486,14 +24416,13 @@ Tell me your planned move-out date and I will set the inspection.`
       if(_doneN){
         _quiet.push('<button type="button" class="adhd-quiet-link" data-wt-toggle="done">' + _doneN + ' done</button>');
       }
-      if(_showMove){
-        // Marlenyi 2026-08-06 · replaced "Move anyway" (one-click bypass, easy to hit
-        // by accident) with a read-only preview of what the next stage looks like.
-        // Nothing writes to the file — the TC gets to see the checklist ahead of time
-        // and closes the preview when done. Actual stage move still happens via the
-        // primary "Move to X →" button once the real closing tasks tick off.
-        _quiet.push('<button type="button" class="adhd-quiet-link" data-preview-stage="' + esc(_nextStage) + '">Preview ' + esc(STAGE_LABELS[_nextStage] || _nextStage) + ' &rarr;</button>');
-      }
+      // Marlenyi 2026-08-06 · dropped Preview entirely. Move anyway was removed first
+      // (dangerous one-click bypass), then replaced with a Preview modal, but the
+      // popup felt like a different surface than the "N done" toggle nearby. Simplest
+      // thing that could work: no override, no preview. The next stage's tasks appear
+      // when the file actually moves into that stage via the primary "Move to X →"
+      // button (visible when the gate clears).
+      void _showMove;
       if(_quiet.length){
         html += '<div class="adhd-quiet">' + _quiet.join('<span class="adhd-quiet-sep">&middot;</span>') + '</div>';
       }
