@@ -14904,18 +14904,30 @@ Tell me your planned move-out date and I will set the inspection.`
     }
 
     // ---- Not yet sent · per-TC pending work (only if there ARE submitted) ----
+    // Credit-covered files hang below each TC row with their address so the reader can
+    // see WHICH file used a credit (matches the desktop kanban treatment).
     var notSent = '';
     if(submitted.length && pending.length){
       var nsRows = pending.map(function(g){
         var isMe = String(g.id) === String(mine);
         var nm = isMe ? 'You' : _tcDisplayName(g.id).split(' ')[0];
         var paidLines = g.billable.filter(function(f){ return !fileIsCovered(f); });
+        var covLines = g.billable.filter(function(f){ return fileIsCovered(f); });
         var t = paidLines.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
+        var covRows = covLines.map(function(f){
+          var addr = String(f.property_address || 'File').split(',')[0];
+          var svcLbl = (typeof _svcLabel === 'function') ? _svcLabel(f) : '';
+          return '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:6px 0 6px 12px;border-top:0.5px dashed #ece5d3;font-size:11px;color:#7a756c">' +
+            '<span style="min-width:0"><span style="color:#0f0f0f">' + esc(addr) + '</span>' +
+            (svcLbl ? '<span style="color:#a9a49a"> &middot; ' + esc(String(svcLbl)) + ' &middot; credit</span>' : '<span style="color:#a9a49a"> &middot; credit</span>') +
+            '</span><span style="color:#a9a49a">$0</span>' +
+          '</div>';
+        }).join('');
         return '<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-top:0.5px solid #f3ede0">' +
           '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
           '<div style="font-size:10.5px;color:#7a756c;margin-top:2px">' + g.billable.length + ' file' + (g.billable.length === 1 ? '' : 's') + ' &middot; waiting for ' + esc(isMe ? 'you to send' : nm + ' to send') + '</div></div>' +
           '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#7a756c;letter-spacing:-0.2px">' + _money(t) + '</span>' +
-        '</div>';
+        '</div>' + covRows;
       }).join('');
       notSent = '<div style="' + _cardBase + ';padding:14px 16px;margin-bottom:16px">' +
         '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:2px">' +
@@ -15111,8 +15123,18 @@ Tell me your planned move-out date and I will set the inspection.`
 
   // Realty Bills section · rendered inside the broker's Invoices view (both mobile + desktop).
   // Reads _atArBills (loaded from public.at_ar_bills). Broker-only content — non-brokers see
-  // nothing because the query returns [] under RLS. Layout mirrors the existing invoice cards:
-  // header row, small money strip, unpaid list with "Mark paid" per row, collapsed paid history.
+  // nothing because the query returns [] under RLS.
+  //
+  // Layout (approved 2026-08-06 mock):
+  //   - Header + 3-KPI money strip
+  //   - Outstanding section · one row per unpaid bill with "Mark paid" button
+  //   - Paid section · GROUPED BY PROPERTY so lifecycle duplicates (4917 2nd St's
+  //     canceled/canceled/closed sequence, 425 Fawnwood's TC#1/TC#2/closed, 1219 Hibiscus's
+  //     canceled precursor) surface as one collapsible summary row with a "Check" flag and a
+  //     per-property total. Single-event properties render as plain rows.
+  //     Alphabetical sort within each section means potential duplicates always cluster
+  //     next to their twins; nothing can hide.
+  //   - Legend at the bottom explains the Check flag and the "real" tag on the surviving event.
   function realtyBillsSectionHtml(){
     var bills = _atArBills || [];
     if(!bills.length) return '';
@@ -15133,36 +15155,114 @@ Tell me your planned move-out date and I will set the inspection.`
         kpi('Bills on file', String(bills.length), false) +
       '</div>';
 
-    var addr = function(b){ return String(b.file_property || '').split(',')[0]; };
+    var addrOf = function(b){ return String(b.file_property || '').split(',')[0].trim(); };
+    // Normalized key for grouping · lowercased, punctuation collapsed, "st"/"street" etc.
+    // treated the same so "4917 2nd Street" and "4917 2nd St W" cluster together.
+    var addrKey = function(b){
+      return addrOf(b).toLowerCase()
+        .replace(/\bst\b|\bstreet\b/g, 'st')
+        .replace(/\bave\b|\bavenue\b/g, 'ave')
+        .replace(/\bblvd\b|\bboulevard\b/g, 'blvd')
+        .replace(/\brd\b|\broad\b/g, 'rd')
+        .replace(/\bln\b|\blane\b/g, 'ln')
+        .replace(/\bdr\b|\bdrive\b/g, 'dr')
+        .replace(/\bpl\b|\bplace\b/g, 'pl')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    };
+    // A bill is "real" if it isn't a canceled precursor or a duplicate TC-# marker. The one that
+    // was actually paid for the transaction; the rest are lifecycle noise.
+    var isRealBill = function(b){
+      var life = String(b.lifecycle_note || '').toLowerCase();
+      if(!life) return true;
+      if(/closed/.test(life)) return true;
+      return false; // canceled #1, canceled #2, canceled, TC #1, TC #2 → not the real one
+    };
+    var svcLabel = function(b){ return String(b.service_type || '').replace(/_/g, ' '); };
+    var whenLabel = function(b){ try { return new Date(b.bill_date + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return b.bill_date || ''; } };
+
+    // Plain single-event row · used for both Outstanding rows and single-event Paid rows.
     var billRow = function(b, showPay){
-      var when = new Date(b.bill_date + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' });
-      var life = b.lifecycle_note ? ' <span style="color:#a99a78;font-weight:400;font-size:10.5px">(' + esc(b.lifecycle_note) + ')</span>' : '';
-      var svc  = String(b.service_type || '').replace(/_/g, ' ');
-      var actor = esc(b.tc_name || '');
-      return '<div style="display:flex;align-items:center;gap:10px;padding:10px 4px;border-top:0.5px solid #f0ebe0">' +
-        '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500;color:#0f0f0f">' + esc(addr(b)) + life + '</div>' +
-        '<div style="font-size:11px;color:#8a857c;margin-top:2px">' + esc(when) + ' &middot; ' + actor + ' &middot; ' + esc(svc) + '</div></div>' +
+      return '<div style="display:flex;align-items:center;gap:10px;padding:11px 4px;border-top:0.5px solid #f0ebe0">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:13.5px;font-weight:500;color:#0f0f0f;line-height:1.25">' + esc(addrOf(b)) + '</div>' +
+          '<div style="font-size:11px;color:#8a857c;margin-top:2px">' + esc(whenLabel(b)) + ' &middot; ' + esc(b.tc_name || '') + ' &middot; ' + esc(svcLabel(b)) + (b.lifecycle_note ? ' &middot; ' + esc(b.lifecycle_note) : '') + '</div>' +
+        '</div>' +
         '<span style="font-size:13.5px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums">' + _money(Math.round((parseFloat(b.amount) || 0) * 100)) + '</span>' +
-        (showPay ? '<button type="button" data-mark-ar-bill-paid="' + esc(b.id) + '" style="font-size:11.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:7px;padding:7px 12px;cursor:pointer;font-family:inherit;white-space:nowrap">Mark paid</button>' : '') +
+        (showPay ? '<button type="button" data-mark-ar-bill-paid="' + esc(b.id) + '" style="font-size:11.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:7px;padding:7px 12px;cursor:pointer;font-family:inherit;white-space:nowrap;margin-left:4px">Mark paid</button>' : '') +
         '</div>';
     };
 
+    // Multi-event group · collapsible <details> with warn flag and a per-property total.
+    var groupRow = function(group){
+      var groupTotal = group.bills.reduce(function(s, b){ return s + Math.round((parseFloat(b.amount) || 0) * 100); }, 0);
+      var actors = group.bills.map(function(b){ return b.tc_name || ''; }).filter(function(v,i,a){ return v && a.indexOf(v) === i; }).join(', ');
+      var subRows = group.bills.map(function(b){
+        var real = isRealBill(b);
+        var lifeText = b.lifecycle_note ? esc(b.lifecycle_note) : (real ? 'no lifecycle marker' : '');
+        var realTag = real ? '<span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;color:#2f6b4f;margin-left:8px">real</span>' : '';
+        return '<div style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;padding:7px 4px 7px 22px;font-size:12.5px;' +
+          (real ? 'color:#0f0f0f;background:#f6f3ea;margin:0 -4px;padding-left:26px;padding-right:8px;border-top:0.5px dashed #d9cfae' : 'color:#6f6656;border-top:0.5px dashed #eee6d1') + '">' +
+          '<span>' + esc(whenLabel(b)) + ' &middot; ' + esc(svcLabel(b)) + (lifeText ? ' &middot; ' + lifeText : '') + realTag + '</span>' +
+          '<span style="font-variant-numeric:tabular-nums">' + _money(Math.round((parseFloat(b.amount) || 0) * 100)) + '</span>' +
+        '</div>';
+      }).join('');
+      return '<details style="border-top:0.5px solid #f0ebe0">' +
+        '<summary style="display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px;padding:11px 4px;cursor:pointer;list-style:none">' +
+          '<div style="min-width:0">' +
+            '<div style="font-size:13.5px;font-weight:500;color:#0f0f0f;line-height:1.25">' + esc(group.addr) + '</div>' +
+            '<div style="font-size:11px;color:#8a857c;margin-top:3px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+              '<span>' + group.bills.length + ' events &middot; ' + esc(actors) + '</span>' +
+              '<span style="display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:20px;background:#fbf3f1;border:0.5px solid #ecd6d0;color:#a3402f;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.3px">Check</span>' +
+            '</div>' +
+          '</div>' +
+          '<span style="font-size:13.5px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums">' + _money(groupTotal) + '</span>' +
+        '</summary>' +
+        subRows +
+        '</details>';
+    };
+
+    // Outstanding · sorted alphabetically by address so any accidental duplicate always
+    // sits right next to its twin.
+    var unpaidSorted = unpaid.slice().sort(function(a, b){ return addrOf(a).localeCompare(addrOf(b)); });
     var unpaidBlock = unpaid.length
-      ? '<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#a3402f;font-weight:700;margin:16px 0 2px">Outstanding &middot; ' + unpaid.length + '</div>' +
-        unpaid.map(function(b){ return billRow(b, true); }).join('')
+      ? '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:22px 4px 8px">' +
+          '<span style="font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#a3402f;font-weight:700">Outstanding &middot; ' + unpaid.length + '</span>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-variant-numeric:tabular-nums">' + _money(outstanding) + '</span></div>' +
+        unpaidSorted.map(function(b){ return billRow(b, true); }).join('')
       : '<div style="font-size:12.5px;color:#6f6656;padding:14px 4px 4px;text-align:center">All bills paid. Clean slate.</div>';
 
+    // Paid · group by normalized address key, sort groups alphabetically. A group with 2+ bills
+    // renders as one collapsible <details> with the "Check" flag; single-bill groups render as
+    // a plain row.
+    var paidGroupsMap = {};
+    paid.forEach(function(b){
+      var k = addrKey(b);
+      if(!paidGroupsMap[k]) paidGroupsMap[k] = { key:k, addr: addrOf(b), bills: [] };
+      paidGroupsMap[k].bills.push(b);
+    });
+    var paidGroups = Object.keys(paidGroupsMap).map(function(k){ return paidGroupsMap[k]; }).sort(function(a, b){ return a.addr.localeCompare(b.addr); });
+
     var paidBlock = paid.length
-      ? '<details style="margin-top:16px"><summary style="cursor:pointer;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8a857c;font-weight:700;padding:6px 0;list-style:none">Paid history &middot; ' + paid.length + ' &middot; ' + _money(paidTotal) + ' &middot; click to expand</summary>' +
-        paid.map(function(b){ return billRow(b, false); }).join('') +
-        '</details>'
+      ? '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:22px 4px 8px">' +
+          '<span style="font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#2f6b4f;font-weight:700">Paid &middot; grouped by property &middot; ' + paidGroups.length + '</span>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-variant-numeric:tabular-nums">' + _money(paidTotal) + '</span></div>' +
+        paidGroups.map(function(g){ return g.bills.length > 1 ? groupRow(g) : billRow(g.bills[0], false); }).join('')
+      : '';
+
+    // Legend · explains the two visual signals (Check flag + real tag). Cheap peace of mind.
+    var legend = paidGroups.some(function(g){ return g.bills.length > 1; })
+      ? '<div style="font-size:11px;color:#9a8c6d;margin-top:18px;padding-top:14px;border-top:0.5px solid #f0ebe0;line-height:1.55">' +
+          '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:10px;height:10px;border-radius:50%;background:#a3402f;display:inline-block"></span>Check</span> &mdash; a property with multiple lifecycle events. Expand it, confirm the total, and decide whether the extras are duplicates or real re-openings.<br>' +
+          '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px"><span style="width:10px;height:10px;border-radius:50%;background:#2f6b4f;display:inline-block"></span>real</span> &mdash; the surviving event (usually the <em>closed</em> one). The others are usually canceled precursors that were still billed.' +
+        '</div>'
       : '';
 
     return '<div style="margin-top:18px;background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:16px 18px">' +
       '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:12px">' +
         '<span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Realty Bills &middot; AT &rarr; AR</span>' +
         '<span style="font-size:11.5px;color:#a39e93">Bills AT sends to Aari Realty for TC work</span></div>' +
-      strip + unpaidBlock + paidBlock +
+      strip + unpaidBlock + paidBlock + legend +
       '</div>';
   }
 
@@ -15193,23 +15293,28 @@ Tell me your planned move-out date and I will set the inspection.`
 
       // Details · one row per file. The rate is shown ONLY where a rate produced the figure: file
       // org pays a flat $80 and no percentage is involved, so printing a percent there is a lie the
-      // reader cannot reconcile. Credit lines are dimmed: counted, not paid.
+      // reader cannot reconcile. Credit lines always render (property address answers "which
+      // credit?" without needing the Details toggle) — non-credit rows still live behind it.
       var det = '';
+      var paidRowsHtml = '';
       if(_invDetails){
-        var rowsHtml = paid.map(function(f){
+        paidRowsHtml = paid.map(function(f){
           var flat = false, foSvc = false; try { flat = !isSplitFile(f); foSvc = isFileOrgFile(f); } catch(_){}
           var basis = foSvc ? '50%' : (flat ? 'flat fee' : (tcPctFor(f) + '%'));
           return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:6px 0;border-top:0.5px solid #f0ebe0">' +
             '<span style="font-size:11px;line-height:1.35;min-width:0">' + esc((f.property_address || 'File').split(',')[0]) +
             '<br><span style="color:#a39e93;font-size:10px">' + esc(_svcLabel(f)) + ' &middot; ' + esc(basis) + '</span></span>' +
             '<span style="font-size:11px;white-space:nowrap">' + _money(fileTcPayCents(f)) + '</span></div>';
-        }).join('') + cov.map(function(f){
-          return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:6px 0;border-top:0.5px solid #f0ebe0;opacity:.5">' +
-            '<span style="font-size:11px;line-height:1.35;min-width:0">' + esc((f.property_address || 'File').split(',')[0]) +
-            '<br><span style="font-size:10px">' + esc(_svcLabel(f)) + ' &middot; credit</span></span>' +
-            '<span style="font-size:11px;white-space:nowrap">$0.00</span></div>';
         }).join('');
-        det = '<div style="margin-top:10px;padding-top:4px;border-top:0.5px solid #f0ebe0">' + rowsHtml + '</div>';
+      }
+      var covRowsHtml = cov.map(function(f){
+        return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:6px 0;border-top:0.5px solid #f0ebe0;opacity:.65">' +
+          '<span style="font-size:11px;line-height:1.35;min-width:0">' + esc((f.property_address || 'File').split(',')[0]) +
+          '<br><span style="font-size:10px;color:#a39e93">' + esc(_svcLabel(f)) + ' &middot; credit</span></span>' +
+          '<span style="font-size:11px;white-space:nowrap;color:#a39e93">$0.00</span></div>';
+      }).join('');
+      if(paidRowsHtml || covRowsHtml){
+        det = '<div style="margin-top:10px;padding-top:4px;border-top:0.5px solid #f0ebe0">' + paidRowsHtml + covRowsHtml + '</div>';
       }
 
       // Send only on her own card, and only with a rate set · an invoice must not record a percent
@@ -15249,12 +15354,18 @@ Tell me your planned move-out date and I will set the inspection.`
         '<span style="font-size:12.5px;font-weight:500">' + esc(_tcDisplayName(i.tc_id).split(' ')[0]) + '</span>' +
         '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:17px;font-variant-numeric:tabular-nums">' + _money(i.total_cents || 0) + '</span></div>' +
         '<div style="font-size:10.5px;color:#8a857c;margin-top:4px">' + esc(i.invoice_number || '') + ' &middot; ' + ((i.line_items || []).length) + ' file' + (((i.line_items || []).length) === 1 ? '' : 's') + '</div>' +
-        (_invDetails ? '<div style="margin-top:10px;padding-top:4px;border-top:0.5px solid #f0ebe0">' + (i.line_items || []).map(function(it){
-          return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:6px 0;border-top:0.5px solid #f0ebe0' + (it.covered ? ';opacity:.5' : '') + '">' +
-            '<span style="font-size:11px;line-height:1.35;min-width:0">' + esc(String(it.address || 'File').split(',')[0]) +
-            '<br><span style="color:#a39e93;font-size:10px">' + esc(it.service || '') + (it.covered ? ' &middot; credit' : '') + '</span></span>' +
-            '<span style="font-size:11px;white-space:nowrap">' + _money(it.amount_cents || 0) + '</span></div>';
-        }).join('') + '</div>' : '') +
+        (function(){
+          // Non-credit rows hide behind the Details toggle; credit rows always render so the
+          // address answers "which credit?" on sight.
+          var _its = i.line_items || [];
+          var _rows = _its.filter(function(it){ return _invDetails || it.covered; }).map(function(it){
+            return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:6px 0;border-top:0.5px solid #f0ebe0' + (it.covered ? ';opacity:.65' : '') + '">' +
+              '<span style="font-size:11px;line-height:1.35;min-width:0">' + esc(String(it.address || 'File').split(',')[0]) +
+              '<br><span style="color:#a39e93;font-size:10px">' + esc(it.service || '') + (it.covered ? ' &middot; credit' : '') + '</span></span>' +
+              '<span style="font-size:11px;white-space:nowrap' + (it.covered ? ';color:#a39e93' : '') + '">' + _money(it.amount_cents || 0) + '</span></div>';
+          }).join('');
+          return _rows ? '<div style="margin-top:10px;padding-top:4px;border-top:0.5px solid #f0ebe0">' + _rows + '</div>' : '';
+        })() +
         (payable
           ? '<button type="button" data-mark-invoice-paid="' + esc(i.id) + '" style="width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:6px;padding:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:9px">Mark paid</button>'
           : '<div style="font-size:10.5px;color:#a39e93;margin-top:8px;padding-top:8px;border-top:0.5px solid #f0ebe0">Paid' + (i.paid_at ? ' ' + esc(new Date(i.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : '') + '</div>') +
