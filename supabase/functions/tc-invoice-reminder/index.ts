@@ -1,4 +1,4 @@
-// Aari Transactions · tc-invoice-reminder (v7 · weekly STATUS email)
+// Aari Transactions · tc-invoice-reminder (v8 · weekly STATUS email)
 // ============================================================================
 // Marlenyi (Jul 30): stop blasting every coordinator a "submit your invoice"
 // nudge. A TC who just uploaded a file and has nothing checked has nothing to
@@ -65,7 +65,8 @@ function trackFor(f:any){
   if(svc==="file_organization") return { stages:["Received","Uploading","Complete"], idx:(({"Received":0,"Uploading":1,"Complete":2}) as Record<string,number>)[f.service_stage] ?? (f.status==="closed"?2:0) };
   if(svc==="offer_prep_basic")  return { stages:["Received","Drafting","Delivered"], idx:(({"Received":0,"Drafting":1,"Delivered":2}) as Record<string,number>)[f.service_stage] ?? 0 };
   if(svc==="offer_prep_complete")return{ stages:["Received","Drafting","Counter","Executed"], idx:(({"Received":0,"Drafting":1,"Counter":2,"Executed":3}) as Record<string,number>)[f.service_stage] ?? 0 };
-  if(svc==="listing_coordinator")return{ stages:["Intake","Docs","MLS Live","Under contract","Closed"], idx: (({new:1,under_contract:3,ctc:3,closed:4}) as Record<string,number>)[f.transaction_stage] ?? 0 };
+  // Marlenyi 2026-08-06: LC shares the 3-stage listing flow with MLS Setup and bills at Live.
+  if(svc==="listing_coordinator")return{ stages:["Received","MLS input","Live"], idx:(({"Received":0,"MLS input":1,"Live":2}) as Record<string,number>)[f.service_stage] ?? 0 };
   return { stages:["New","In progress","Done"], idx:(({new:0,under_contract:1,closed:2}) as Record<string,number>)[f.transaction_stage] ?? 0 };
 }
 // deno-lint-ignore no-explicit-any
