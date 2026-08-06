@@ -24047,7 +24047,11 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     if(doneTasks && doneTasks.length){
       items.push('<button type="button" class="wt-link" data-wt-toggle="done">' + doneTasks.length + ' done &rsaquo;</button>');
-      lists += '<div data-wt-list="done" hidden style="margin-top:4px">' + doneTasks.map(function(t){ return ckRow(file, t, dls, done, tagFn ? tagFn(t.id) : ''); }).join('') + '</div>';
+      // Marlenyi 2026-08-06: expanded done list needs its own header + top rule so it
+      // visually detaches from Due-today above, matching the buyer track path.
+      lists += '<div data-wt-list="done" hidden style="margin-top:14px;padding-top:10px;border-top:0.5px solid #e6e2d8">' +
+        '<div style="font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#7a756c;padding:0 0 8px">Previously done &middot; ' + doneTasks.length + '</div>' +
+        doneTasks.map(function(t){ return ckRow(file, t, dls, done, tagFn ? tagFn(t.id) : ''); }).join('') + '</div>';
     }
     var n = 0; Object.keys(done).forEach(function(k){ if(done[k]) n++; });
     if(((file.file_type || 'sale') === 'sale' || (file.file_type || '') === 'rental') && n){
@@ -24256,12 +24260,15 @@ Tell me your planned move-out date and I will set the inspection.`
       _dlAll.push({ key:d.key, name:d.name || 'Deadline', date:d.date, done:!!(_r && _r.completed_at) });
     }); } catch(_){}
     var _dlDays = function(dt){ return _bizDaysTo(dt); };
-    // Done deadlines sink to the bottom of their section; a done item whose date is beyond 3 days
-    // (would normally be the hidden "later" bucket) is shown struck under Today so it never vanishes.
-    var _dlSort = function(a, b){ return (a.done ? 1 : 0) - (b.done ? 1 : 0) || (a.date - b.date); };
-    var _dlToday = _dlAll.filter(function(x){ var n = _dlDays(x.date); return (n <= 0) || (x.done && n > 3); }).sort(_dlSort);
-    var _dlSoon = _dlAll.filter(function(x){ var n = _dlDays(x.date); return n > 0 && n <= 3; }).sort(_dlSort);
-    var _dlLater = _dlAll.filter(function(x){ var n = _dlDays(x.date); return n > 3 && !x.done; }).sort(_dlSort);
+    // Marlenyi 2026-08-06 · done deadlines no longer render inline in Due-today (they were
+    // making the section look like everything had been checked off today). They now roll into
+    // the collapsed "N done" toggle at the bottom next to done tasks, so they stay findable
+    // for audit without cluttering the top. Sort keeps them chronological.
+    var _dlSort = function(a, b){ return a.date - b.date; };
+    var _dlToday = _dlAll.filter(function(x){ var n = _dlDays(x.date); return !x.done && n <= 0; }).sort(_dlSort);
+    var _dlSoon = _dlAll.filter(function(x){ var n = _dlDays(x.date); return !x.done && n > 0 && n <= 3; }).sort(_dlSort);
+    var _dlLater = _dlAll.filter(function(x){ var n = _dlDays(x.date); return !x.done && n > 3; }).sort(_dlSort);
+    var _dlDone  = _dlAll.filter(function(x){ return x.done; }).sort(function(a, b){ return b.date - a.date; });
     var _dlTagFor = function(k){ k = String(k || ''); if(/loan/.test(k)) return 'Loan'; if(/title/.test(k)) return 'Title'; if(/survey/.test(k)) return 'Survey'; if(/insp|feasib|due_dilig/.test(k)) return 'Insp'; if(/apprais/.test(k)) return 'Appr'; if(/estoppel/.test(k)) return 'Estoppel'; if(/hoa/.test(k)) return 'HOA'; if(/emd|deposit/.test(k)) return 'EMD'; if(/compensation|comp/.test(k)) return 'Comp'; if(/clos/.test(k)) return 'Closing'; if(/lease|tenant/.test(k)) return 'Lease'; return 'Date'; };
     var _dlRowH = function(p){
       var _tg = _dlTagFor(p.key);
@@ -24327,10 +24334,10 @@ Tell me your planned move-out date and I will set the inspection.`
     // so Eileen don't send 2 times." Weekly update now goes out ONLY via
     // the Friday nudge at the top of the drawer, so there is one and only
     // one place to send it, no double-send risk.
-    // Done tasks (including today's just-checked) all live in the "N done"
-    // collapsed footer · Marlenyi Jul 28 preference · they're not inline
-    // in Today/This week anymore.
-    const _doneN = doneTasks.length;
+    // Done tasks + done deadlines both live in the "N done" collapsed footer ·
+    // Marlenyi Jul 28 (tasks) + Aug 6 (deadlines) preference · nothing done shows
+    // inline in Due-today / Next-3-days anymore.
+    const _doneN = doneTasks.length + _dlDone.length;
     let _nextStage = '';
     try {
       const _st = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || '');
@@ -24363,6 +24370,7 @@ Tell me your planned move-out date and I will set the inspection.`
         html += '<div data-wt-list="done" hidden style="margin-top:14px;padding-top:10px;border-top:0.5px solid #e6e2d8">' +
           '<div style="font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#7a756c;padding:0 0 8px">Previously done &middot; ' + _doneN + '</div>' +
           doneTasks.map(function(t){ return ckRow(file, t, dls, done, ucTagHtml(t.id)); }).join('') +
+          _dlDone.map(_dlRowH).join('') +
           '</div>';
       }
     }
