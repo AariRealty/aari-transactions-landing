@@ -15404,6 +15404,12 @@ Tell me your planned move-out date and I will set the inspection.`
   // "sent" because the only person on this 3-state board is the broker, whose job is to pay.
   var _invMobTab = 'sent';
   try { _invMobTab = localStorage.getItem('aari_invoice_tab') || 'sent'; } catch(_){}
+  // Paid is no longer a board column — it's a collapsible history strip below the board (Marlenyi
+  // Aug 7). The board holds only money that needs a decision. So a stale "paid" tab must not survive
+  // and hide both live columns.
+  if(_invMobTab === 'paid') _invMobTab = 'sent';
+  var _paidHistOpen = false;
+  try { _paidHistOpen = localStorage.getItem('aari_paid_open') === '1'; } catch(_){}
   function _tcDisplayName(id){
     var t = (typeof _tcsById === 'object' && _tcsById) ? _tcsById[id] : null;
     var n = t ? ((t.first_name || '') + ' ' + (t.last_name || '')).trim() : '';
@@ -16119,7 +16125,6 @@ Tell me your planned move-out date and I will set the inspection.`
     var _seg = '<div class="inv-seg" data-inv-seg="1">' +
         '<button type="button" class="inv-seg-btn' + (_invMobTab === 'notsent' ? ' on' : '') + '" data-inv-tab="notsent">Not sent</button>' +
         '<button type="button" class="inv-seg-btn' + (_invMobTab === 'sent' ? ' on' : '') + '" data-inv-tab="sent">Sent</button>' +
-        '<button type="button" class="inv-seg-btn' + (_invMobTab === 'paid' ? ' on' : '') + '" data-inv-tab="paid">Paid</button>' +
       '</div>';
 
     // Money strip · the three totals move UP out of the column headers so the first
@@ -16217,21 +16222,39 @@ Tell me your planned move-out date and I will set the inspection.`
     }).join('');
     var _pdAR = _arP.map(function(b){ return _paidRow(esc(_addrOf(b.file_property)), '<span style="color:#8a6d1b;font-weight:600">Realty owes AT</span> &middot; ' + esc(b.tc_name || '') + (b.paid_at ? ' &middot; Paid ' + esc(new Date(b.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : ''), Math.round((parseFloat(b.amount) || 0) * 100)); }).join('');
     var _paidCount = paidInv.reduce(function(s, i){ return s + Math.max(1, (i.line_items || []).length); }, 0) + _arP.length;
-    // Paid lives in the third column (next to Sent · unpaid), not a bottom section (Marlenyi Aug 7).
-    // Compact rows + a search box up top so it never sprawls.
-    var _paidColInner = _paidCount
-      ? '<input type="text" data-paid-search placeholder="Search paid…" style="width:100%;box-sizing:border-box;font-family:inherit;font-size:11px;padding:7px 9px;border:0.5px solid #e6e1d6;border-radius:8px;background:#fff;color:#0f0f0f;margin-bottom:6px">' +
-        '<div data-paid-rows>' + _pdCoord + _pdAR + '</div>'
-      : _invEmptyColHtml('No invoice has ever<br>been submitted.');
+    var _paidTotal = paidInv.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0) +
+                     _arP.reduce(function(s, b){ return s + Math.round((parseFloat(b.amount) || 0) * 100); }, 0);
+
+    // Paid is NOT a board column (Marlenyi Aug 7) · the board holds only money that still needs a
+    // decision (Not sent, Sent/unpaid). Settled work collapses into ONE quiet strip below the board:
+    // "Paid this period · $X · N transactions", closed by default so it never competes for attention.
+    // Tapping it opens the full searchable history; the open/closed choice is remembered.
+    var _paidStrip = _paidCount
+      ? '<div style="margin-top:12px">' +
+          '<button type="button" data-paid-toggle="1" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:#fcfaf5;border:0.5px solid #ece7dc;border-radius:' + (_paidHistOpen ? '10px 10px 0 0' : '10px') + ';padding:12px 15px;cursor:pointer;font-family:inherit;text-align:left">' +
+            '<span style="font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:#a39e93;font-weight:700">Paid this period</span>' +
+            '<span style="display:flex;align-items:center;gap:12px">' +
+              '<span style="font-size:11px;color:#8a857c">' + _paidCount + ' transaction' + (_paidCount === 1 ? '' : 's') + '</span>' +
+              '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-variant-numeric:tabular-nums">' + _money(_paidTotal) + '</span>' +
+              '<span style="font-size:10px;color:#a39e93;display:inline-block;transform:rotate(' + (_paidHistOpen ? '90deg' : '0deg') + ');transition:transform .15s">&#9656;</span>' +
+            '</span>' +
+          '</button>' +
+          (_paidHistOpen
+            ? '<div style="background:#fff;border:0.5px solid #ece7dc;border-top:0;border-radius:0 0 10px 10px;padding:12px 15px 8px">' +
+                '<input type="text" data-paid-search placeholder="Search paid…" style="width:100%;box-sizing:border-box;font-family:inherit;font-size:11px;padding:7px 9px;border:0.5px solid #e6e1d6;border-radius:8px;background:#fff;color:#0f0f0f;margin-bottom:4px">' +
+                '<div data-paid-rows>' + _pdCoord + _pdAR + '</div>' +
+              '</div>'
+            : '') +
+        '</div>'
+      : '';
 
     return '<div style="display:flex;align-items:center;gap:10px;margin:0 0 12px;position:relative">' +
         '<span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Where each invoice stands</span>' +
         '<span style="font-size:11.5px;color:#a39e93">' + esc(_invoicePeriod()) + '</span>' + toggle + '</div>' + moneyStrip + _seg +
-      '<div style="background:#fcfaf5;border-radius:12px;padding:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:start" data-invoice-board="1" data-inv-active="' + _invMobTab + '">' +
+      '<div style="background:#fcfaf5;border-radius:12px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start" data-invoice-board="1" data-inv-active="' + _invMobTab + '">' +
         _invColHtml('Not sent', _cnt(working.length), cards || _invEmptyColHtml('Nothing billable this week<br>across any coordinator.')) +
         _invColHtml('Sent &middot; unpaid', _cnt(subs.length + _arU.length), _sentInner) +
-        _invColHtml('Paid', _cnt(_paidCount), _paidColInner) +
-      '</div>';
+      '</div>' + _paidStrip;
   }
   // ===== List view · Variant 2 · priority groups (Jul 30 2026, Marlenyi) =====
   // The scale view for 100+ files, where the board becomes an endless scroll. Every active file is
@@ -16739,6 +16762,14 @@ Tell me your planned move-out date and I will set the inspection.`
     if(d){
       _invDetails = !_invDetails;
       try { localStorage.setItem('aari_invoice_details', _invDetails ? '1' : '0'); } catch(_){}
+      try { renderInvoiceScreen(); } catch(_){}
+      return;
+    }
+    // Paid history strip · open/close the settled-work list below the board. Remembered.
+    var pt = e.target && e.target.closest && e.target.closest('[data-paid-toggle]');
+    if(pt){
+      _paidHistOpen = !_paidHistOpen;
+      try { localStorage.setItem('aari_paid_open', _paidHistOpen ? '1' : '0'); } catch(_){}
       try { renderInvoiceScreen(); } catch(_){}
       return;
     }
