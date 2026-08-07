@@ -58,10 +58,35 @@ const AT_TC_PCT: number = PAY.AT_TC_PCT;
 function row2(left: string, right: string, border: boolean){
   return `<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='${border?"border-top:0.5px solid #f0ebe0;":""}'><tr><td valign='top' style='padding:10px 0'>${left}</td><td valign='top' align='right' style='padding:10px 0;white-space:nowrap;font-size:12.5px;font-weight:600;color:#0f0f0f'>${right}</td></tr></table>`;
 }
+// Prior-unpaid banner · Marlenyi 2026-08-07 · Eileen sent a $400 invoice while
+// her earlier $100 invoice (A-1044, July 24-30) was still unpaid. The new email
+// gave no signal that a prior balance was pending, so Marlenyi paid the new one
+// blind and had to be told separately about the old one. Broker email now shows
+// a red block listing every outstanding invoice from THIS coordinator so the
+// pending balance is impossible to miss.
+function priorUnpaidBannerHtml(prior: any[]){
+  if (!prior || !prior.length) return "";
+  const rows = prior.map((p: any)=>{
+    const num = esc(p.invoice_number || "");
+    const period = p.period_start && p.period_end ? esc(p.period_start + " – " + p.period_end) : "";
+    const sub = period ? `<div style='font-size:11px;color:#a36b58;margin-top:2px'>${period}</div>` : "";
+    return `<table role='presentation' width='100%' cellpadding='0' cellspacing='0'><tr><td style='padding:8px 0;border-top:0.5px solid #f6e3dc'><div style='font-size:12.5px;color:#0f0f0f;font-weight:600'>Invoice ${num}</div>${sub}</td><td align='right' valign='top' style='padding:8px 0;border-top:0.5px solid #f6e3dc;font-size:12.5px;font-weight:600;color:#993c1d;white-space:nowrap'>${money(Number(p.total_cents)||0)}</td></tr></table>`;
+  }).join('');
+  const owedNow = prior.reduce((s: number, p: any)=>s + (Number(p.total_cents)||0), 0);
+  return `<div style='background:#fdf4f1;border:0.5px solid #f3d9d0;border-radius:11px;padding:14px 16px;margin-bottom:18px'>` +
+    `<div style='display:flex;align-items:baseline;justify-content:space-between'>` +
+      `<span style='font-family:Georgia,serif;font-size:14px;font-weight:600;color:#993c1d'>Still owed from prior invoices</span>` +
+      `<span style='font-size:12px;font-weight:700;color:#993c1d'>${money(owedNow)}</span>` +
+    `</div>` +
+    `<div style='font-size:11.5px;color:#a36b58;margin:3px 0 8px;line-height:1.5'>${prior.length} invoice${prior.length===1?'':'s'} from this coordinator ${prior.length===1?'is':'are'} still marked submitted and unpaid.</div>` +
+    rows +
+  `</div>`;
+}
 function invoiceEmailHtml(o: any){
   const paid = o.items.filter((it: any)=>!it.covered);
   const covered = o.items.filter((it: any)=>it.covered);
   const total = o.total_cents;
+  const priorBanner = (o.audience === 'broker') ? priorUnpaidBannerHtml(o.prior_unpaid || []) : "";
   const paidRows = paid.map((it: any)=>row2(`<div style='font-size:12.5px;font-weight:500;color:#0f0f0f'>${esc(it.address||'File')}${it.over?' &middot; over limit':''}</div><div style='font-size:11px;color:#8a857c'>${esc(it.service||'')}</div>`, money(Number(it.amount_cents)||0), true)).join('');
   let coveredHtml='';
   if(covered.length){
@@ -80,6 +105,7 @@ function invoiceEmailHtml(o: any){
     `<table role='presentation' width='440' cellpadding='0' cellspacing='0' style='max-width:440px;width:100%;background:#ffffff;border:0.5px solid #e8e6e0;border-radius:14px'><tr><td style='padding:30px 26px;font-family:Arial,Helvetica,sans-serif;color:#0f0f0f'>`+
     `<div style='text-align:center;padding-bottom:20px;border-bottom:0.5px solid #ece8e0;margin-bottom:20px'><div style='font-family:Georgia,serif;font-size:22px'>Aari Transactions</div><div style='font-size:9.5px;letter-spacing:2px;color:#8a857c;margin-top:7px'>COORDINATOR INVOICE &middot; ${esc(o.invoice_number||'')}</div><div style='font-size:11px;color:#a39e93;margin-top:4px'>${esc(o.period||'')}</div></div>`+
     fromTo+
+    priorBanner+
     `<div style='background:#0f0f0f;border-radius:11px;padding:18px;margin-bottom:20px;text-align:center'><div style='font-size:11px;color:#b8b8b8'>Due to you this week</div><div style='font-family:Georgia,serif;font-size:34px;color:#ffffff;line-height:1.1;margin-top:3px'>${money(total)}</div><div style='font-size:11.5px;color:#9a9a9a;margin-top:4px'>${paid.length} paid &middot; ${covered.length} covered by client credits</div></div>`+
     (paid.length?`<div style='font-size:10px;letter-spacing:1px;color:#3e7d57;margin-bottom:2px'>YOU&rsquo;RE OWED</div>${paidRows}`:'')+
     coveredHtml+
@@ -220,14 +246,38 @@ Deno.serve(async (req) => {
   const period = (body.period_start && body.period_end) ? (body.period_start + " – " + body.period_end) : "";
   const { data: broker } = await admin.from("agents").select("email").eq("role","broker").order("created_at",{ ascending:true }).limit(1).maybeSingle();
   const brokerEmail = (broker && broker.email) || "marlenyi@aaritransactions.com";
-  const html = invoiceEmailHtml({ invoice_number: inv.invoice_number, period, tc_name: tcLabel, items: safeItems, total_cents: total, audience: 'broker' });
+
+  // Prior-unpaid lookup · every previously-submitted invoice from THIS same
+  // coordinator that hasn't been marked paid yet (excludes the one we just
+  // inserted). If any exist, the broker email leads with a red "Still owed"
+  // banner listing them so the pending balance can't be missed. Best-effort
+  // — if the lookup fails we still send the invoice, just without the flag.
+  let priorUnpaid: any[] = [];
+  try {
+    const { data: outstanding } = await admin
+      .from("tc_invoices")
+      .select("invoice_number, period_start, period_end, total_cents, created_at")
+      .eq("tc_id", tcId)
+      .eq("status", "submitted")
+      .neq("id", inv.id)
+      .order("created_at", { ascending: true });
+    priorUnpaid = outstanding || [];
+  } catch (_) { priorUnpaid = []; }
+  const priorSum = priorUnpaid.reduce((s: number, p: any)=>s + (Number(p.total_cents)||0), 0);
+
+  const html = invoiceEmailHtml({ invoice_number: inv.invoice_number, period, tc_name: tcLabel, items: safeItems, total_cents: total, audience: 'broker', prior_unpaid: priorUnpaid });
   // The coordinator now gets the SAME invoice document the broker gets (audience:'tc' swaps only
   // the call to action). It used to be a two-line plain note, which gave her no record of what she
   // actually billed — she had to take the total on faith.
   const tcHtml = invoiceEmailHtml({ invoice_number: inv.invoice_number, period, tc_name: tcLabel, items: safeItems, total_cents: total, audience: 'tc' });
-  await sendEmail(brokerEmail, `New invoice from ${tcLabel} · ${money(total)}`, html);
+  // Subject line carries the running-balance flag too. A skimmed inbox now shows
+  // "New invoice from Eileen · $400 · $100 still unpaid" instead of just $400.
+  const brokerSubject = priorSum > 0
+    ? `New invoice from ${tcLabel} · ${money(total)} · ${money(priorSum)} still unpaid`
+    : `New invoice from ${tcLabel} · ${money(total)}`;
+  await sendEmail(brokerEmail, brokerSubject, html);
   if (tc.email) await sendEmail(tc.email, `Invoice ${inv.invoice_number} sent · ${money(total)}`, tcHtml);
-  return j(200,{ ok:true, invoice_id:inv.id, invoice_number:inv.invoice_number, total_cents:total });
+  return j(200,{ ok:true, invoice_id:inv.id, invoice_number:inv.invoice_number, total_cents:total, prior_unpaid_cents: priorSum });
 });
 async function sendEmail(to: string, subject: string, html: string){
   if (!RESEND) return;
