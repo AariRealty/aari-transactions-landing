@@ -11288,11 +11288,16 @@ Tell me your planned move-out date and I will set the inspection.`
     };
     // Same row shape as a task in Today: a checkbox, a category tag, the name, the days-left. Ticking
     // the box marks the deadline done (writes a real completion · crosses off the calendar + EOD).
+    // A CLOSING row that's past due also gets a "Confirm date →" button (opens the 3-option modal).
     var row = function(p){
+      var _confirm = '';
+      if(daysTo(p.date) < 0 && /clos/.test(String(p.key || ''))){
+        try { _confirm = confirmClosingDateLinkHtml(file); } catch(_){ _confirm = ''; }
+      }
       return '<div class="ck-task adhd-task" style="display:flex;align-items:center;gap:11px;padding:11px 0;border-top:0.5px solid #f2eee2">' +
         '<input type="checkbox" class="adhd-cb" data-sdl-check="' + esc(p.key) + '" style="width:18px;height:18px;accent-color:#0f0f0f;flex:none;cursor:pointer">' +
         '<span style="flex:none;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border-radius:4px;padding:2px 6px;color:#3d6b4d;background:#eef1ee">' + esc(_dlTag(p.key)) + '</span>' +
-        '<span style="flex:1;min-width:0;font-weight:600;color:#0a0a0a;font-size:13.5px">' + esc(p.name) + '</span>' + pill(p) + '</div>';
+        '<span style="flex:1;min-width:0;font-weight:600;color:#0a0a0a;font-size:13.5px">' + esc(p.name) + '</span>' + pill(p) + _confirm + '</div>';
     };
     // White cards + serif headings, the same look as the "Today" card above.
     var CARD = 'background:#fff;border:0.5px solid rgba(15,15,15,0.06);border-radius:14px;padding:12px 16px;margin:0 0 10px;box-shadow:0 2px 10px rgba(15,15,15,0.04)';
@@ -24277,84 +24282,117 @@ Tell me your planned move-out date and I will set the inspection.`
     try { await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); } catch(_){}
   });
 
-  // Marlenyi 2026-08-07 · past-closing prompt. When a file's closing_date is
-  // in the past and it's still active (UC / CTC), the drawer shows a persistent
-  // banner asking whether closing actually happened, was rescheduled, or is
-  // still in progress. Solves the "tasks stuck past-due with no way to fix it"
-  // problem. Dismiss-for-today is per-day so it re-surfaces daily until acted on.
-  function closingReschedulePromptHtml(file){
+  // Marlenyi 2026-08-07 · past-closing prompt. When a file's CLOSING deadline
+  // row is past due, the row shows a "Confirm date" link. Clicking it opens a
+  // modal chooser: Closed today / Rescheduled / Still working on it. Rewrote
+  // from the drawer banner form to a row-anchored trigger so the fix lives on
+  // the very row that's showing "1d late" — no separate call to action to
+  // scroll past. Dismiss-for-today is per-day (raw_form_data key) so the link
+  // hides for the rest of today and returns tomorrow if closing_date is still
+  // in the past.
+  function _todayIsoYmd(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+  function _shouldShowConfirmDateLink(file){
     try {
-      if(!file || !file.closing_date) return '';
-      if(file.status === 'archived' || String(file.transaction_stage || '') === 'closed' || file.status === 'closed') return '';
+      if(!file || !file.closing_date) return false;
+      if(file.status === 'archived' || String(file.transaction_stage || '') === 'closed' || file.status === 'closed') return false;
       var stage = String(file.transaction_stage || '').toLowerCase();
-      if(['under_contract','ctc','inspection','appraisal','remedy'].indexOf(stage) === -1) return '';
-      // Days-to-close: negative means closing was in the past.
+      if(['under_contract','ctc','inspection','appraisal','remedy'].indexOf(stage) === -1) return false;
       var dtc = (typeof daysToClose === 'function') ? daysToClose(file) : null;
-      if(dtc == null || dtc >= 0) return '';
-      // Dismissed already for today · check yyyy-mm-dd match.
+      if(dtc == null || dtc >= 0) return false;
       var raw = file.raw_form_data || {};
-      var todayY = (function(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
-      if(raw.closing_reschedule_dismissed_on === todayY) return '';
-      var was = String(file.closing_date || '').slice(0, 10);
-      var wasFmt = '';
-      try { var d0 = new Date(was + 'T12:00:00'); wasFmt = d0.toLocaleDateString('en-US', { month:'long', day:'numeric' }); } catch(_){ wasFmt = was; }
-      var lateBy = Math.abs(dtc);
-      return '<div class="closing-past-banner" data-close-past-file="' + esc(file.id) + '" '
-        + 'style="background:linear-gradient(180deg,#fbf3f1 0%,#f6e5e0 100%);border:0.5px solid #ecd6d0;border-radius:12px;padding:13px 15px;margin:0 0 14px">'
-        + '<div style="font-size:9.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:#a3402f;margin-bottom:4px">Past closing date &middot; ' + lateBy + 'd ago</div>'
-        + '<div style="font-size:12.5px;color:#0f0f0f;line-height:1.55;margin-bottom:10px">Closing was scheduled for <strong>' + esc(wasFmt) + '</strong>. What happened?</div>'
-        + '<div style="display:flex;flex-wrap:wrap;gap:6px">'
-        +   '<button type="button" data-close-past-done="1" style="font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;background:#0f0f0f;color:#fff;border:0">Closed today</button>'
-        +   '<button type="button" data-close-past-resched="1" style="font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;background:#fff;color:#0f0f0f;border:0.5px solid #d9d1bc">Rescheduled</button>'
-        +   '<button type="button" data-close-past-later="1" style="font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;background:transparent;color:#7a756c;border:0">Still working on it</button>'
-        + '</div></div>';
-    } catch(_){ return ''; }
+      if(raw.closing_reschedule_dismissed_on === _todayIsoYmd()) return false;
+      return true;
+    } catch(_){ return false; }
   }
-  // Delegated click handler for the three actions on the past-closing banner.
+  function confirmClosingDateLinkHtml(file){
+    if(!_shouldShowConfirmDateLink(file)) return '';
+    return '<button type="button" data-confirm-closing-date="' + esc(file.id) + '" '
+      + 'style="flex:none;font-size:10.5px;font-weight:700;border-radius:8px;padding:4px 10px;cursor:pointer;font-family:inherit;background:#0f0f0f;color:#fff;border:0;margin-left:6px">Confirm date &rarr;</button>';
+  }
+  // ---- Modal chooser (Closed today / Rescheduled / Still working) ----
+  // Opened by the "Confirm date" link. All three actions do the same DB work
+  // they used to do in the drawer banner form; only the trigger surface moved.
+  function _openConfirmClosingDateModal(fileId){
+    var file = (_files || []).find(function(f){ return String(f.id) === String(fileId); }) || _currentFile;
+    if(!file || String(file.id) !== String(fileId)) return;
+    var was = String(file.closing_date || '').slice(0, 10);
+    var wasFmt = was;
+    try { var d0 = new Date(was + 'T12:00:00'); wasFmt = d0.toLocaleDateString('en-US', { month:'long', day:'numeric' }); } catch(_){}
+    var dtc = (typeof daysToClose === 'function') ? daysToClose(file) : null;
+    var lateBy = (dtc != null) ? Math.abs(dtc) : '';
+    var ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,0.45);display:flex;align-items:center;justify-content:center;z-index:99999;padding:20px';
+    ov.innerHTML = '<div class="closing-past-actions" data-close-past-file="' + esc(fileId) + '" style="background:#fff;border-radius:14px;max-width:420px;width:100%;padding:22px 24px;box-shadow:0 12px 40px rgba(0,0,0,0.25);font-family:inherit">'
+      + '<div style="font-size:9.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:#a3402f;margin-bottom:6px">Past closing date' + (lateBy !== '' ? ' &middot; ' + lateBy + 'd ago' : '') + '</div>'
+      + '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:20px;font-weight:600;color:#0f0f0f;margin-bottom:6px">Confirm the closing date</div>'
+      + '<div style="font-size:12.5px;color:#5f5647;line-height:1.55;margin-bottom:16px">Closing was scheduled for <strong>' + esc(wasFmt) + '</strong>. What happened?</div>'
+      + '<div style="display:flex;flex-direction:column;gap:8px">'
+      +   '<button type="button" data-close-past-done="1" style="font-size:12.5px;font-weight:600;border-radius:8px;padding:10px 14px;cursor:pointer;font-family:inherit;background:#0f0f0f;color:#fff;border:0;text-align:left">Closed today</button>'
+      +   '<button type="button" data-close-past-resched="1" style="font-size:12.5px;font-weight:600;border-radius:8px;padding:10px 14px;cursor:pointer;font-family:inherit;background:#fff;color:#0f0f0f;border:0.5px solid #d9d1bc;text-align:left">Rescheduled&hellip;</button>'
+      +   '<button type="button" data-close-past-later="1" style="font-size:12.5px;font-weight:600;border-radius:8px;padding:10px 14px;cursor:pointer;font-family:inherit;background:transparent;color:#7a756c;border:0;text-align:left">Still working on it</button>'
+      + '</div>'
+      + '<div style="display:flex;justify-content:flex-end;margin-top:14px">'
+      +   '<button type="button" data-close-past-modal-close="1" style="font-size:12px;font-weight:600;color:#7a756c;background:transparent;border:0;padding:4px 8px;cursor:pointer;font-family:inherit">Cancel</button>'
+      + '</div></div>';
+    document.body.appendChild(ov);
+    var closeOv = function(){ try { ov.remove(); } catch(_){} };
+    ov.addEventListener('click', function(ev){ if(ev.target === ov) closeOv(); });
+    var xBtn = ov.querySelector('[data-close-past-modal-close]');
+    if(xBtn) xBtn.addEventListener('click', closeOv);
+  }
+  // Trigger: "Confirm date" link on the CLOSING deadline row opens the modal.
+  document.addEventListener('click', function(e){
+    var trig = e.target && e.target.closest && e.target.closest('[data-confirm-closing-date]');
+    if(!trig) return;
+    e.preventDefault();
+    _openConfirmClosingDateModal(trig.getAttribute('data-confirm-closing-date'));
+  });
+  // Delegated click handler for the three actions inside the modal chooser.
+  // Looks for the .closing-past-actions container (the modal card).
   document.addEventListener('click', async function(e){
     var btn = e.target && e.target.closest && e.target.closest('[data-close-past-done],[data-close-past-resched],[data-close-past-later]');
     if(!btn) return;
-    var banner = btn.closest('.closing-past-banner'); if(!banner) return;
-    var fileId = banner.getAttribute('data-close-past-file');
+    var card = btn.closest('.closing-past-actions'); if(!card) return;
+    var fileId = card.getAttribute('data-close-past-file');
     var file = (_files || []).find(function(f){ return String(f.id) === String(fileId); }) || _currentFile;
     if(!file || String(file.id) !== String(fileId)) return;
-    banner.querySelectorAll('button').forEach(function(b){ b.disabled = true; b.style.opacity = '0.5'; b.style.cursor = 'wait'; });
+    var overlay = card.parentElement; // the fixed overlay wrapping the modal card
+    card.querySelectorAll('button').forEach(function(b){ b.disabled = true; b.style.opacity = '0.5'; b.style.cursor = 'wait'; });
+    var restore = function(){ card.querySelectorAll('button').forEach(function(b){ b.disabled = false; b.style.opacity = ''; b.style.cursor = ''; }); };
+    var closeOverlay = function(){ try { if(overlay && overlay.parentElement) overlay.remove(); } catch(_){} };
     // -------- CLOSED TODAY --------
     if(btn.hasAttribute('data-close-past-done')){
-      var _todayIso = (function(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
+      var _todayIso = _todayIsoYmd();
       try {
         var { error } = await _client.from('files').update({ transaction_stage:'closed', status:'closed', actual_closing_date:_todayIso, updated_at:new Date().toISOString() }).eq('id', fileId);
-        if(error){ alert('Could not save: ' + (error.message || 'unknown')); banner.querySelectorAll('button').forEach(function(b){ b.disabled = false; b.style.opacity = ''; b.style.cursor = ''; }); return; }
+        if(error){ alert('Could not save: ' + (error.message || 'unknown')); restore(); return; }
         file.transaction_stage = 'closed'; file.status = 'closed'; file.actual_closing_date = _todayIso;
+        closeOverlay();
         try { renderKanban(); } catch(_){}
         try { renderPlaybook(file); } catch(_){}
-      } catch(err){ alert('Network error: ' + (err && err.message || err)); banner.querySelectorAll('button').forEach(function(b){ b.disabled = false; b.style.opacity = ''; b.style.cursor = ''; }); }
+      } catch(err){ alert('Network error: ' + (err && err.message || err)); restore(); }
       return;
     }
-    // -------- STILL WORKING (dismiss for today) --------
+    // -------- STILL WORKING (dismiss the link for today) --------
     if(btn.hasAttribute('data-close-past-later')){
-      var _tY = (function(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
+      var _tY = _todayIsoYmd();
       var prev = file.raw_form_data || {};
       var next = Object.assign({}, prev, { closing_reschedule_dismissed_on: _tY });
       file.raw_form_data = next;
-      banner.remove();
+      closeOverlay();
       try { await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); } catch(_){}
+      try { renderPlaybook(file); } catch(_){}
       return;
     }
-    // -------- RESCHEDULED --------
+    // -------- RESCHEDULED · swap the chooser card contents for the date picker --------
     if(btn.hasAttribute('data-close-past-resched')){
-      // Modal · date picker prefilled to a sane "next business day" guess. Any past date is rejected.
       var todayObj = new Date(); todayObj.setHours(0,0,0,0);
       var guess = new Date(todayObj.getTime() + 86400000);
-      // Skip Sun/Sat.
       if(guess.getDay() === 0) guess = new Date(guess.getTime() + 86400000);
       if(guess.getDay() === 6) guess = new Date(guess.getTime() + 2*86400000);
       var guessIso = guess.getFullYear() + '-' + String(guess.getMonth()+1).padStart(2,'0') + '-' + String(guess.getDate()).padStart(2,'0');
       var todayIso = todayObj.getFullYear() + '-' + String(todayObj.getMonth()+1).padStart(2,'0') + '-' + String(todayObj.getDate()).padStart(2,'0');
-      var ov = document.createElement('div');
-      ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,0.45);display:flex;align-items:center;justify-content:center;z-index:99999;padding:20px';
-      ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:400px;width:100%;padding:22px 24px;box-shadow:0 12px 40px rgba(0,0,0,0.25);font-family:inherit">'
-        + '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:20px;font-weight:600;color:#0f0f0f;margin-bottom:6px">Reschedule closing</div>'
+      card.innerHTML = '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:20px;font-weight:600;color:#0f0f0f;margin-bottom:6px">Reschedule closing</div>'
         + '<div style="font-size:12.5px;color:#5f5647;line-height:1.5;margin-bottom:14px">Pick the new closing date. Closing-day tasks (payment link, wire warning, walk-through, CD) will re-flow their due dates.</div>'
         + '<label style="display:block;font-size:11px;font-weight:600;color:#7a756c;margin-bottom:4px">New closing date</label>'
         + '<input type="date" id="__close-past-newd" value="' + esc(guessIso) + '" min="' + esc(todayIso) + '" style="width:100%;padding:9px 10px;border:0.5px solid #d9d1bc;border-radius:8px;font-size:14px;font-family:inherit">'
@@ -24362,12 +24400,9 @@ Tell me your planned move-out date and I will set the inspection.`
         + '<div style="display:flex;gap:9px;justify-content:flex-end;margin-top:16px">'
         +   '<button type="button" data-close-past-cancel="1" style="font-size:12.5px;font-weight:600;color:#5f5e5a;background:#f3f0ea;border:0.5px solid rgba(15,15,15,0.12);border-radius:8px;padding:8px 16px;cursor:pointer;font-family:inherit">Cancel</button>'
         +   '<button type="button" data-close-past-save="1" style="font-size:12.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:8px;padding:8px 16px;cursor:pointer;font-family:inherit">Save</button>'
-        + '</div></div>';
-      document.body.appendChild(ov);
-      var closeOv = function(){ try { ov.remove(); } catch(_){} banner.querySelectorAll('button').forEach(function(b){ b.disabled = false; b.style.opacity = ''; b.style.cursor = ''; }); };
-      ov.querySelector('[data-close-past-cancel]').addEventListener('click', closeOv);
-      ov.addEventListener('click', function(ev){ if(ev.target === ov) closeOv(); });
-      ov.querySelector('[data-close-past-save]').addEventListener('click', async function(){
+        + '</div>';
+      card.querySelector('[data-close-past-cancel]').addEventListener('click', closeOverlay);
+      card.querySelector('[data-close-past-save]').addEventListener('click', async function(){
         var inp = document.getElementById('__close-past-newd');
         var errEl = document.getElementById('__close-past-err');
         var val = (inp && inp.value) || '';
@@ -24378,7 +24413,7 @@ Tell me your planned move-out date and I will set the inspection.`
           var { error } = await _client.from('files').update({ closing_date:val, updated_at:new Date().toISOString() }).eq('id', fileId);
           if(error){ errEl.style.display = 'block'; errEl.textContent = 'Could not save: ' + (error.message || 'unknown'); this.disabled = false; this.textContent = 'Save'; return; }
           file.closing_date = val;
-          try { ov.remove(); } catch(_){}
+          closeOverlay();
           try { renderKanban(); } catch(_){}
           try { renderPlaybook(file); } catch(_){}
         } catch(err){ errEl.style.display = 'block'; errEl.textContent = 'Network error: ' + (err && err.message || err); this.disabled = false; this.textContent = 'Save'; }
@@ -24876,10 +24911,20 @@ Tell me your planned move-out date and I will set the inspection.`
       var txt = (n < 0) ? (Math.abs(n) + 'd late') : (n === 0 ? 'Due today' : (n <= 3 ? 'In ' + n + ' day' + (n === 1 ? '' : 's') : p.date.toLocaleDateString('en-US', { month:'short', day:'numeric' })));
       var col = (n <= 0) ? '#f7ece8;color:#a3402f' : (n <= 3 ? '#fbf3e2;color:#8a6d1b' : '#f1efe8;color:#8a857c');
       var _tagH = '<span style="flex:none;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border-radius:4px;padding:2px 6px;color:#3d6b4d;background:#eef1ee">' + esc(_tg) + '</span>';
+      // Marlenyi 2026-08-07 · when this is the CLOSING deadline row and it's
+      // past due, tack a "Confirm date →" button to the right so the fix lives
+      // where the "Xd late" pill lives. Only renders on the actual file's row
+      // (not on stage-deadlines cards that lack a file context). Clicking it
+      // opens the 3-option modal (Closed today / Rescheduled / Still working).
+      var _confirmBtn = '';
+      if(n < 0 && /clos/.test(String(p.key || ''))){
+        try { _confirmBtn = confirmClosingDateLinkHtml(file); } catch(_){ _confirmBtn = ''; }
+      }
       return '<div class="ck-task adhd-task" style="display:flex;align-items:center;gap:11px;padding:11px 0;border-top:0.5px solid #f2eee2">' +
         '<input type="checkbox" class="adhd-cb" data-sdl-check="' + esc(p.key) + '">' + _tagH +
         '<span style="flex:1;min-width:0;font-weight:600;color:#0a0a0a;font-size:13.5px">' + esc(_disp) + '</span>' +
-        '<span style="flex:none;font-size:10.5px;font-weight:700;border-radius:999px;padding:4px 10px;background:' + col + '">' + txt + '</span></div>';
+        '<span style="flex:none;font-size:10.5px;font-weight:700;border-radius:999px;padding:4px 10px;background:' + col + '">' + txt + '</span>' +
+        _confirmBtn + '</div>';
     };
 
     var _todayHeadCt = (_todayTasks.length || _dlToday.length) ? '' : 'Nothing urgent &middot; you&rsquo;re ahead';
@@ -25729,7 +25774,6 @@ Tell me your planned move-out date and I will set the inspection.`
     // deadlines for clients." Money strip belongs on the Invoices tab, not
     // between deadline tasks. The Invoices view already surfaces per-file pay.
     host.innerHTML = contractGuardBannerHtml(file) + roBanner + saBanner + payBanner + closingBanner + gate + widget +
-      closingReschedulePromptHtml(file) +
       inhouseTestBannerHtml(file) +
       otherSideOfferChipHtml(file) +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
