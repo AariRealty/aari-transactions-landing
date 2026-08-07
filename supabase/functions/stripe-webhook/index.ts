@@ -1,5 +1,5 @@
 // ============================================================================
-// Aari Transactions · stripe-webhook (June 2026)
+// Aari Transactions · stripe-webhook (v33 · 2026-08-07)
 // ============================================================================
 // Listens for checkout.session.completed. Matches the payment to the file via
 // metadata.file_id (preferred) or client_reference_id (what the intake appends
@@ -13,7 +13,15 @@
 //   Developers -> Webhooks -> Add endpoint
 //   URL: https://<project-ref>.supabase.co/functions/v1/stripe-webhook
 //   Event: checkout.session.completed
-//   IMPORTANT: deploy with --no-verify-jwt (Stripe can't send Supabase JWTs).
+//
+// **verify_jwt MUST BE false** — Stripe cannot send Supabase JWTs, so with JWT
+// verification on the edge runtime rejects every event as 401 before this file
+// runs. That's the bug Marlenyi hit on 2026-08-06: Stripe emailed her that
+// deliveries were failing for the past week. Authenticity is protected by
+// verifyStripeSignature() below, which HMAC-checks each event against
+// STRIPE_WEBHOOK_SECRET before touching the DB. Re-deploy this function via
+// the MCP deploy_edge_function tool with verify_jwt=false, NOT via any path
+// that defaults to true.
 // ============================================================================
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
