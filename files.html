@@ -2006,14 +2006,16 @@
   </div>
 
   <!-- ============ INLINE METRICS STRIP · was a 4-tile KPI row, now one quiet line ============ -->
+  <!-- Marlenyi 2026-08-07 · every metric is clickable; tapping opens a popup with the
+       underlying file list (openKpiModal handler wired near renderKpis). -->
   <div class="metrics-inline" id="metrics-inline">
-    <span class="metrics-item" id="m-needs"><strong id="kpi-needs">0</strong> need you</span>
+    <span class="metrics-item" id="m-needs" data-kpi="needs" role="button" tabindex="0" style="cursor:pointer"><strong id="kpi-needs">0</strong> need you</span>
     <span class="metrics-sep">·</span>
-    <span class="metrics-item" id="m-active"><strong id="kpi-active">0</strong> active</span>
+    <span class="metrics-item" id="m-active" data-kpi="active" role="button" tabindex="0" style="cursor:pointer"><strong id="kpi-active">0</strong> active</span>
     <span class="metrics-sep">·</span>
-    <span class="metrics-item" id="m-closing"><strong id="kpi-closing">0</strong> closing this week</span>
+    <span class="metrics-item" id="m-closing" data-kpi="closing" role="button" tabindex="0" style="cursor:pointer"><strong id="kpi-closing">0</strong> closing this week</span>
     <span class="metrics-sep">·</span>
-    <span class="metrics-item metrics-item-quiet" id="m-ytd"><strong id="kpi-ytd">0</strong> closed YTD</span>
+    <span class="metrics-item metrics-item-quiet" id="m-ytd" data-kpi="ytd" role="button" tabindex="0" style="cursor:pointer"><strong id="kpi-ytd">0</strong> closed YTD</span>
   </div>
 
   <!-- ============ AGENT MESSAGES PANEL (TC + broker view) ============ -->
@@ -12197,6 +12199,151 @@ Tell me your planned move-out date and I will set the inspection.`
     const mClose = document.getElementById('m-closing'); if(mClose) mClose.classList.toggle('metrics-item-quiet', closingWk === 0);
     const mYtd = document.getElementById('m-ytd'); if(mYtd) mYtd.classList.toggle('metrics-item-quiet', ytd === 0);
   }
+
+  // Marlenyi 2026-08-07 · click a KPI (need you / active / closing this week / closed YTD)
+  // to see the exact file list behind the number. Popup shows one row per file: address,
+  // stage, closing date, TC. Row → open the file drawer + close the popup.
+  function _kpiFilesFor(kind){
+    const _tcView = String((_profile && _profile.role) || '').toLowerCase() === 'tc';
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if(kind === 'needs'){
+      try {
+        const trg = _fileTriage();
+        return (trg.needsyou || []).map(function(it){ return it.f; })
+          .concat((trg.needstc || []).map(function(it){ return it.f; }));
+      } catch(_){ return []; }
+    }
+    return (_files || []).filter(function(f){
+      if(!f) return false;
+      if((f.raw_form_data || {}).test_pool) return false;
+      if(f.status === 'archived') return false;
+      if(_tcView && !f.assigned_tc_id) return false;
+      const stage = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || '');
+      if(kind === 'active') return stage !== 'closed';
+      if(kind === 'closing'){
+        if(stage === 'closed') return false;
+        const d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+        return d != null && d >= 0 && d <= 7;
+      }
+      if(kind === 'ytd'){
+        if(stage !== 'closed') return false;
+        // YTD = closed this calendar year. Use actual_closing_date when set, else closing_date.
+        const iso = f.actual_closing_date || f.closing_date;
+        if(!iso) return false;
+        try { const d = new Date(String(iso).slice(0,10) + 'T12:00:00'); return d.getFullYear() === today.getFullYear(); } catch(_){ return false; }
+      }
+      return false;
+    });
+  }
+  function openKpiModal(kind){
+    const titles = { needs:'Need you', active:'Active files', closing:'Closing this week', ytd:'Closed this year' };
+    const subs = {
+      needs:'Files with overdue tasks, work due today, or setup pending.',
+      active:'Every open file across all stages.',
+      closing:'Files whose closing date falls in the next 7 days.',
+      ytd:'Files whose closing date landed this calendar year.'
+    };
+    const list = _kpiFilesFor(kind);
+    // Sort · needs stays as triage order (most work first); others sort by closing date
+    // ascending (soonest first), then by address for stability.
+    if(kind !== 'needs'){
+      list.sort(function(a, b){
+        const ad = a.closing_date ? new Date(String(a.closing_date).slice(0,10) + 'T12:00:00').getTime() : 8.64e15;
+        const bd = b.closing_date ? new Date(String(b.closing_date).slice(0,10) + 'T12:00:00').getTime() : 8.64e15;
+        if(ad !== bd) return ad - bd;
+        return String(a.property_address || '').localeCompare(String(b.property_address || ''));
+      });
+    }
+    const fmtCloseCell = function(f){
+      if(!f.closing_date) return '<span style="color:#a09a8f">—</span>';
+      try {
+        const dt = new Date(String(f.closing_date).slice(0,10) + 'T12:00:00');
+        const dayLbl = dt.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+        const dtc = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+        let sub = '';
+        if(dtc != null){
+          if(dtc < 0) sub = '<span style="color:#993c1d">' + Math.abs(dtc) + 'd overdue</span>';
+          else if(dtc === 0) sub = '<span style="color:#993c1d">today</span>';
+          else if(dtc === 1) sub = 'tomorrow';
+          else if(dtc <= 7) sub = 'in ' + dtc + ' days';
+        }
+        return dayLbl + (sub ? '<div style="font-size:10.5px;color:#7a756c;margin-top:1px">' + sub + '</div>' : '');
+      } catch(_){ return '<span style="color:#a09a8f">—</span>'; }
+    };
+    const tcNameFor = function(f){
+      try {
+        const tc = f.assigned_tc_id && _tcsById[f.assigned_tc_id];
+        if(!tc) return '';
+        return ((tc.first_name || '') + (tc.last_name ? ' ' + tc.last_name.charAt(0).toUpperCase() + '.' : '')).trim();
+      } catch(_){ return ''; }
+    };
+    const rowHtml = list.map(function(f){
+      const stg = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || '');
+      const stgLbl = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[stg]) ? STAGE_LABELS[stg] : (stg || 'Active');
+      const addr = String(f.property_address || 'File').split(',');
+      const line1 = addr[0].trim();
+      const line2 = addr.slice(1).join(',').trim();
+      const tcLbl = tcNameFor(f);
+      return '<div class="kpi-row" data-kpi-open="' + esc(f.id) + '" style="display:grid;grid-template-columns:1.6fr 1fr 1fr .8fr;gap:12px;align-items:start;padding:10px 12px;border-top:0.5px solid #f2eee2;cursor:pointer">' +
+        '<div style="min-width:0"><div style="font-size:13px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(line1) + '</div>' +
+          (line2 ? '<div style="font-size:11px;color:#8a857c;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(line2) + '</div>' : '') +
+        '</div>' +
+        '<div style="font-size:12px;color:#3d3a34">' + esc(stgLbl) + '</div>' +
+        '<div style="font-size:12px;color:#3d3a34">' + fmtCloseCell(f) + '</div>' +
+        '<div style="font-size:11.5px;color:#7a756c">' + esc(tcLbl) + '</div>' +
+      '</div>';
+    }).join('');
+    const empty = '<div style="padding:32px 12px;text-align:center;font-size:12.5px;color:#7a756c">Nothing here. You&rsquo;re ahead.</div>';
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,0.45);display:flex;align-items:flex-start;justify-content:center;z-index:99999;padding:60px 20px 20px;overflow-y:auto';
+    ov.innerHTML = '<div class="kpi-modal" style="background:#fff;border-radius:14px;max-width:820px;width:100%;padding:20px 22px 14px;box-shadow:0 12px 40px rgba(0,0,0,0.25);font-family:inherit">' +
+      '<div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:6px">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:22px;font-weight:600;color:#0f0f0f;line-height:1.15">' + esc(titles[kind] || 'Files') + ' <span style="font-weight:500;color:#7a756c;font-family:inherit;font-size:15px">&middot; ' + list.length + '</span></div>' +
+          '<div style="font-size:12px;color:#7a756c;margin-top:4px;line-height:1.5">' + esc(subs[kind] || '') + '</div>' +
+        '</div>' +
+        '<button type="button" data-kpi-close="1" aria-label="Close" style="flex:none;background:transparent;border:0;color:#7a756c;font-size:20px;line-height:1;padding:4px 6px;cursor:pointer;font-family:inherit">&times;</button>' +
+      '</div>' +
+      (list.length
+        ? '<div style="margin-top:12px">' +
+            '<div style="display:grid;grid-template-columns:1.6fr 1fr 1fr .8fr;gap:12px;padding:8px 12px;font-size:9.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#a09a8f">' +
+              '<div>Property</div><div>Stage</div><div>Closing</div><div>TC</div>' +
+            '</div>' +
+            '<div style="max-height:60vh;overflow-y:auto">' + rowHtml + '</div>' +
+          '</div>'
+        : empty) +
+    '</div>';
+    document.body.appendChild(ov);
+    const closeOv = function(){ try { ov.remove(); document.removeEventListener('keydown', escHandler); } catch(_){} };
+    const escHandler = function(e){ if(e.key === 'Escape') closeOv(); };
+    document.addEventListener('keydown', escHandler);
+    ov.addEventListener('click', function(ev){
+      if(ev.target === ov) return closeOv();
+      const cb = ev.target && ev.target.closest && ev.target.closest('[data-kpi-close]');
+      if(cb) return closeOv();
+      const row = ev.target && ev.target.closest && ev.target.closest('[data-kpi-open]');
+      if(row){
+        const fid = row.getAttribute('data-kpi-open');
+        const f = (_files || []).find(function(x){ return x.id === fid; });
+        if(f){ closeOv(); try { openPlaybook(f); } catch(_){} }
+      }
+    });
+  }
+  // KPI click / keyboard wire-up · delegated once at document level so re-renders
+  // (renderKpis after search / filter / claim) don't need to re-bind.
+  document.addEventListener('click', function(e){
+    const el = e.target && e.target.closest && e.target.closest('[data-kpi]');
+    if(!el) return;
+    e.preventDefault();
+    openKpiModal(el.getAttribute('data-kpi'));
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    const el = e.target && e.target.closest && e.target.closest('[data-kpi]');
+    if(!el) return;
+    e.preventDefault();
+    openKpiModal(el.getAttribute('data-kpi'));
+  });
 
   function renderFileTypeFilter(){
     const el = document.getElementById('ft-filter');
