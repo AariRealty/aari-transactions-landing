@@ -8142,8 +8142,27 @@ Tell me your planned move-out date and I will set the inspection.`
     res = res.replace(/([A-Za-z])\s+([A-Z]{2})\s+(\d{5})/, '$1, $2 $3');
     return res.replace(/\s+,/g,',').replace(/,\s*,/g,', ').replace(/\s+/g,' ').trim();
   }
+  // Renders a friendly error state where the kanban skeleton was, so a failed
+  // load never leaves the user staring at gray placeholders forever.
+  function _showKanbanErrorState(message){
+    try {
+      const k = document.getElementById('kanban');
+      if(!k) return;
+      k.style.gridTemplateColumns = '1fr';
+      k.innerHTML = '<div class="kanban-zero">' +
+        '<p class="kz-title">' + esc(message || 'We couldn’t load your files.') + '</p>' +
+        '<p class="kz-sub">Refresh the page. If it keeps happening, sign out and back in.</p>' +
+        '<p class="kz-sub" style="margin-top:14px"><button type="button" onclick="location.reload()" style="background:#0f0f0f;color:#fff;border:0;border-radius:8px;padding:9px 18px;font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer">Refresh</button></p>' +
+      '</div>';
+    } catch(_){}
+  }
+
   async function loadAndRender(){
-    if(!_client || !_profile) return;
+    if(!_client || !_profile){
+      // Marlenyi 2026-08-07 · never leave the skeleton hanging if init bailed early.
+      _showKanbanErrorState('Signed out. Please sign in again.');
+      return;
+    }
     showKanbanSkeleton(); // visual cue while the query runs
     // Effective role: is_tc=true acts as 'tc' for file scoping, so a
     // dual agent+TC sees TC files here. Broker is unchanged (sees all).
@@ -8158,7 +8177,20 @@ Tell me your planned move-out date and I will set the inspection.`
     } else if(role === 'broker' && _tcFilter !== 'all'){
       q = q.or('assigned_tc_id.eq.'+_tcFilter+',fg_tc_id.eq.'+_tcFilter);
     }
-    const { data: files } = await q;
+    // Marlenyi 2026-08-07 · wrap the files query itself. A network fail or RLS
+    // reject used to throw uncaught and abort the whole loadAndRender chain,
+    // leaving the kanban skeleton stuck on screen.
+    let files = null, filesErr = null;
+    try {
+      const _res = await q;
+      files = _res && _res.data;
+      filesErr = _res && _res.error;
+    } catch(e){ filesErr = e; }
+    if(filesErr){
+      console.error('files load failed', filesErr);
+      _showKanbanErrorState('We couldn’t load your files.');
+      return;
+    }
     _files = files || [];
     // Normalize client_type to lowercase — intake historically stored it
     // capitalized ("Buyer"/"Seller"), which broke every `=== 'buyer'` check
@@ -8242,27 +8274,39 @@ Tell me your planned move-out date and I will set the inspection.`
         (mems || []).forEach(m => { _membersById[m.agent_id] = m; });
       } catch(e){ console.error('memberships load threw · credit coverage will not apply', e); }
     }
-    computeCreditCoverage();
+    // Marlenyi 2026-08-07 · every await between the files fetch and the
+    // render calls is now defensively wrapped so a single hiccup can't stall
+    // the whole load. computeCreditCoverage used to be a silent kill-switch:
+    // one thrown exception here would leave the kanban skeleton frozen.
+    try { computeCreditCoverage(); } catch(e){ console.warn('computeCreditCoverage failed', e); }
     // Pull email sends for the visible files
+    _sendsByFile = {};
     if(_files.length){
       const ids = _files.map(f => f.id);
-      const { data: sends } = await _client.from('file_email_sends')
-        .select('file_id, template_id, sent_at, recipient_email, status')
-        .in('file_id', ids).eq('status','succeeded')
-        .order('sent_at',{ascending:false});
-      _sendsByFile = {};
-      (sends || []).forEach(s => {
-        _sendsByFile[s.file_id] = _sendsByFile[s.file_id] || {};
-        if(!_sendsByFile[s.file_id][s.template_id]){ _sendsByFile[s.file_id][s.template_id] = s; }
-      });
-    } else { _sendsByFile = {}; }
-    renderFileTypeFilter();
-    renderKanbanShell();
-    renderKpis();
-    renderKanban();
-    loadAndRenderAgentMessages();
-    // Each render is isolated so one throwing panel can't abort the rest (the
-    // deep-link handoff below used to die behind a renderPriorityQueue crash).
+      try {
+        const { data: sends } = await _client.from('file_email_sends')
+          .select('file_id, template_id, sent_at, recipient_email, status')
+          .in('file_id', ids).eq('status','succeeded')
+          .order('sent_at',{ascending:false});
+        (sends || []).forEach(s => {
+          _sendsByFile[s.file_id] = _sendsByFile[s.file_id] || {};
+          if(!_sendsByFile[s.file_id][s.template_id]){ _sendsByFile[s.file_id][s.template_id] = s; }
+        });
+      } catch(e){ console.warn('file_email_sends load failed', e); }
+    }
+    // Marlenyi 2026-08-07 · every render call now isolated. Before, an
+    // uncaught throw in ANY of the first four aborted the chain and left
+    // the kanban skeleton on screen. renderKanban is the critical one for
+    // clearing the skeleton, so it also gets a failure fallback that draws
+    // the error state instead of leaving gray boxes.
+    try{ renderFileTypeFilter(); }catch(e){ console.warn('renderFileTypeFilter failed', e); }
+    try{ renderKanbanShell(); }catch(e){ console.warn('renderKanbanShell failed', e); }
+    try{ renderKpis(); }catch(e){ console.warn('renderKpis failed', e); }
+    try{ renderKanban(); }catch(e){
+      console.error('renderKanban failed · showing error state', e);
+      _showKanbanErrorState('Something went wrong loading your files.');
+    }
+    try{ loadAndRenderAgentMessages(); }catch(e){ console.warn('loadAndRenderAgentMessages failed', e); }
     try{ renderPriorityQueue(); }catch(e){ console.warn('renderPriorityQueue failed', e); }
     try{ renderTodayHero(); }catch(e){ console.warn('renderTodayHero failed', e); }
     try{ renderClosingsList(); }catch(e){ console.warn('renderClosingsList failed', e); }
