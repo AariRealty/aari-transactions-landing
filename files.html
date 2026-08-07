@@ -17993,7 +17993,13 @@ Tell me your planned move-out date and I will set the inspection.`
           }
         } catch(_){}
         const _stageNow = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || 'under_contract');
-        let _ci = UC_SPINE_OPS.findIndex(function(o){ return o.key === _stageNow; }); if(_ci < 0) _ci = 0;
+        const _spineNow = _uc_spineKey(_stageNow);
+        let _ci = UC_SPINE_OPS.findIndex(function(o){ return o.key === _spineNow; }); if(_ci < 0) _ci = 0;
+        // Marlenyi 2026-08-07 · when the file's real stage is 'ctc' we're still on
+        // the merged UC card, but the sub-phase should read "Clear to close" so the
+        // TC knows all contingencies cleared. Rendered as a soft sub-label after the
+        // step title, matching the way _ucHint appends late/next info below it.
+        const _subLabel = (_stageNow === 'ctc') ? '<span class="uc-step-sub" style="display:block;font-size:11px;color:#7a756c;font-weight:500;margin-top:2px">Clear to close</span>' : '';
         let _ops = '';
         UC_SPINE_OPS.forEach(function(o, i){
           if(i < _ci) _ops += ucSpineRow(o.n, o.label, 'done', null);
@@ -18002,7 +18008,7 @@ Tell me your planned move-out date and I will set the inspection.`
             // in the work pop, shown/hidden by this header so it reads as one box).
             _ops += '<div class="uc-acc uc5' + (_uc5Open ? ' open' : '') + '">' +
               '<button type="button" class="uc-acc-hd" data-uc5-toggle="1">' +
-                '<span class="uc-acc-l"><span class="uc-step-num cur">' + o.n + '</span><span>' + o.label + _ucHint + '</span></span>' +
+                '<span class="uc-acc-l"><span class="uc-step-num cur">' + o.n + '</span><span>' + o.label + _subLabel + _ucHint + '</span></span>' +
                 '<span class="uc5-now">now <span class="uc-acc-chev">&#8250;</span></span>' +
               '</button></div>';
           }
@@ -24002,11 +24008,18 @@ Tell me your planned move-out date and I will set the inspection.`
     insp_utilities_on:1, insp_proceed_notice:1, insp_cancel_notice:1, insp_permits:1,
     insp_review_report:1, rem_asis_accepted:1, rem_addendum_confirmed:1, rem_permits_followup:1 };
   // Numbered file spine · the operational stages after Setup.
+  // Marlenyi 2026-08-07 · Under contract + Clear to close render as ONE card.
+  // DB keeps both stages ('under_contract' + 'ctc') so nothing downstream breaks;
+  // this array collapses them visually. When the file is at 'ctc', the header
+  // appends "· Clear to close" so the sub-phase is still legible (see the
+  // rendering block that reads this list in renderContractTerms / spine bottom).
   const UC_SPINE_OPS = [
-    { n:5, key:'under_contract', label:'Under contract' },
-    { n:6, key:'ctc',           label:'Clear to close' },
-    { n:7, key:'closed',        label:'Closed' },
+    { n:5, key:'under_contract', keys:['under_contract','ctc'], label:'Under contract' },
+    { n:6, key:'closed',         keys:['closed'],               label:'Closed' },
   ];
+  // Map a real transaction_stage to the visual spine key it belongs to.
+  // Used everywhere the spine index is derived from a stage.
+  function _uc_spineKey(stage){ return (String(stage || '') === 'ctc') ? 'under_contract' : String(stage || ''); }
   function ucSpineRow(n, label, kind, editSection){
     if(kind === 'done'){
       return '<div class="uc-step"><span class="uc-step-l"><span class="uc-step-num done">&#10003;</span>' + label + '</span>' +
@@ -24026,7 +24039,10 @@ Tell me your planned move-out date and I will set the inspection.`
     const rawSetup = ['', 'new', 'intake_received', 'waiting_for_tc'].indexOf((file.transaction_stage || '').toLowerCase()) !== -1;
     if(rawSetup){ return UC_SPINE_OPS.map(function(o){ return ucSpineRow(o.n, o.label, 'locked'); }).join(''); }
     const stage = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || 'under_contract');
-    let ci = UC_SPINE_OPS.findIndex(function(o){ return o.key === stage; }); if(ci < 0) ci = 0;
+    // 'ctc' collapses onto the 'under_contract' spine card visually (Marlenyi 2026-08-07),
+    // so the bottom lock-set should never include 'ctc' as a locked-below entry.
+    const _spineStage = _uc_spineKey(stage);
+    let ci = UC_SPINE_OPS.findIndex(function(o){ return o.key === _spineStage; }); if(ci < 0) ci = 0;
     return UC_SPINE_OPS.filter(function(o, i){ return i > ci; }).map(function(o){ return ucSpineRow(o.n, o.label, 'locked'); }).join('');
   }
   function ucTrackStatus(openN, total){
