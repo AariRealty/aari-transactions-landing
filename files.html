@@ -12471,10 +12471,9 @@ Tell me your planned move-out date and I will set the inspection.`
   // completed ones, deadlines dated before their file's intake, and files whose closing already went by.
   function _calOverdueItems(){
     const t0 = (function(){ const t = new Date(); t.setHours(0, 0, 0, 0); return t.getTime(); })();
-    const intake = {}, closing = {};
+    const intake = {};
     (_files || []).forEach(function(f){ if(!f || !f.id) return;
       if(f.created_at){ const c = new Date(f.created_at); if(!isNaN(c)){ c.setHours(0, 0, 0, 0); intake[f.id] = c.getTime(); } }
-      if(f.closing_date){ const cl = new Date(String(f.closing_date).slice(0, 10) + 'T12:00:00'); if(!isNaN(cl)){ cl.setHours(0, 0, 0, 0); closing[f.id] = cl.getTime(); } }
     });
     const out = [];
     (_tcCalDeadlines() || []).forEach(function(d){
@@ -12482,7 +12481,12 @@ Tell me your planned move-out date and I will set the inspection.`
       const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); const xt = x.getTime();
       if(xt >= t0) return;
       const ik = intake[d.fileId]; if(ik != null && xt < ik) return;
-      const cm = closing[d.fileId]; if(cm != null && cm < t0) return;
+      // Marlenyi 2026-08-07 · used to drop deadlines from files whose closing
+      // date was in the past. That HID the CLOSING deadline row itself for exactly
+      // the files that need the Confirm date prompt. Removed. Files that have
+      // truly closed are already dropped by _tcCalDeadlines (deriveStage === 'closed'
+      // or status === 'closed'/'archived'), so historical noise from finished files
+      // is still filtered.
       out.push(d);
     });
     out.sort(function(a, b){ return a.date - b.date; });
@@ -12499,9 +12503,19 @@ Tell me your planned move-out date and I will set the inspection.`
       const dd = new Date(d.date.getTime()); dd.setHours(0, 0, 0, 0);
       const late = Math.round((t0 - dd.getTime()) / 86400000);
       const lateTxt = late <= 0 ? 'Due today' : (late + 'd late');
+      // Marlenyi 2026-08-07 · when this is the CLOSING deadline row, add an
+      // inline "Confirm date →" button that opens the same 3-option modal the
+      // task row uses (Closed today / Rescheduled / Still working on it).
+      let confirmBtn = '';
+      if(/clos/.test(String(d.key || ''))){
+        try {
+          const f = (_files || []).find(function(x){ return x.id === d.fileId; });
+          if(f) confirmBtn = confirmClosingDateLinkHtml(f);
+        } catch(_){}
+      }
       return '<div data-cal-open="' + esc(d.fileId) + '" style="display:flex;align-items:center;gap:9px;padding:8px 0;border-top:0.5px solid #f6e3dc;cursor:pointer">' +
         '<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:#0f0f0f">' + nm + '</div><div style="font-size:11px;color:#a36b58;margin-top:2px">' + addr + '</div></div>' +
-        '<span style="flex:none;font-size:10px;font-weight:700;color:#993c1d;background:#faece7;border:0.5px solid #f3d9d0;border-radius:20px;padding:3px 11px;white-space:nowrap">' + lateTxt + '</span></div>';
+        '<span style="flex:none;font-size:10px;font-weight:700;color:#993c1d;background:#faece7;border:0.5px solid #f3d9d0;border-radius:20px;padding:3px 11px;white-space:nowrap">' + lateTxt + '</span>' + confirmBtn + '</div>';
     };
     return '<div style="background:#fdf4f1;border:0.5px solid #f3d9d0;border-radius:12px;padding:12px 14px;margin-bottom:14px">' +
       '<div style="display:flex;align-items:baseline;justify-content:space-between">' +
@@ -13340,59 +13354,75 @@ Tell me your planned move-out date and I will set the inspection.`
   function nextClosingsHtml(){
     try {
       const today = new Date(); today.setHours(0, 0, 0, 0);
-      const all = (_files || []).filter(function(f){
+      // Every active sale file with a closing date. Split into PAST (needs attention)
+      // and FUTURE (upcoming). Closed/archived files never appear in either group.
+      // Marlenyi 2026-08-07 · was including past-close files in the upcoming carousel
+      // and counting them in the "N upcoming" total; both were misleading.
+      const eligible = (_files || []).filter(function(f){
         if((f.file_type || 'sale') !== 'sale') return false;
-        if(f.status === 'archived') return false;
+        if(f.status === 'archived' || f.status === 'closed') return false;
         if(typeof deriveStage === 'function' && deriveStage(f) === 'closed') return false;
         return !!f.closing_date;
       }).map(function(f){
         const c = new Date(String(f.closing_date).slice(0,10) + 'T12:00:00'); c.setHours(0, 0, 0, 0);
         return { f:f, date:c, days: Math.round((c - today) / 86400000), addr: String(f.property_address || '').split(',')[0] };
       }).filter(function(x){ return !isNaN(x.date.getTime()); });
-      if(!all.length) return '';
-      // A window of 5 over ALL closings, chronological. Default sits on the first UPCOMING one,
-      // so nothing passed shows on load. The left arrow steps the window back one closing at a
-      // time (into previous ones), the right arrow steps forward one at a time (later upcoming).
-      all.sort(function(a, b){ return a.date - b.date; });
-      let firstUp = all.findIndex(function(x){ return x.days >= 0; });
-      if(firstUp < 0) firstUp = all.length;
-      const maxStart = Math.max(0, all.length - 5);
-      _ncStep = Math.max(-firstUp, Math.min(_ncStep, maxStart - firstUp));
-      const start = Math.max(0, Math.min(firstUp + _ncStep, maxStart));
-      const win = all.slice(start, start + 5);
-      if(!win.length) return '';
-      const canLeft = start > 0;
-      const canRight = start + win.length < all.length;
+      if(!eligible.length) return '';
+      const past = eligible.filter(function(x){ return x.days < 0; }).sort(function(a, b){ return a.date - b.date; });
+      const future = eligible.filter(function(x){ return x.days >= 0; }).sort(function(a, b){ return a.date - b.date; });
       const fmt = function(d){ try { return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } };
-      // CAL 04 · slim tiles · Marlenyi picked and shrunk again (July 25).
-      // Each closing is a thin-bordered tile · no cream background · compact.
-      // The outer bar loses its own background + heavy padding so it doesn't
-      // read as a second card sitting on top of the calendar card.
-      const unit = function(x){
-        const cd = x.days < 0 ? (Math.abs(x.days) + 'd ago') : (x.days === 0 ? 'today' : x.days + ' days');
-        const col = x.days < 0 ? '#a3402f' : (x.days <= 3 ? '#a3402f' : '#7a756c');
-        return '<div data-cal-open="' + esc(x.f.id) + '" style="flex:0 0 auto;cursor:pointer;background:transparent;border:0.5px solid rgba(15,15,15,0.10);border-radius:7px;padding:6px 9px' + (x.days < 0 ? ';opacity:.5' : '') + '">' +
-          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f;line-height:1">' + fmt(x.date) + '</div>' +
-          '<div style="font-size:11px;color:#3d3a34;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.addr) + '</div>' +
-          '<div style="font-size:9.5px;color:' + col + ';font-weight:600;margin-top:1px;letter-spacing:0.2px">' + cd + '</div></div>';
-      };
-      // ADHD-friendly · Marlenyi July 25 · the "NEXT CLOSINGS" all-caps
-      // label was competing with the tiles for space. Move it above the row
-      // as a lowercase serif heading with a small "next →" affordance, and
-      // give the tiles the full width. Arrows live at the ends of the row
-      // so the tiles can breathe.
-      const arw = function(dir, lbl, on){ return '<button type="button"' + (on ? (' data-nc-step="' + dir + '"') : ' disabled') + ' aria-label="' + lbl + '" style="flex:none;border:0;background:none;color:' + (on ? '#5f5e5a' : '#e2ddd3') + ';font-size:18px;line-height:1;cursor:' + (on ? 'pointer' : 'default') + ';padding:2px 4px">' + (dir < 0 ? '&#8249;' : '&#8250;') + '</button>'; };
-      return '<div style="background:transparent;padding:0 0 12px;margin-bottom:4px">' +
-        '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;padding:0 2px">' +
-          '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f">Next closings</span>' +
-          '<span style="font-size:10px;font-weight:600;letter-spacing:0.4px;color:#a09a8f">' + all.length + ' upcoming</span>' +
-        '</div>' +
-        '<div style="display:flex;gap:6px;align-items:stretch">' +
-          arw(-1, 'Previous closings', canLeft) +
-          '<div style="flex:1;min-width:0;display:flex;gap:8px;align-items:stretch;overflow-x:auto;-webkit-overflow-scrolling:touch">' + win.map(unit).join('') + '</div>' +
-          arw(1, 'Later closings', canRight) +
-        '</div>' +
-      '</div>';
+      // -------- Needs attention (past close, still active) --------
+      // Renders in front of the carousel. Clicking a tile opens the file drawer;
+      // the CLOSING deadline row inside will show the "Confirm date →" button that
+      // opens the same 3-option modal (Closed today / Rescheduled / Still working).
+      let needsHtml = '';
+      if(past.length){
+        const punit = function(x){
+          const cd = Math.abs(x.days) + 'd ago';
+          return '<div data-cal-open="' + esc(x.f.id) + '" style="flex:0 0 auto;cursor:pointer;background:#fdf4f1;border:0.5px solid #f3d9d0;border-radius:7px;padding:6px 9px">' +
+            '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#993c1d;line-height:1">' + fmt(x.date) + '</div>' +
+            '<div style="font-size:11px;color:#5a2517;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.addr) + '</div>' +
+            '<div style="font-size:9.5px;color:#993c1d;font-weight:700;margin-top:1px;letter-spacing:0.2px">' + cd + '</div></div>';
+        };
+        needsHtml = '<div style="background:transparent;padding:0 0 12px;margin-bottom:4px">' +
+          '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;padding:0 2px">' +
+            '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#993c1d">Needs attention</span>' +
+            '<span style="font-size:10px;font-weight:700;letter-spacing:0.4px;color:#993c1d">' + past.length + ' past close</span>' +
+          '</div>' +
+          '<div style="display:flex;gap:8px;align-items:stretch;overflow-x:auto;-webkit-overflow-scrolling:touch">' + past.map(punit).join('') + '</div>' +
+        '</div>';
+      }
+      // -------- Next closings (future only) --------
+      let upHtml = '';
+      if(future.length){
+        const maxStart = Math.max(0, future.length - 5);
+        _ncStep = Math.max(0, Math.min(_ncStep, maxStart));
+        const start = _ncStep;
+        const win = future.slice(start, start + 5);
+        const canLeft = start > 0;
+        const canRight = start + win.length < future.length;
+        const unit = function(x){
+          const cd = x.days === 0 ? 'today' : (x.days === 1 ? 'tomorrow' : x.days + ' days');
+          const col = x.days <= 3 ? '#a3402f' : '#7a756c';
+          return '<div data-cal-open="' + esc(x.f.id) + '" style="flex:0 0 auto;cursor:pointer;background:transparent;border:0.5px solid rgba(15,15,15,0.10);border-radius:7px;padding:6px 9px">' +
+            '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f;line-height:1">' + fmt(x.date) + '</div>' +
+            '<div style="font-size:11px;color:#3d3a34;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.addr) + '</div>' +
+            '<div style="font-size:9.5px;color:' + col + ';font-weight:600;margin-top:1px;letter-spacing:0.2px">' + cd + '</div></div>';
+        };
+        const arw = function(dir, lbl, on){ return '<button type="button"' + (on ? (' data-nc-step="' + dir + '"') : ' disabled') + ' aria-label="' + lbl + '" style="flex:none;border:0;background:none;color:' + (on ? '#5f5e5a' : '#e2ddd3') + ';font-size:18px;line-height:1;cursor:' + (on ? 'pointer' : 'default') + ';padding:2px 4px">' + (dir < 0 ? '&#8249;' : '&#8250;') + '</button>'; };
+        upHtml = '<div style="background:transparent;padding:0 0 12px;margin-bottom:4px">' +
+          '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;padding:0 2px">' +
+            '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f">Next closings</span>' +
+            '<span style="font-size:10px;font-weight:600;letter-spacing:0.4px;color:#a09a8f">' + future.length + ' upcoming</span>' +
+          '</div>' +
+          '<div style="display:flex;gap:6px;align-items:stretch">' +
+            arw(-1, 'Previous closings', canLeft) +
+            '<div style="flex:1;min-width:0;display:flex;gap:8px;align-items:stretch;overflow-x:auto;-webkit-overflow-scrolling:touch">' + win.map(unit).join('') + '</div>' +
+            arw(1, 'Later closings', canRight) +
+          '</div>' +
+        '</div>';
+      }
+      return needsHtml + upHtml;
     } catch(_){ return ''; }
   }
   // ---- Month HEATMAP calendar (replaces the kanban) · #calHeatmap ----
@@ -13489,7 +13519,15 @@ Tell me your planned move-out date and I will set the inspection.`
     const sel = new Date(_selTs), sd = byDay[_selTs] || [];
     const _dayCountTo = function(due){ try { const c=new Date();c.setHours(0,0,0,0); const t=new Date(due);t.setHours(0,0,0,0); let n=0; const w=new Date(c); while(w<t){ w.setDate(w.getDate()+1); const dw=w.getDay(); if(dw!==0&&dw!==6)n++; } return n; } catch(_){ return null; } };
     const _dueOf = function(d){ return (d.isChase && d.dueDate) ? d.dueDate : d.date; };
-    const _shown = sd.filter(function(d){ if(d.isChase && d.dueDate){ const n=_dayCountTo(d.dueDate); return n!=null && n<=3; } return true; });
+    // Marlenyi 2026-08-07 · Today panel is ONLY things due today. Chase items
+    // (early-warning reminders whose real dueDate is 3 days out) were being
+    // included and counted in the "N due" pill — that inflated the number and
+    // put items in the list that weren't actually due today. Past-due items
+    // live in the red Overdue block pinned above the panel, not here.
+    const _shown = sd.filter(function(d){
+      if(d.isChase) return false; // reminders don't belong in Today's count
+      return true;
+    });
     const _isToday = (_selTs === t0);
     const _bigLab = _isToday ? 'Today' : sel.toLocaleDateString('en-US',{weekday:'long'});
     const _subLab = sel.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
@@ -24341,12 +24379,17 @@ Tell me your planned move-out date and I will set the inspection.`
     if(xBtn) xBtn.addEventListener('click', closeOv);
   }
   // Trigger: "Confirm date" link on the CLOSING deadline row opens the modal.
+  // Uses capture phase + stopImmediatePropagation so a parent row's directly-bound
+  // data-cal-open click handler doesn't ALSO fire and open the file drawer behind
+  // the modal. Capture runs BEFORE the row's bubble handler ever sees the click.
   document.addEventListener('click', function(e){
     var trig = e.target && e.target.closest && e.target.closest('[data-confirm-closing-date]');
     if(!trig) return;
     e.preventDefault();
+    e.stopImmediatePropagation();
+    e.stopPropagation();
     _openConfirmClosingDateModal(trig.getAttribute('data-confirm-closing-date'));
-  });
+  }, true);
   // Delegated click handler for the three actions inside the modal chooser.
   // Looks for the .closing-past-actions container (the modal card).
   document.addEventListener('click', async function(e){
