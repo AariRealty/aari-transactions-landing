@@ -15914,28 +15914,76 @@ Tell me your planned move-out date and I will set the inspection.`
 
     var subs = (_invoices || []).filter(function(i){ return i.status === 'submitted'; });
     var paidInv = (_invoices || []).filter(function(i){ return i.status === 'paid'; });
+    // Marlenyi 2026-08-07 · line-item partial pay. Each unpaid line gets a checkbox.
+    // Broker can mark selected paid OR hold selected with a note + snooze date. Held
+    // lines render inline with their reason so both the broker and the reminder see it.
+    // Line state stored inside line_items[]: paid_at / held_at / held_note / snooze_until.
     var invCardHtml = function(i, payable){
+      var _its = (i.line_items || []).slice();
+      var _totalUnpaid = _its.reduce(function(s, it){ return (it && !it.paid_at && !it.covered) ? s + (it.amount_cents || 0) : s; }, 0);
+      var _totalPaidLines = _its.filter(function(it){ return it && it.paid_at; }).reduce(function(s, it){ return s + (it.amount_cents || 0); }, 0);
+      var _lineRow = function(it, idx){
+        var isPaid = !!(it && it.paid_at);
+        var isHeld = !!(it && it.held_at && !isPaid);
+        var isCov  = !!(it && it.covered);
+        // A covered $0 line never needs a checkbox — it's just on-the-record.
+        // A paid line reads muted + struck. Held lines get a red note underneath.
+        var cb = '';
+        if(payable && !isPaid && !isCov){
+          cb = '<input type="checkbox" class="inv-line-cb" data-inv-line="' + esc(i.id) + '|' + idx + '" style="flex:none;margin:2px 8px 0 0;width:15px;height:15px;accent-color:#0f0f0f;cursor:pointer">';
+        }
+        var addr = esc(String((it && it.address) || 'File').split(',')[0]);
+        var svc  = esc((it && it.service) || '');
+        var suffix = isCov ? ' &middot; credit' : '';
+        var money = _money((it && it.amount_cents) || 0);
+        var rowStyle = 'display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:6px 0;border-top:0.5px solid #f0ebe0';
+        if(isCov) rowStyle += ';opacity:.65';
+        if(isPaid) rowStyle += ';opacity:.55';
+        var body = '<span style="font-size:11px;line-height:1.35;min-width:0;flex:1">';
+        if(isPaid) body += '<span style="text-decoration:line-through;color:#8a857c">';
+        body += addr;
+        if(isPaid) body += '</span>';
+        body += '<br><span style="color:#a39e93;font-size:10px">' + svc + suffix;
+        if(isPaid) body += ' &middot; paid ' + esc(new Date(it.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' }));
+        if(isHeld){
+          body += '<br><span style="color:#993c1d;font-weight:600">Held';
+          if(it.held_note) body += ' &middot; ' + esc(it.held_note);
+          if(it.snooze_until) body += ' &middot; snoozed to ' + esc(new Date(String(it.snooze_until).slice(0,10) + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }));
+          body += '</span>';
+        }
+        body += '</span></span>';
+        var amt = '<span style="font-size:11px;white-space:nowrap' + (isCov || isPaid ? ';color:#a39e93' : '') + '">' + money + '</span>';
+        return '<div style="' + rowStyle + '">' + cb + body + amt + '</div>';
+      };
+      // Show every line (not just details toggle) when payable so the broker can pick.
+      var _visible = _its.map(function(it, idx){ return { it: it, idx: idx }; })
+        .filter(function(pair){ return payable || _invDetails || (pair.it && pair.it.covered); });
+      var _rows = _visible.map(function(pair){ return _lineRow(pair.it, pair.idx); }).join('');
+      var _rowsBlock = _rows ? '<div style="margin-top:10px;padding-top:4px;border-top:0.5px solid #f0ebe0">' + _rows + '</div>' : '';
+      var _summary = '<div style="font-size:10.5px;color:#8a857c;margin-top:4px">' + esc(i.invoice_number || '') + ' &middot; ' + _its.length + ' file' + (_its.length === 1 ? '' : 's');
+      if(payable && _totalPaidLines > 0) _summary += ' &middot; <span style="color:#2f6b4f;font-weight:600">' + _money(_totalPaidLines) + ' paid</span>';
+      _summary += '</div>';
+      // The action strip carries three buttons for a partial-pay invoice · mark selected
+      // paid, hold selected, or (fast path) mark all paid. Held lines don't disable the
+      // buttons — the broker can un-hold later by checking them + marking paid.
+      var actions = '';
+      if(payable){
+        actions = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:9px;padding-top:8px;border-top:0.5px solid #f0ebe0">' +
+          '<button type="button" data-inv-pay-selected="' + esc(i.id) + '" style="flex:1 1 auto;background:#0f0f0f;color:#fff;border:0;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">Mark selected paid</button>' +
+          '<button type="button" data-inv-hold-selected="' + esc(i.id) + '" style="flex:1 1 auto;background:#fff;color:#993c1d;border:0.5px solid #f3d9d0;border-radius:6px;padding:7px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">Hold selected&hellip;</button>' +
+          '<button type="button" data-mark-invoice-paid="' + esc(i.id) + '" title="Mark the whole invoice paid" style="flex:none;background:transparent;color:#7a756c;border:0;padding:7px 8px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit">Pay all</button>' +
+        '</div>';
+      } else {
+        actions = '<div style="font-size:10.5px;color:#a39e93;margin-top:8px;padding-top:8px;border-top:0.5px solid #f0ebe0">Paid' + (i.paid_at ? ' ' + esc(new Date(i.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : '') + '</div>';
+      }
       return '<div style="background:#fff;border:0.5px solid #e8e4db;border-radius:10px;padding:13px;margin-bottom:8px">' +
         '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px">' +
         '<span style="font-size:12.5px;font-weight:500">' + esc(_tcDisplayName(i.tc_id).split(' ')[0]) + '</span>' +
-        '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:17px;font-variant-numeric:tabular-nums">' + _money(i.total_cents || 0) + '</span></div>' +
-        '<div style="font-size:10.5px;color:#8a857c;margin-top:4px">' + esc(i.invoice_number || '') + ' &middot; ' + ((i.line_items || []).length) + ' file' + (((i.line_items || []).length) === 1 ? '' : 's') + '</div>' +
-        (function(){
-          // Non-credit rows hide behind the Details toggle; credit rows always render so the
-          // address answers "which credit?" on sight.
-          var _its = i.line_items || [];
-          var _rows = _its.filter(function(it){ return _invDetails || it.covered; }).map(function(it){
-            return '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:6px 0;border-top:0.5px solid #f0ebe0' + (it.covered ? ';opacity:.65' : '') + '">' +
-              '<span style="font-size:11px;line-height:1.35;min-width:0">' + esc(String(it.address || 'File').split(',')[0]) +
-              '<br><span style="color:#a39e93;font-size:10px">' + esc(it.service || '') + (it.covered ? ' &middot; credit' : '') + '</span></span>' +
-              '<span style="font-size:11px;white-space:nowrap' + (it.covered ? ';color:#a39e93' : '') + '">' + _money(it.amount_cents || 0) + '</span></div>';
-          }).join('');
-          return _rows ? '<div style="margin-top:10px;padding-top:4px;border-top:0.5px solid #f0ebe0">' + _rows + '</div>' : '';
-        })() +
-        (payable
-          ? '<button type="button" data-mark-invoice-paid="' + esc(i.id) + '" style="width:100%;background:#0f0f0f;color:#fff;border:0;border-radius:6px;padding:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:9px">Mark paid</button>'
-          : '<div style="font-size:10.5px;color:#a39e93;margin-top:8px;padding-top:8px;border-top:0.5px solid #f0ebe0">Paid' + (i.paid_at ? ' ' + esc(new Date(i.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : '') + '</div>') +
-        '</div>';
+        '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:17px;font-variant-numeric:tabular-nums">' + _money(_totalUnpaid) + '</span></div>' +
+        _summary +
+        _rowsBlock +
+        actions +
+      '</div>';
     };
 
     var toggle = '<label style="margin-left:auto;display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none">' +
@@ -16323,16 +16371,118 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   async function markInvoicePaid(id){
     try {
-      var res = await _client.from('tc_invoices').update({ status:'paid', paid_at:new Date().toISOString(), paid_by:(_profile && _profile.id) || null }).eq('id', id);
+      // Fast path · mark every unpaid line paid + flip invoice to paid. Fetch current
+      // line_items so we don't stomp any held_note the broker might have set earlier.
+      var { data: cur, error: getErr } = await _client.from('tc_invoices').select('line_items').eq('id', id).maybeSingle();
+      if(getErr){ alert('Not saved: ' + getErr.message); return; }
+      var _now = new Date().toISOString();
+      var _who = (_profile && _profile.id) || null;
+      var updated = ((cur && cur.line_items) || []).map(function(it){
+        if(!it || it.paid_at || it.covered) return it;
+        return Object.assign({}, it, { paid_at: _now, paid_by: _who, held_at: null, held_note: null, snooze_until: null });
+      });
+      var res = await _client.from('tc_invoices').update({ status:'paid', paid_at:_now, paid_by:_who, line_items: updated }).eq('id', id);
       if(res.error){ alert('Not saved: ' + res.error.message); return; }
-      // Re-render the INVOICE BOARD (the paid invoice moves Sent -> Paid) + the nav badge.
-      // Was only refreshing the file list, so a successful Mark paid looked like nothing happened.
       await loadInvoices();
       try { renderInvoiceScreen(); } catch(_){}
       try { renderTcCalendar(); } catch(_){}
       try { renderFileList(); } catch(_){}
       try { if(typeof ensureMobileNav === 'function') ensureMobileNav(); } catch(_){}
     } catch(_){ alert('Not saved.'); }
+  }
+  // Marlenyi 2026-08-07 · partial pay. Broker checks specific lines in the invoice card
+  // then hits Mark selected paid. Only those lines flip to paid_at; if every non-covered
+  // line ends up paid the whole invoice's status flips too (so it moves out of the
+  // "Sent · awaiting pay" column). Otherwise the invoice stays 'submitted' with a mix
+  // of paid + held/unpaid lines.
+  function _selectedInvLines(invId){
+    try {
+      var out = [];
+      document.querySelectorAll('.inv-line-cb[data-inv-line^="' + invId + '|"]:checked').forEach(function(cb){
+        var parts = String(cb.getAttribute('data-inv-line') || '').split('|');
+        var n = parseInt(parts[1], 10);
+        if(!isNaN(n)) out.push(n);
+      });
+      return out;
+    } catch(_){ return []; }
+  }
+  async function markInvoiceLinesPaid(invId){
+    var idxs = _selectedInvLines(invId);
+    if(!idxs.length){ alert('Check the lines you want to mark paid first.'); return; }
+    try {
+      var { data: cur, error: getErr } = await _client.from('tc_invoices').select('line_items').eq('id', invId).maybeSingle();
+      if(getErr || !cur){ alert('Not saved: ' + (getErr && getErr.message || 'invoice missing')); return; }
+      var _now = new Date().toISOString();
+      var _who = (_profile && _profile.id) || null;
+      var mark = new Set(idxs);
+      var updated = (cur.line_items || []).map(function(it, idx){
+        if(!mark.has(idx) || !it || it.paid_at || it.covered) return it;
+        return Object.assign({}, it, { paid_at: _now, paid_by: _who, held_at: null, held_note: null, snooze_until: null });
+      });
+      // If EVERY non-covered line is now paid, roll the invoice to 'paid' so it graduates
+      // out of the pending column · Marlenyi's mental model is "invoice fully paid = done".
+      var allPaid = updated.every(function(it){ return !it || it.covered || it.paid_at; });
+      var patch = { line_items: updated };
+      if(allPaid){ patch.status = 'paid'; patch.paid_at = _now; patch.paid_by = _who; }
+      var res = await _client.from('tc_invoices').update(patch).eq('id', invId);
+      if(res.error){ alert('Not saved: ' + res.error.message); return; }
+      await loadInvoices();
+      try { renderInvoiceScreen(); } catch(_){}
+      try { if(typeof ensureMobileNav === 'function') ensureMobileNav(); } catch(_){}
+    } catch(err){ alert('Not saved: ' + (err && err.message || err)); }
+  }
+  async function holdInvoiceLines(invId){
+    var idxs = _selectedInvLines(invId);
+    if(!idxs.length){ alert('Check the lines you want to hold first.'); return; }
+    // Small modal · reason + snooze date. Snooze default = 7 days out (next weekly cycle).
+    var _t0 = new Date(); _t0.setHours(0,0,0,0);
+    var _guess = new Date(_t0.getTime() + 7*86400000);
+    var _pad = function(n){ return String(n).padStart(2,'0'); };
+    var _iso = function(d){ return d.getFullYear() + '-' + _pad(d.getMonth()+1) + '-' + _pad(d.getDate()); };
+    var minIso = _iso(_t0), guessIso = _iso(_guess);
+    var ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,0.45);display:flex;align-items:center;justify-content:center;z-index:99999;padding:20px';
+    ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:420px;width:100%;padding:22px 24px;box-shadow:0 12px 40px rgba(0,0,0,0.25);font-family:inherit">' +
+      '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:20px;font-weight:600;color:#0f0f0f;margin-bottom:6px">Hold ' + idxs.length + ' line' + (idxs.length === 1 ? '' : 's') + '</div>' +
+      '<div style="font-size:12.5px;color:#5f5647;line-height:1.5;margin-bottom:14px">Hold these lines with a reason. The weekly Friday reminder will surface them with your note; a targeted ping fires when the snooze date passes.</div>' +
+      '<label style="display:block;font-size:11px;font-weight:600;color:#7a756c;margin-bottom:4px">Reason</label>' +
+      '<input type="text" id="__hold-note" placeholder="e.g. Waiting on Samantha payment" style="width:100%;padding:9px 10px;border:0.5px solid #d9d1bc;border-radius:8px;font-size:13px;font-family:inherit;margin-bottom:10px">' +
+      '<label style="display:block;font-size:11px;font-weight:600;color:#7a756c;margin-bottom:4px">Remind me on</label>' +
+      '<input type="date" id="__hold-snooze" value="' + esc(guessIso) + '" min="' + esc(minIso) + '" style="width:100%;padding:9px 10px;border:0.5px solid #d9d1bc;border-radius:8px;font-size:14px;font-family:inherit">' +
+      '<div id="__hold-err" style="display:none;font-size:11.5px;color:#a3402f;margin-top:6px"></div>' +
+      '<div style="display:flex;gap:9px;justify-content:flex-end;margin-top:16px">' +
+        '<button type="button" data-hold-cancel="1" style="font-size:12.5px;font-weight:600;color:#5f5e5a;background:#f3f0ea;border:0.5px solid rgba(15,15,15,0.12);border-radius:8px;padding:8px 16px;cursor:pointer;font-family:inherit">Cancel</button>' +
+        '<button type="button" data-hold-save="1" style="font-size:12.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:8px;padding:8px 16px;cursor:pointer;font-family:inherit">Hold ' + idxs.length + '</button>' +
+      '</div></div>';
+    document.body.appendChild(ov);
+    var closeOv = function(){ try { ov.remove(); } catch(_){} };
+    ov.addEventListener('click', function(ev){ if(ev.target === ov) closeOv(); });
+    ov.querySelector('[data-hold-cancel]').addEventListener('click', closeOv);
+    ov.querySelector('[data-hold-save]').addEventListener('click', async function(){
+      var noteEl = document.getElementById('__hold-note');
+      var snEl = document.getElementById('__hold-snooze');
+      var errEl = document.getElementById('__hold-err');
+      var note = (noteEl && noteEl.value || '').trim();
+      var snooze = (snEl && snEl.value || '').trim();
+      if(!note){ errEl.style.display = 'block'; errEl.textContent = 'Add a short reason so future-you remembers.'; return; }
+      if(snooze && snooze < minIso){ errEl.style.display = 'block'; errEl.textContent = 'Snooze date must be today or later.'; return; }
+      this.disabled = true; this.textContent = 'Saving…';
+      try {
+        var { data: cur, error: getErr } = await _client.from('tc_invoices').select('line_items').eq('id', invId).maybeSingle();
+        if(getErr || !cur){ errEl.style.display = 'block'; errEl.textContent = 'Not saved: ' + (getErr && getErr.message || 'invoice missing'); this.disabled = false; this.textContent = 'Hold ' + idxs.length; return; }
+        var _now = new Date().toISOString();
+        var hold = new Set(idxs);
+        var updated = (cur.line_items || []).map(function(it, idx){
+          if(!hold.has(idx) || !it || it.paid_at || it.covered) return it;
+          return Object.assign({}, it, { held_at: _now, held_note: note, snooze_until: snooze || null });
+        });
+        var res = await _client.from('tc_invoices').update({ line_items: updated }).eq('id', invId);
+        if(res.error){ errEl.style.display = 'block'; errEl.textContent = 'Not saved: ' + res.error.message; this.disabled = false; this.textContent = 'Hold ' + idxs.length; return; }
+        closeOv();
+        await loadInvoices();
+        try { renderInvoiceScreen(); } catch(_){}
+      } catch(err){ errEl.style.display = 'block'; errEl.textContent = 'Not saved: ' + (err && err.message || err); this.disabled = false; this.textContent = 'Hold ' + idxs.length; }
+    });
   }
   // Mark an AR bill paid. Same shape as markInvoicePaid but hits at_ar_bills and re-loads
   // that ledger so the Realty Bills section updates in place.
@@ -16350,6 +16500,10 @@ Tell me your planned move-out date and I will set the inspection.`
     if(s){ submitMyInvoice(); return; }
     var m = e.target && e.target.closest && e.target.closest('[data-mark-invoice-paid]');
     if(m){ markInvoicePaid(m.getAttribute('data-mark-invoice-paid')); return; }
+    var mps = e.target && e.target.closest && e.target.closest('[data-inv-pay-selected]');
+    if(mps){ markInvoiceLinesPaid(mps.getAttribute('data-inv-pay-selected')); return; }
+    var mhs = e.target && e.target.closest && e.target.closest('[data-inv-hold-selected]');
+    if(mhs){ holdInvoiceLines(mhs.getAttribute('data-inv-hold-selected')); return; }
     // Realty Bills · mark a single AR bill paid. Optimistic local update, then re-render;
     // reloads at_ar_bills in the background so any concurrent broker session sees fresh state.
     var mb = e.target && e.target.closest && e.target.closest('[data-mark-ar-bill-paid]');
