@@ -258,6 +258,62 @@
   document.getElementById("go-listing").addEventListener("click",function(){ listingStart(); });
   document.getElementById("go-browse").addEventListener("click",function(){ location.href="services.html"; });
   document.getElementById("c-door").addEventListener("click",function(){ show("step-door"); });
+
+  // Marlenyi 2026-08-06 · $50 first-file credit intake. When submit.html loads with
+  // ?promo=CODE (the recipient clicked the "Start a file" button from the thank-you
+  // email), validate the code and stick a warm banner at the top of the flow so the
+  // credit is visible from door → checkout. Passed through to public-submit inside
+  // payload.fields.promo_code · the invoice engine subtracts $50 at close.
+  var __aariPromo = null;
+  function _promoBannerHtml(p){
+    if(!p) return '';
+    if(p.valid){
+      var fromLine = p.sent_by_first
+        ? (p.sent_by_first + ' sent you a $50 credit' + (p.from_property ? ' from your ' + p.from_property + ' closing' : '') + '.')
+        : 'You have a $50 credit ready.';
+      return '<div id="__promo-banner" style="max-width:520px;margin:0 auto 14px;background:linear-gradient(180deg,#eef4ec 0%,#dcebd9 100%);border:0.5px solid #b7d5b1;border-radius:10px;padding:11px 14px">'
+        + '<div style="font-size:9.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:#2f5c3a;margin-bottom:3px">&#10024; Your $50 credit is ready</div>'
+        + '<div style="font-size:12px;color:#2f5c3a;line-height:1.5">' + esc(fromLine) + ' Code <span style="font-family:\'SF Mono\',Menlo,monospace;font-weight:700;letter-spacing:1px;color:#0f0f0f;background:#fff;padding:1px 6px;border-radius:4px;font-size:11px">' + esc(p.code) + '</span> applies at closing when you pick TC coordination.</div>'
+        + '</div>';
+    }
+    // Invalid · softer warn so the user can still proceed without the code.
+    var reasonMsg = ({
+      already_used: 'This code was already used. You can still submit without it.',
+      not_found: 'This code was not recognized. You can still submit without it.',
+      not_recognized: 'This code was not recognized. You can still submit without it.'
+    })[p.reason] || 'This code was not accepted. You can still submit without it.';
+    return '<div id="__promo-banner" style="max-width:520px;margin:0 auto 14px;background:#fbf3f1;border:0.5px solid #ecd6d0;border-radius:10px;padding:11px 14px">'
+      + '<div style="font-size:9.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:#a3402f;margin-bottom:3px">Promo code</div>'
+      + '<div style="font-size:12px;color:#a3402f;line-height:1.5">' + esc(reasonMsg) + '</div>'
+      + '</div>';
+  }
+  function _renderPromoBanner(){
+    var old = document.getElementById('__promo-banner');
+    if(old) old.remove();
+    if(!__aariPromo) return;
+    var host = document.querySelector('.wrap') || document.body;
+    var html = _promoBannerHtml(__aariPromo);
+    if(!html) return;
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    host.insertBefore(tmp.firstChild, host.firstChild);
+  }
+  (function _initPromo(){
+    try {
+      var qs = new URLSearchParams(window.location.search || '');
+      var code = String(qs.get('promo') || '').trim().toUpperCase();
+      if(!code) return;
+      fetch("https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/validate-promo-code", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ code: code })
+      }).then(function(r){ return r.json(); }).then(function(d){
+        __aariPromo = Object.assign({ code: code }, d || {});
+        window.__aariPromo = __aariPromo;
+        _renderPromoBanner();
+      }).catch(function(_){});
+    } catch(_){}
+  })();
   // Listing picker: three listing services, each routes into the standard service order screen.
   function listingStart(){
     var W=document.getElementById("step-listing");
@@ -502,7 +558,15 @@
       }
       if(!termsOK("terms-c","sub-err")) return;
       btn.disabled=true; btn.textContent="Submitting…";
-      var payload={ intent:"contract", pdf_base64:cState.b64, filename:cState.name, side:cState.side, agent_email:(authState.token?authState.email:email), fields:cState.fields, terms_version:TERMS_VERSION, terms_accepted:true };
+      // Marlenyi 2026-08-06 · attach the validated $50 promo code so the invoice
+      // engine can subtract it at close and mark at_promo_codes.redeemed_at.
+      // Only forwarded when validate-promo-code returned {valid:true} on load.
+      var _fields = Object.assign({}, cState.fields || {});
+      if(window.__aariPromo && window.__aariPromo.valid){
+        _fields.promo_code = window.__aariPromo.code;
+        _fields.promo_amount_cents = window.__aariPromo.amount_cents || 5000;
+      }
+      var payload={ intent:"contract", pdf_base64:cState.b64, filename:cState.name, side:cState.side, agent_email:(authState.token?authState.email:email), fields:_fields, terms_version:TERMS_VERSION, terms_accepted:true };
       if(!authState.token){ payload.first_name=first; payload.last_name=last; }
       if(cState.sa && cState.sa.accepted){ payload.sa=cState.sa; }
       fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+(authState.token||SB_KEY) }, body:JSON.stringify(payload) })
