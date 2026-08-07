@@ -14380,10 +14380,20 @@ Tell me your planned move-out date and I will set the inspection.`
     const _isToday = (_calSelDay === t0);
     const _bigLab = _isToday ? 'Today' : sel.toLocaleDateString('en-US', { weekday:'long' });
     const _subLab = sel.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+    // Marlenyi 2026-08-07 · header count = pending only. Done items live in their
+    // own section below so the number matches the "to do" list, not the whole list.
+    const _pendingCount = _shown.filter(function(d){
+      try {
+        const _bk = String(d.key||'').replace(/__chase$/,'');
+        const _st = (typeof _deadlinesByFile !== 'undefined' && _deadlinesByFile[d.fileId]) || {};
+        const _rec = (typeof _dlRecFor === 'function') ? _dlRecFor(_st, _bk) : null;
+        return !(_rec && _rec.completed_at);
+      } catch(_){ return true; }
+    }).length;
     html += '<div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid #ece8e0;padding-bottom:12px;margin-bottom:12px">' +
       '<div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;font-weight:500;line-height:1;color:#0f0f0f">' + esc(_bigLab) + '</div>' +
       '<div style="font-size:11px;color:#8a857c;margin-top:3px;letter-spacing:.02em">' + esc(_subLab) + '</div></div>' +
-      '<span style="flex:none;font-size:11px;font-weight:600;color:#8a857c;white-space:nowrap">' + _shown.length + ' due</span>' +
+      '<span style="flex:none;font-size:11px;font-weight:600;color:#8a857c;white-space:nowrap">' + _pendingCount + ' due</span>' +
     '</div>';
     // Side of a file · buyer/seller/not set. The calendar is sale-only, so listings never reach here.
     const _sideOf = function(d){
@@ -14414,13 +14424,32 @@ Tell me your planned move-out date and I will set the inspection.`
       } catch(_){ done = false; }
       // Right-side day bubble · "Due today" is the urgent one (bold dark pill); the countdown
       // is a soft gold pill. Done swaps in a green pill.
+      // Marlenyi 2026-08-07 · a CLOSING row on an auto-rolled file (closing_date silently moved
+      // forward to today) shows the real overdue count computed from the ORIGINAL scheduled date
+      // — otherwise it would read "Due today" when it's actually X days overdue.
       let bubble = '';
+      let _bubbleN = n;
+      try {
+        if(!isChase && /clos/.test(String(d.key || ''))){
+          const _f = (_files || []).find(function(x){ return x.id === d.fileId; });
+          const _rolledFrom = _f && _f.raw_form_data && _f.raw_form_data.closing_date_auto_rolled_from;
+          if(_rolledFrom){
+            const _orig = new Date(String(_rolledFrom).slice(0,10) + 'T12:00:00'); _orig.setHours(0,0,0,0);
+            _bubbleN = _dayCountTo(_orig);
+          }
+        }
+      } catch(_){}
       if(done){
         bubble = '<span style="flex:none;font-size:10px;font-weight:600;color:#2f6b4f;background:#e8f3ec;border:0.5px solid #cfe4d6;border-radius:20px;padding:3px 11px;white-space:nowrap">Done &#10003;</span>';
-      } else if(n != null){
-        bubble = (n <= 0)
-          ? '<span style="flex:none;font-size:10px;font-weight:700;color:#993c1d;background:#faece7;border:0.5px solid #f3d9d0;border-radius:20px;padding:3px 11px;white-space:nowrap">Due today</span>'
-          : '<span style="flex:none;font-size:10px;font-weight:600;color:#8a6d1b;background:#faf3e6;border:0.5px solid #ecdfc4;border-radius:20px;padding:3px 11px;white-space:nowrap">Due in ' + n + ' day' + (n === 1 ? '' : 's') + '</span>';
+      } else if(_bubbleN != null){
+        if(_bubbleN < 0){
+          const late = Math.abs(_bubbleN);
+          bubble = '<span style="flex:none;font-size:10px;font-weight:700;color:#993c1d;background:#faece7;border:0.5px solid #f3d9d0;border-radius:20px;padding:3px 11px;white-space:nowrap">' + late + ' day' + (late === 1 ? '' : 's') + ' overdue</span>';
+        } else if(_bubbleN === 0){
+          bubble = '<span style="flex:none;font-size:10px;font-weight:700;color:#993c1d;background:#faece7;border:0.5px solid #f3d9d0;border-radius:20px;padding:3px 11px;white-space:nowrap">Due today</span>';
+        } else {
+          bubble = '<span style="flex:none;font-size:10px;font-weight:600;color:#8a6d1b;background:#faf3e6;border:0.5px solid #ecdfc4;border-radius:20px;padding:3px 11px;white-space:nowrap">Due in ' + _bubbleN + ' day' + (_bubbleN === 1 ? '' : 's') + '</span>';
+        }
       }
       // Pastel side pills · buyer cream, seller sage, not-set soft gold — all distinct.
       const tagCol = side==='buyer' ? '#5f5e5a' : side==='seller' ? '#085041' : '#8a6d1b';
@@ -14431,9 +14460,27 @@ Tell me your planned move-out date and I will set the inspection.`
         bubble +
       '</div>';
     };
-    html += _shown.length
-      ? _shown.map(_listRow).join('')
-      : '<div style="font-size:12px;color:#a39e95;padding:9px 0 2px">' + (_isToday ? 'Nothing due in the next 3 days. You’re ahead.' : 'Nothing due this day.') + '</div>';
+    // Marlenyi 2026-08-07 · split into pending + done so "already checked off" items
+    // don't sit intermixed with real to-dos. Pending renders under the day header;
+    // done items collect under their own "Done" section with a small header + a count.
+    const _isDoneItem = function(d){
+      try {
+        const _bk = String(d.key||'').replace(/__chase$/,'');
+        const _st = (typeof _deadlinesByFile !== 'undefined' && _deadlinesByFile[d.fileId]) || {};
+        const _rec = (typeof _dlRecFor === 'function') ? _dlRecFor(_st, _bk) : null;
+        return !!(_rec && _rec.completed_at);
+      } catch(_){ return false; }
+    };
+    const _shownPending = _shown.filter(function(d){ return !_isDoneItem(d); });
+    const _shownDone    = _shown.filter(function(d){ return  _isDoneItem(d); });
+    if(_shownPending.length){
+      html += _shownPending.map(_listRow).join('');
+    } else if(!_shownDone.length){
+      html += '<div style="font-size:12px;color:#a39e95;padding:9px 0 2px">' + (_isToday ? 'Nothing due in the next 3 days. You’re ahead.' : 'Nothing due this day.') + '</div>';
+    }
+    if(_shownDone.length){
+      html += '<div style="font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#a99a78;margin:16px 0 2px">Done &middot; ' + _shownDone.length + '</div>' + _shownDone.map(_listRow).join('');
+    }
     html += '</div></div></div>';
     host.innerHTML = html; _wireCal(host);
   }
