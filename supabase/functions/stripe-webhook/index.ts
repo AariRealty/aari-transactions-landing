@@ -1,27 +1,34 @@
 // ============================================================================
-// Aari Transactions · stripe-webhook (v33 · 2026-08-07)
+// Aari Transactions · stripe-webhook (v36 · 2026-08-07)
 // ============================================================================
-// Listens for checkout.session.completed. Matches the payment to the file via
-// metadata.file_id (preferred) or client_reference_id (what the intake appends
-// to the payment links). Flips payment_pending -> payment_confirmed and pings
-// the TC notification function (best-effort).
+// Handles Stripe events for BOTH sides of the business:
+//   1. checkout.session.completed  · one-time file payments (flip
+//      payment_pending -> payment_confirmed) AND the first subscription
+//      checkout (capture stripe_customer_id + stripe_subscription_id onto the
+//      agent's membership so self-serve management can act on it).
+//   2. Subscription lifecycle (memberships) · keeps status + billing-period
+//      dates in sync so recurring renewals, cancellations, and status changes
+//      are recorded. Matched by stripe_subscription_id.
+//        · customer.subscription.updated / .created · sync period + status
+//        · customer.subscription.deleted            · status = cancelled
+//        · invoice.paid                             · renewal paid -> active
+//      Credits are intentionally NOT touched here: the app computes each
+//      cycle's credits at read-time from current_period_start, so keeping that
+//      date correct is all the webhook owes it.
+//      A failed payment (invoice.payment_failed) is acknowledged but does NOT
+//      change status — Stripe retries, and if it ultimately fails Stripe fires
+//      subscription.deleted, which marks the member cancelled. This avoids
+//      locking out a paying member over a temporary card hiccup (Marlenyi Aug 7).
 //
 // Secrets required (Dashboard -> Edge Functions -> Secrets):
 //   STRIPE_WEBHOOK_SECRET  · signing secret from the Stripe webhook endpoint
 //
-// Stripe dashboard setup (Marlenyi):
-//   Developers -> Webhooks -> Add endpoint
-//   URL: https://<project-ref>.supabase.co/functions/v1/stripe-webhook
-//   Event: checkout.session.completed
-//
 // **verify_jwt MUST BE false** — Stripe cannot send Supabase JWTs, so with JWT
 // verification on the edge runtime rejects every event as 401 before this file
-// runs. That's the bug Marlenyi hit on 2026-08-06: Stripe emailed her that
-// deliveries were failing for the past week. Authenticity is protected by
-// verifyStripeSignature() below, which HMAC-checks each event against
-// STRIPE_WEBHOOK_SECRET before touching the DB. Re-deploy this function via
-// the MCP deploy_edge_function tool with verify_jwt=false, NOT via any path
-// that defaults to true.
+// runs. Authenticity is protected by verifyStripeSignature() below, which
+// HMAC-checks each event against STRIPE_WEBHOOK_SECRET. Re-deploy via the MCP
+// deploy_edge_function tool with verify_jwt=false, NOT via any path that
+// defaults to true.
 // ============================================================================
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -64,6 +71,24 @@ async function verifyStripeSignature(body: string, header: string | null): Promi
   return diff === 0;
 }
 
+function json(payload: unknown): Response {
+  return new Response(JSON.stringify(payload), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+// Stripe subscription.status -> membership.status. Returns null for states we
+// don't want to write (past_due / unpaid / incomplete) so we never overwrite a
+// known status with an unrecognized one — dates still sync, status is left be.
+function mapSubStatus(s: string): string | null {
+  if (s === "active" || s === "trialing") return "active";
+  if (s === "paused") return "paused";
+  if (s === "canceled") return "cancelled";
+  return null;
+}
+
+function tsToIso(v: unknown): string | null {
+  return typeof v === "number" && v > 0 ? new Date(v * 1000).toISOString() : null;
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("ok", { status: 200 });
   const body = await req.text();
@@ -73,11 +98,69 @@ Deno.serve(async (req) => {
   let event: { type?: string; data?: { object?: Record<string, unknown> } };
   try { event = JSON.parse(body); } catch { return new Response("bad json", { status: 400 }); }
 
-  if (event.type !== "checkout.session.completed") {
-    return new Response(JSON.stringify({ received: true, ignored: event.type }), { status: 200 });
+  const type = event.type || "";
+  const obj = (event.data?.object ?? {}) as Record<string, unknown>;
+  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
+
+  // ---- Subscription lifecycle (memberships) --------------------------------
+  if (type === "customer.subscription.updated" || type === "customer.subscription.created") {
+    const subId = (obj.id as string | undefined) || "";
+    if (!subId) return json({ received: true, ignored: type, reason: "no subscription id" });
+    const patch: Record<string, unknown> = {};
+    // Newer Stripe API versions (2025+) moved current_period_start/end off the
+    // subscription and onto each line item. Read the top level first (older
+    // versions), then fall back to the first item (2026-04-22.dahlia).
+    const item0 = ((((obj.items as Record<string, unknown> | undefined)?.data) as Record<string, unknown>[] | undefined) || [])[0] || {};
+    const cps = tsToIso(obj.current_period_start ?? item0.current_period_start);
+    const cpe = tsToIso(obj.current_period_end ?? item0.current_period_end);
+    if (cps) patch.current_period_start = cps;
+    if (cpe) { patch.current_period_end = cpe; patch.next_renewal_at = cpe; }
+    const st = mapSubStatus(String(obj.status || ""));
+    if (st) {
+      patch.status = st;
+      if (st === "cancelled") patch.cancelled_at = new Date().toISOString();
+    }
+    if (Object.keys(patch).length) {
+      const r = await supabase.from("memberships").update(patch).eq("stripe_subscription_id", subId);
+      if (r.error) console.error("[stripe-webhook] subscription sync failed", r.error.message);
+    }
+    return json({ received: true, subscription_synced: subId });
   }
 
-  const session = (event.data?.object ?? {}) as Record<string, unknown>;
+  if (type === "customer.subscription.deleted") {
+    const subId = (obj.id as string | undefined) || "";
+    if (subId) {
+      const r = await supabase.from("memberships")
+        .update({ status: "cancelled", cancelled_at: new Date().toISOString() })
+        .eq("stripe_subscription_id", subId);
+      if (r.error) console.error("[stripe-webhook] cancel sync failed", r.error.message);
+    }
+    return json({ received: true, subscription_deleted: subId });
+  }
+
+  if (type === "invoice.paid") {
+    // A recurring charge succeeded. The following subscription.updated event
+    // carries the new period; here we just make sure the member reads active
+    // (unless they've been cancelled). Credits are handled by the app's cycle
+    // logic off current_period_start, so nothing to reset here.
+    const subId = (obj.subscription as string | undefined) || "";
+    if (subId) {
+      const r = await supabase.from("memberships")
+        .update({ status: "active" })
+        .eq("stripe_subscription_id", subId)
+        .neq("status", "cancelled");
+      if (r.error) console.error("[stripe-webhook] invoice.paid sync failed", r.error.message);
+    }
+    return json({ received: true, invoice_paid: subId });
+  }
+
+  // ---- Checkout (one-time file payment OR first subscription checkout) ------
+  if (type !== "checkout.session.completed") {
+    // invoice.payment_failed and everything else: acknowledge, no DB change.
+    return json({ received: true, ignored: type });
+  }
+
+  const session = obj;
   const meta = (session.metadata ?? {}) as Record<string, string>;
   const fileId = meta.file_id || (session.client_reference_id as string | undefined) || "";
 
@@ -91,7 +174,6 @@ Deno.serve(async (req) => {
     const email = (details.email as string | undefined) || (session.customer_email as string | undefined) || "";
     if (subscription && email) {
       try {
-        const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
         const ag = await supabase.from("agents").select("id").ilike("email", email).maybeSingle();
         const agentId = ag.data?.id;
         if (agentId) {
@@ -104,14 +186,12 @@ Deno.serve(async (req) => {
         console.warn("[stripe-webhook] membership id capture failed", e);
       }
     }
-    return new Response(JSON.stringify({ received: true, matched: false, membership: !!subscription }), { status: 200 });
+    return json({ received: true, matched: false, membership: !!subscription });
   }
 
   // Stripe gives amount_total in the smallest currency unit (cents for USD).
-  // Capture it so the agent's Billing view can show the real amount charged.
   const amountTotal = typeof session.amount_total === "number" ? session.amount_total : null;
 
-  const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
   const upd = await supabase
     .from("files")
     .update({
@@ -125,7 +205,7 @@ Deno.serve(async (req) => {
 
   if (upd.error) {
     console.error("[stripe-webhook] update failed", upd.error.message);
-    return new Response(JSON.stringify({ received: true, updated: false }), { status: 200 });
+    return json({ received: true, updated: false });
   }
 
   // Best-effort TC ping · payment confirmed, file is ready to work.
@@ -139,5 +219,5 @@ Deno.serve(async (req) => {
     console.warn("[stripe-webhook] TC ping failed (payment still confirmed)", e);
   }
 
-  return new Response(JSON.stringify({ received: true, updated: !!upd.data }), { status: 200 });
+  return json({ received: true, updated: !!upd.data });
 });
