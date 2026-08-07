@@ -23210,20 +23210,48 @@ Tell me your planned move-out date and I will set the inspection.`
         : t.emailGate.requiresLogistics
           ? !((file.logistics || {})[t.emailGate.requiresLogistics])
           : !(done[t.emailGate.requires] || ((file.logistics || {}).contacts_confirmed_at))));
-      emailHtml = '<div class="ck-emails">' + ems.map(e => {
+      // Marlenyi 2026-08-07 · slim pill design (option A from the mock). Every email
+      // becomes an inline pill labelled with just the recipient (last segment of
+      // "Closing confirmation · title" → "Title"). Multiple recipients render side
+      // by side and scroll sideways instead of stacking tall. Tap opens the drafted
+      // email card inline, same behavior as before via data-open-email.
+      const _shortPill = function(lbl){
+        const s = String(lbl || '').trim();
+        const i = s.lastIndexOf('·');
+        const tail = i >= 0 ? s.slice(i + 1).trim() : s;
+        return tail.charAt(0).toUpperCase() + tail.slice(1);
+      };
+      const _pillBase = 'flex:none;display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer;font-family:inherit;transition:background .1s';
+      const _pillStyle = 'background:#faf7ef;border:0.5px solid #e6dfcd;color:#5f5647';
+      const _pillSentStyle = 'background:#eef4ec;border:0.5px solid #cbdcc9;color:#2f5c3a';
+      const _pillDisabledStyle = 'background:#f5f2ea;border:0.5px solid #e6dfcd;color:#a39e93;opacity:.55;cursor:not-allowed';
+      const _pillsHtml = ems.map(e => {
         const sent = sends[e.id];
+        const _lbl = _shortPill(e.label);
         if(_emGate){
-          const _gnote = _ctHold ? 'Upload the executed contract before this goes out. The file in the contract slot does not read as a contract.' : (t.emailGate && t.emailGate.note);
-          return '<button type="button" class="ck-send" disabled aria-disabled="true" style="opacity:.45;cursor:not-allowed">Send &middot; ' + esc(e.label) + '</button>' +
-            '<div class="ck-sub" style="margin:3px 0 8px;color:#a08a5a">' + esc(_gnote) + '</div>';
+          return '<button type="button" style="' + _pillBase + ';' + _pillDisabledStyle + '" disabled aria-disabled="true"><span style="font-size:10px;opacity:.7">&#9993;</span>' + esc(_lbl) + '</button>';
         }
-        return '<button type="button" class="ck-send' + (sent ? ' sent' : '') + '" data-open-email="' + esc(e.id) + '">' +
-            (sent ? '&check; Sent · ' : 'Send · ') + esc(e.label) +
-          '</button>' +
-          '<div class="ck-email" id="ck-email-' + esc(e.id) + '" style="display:none">' +
-            buildEmailCardHtml(e, _drawerFile, _drawerAgent, sends) +
-          '</div>';
-      }).join('') + '</div>';
+        return '<button type="button" class="ck-send' + (sent ? ' sent' : '') + '" style="' + _pillBase + ';' + (sent ? _pillSentStyle : _pillStyle) + '" data-open-email="' + esc(e.id) + '">' +
+          '<span style="font-size:10px;opacity:.7">' + (sent ? '&check;' : '&#9993;') + '</span>' + esc(_lbl) +
+        '</button>';
+      }).join('');
+      // If the whole task is gated, tack on the gate note under the disabled pills.
+      const _gateNoteHtml = (_emGate && (function(){
+        const _gnote = _ctHold ? 'Upload the executed contract before this goes out. The file in the contract slot does not read as a contract.' : (t.emailGate && t.emailGate.note);
+        return _gnote ? '<div class="ck-sub" style="margin:5px 0 0;color:#a08a5a">' + esc(_gnote) + '</div>' : '';
+      })()) || '';
+      // Each email's inline card (drafted email) lives BELOW the pill strip. Same
+      // data-open-email handler toggles display; multiple can be open at once.
+      const _cardsHtml = ems.map(e => {
+        return '<div class="ck-email" id="ck-email-' + esc(e.id) + '" style="display:none;margin-top:8px">' +
+          buildEmailCardHtml(e, _drawerFile, _drawerAgent, sends) +
+        '</div>';
+      }).join('');
+      emailHtml = '<div class="ck-emails">'
+        + '<div style="display:flex;flex-wrap:nowrap;gap:5px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch">' + _pillsHtml + '</div>'
+        + _gateNoteHtml
+        + _cardsHtml
+      + '</div>';
     }
 
     // Logistics fields this task needs — asked inline, no separate section.
@@ -26244,11 +26272,25 @@ Tell me your planned move-out date and I will set the inspection.`
     if(standaloneEmails.length){
       emailsEl.style.display = '';
       // Collapsed behind a Send button (click to open), same as task emails — never open by default.
-      emailsEl.innerHTML = '<div class="ck-emails" style="margin-left:0">' + standaloneEmails.map(e => {
+      // Marlenyi 2026-08-07 · same slim-pill design as task-tied emails above.
+      // Recipient-only label, horizontal scroll strip, inline cards below.
+      const _stShort = function(lbl){ const s = String(lbl || '').trim(); const i = s.lastIndexOf('·'); const tail = i >= 0 ? s.slice(i + 1).trim() : s; return tail.charAt(0).toUpperCase() + tail.slice(1); };
+      const _stBase = 'flex:none;display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:3px 9px;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer;font-family:inherit;transition:background .1s';
+      const _stPillStyle = 'background:#faf7ef;border:0.5px solid #e6dfcd;color:#5f5647';
+      const _stSentStyle = 'background:#eef4ec;border:0.5px solid #cbdcc9;color:#2f5c3a';
+      const _stPills = standaloneEmails.map(e => {
         const _es = sends[e.id];
-        return '<button type="button" class="ck-send' + (_es ? ' sent' : '') + '" data-open-email="' + esc(e.id) + '">' + (_es ? '&check; Sent · ' : 'Send · ') + esc(e.label) + '</button>' +
-          '<div class="ck-email" id="ck-email-' + esc(e.id) + '" style="display:none">' + buildEmailCardHtml(e, file, agent, sends) + '</div>';
-      }).join('') + '</div>';
+        return '<button type="button" class="ck-send' + (_es ? ' sent' : '') + '" style="' + _stBase + ';' + (_es ? _stSentStyle : _stPillStyle) + '" data-open-email="' + esc(e.id) + '">'
+          + '<span style="font-size:10px;opacity:.7">' + (_es ? '&check;' : '&#9993;') + '</span>' + esc(_stShort(e.label))
+        + '</button>';
+      }).join('');
+      const _stCards = standaloneEmails.map(e => {
+        return '<div class="ck-email" id="ck-email-' + esc(e.id) + '" style="display:none;margin-top:8px">' + buildEmailCardHtml(e, file, agent, sends) + '</div>';
+      }).join('');
+      emailsEl.innerHTML = '<div class="ck-emails" style="margin-left:0">'
+        + '<div style="display:flex;flex-wrap:nowrap;gap:5px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch">' + _stPills + '</div>'
+        + _stCards
+      + '</div>';
       if(_emCount){ _emCount.style.display = ''; _emCount.textContent = 'Other emails · ' + standaloneEmails.length + ' not tied to a task'; }
     } else {
       // Every email is attached to a task — hide the separate list entirely so
