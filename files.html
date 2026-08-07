@@ -11345,7 +11345,16 @@ Tell me your planned move-out date and I will set the inspection.`
       if(/clos/.test(k)) return 'Closing'; if(/lease|tenant/.test(k)) return 'Lease'; return 'Date'; };
     var pill = function(p){
       var n = daysTo(p.date);
-      var txt = (n < 0) ? (Math.abs(n) + 'd late') : (n === 0 ? 'Due today' : (n <= 3 ? 'In ' + n + ' day' + (n === 1 ? '' : 's') : fmt(p.date)));
+      // Marlenyi 2026-08-07 · CLOSING row on an auto-rolled file · use the ORIGINAL
+      // date for the pill, so it reads the real "X days overdue" instead of "Due
+      // today" from the rolled date.
+      if(/clos/.test(String(p.key || '')) && file && file.raw_form_data && file.raw_form_data.closing_date_auto_rolled_from){
+        try {
+          var _od = new Date(String(file.raw_form_data.closing_date_auto_rolled_from).slice(0,10) + 'T12:00:00');
+          if(!isNaN(_od.getTime())) n = daysTo(_od);
+        } catch(_){}
+      }
+      var txt = (n < 0) ? (Math.abs(n) + ' day' + (n === -1 ? '' : 's') + ' overdue') : (n === 0 ? 'Due today' : (n <= 3 ? 'In ' + n + ' day' + (n === 1 ? '' : 's') : fmt(p.date)));
       var col = (n <= 0) ? '#f7ece8;color:#a3402f' : (n <= 3 ? '#fbf3e2;color:#8a6d1b' : '#f1efe8;color:#8a857c');
       return '<span style="flex:none;font-size:10.5px;font-weight:700;border-radius:999px;padding:4px 10px;background:' + col + '">' + txt + '</span>';
     };
@@ -13445,14 +13454,27 @@ Tell me your planned move-out date and I will set the inspection.`
         try { const d = new Date(String(iso).slice(0,10) + 'T12:00:00'); return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; }
       };
       const unit = function(x){
-        const cd = x.days === 0 ? 'today' : (x.days === 1 ? 'tomorrow' : x.days + ' days');
-        const col = x.days <= 3 ? '#a3402f' : '#7a756c';
-        // A rolled tile gets a red left rail + a tiny "was Aug 6" line so the TC sees at a glance
-        // this needs their confirmation. Cheap visual, no extra section.
-        const rolledStyle = x.rolledFrom ? ';border-left:2.5px solid #993c1d' : '';
-        const rolledNote  = x.rolledFrom ? '<div style="font-size:9px;color:#993c1d;font-weight:600;margin-top:2px;letter-spacing:0.15px">was ' + esc(fmtFrom(x.rolledFrom)) + ' · confirm</div>' : '';
+        // Marlenyi 2026-08-07 · rolled tile shows the REAL overdue count computed
+        // from the original scheduled date, not "today" from the rolled date. Keeps
+        // the pipeline slot but tells the truth about how late the closing is.
+        let cd, col, dateLine;
+        if(x.rolledFrom){
+          try {
+            const orig = new Date(String(x.rolledFrom).slice(0,10) + 'T12:00:00'); orig.setHours(0,0,0,0);
+            const lateBy = Math.round((today - orig) / 86400000);
+            cd = lateBy + ' day' + (lateBy === 1 ? '' : 's') + ' overdue';
+          } catch(_){ cd = 'overdue'; }
+          col = '#993c1d';
+          dateLine = fmt(new Date(String(x.rolledFrom).slice(0,10) + 'T12:00:00'));
+        } else {
+          cd = x.days === 0 ? 'today' : (x.days === 1 ? 'tomorrow' : x.days + ' days');
+          col = x.days <= 3 ? '#a3402f' : '#7a756c';
+          dateLine = fmt(x.date);
+        }
+        const rolledStyle = x.rolledFrom ? ';border-left:2.5px solid #993c1d;background:#fdf6f4' : '';
+        const rolledNote  = x.rolledFrom ? '<div style="font-size:9px;color:#993c1d;font-weight:600;margin-top:2px;letter-spacing:0.15px">tap to confirm</div>' : '';
         return '<div data-cal-open="' + esc(x.f.id) + '" style="flex:0 0 auto;cursor:pointer;background:transparent;border:0.5px solid rgba(15,15,15,0.10);border-radius:7px;padding:6px 9px' + rolledStyle + '">' +
-          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f;line-height:1">' + fmt(x.date) + '</div>' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f;line-height:1">' + dateLine + '</div>' +
           '<div style="font-size:11px;color:#3d3a34;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.addr) + '</div>' +
           '<div style="font-size:9.5px;color:' + col + ';font-weight:600;margin-top:1px;letter-spacing:0.2px">' + cd + '</div>' +
           rolledNote +
@@ -25015,16 +25037,26 @@ Tell me your planned move-out date and I will set the inspection.`
           '<span style="flex:none;font-size:10.5px;font-weight:700;color:#2f7a4f">&#10003; done</span></div>';
       }
       var n = _dlDays(p.date);
-      var txt = (n < 0) ? (Math.abs(n) + 'd late') : (n === 0 ? 'Due today' : (n <= 3 ? 'In ' + n + ' day' + (n === 1 ? '' : 's') : p.date.toLocaleDateString('en-US', { month:'short', day:'numeric' })));
+      // Marlenyi 2026-08-07 · when this is the CLOSING row on an auto-rolled file
+      // (closing_date silently moved forward to today by autoRollPastClosings),
+      // compute the pill from the ORIGINAL scheduled date instead of the rolled
+      // one — otherwise it would read "Due today" when it's actually X days
+      // overdue. The visible truth stays truthful; the pipeline position rolls.
+      var _isClosingRow = /clos/.test(String(p.key || ''));
+      var _rolledFrom = _isClosingRow && file && file.raw_form_data && file.raw_form_data.closing_date_auto_rolled_from;
+      if(_rolledFrom){
+        try {
+          var _origDate = new Date(String(_rolledFrom).slice(0,10) + 'T12:00:00');
+          if(!isNaN(_origDate.getTime())) n = _dlDays(_origDate);
+        } catch(_){}
+      }
+      var txt = (n < 0) ? (Math.abs(n) + ' day' + (n === -1 ? '' : 's') + ' overdue') : (n === 0 ? 'Due today' : (n <= 3 ? 'In ' + n + ' day' + (n === 1 ? '' : 's') : p.date.toLocaleDateString('en-US', { month:'short', day:'numeric' })));
       var col = (n <= 0) ? '#f7ece8;color:#a3402f' : (n <= 3 ? '#fbf3e2;color:#8a6d1b' : '#f1efe8;color:#8a857c');
       var _tagH = '<span style="flex:none;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border-radius:4px;padding:2px 6px;color:#3d6b4d;background:#eef1ee">' + esc(_tg) + '</span>';
-      // Marlenyi 2026-08-07 · when this is the CLOSING deadline row and the
-      // file needs a date confirmation (past-due OR auto-rolled to today), tack
-      // a "Confirm date →" button to the right. confirmClosingDateLinkHtml
-      // gates on _shouldShowConfirmDateLink so it silently no-ops when nothing
-      // needs confirming. Clicking opens the 3-option modal.
+      // Closing row on a file that needs a date confirmation (past-due OR auto-rolled)
+      // gets a "Confirm date →" button to open the 3-option modal.
       var _confirmBtn = '';
-      if(/clos/.test(String(p.key || ''))){
+      if(_isClosingRow){
         try { _confirmBtn = confirmClosingDateLinkHtml(file); } catch(_){ _confirmBtn = ''; }
       }
       return '<div class="ck-task adhd-task" style="display:flex;align-items:center;gap:11px;padding:11px 0;border-top:0.5px solid #f2eee2">' +
