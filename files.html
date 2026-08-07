@@ -8164,6 +8164,18 @@ Tell me your planned move-out date and I will set the inspection.`
       return;
     }
     showKanbanSkeleton(); // visual cue while the query runs
+    // Marlenyi 2026-08-07 · hard timeout: if the skeleton is still showing 15
+    // seconds after we started, something upstream hung silently — flip to the
+    // error state so she never sits on gray placeholders forever.
+    var _skeletonWatchdog = setTimeout(function(){
+      try {
+        var k = document.getElementById('kanban');
+        if(k && k.querySelector('.sk-card')){
+          console.error('kanban skeleton still visible after 15s · showing error state');
+          _showKanbanErrorState('Loading is taking longer than usual.');
+        }
+      } catch(_){}
+    }, 15000);
     // Effective role: is_tc=true acts as 'tc' for file scoping, so a
     // dual agent+TC sees TC files here. Broker is unchanged (sees all).
     const rawRole = (_profile.role || '').toLowerCase();
@@ -8188,6 +8200,7 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(e){ filesErr = e; }
     if(filesErr){
       console.error('files load failed', filesErr);
+      try { clearTimeout(_skeletonWatchdog); } catch(_){}
       _showKanbanErrorState('We couldn’t load your files.');
       return;
     }
@@ -8207,24 +8220,33 @@ Tell me your planned move-out date and I will set the inspection.`
     // no-ops the banner, task lock, card badge, drag gate and briefing row.
     // Pull TCs once for everyone · cards show the assigned TC, brokers also
     // get the filter dropdown.
+    // Marlenyi 2026-08-07 · every await in this block is wrapped. Before,
+    // a cold Supabase connection or transient RLS reject on ANY of these
+    // three roster loads used to throw uncaught and abort loadAndRender
+    // right here — after the skeleton was drawn but BEFORE renderKanban
+    // ran, leaving Marlenyi staring at gray placeholders forever on refresh.
     if(Object.keys(_tcsById).length === 0){
       // Include brokers too · the broker can be the assigned coordinator on her own files,
       // so she shows up in the TC filter and her files resolve a coordinator name.
-      const { data: tcs, error: _tcsErr } = await _client.from('agents').select('id, first_name, last_name, email, role, gcal_calendar_id').in('role',['tc','broker']);
-      // Silent-failure guard · if this load fails _tcsById stays empty, every file resolves its
-      // coordinator to the AT_TC_PCT default, and every pay figure on the board quietly renders
-      // at 40% with nothing on screen looking wrong. Never swallow it. (Bucket 1 bug class.)
-      if(_tcsErr) console.error('agents roster load failed · coordinator names + pay % fall back to the ' + AT_TC_PCT + '% default', _tcsErr);
-      (tcs || []).forEach(t => { _tcsById[t.id] = t; });
+      try {
+        const { data: tcs, error: _tcsErr } = await _client.from('agents').select('id, first_name, last_name, email, role, gcal_calendar_id').in('role',['tc','broker']);
+        // Silent-failure guard · if this load fails _tcsById stays empty, every file resolves its
+        // coordinator to the AT_TC_PCT default, and every pay figure on the board quietly renders
+        // at 40% with nothing on screen looking wrong. Never swallow it. (Bucket 1 bug class.)
+        if(_tcsErr) console.error('agents roster load failed · coordinator names + pay % fall back to the ' + AT_TC_PCT + '% default', _tcsErr);
+        (tcs || []).forEach(t => { _tcsById[t.id] = t; });
+      } catch(e){ console.error('agents roster load threw · continuing with empty roster', e); }
       // Pay rates are SENSITIVE and live in their own row-secured table (tc_pay_rates), never on
       // agents: a TC only ever receives their OWN rate, the broker receives all. Merged onto the
       // roster here so tcPctFor() keeps reading tc.tc_pay_pct unchanged. An absent row = the
       // AT_TC_PCT default. If this load fails every figure silently falls back to the default,
       // so it is checked loudly rather than swallowed.
-      const { data: rates, error: _rateErr } = await _client.from('tc_pay_rates').select('tc_id, pct');
-      if(_rateErr) console.error('tc_pay_rates load failed · pay % falls back to the ' + AT_TC_PCT + '% default', _rateErr);
-      (rates || []).forEach(r => { if(_tcsById[r.tc_id]) _tcsById[r.tc_id].tc_pay_pct = r.pct; });
-      if(role === 'broker') renderTcFilter();
+      try {
+        const { data: rates, error: _rateErr } = await _client.from('tc_pay_rates').select('tc_id, pct');
+        if(_rateErr) console.error('tc_pay_rates load failed · pay % falls back to the ' + AT_TC_PCT + '% default', _rateErr);
+        (rates || []).forEach(r => { if(_tcsById[r.tc_id]) _tcsById[r.tc_id].tc_pay_pct = r.pct; });
+      } catch(e){ console.error('tc_pay_rates load threw · pay % falls back to default', e); }
+      if(role === 'broker'){ try { renderTcFilter(); } catch(e){ console.warn('renderTcFilter failed', e); } }
 
       // ===== THE PEOPLE FILES BELONG TO =====
       // _agentNameById was declared "for SA briefing rows" and then NEVER ASSIGNED. Dead since it
@@ -8235,19 +8257,21 @@ Tell me your planned move-out date and I will set the inspection.`
       // COORDINATOR on a card. This one answers a different question: whose file is this. Both are
       // needed, so both are loaded, and this one is checked rather than swallowed, because an
       // empty picker sends a coordinator straight back to guessing.
-      const { data: _ppl, error: _pplErr } = await _client.from('agents')
-        .select('id, first_name, last_name, email, role, brokerage_name, merged_into, default_confidential_remarks, tc_may_email_client, tc_may_publish_mls, tc_may_order_paid').in('role', ['agent','tc','broker']);
-      if(_pplErr) console.error('agent roster load failed · the New file picker will be empty and file ownership cannot be set', _pplErr);
-      (_ppl || []).forEach(a => {
-        if(a.merged_into) return; // merged duplicates never show in any picker
-        const nm = [a.first_name, a.last_name].filter(Boolean).join(' ').trim();
-        if(nm) _agentNameById[a.id] = nm;
-        else if(a.email) _agentNameById[a.id] = a.email;
-        // remarks = the agent's saved default confidential remarks (set in their own portal · Listing defaults)
-        _agentMetaById[a.id] = { name:(nm || a.email || ''), email:a.email || '', brokerage:a.brokerage_name || '', remarks:a.default_confidential_remarks || '',
-          // TC authority · smooth (permissive) default when the column is missing/undefined.
-          authority:{ email_client: a.tc_may_email_client !== false, publish_mls: a.tc_may_publish_mls !== false, order_paid: a.tc_may_order_paid !== false } };
-      });
+      try {
+        const { data: _ppl, error: _pplErr } = await _client.from('agents')
+          .select('id, first_name, last_name, email, role, brokerage_name, merged_into, default_confidential_remarks, tc_may_email_client, tc_may_publish_mls, tc_may_order_paid').in('role', ['agent','tc','broker']);
+        if(_pplErr) console.error('agent roster load failed · the New file picker will be empty and file ownership cannot be set', _pplErr);
+        (_ppl || []).forEach(a => {
+          if(a.merged_into) return; // merged duplicates never show in any picker
+          const nm = [a.first_name, a.last_name].filter(Boolean).join(' ').trim();
+          if(nm) _agentNameById[a.id] = nm;
+          else if(a.email) _agentNameById[a.id] = a.email;
+          // remarks = the agent's saved default confidential remarks (set in their own portal · Listing defaults)
+          _agentMetaById[a.id] = { name:(nm || a.email || ''), email:a.email || '', brokerage:a.brokerage_name || '', remarks:a.default_confidential_remarks || '',
+            // TC authority · smooth (permissive) default when the column is missing/undefined.
+            authority:{ email_client: a.tc_may_email_client !== false, publish_mls: a.tc_may_publish_mls !== false, order_paid: a.tc_may_order_paid !== false } };
+        });
+      } catch(e){ console.error('agent roster load threw · New file picker will be empty', e); }
     }
     // Active Aari Transactions memberships · a member gets $50 off every TC file (the discount
     // comes out of the coordinating TC's 40%, not the company's share). Keyed by agent_id.
@@ -8306,6 +8330,8 @@ Tell me your planned move-out date and I will set the inspection.`
       console.error('renderKanban failed · showing error state', e);
       _showKanbanErrorState('Something went wrong loading your files.');
     }
+    // Render reached · cancel the skeleton watchdog.
+    try { clearTimeout(_skeletonWatchdog); } catch(_){}
     try{ loadAndRenderAgentMessages(); }catch(e){ console.warn('loadAndRenderAgentMessages failed', e); }
     try{ renderPriorityQueue(); }catch(e){ console.warn('renderPriorityQueue failed', e); }
     try{ renderTodayHero(); }catch(e){ console.warn('renderTodayHero failed', e); }
