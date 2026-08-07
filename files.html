@@ -16086,6 +16086,71 @@ Tell me your planned move-out date and I will set the inspection.`
     if(si) si.addEventListener('input', function(){ _listQuery = this.value; _listApplySearch(); });
     _listApplySearch();
   }
+  // Marlenyi 2026-08-07 · files whose closing_date was auto-rolled forward (past-close
+  // + still-active) but the TC never confirmed status. These LOOK closed to the coordinator
+  // (they were originally scheduled Aug 6, the actual closing probably happened) but the
+  // system can't invoice them until stage flips to 'closed'. Surface them at the top of
+  // the TC's invoice screen so the fix is one click away.
+  function _rolledClosingsReadyForTc(){
+    if(!_profile || !_profile.id || !_files) return [];
+    return _files.filter(function(f){
+      try {
+        if(!f || !f.id) return false;
+        if(f.assigned_tc_id !== _profile.id) return false;
+        if(f.status === 'archived' || f.status === 'closed') return false;
+        if((f.raw_form_data || {}).test_pool) return false;
+        var stg = String(f.transaction_stage || '').toLowerCase();
+        if(stg === 'closed') return false;
+        if(f.invoice_id) return false; // already invoiced somehow
+        var rolled = (f.raw_form_data || {}).closing_date_auto_rolled_from;
+        return !!rolled;
+      } catch(_){ return false; }
+    });
+  }
+  function _rolledInvoicePromptHtml(){
+    var files = _rolledClosingsReadyForTc();
+    if(!files.length) return '';
+    var esc2 = (typeof esc === 'function') ? esc : function(s){ return String(s == null ? '' : s); };
+    var _fmtOrig = function(iso){
+      try { var d = new Date(String(iso).slice(0,10) + 'T12:00:00'); return d.toLocaleDateString('en-US', { month:'long', day:'numeric' }); } catch(_){ return String(iso || ''); }
+    };
+    var rows = files.map(function(f){
+      var addr = String(f.property_address || 'File').split(',')[0];
+      var origIso = (f.raw_form_data || {}).closing_date_auto_rolled_from || '';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-top:0.5px solid #f6e3dc">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;color:#0f0f0f">' + esc2(addr) + '</div>' +
+        '<div style="font-size:11px;color:#a36b58;margin-top:1px">Was scheduled ' + esc2(_fmtOrig(origIso)) + ' &middot; not yet marked closed</div></div>' +
+        '<button type="button" data-inv-mark-closed="' + esc2(f.id) + '" style="flex:none;background:#0f0f0f;color:#fff;border:0;border-radius:8px;padding:8px 14px;font-family:inherit;font-size:12px;font-weight:600;cursor:pointer">Mark closed</button>' +
+      '</div>';
+    }).join('');
+    var n = files.length;
+    var head = '<div style="padding:12px 14px 4px"><div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px">' +
+      '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:600;color:#993c1d">Closed but not marked &middot; ' + n + '</span>' +
+      '<span style="font-size:11px;font-weight:700;color:#993c1d">' + n + ' won&rsquo;t invoice yet</span></div>' +
+      '<div style="font-size:11.5px;color:#a36b58;margin:3px 0 0;line-height:1.5">These files auto-rolled past their scheduled closing. Mark each closed to add it to this week&rsquo;s invoice.</div></div>';
+    return '<div style="background:#fdf4f1;border:0.5px solid #f3d9d0;border-radius:12px;margin:0 0 14px;overflow:hidden">' + head + rows + '</div>';
+  }
+  // "Mark closed" button on the rolled-closings prompt · same DB write the Confirm date modal
+  // uses (transaction_stage=closed, status=closed, actual_closing_date=today), then re-renders
+  // the invoice screen so the newly-billable file appears in the list.
+  document.addEventListener('click', async function(e){
+    var btn = e.target && e.target.closest && e.target.closest('[data-inv-mark-closed]');
+    if(!btn) return;
+    var fid = btn.getAttribute('data-inv-mark-closed');
+    var file = (_files || []).find(function(x){ return String(x.id) === String(fid); });
+    if(!file || !_client){ return; }
+    btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'wait'; btn.textContent = 'Marking…';
+    var _todayIso = (function(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
+    try {
+      var { error } = await _client.from('files').update({ transaction_stage:'closed', status:'closed', actual_closing_date:_todayIso, updated_at:new Date().toISOString() }).eq('id', fid);
+      if(error){ alert('Could not save: ' + (error.message || 'unknown')); btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = ''; btn.textContent = 'Mark closed'; return; }
+      file.transaction_stage = 'closed'; file.status = 'closed'; file.actual_closing_date = _todayIso;
+      try { renderInvoiceScreen(); } catch(_){}
+      try { renderKanban(); } catch(_){}
+      try { renderKpis(); } catch(_){}
+    } catch(err){ alert('Network error: ' + (err && err.message || err)); btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = ''; btn.textContent = 'Mark closed'; }
+  });
+
   function renderInvoiceScreen(){
     var host = document.getElementById('invoiceScreen'); if(!host) return;
     var role = (_profile && String(_profile.role || '').toLowerCase()) || '';
@@ -16094,6 +16159,8 @@ Tell me your planned move-out date and I will set the inspection.`
     // The broker sees the whole team's money, not just her own. Her own coordinator work is one
     // card in that board like anyone else's, because that is what it is.
     if(role === 'broker'){ host.innerHTML = brokerInvoiceBoardHtml(); return; }
+    var rolledPrompt = '';
+    try { rolledPrompt = _rolledInvoicePromptHtml(); } catch(_){ rolledPrompt = ''; }
     var files = [];
     try { files = myBillableFiles(); } catch(_){ files = []; }
     var pct = myPayPctOrNull();
@@ -16125,7 +16192,7 @@ Tell me your planned move-out date and I will set the inspection.`
 
     // Nothing billable · say so, and say what would change it.
     if(!files.length){
-      host.innerHTML = payables + '<div style="' + card + '">' +
+      host.innerHTML = payables + rolledPrompt + '<div style="' + card + '">' +
         '<p style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;margin:0 0 2px">Nothing to invoice yet</p>' +
         '<p style="font-size:12px;color:#8a857c;margin:0 0 14px">' + esc(_invoicePeriod()) + '</p>' +
         '<p style="font-size:13px;color:#5f5e5a;line-height:1.55;margin:0">A file becomes billable when its last step is checked off, or when a sale closes.</p>' +
@@ -16193,7 +16260,7 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     body += noRate + '</div>';
 
-    host.innerHTML = payables +
+    host.innerHTML = payables + rolledPrompt +
       '<div style="background:#fff;border:0.5px solid #e8e4db;border-radius:12px;overflow:hidden;margin:0 0 14px">' + hero + body + '</div>' +
       _nextInvoiceCardHtml(card);
   }
