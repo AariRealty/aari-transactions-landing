@@ -15979,9 +15979,14 @@ Tell me your planned move-out date and I will set the inspection.`
         var isCov  = !!(it && it.covered);
         // A covered $0 line never needs a checkbox — it's just on-the-record.
         // A paid line reads muted + struck. Held lines get a red note underneath.
+        // "Client hasn't paid AT yet" · a billable (non-credit) line whose file isn't
+        // payment-confirmed. The coordinator shouldn't be paid before the client's money
+        // is in, so we flag the line and warn on Mark-selected-paid (Marlenyi Aug 7).
+        var _lf = (it && it.file_id && typeof _files !== 'undefined' && _files) ? _files.find(function(x){ return x.id === it.file_id; }) : null;
+        var _unfunded = !!(_lf && !_lf.payment_confirmed) && !isCov && !isPaid;
         var cb = '';
         if(payable && !isPaid && !isCov){
-          cb = '<input type="checkbox" class="inv-line-cb" data-inv-line="' + esc(i.id) + '|' + idx + '" style="flex:none;margin:2px 8px 0 0;width:15px;height:15px;accent-color:#0f0f0f;cursor:pointer">';
+          cb = '<input type="checkbox" class="inv-line-cb" data-inv-line="' + esc(i.id) + '|' + idx + '"' + (_unfunded ? ' data-inv-unfunded="1"' : '') + ' style="flex:none;margin:2px 8px 0 0;width:15px;height:15px;accent-color:#0f0f0f;cursor:pointer">';
         }
         var addr = esc(String((it && it.address) || 'File').split(',')[0]);
         var svc  = esc((it && it.service) || '');
@@ -16001,6 +16006,9 @@ Tell me your planned move-out date and I will set the inspection.`
           if(it.held_note) body += ' &middot; ' + esc(it.held_note);
           if(it.snooze_until) body += ' &middot; snoozed to ' + esc(new Date(String(it.snooze_until).slice(0,10) + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }));
           body += '</span>';
+        }
+        if(_unfunded && !isHeld){
+          body += '<br><span style="color:#8a6d1b;font-weight:600">Client payment pending &middot; hold until funded</span>';
         }
         body += '</span></span>';
         var amt = '<span style="font-size:11px;white-space:nowrap' + (isCov || isPaid ? ';color:#a39e93' : '') + '">' + money + '</span>';
@@ -16460,6 +16468,12 @@ Tell me your planned move-out date and I will set the inspection.`
   async function markInvoiceLinesPaid(invId){
     var idxs = _selectedInvLines(invId);
     if(!idxs.length){ alert('Check the lines you want to mark paid first.'); return; }
+    // Guard · warn before paying the coordinator for a file whose client hasn't paid AT yet
+    // (Marlenyi Aug 7 · the Samantha-pending case). She can still override for a goodwill pay.
+    try {
+      var _unfCount = document.querySelectorAll('.inv-line-cb[data-inv-line^="' + invId + '|"][data-inv-unfunded="1"]:checked').length;
+      if(_unfCount > 0 && !confirm(_unfCount + ' of the selected ' + (_unfCount === 1 ? 'file has' : 'files have') + " not been paid by the client yet. Pay the coordinator anyway?")){ return; }
+    } catch(_){}
     try {
       var { data: cur, error: getErr } = await _client.from('tc_invoices').select('line_items').eq('id', invId).maybeSingle();
       if(getErr || !cur){ alert('Not saved: ' + (getErr && getErr.message || 'invoice missing')); return; }
