@@ -16113,7 +16113,6 @@ Tell me your planned move-out date and I will set the inspection.`
     var _seg = '<div class="inv-seg" data-inv-seg="1">' +
         '<button type="button" class="inv-seg-btn' + (_invMobTab === 'notsent' ? ' on' : '') + '" data-inv-tab="notsent">Not sent</button>' +
         '<button type="button" class="inv-seg-btn' + (_invMobTab === 'sent' ? ' on' : '') + '" data-inv-tab="sent">Sent</button>' +
-        '<button type="button" class="inv-seg-btn' + (_invMobTab === 'paid' ? ' on' : '') + '" data-inv-tab="paid">Paid</button>' +
       '</div>';
 
     // Money strip · the three totals move UP out of the column headers so the first
@@ -16158,16 +16157,32 @@ Tell me your planned move-out date and I will set the inspection.`
     var _arUcards = _arU.map(function(b){ return arBillCardHtml(b, true); }).join('');
     var _arPcards = _arP.slice(0, 8).map(function(b){ return arBillCardHtml(b, false); }).join('');
     var _sentInner = (subs.map(function(i){ return invCardHtml(i, true); }).join('') + _arUcards) || _invEmptyColHtml('Nothing waiting on you.<br>Invoices land here Thursday.');
-    var _paidInner = (paidInv.slice(0, 8).map(function(i){ return invCardHtml(i, false); }).join('') + _arPcards) || _invEmptyColHtml('No invoice has ever<br>been submitted.');
+
+    // Paid transactions live in ONE compact section at the BOTTOM (Marlenyi Aug 7) so the kanban
+    // above only ever holds active work and never grows into a long list. Coordinator payouts and
+    // Realty bills both land here once settled, each labeled so the direction is clear.
+    var _paidRow = function(label, meta, amtCents){
+      return '<div style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-top:0.5px solid #f0ebe0">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:#0f0f0f;font-weight:500">' + label + '</div>' +
+        '<div style="font-size:10.5px;color:#a39e93;margin-top:1px">' + meta + '</div></div>' +
+        '<span style="font-family:Georgia,serif;font-size:13px;color:#8a857c;font-variant-numeric:tabular-nums">' + _money(amtCents) + '</span></div>';
+    };
+    var _pdCoord = paidInv.map(function(i){ return _paidRow(esc(_tcDisplayName(i.tc_id).split(' ')[0]) + ' &middot; ' + esc(i.invoice_number || ''), 'Paid' + (i.paid_at ? ' ' + esc(new Date(i.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : '') + ' &middot; ' + ((i.line_items || []).length) + ' files', i.total_cents || 0); }).join('');
+    var _pdAR = _arP.map(function(b){ return _paidRow(esc(String(b.file_property || 'File').split(',')[0]), '<span style="color:#8a6d1b;font-weight:600">Realty owes AT</span> &middot; ' + esc(b.tc_name || '') + (b.paid_at ? ' &middot; Paid ' + esc(new Date(b.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : ''), Math.round((parseFloat(b.amount) || 0) * 100)); }).join('');
+    var _paidSection = (paidInv.length + _arP.length)
+      ? '<div style="margin-top:16px;background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:16px 18px">' +
+          '<div style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700;margin-bottom:2px">Paid &middot; history</div>' +
+          _pdCoord + _pdAR +
+        '</div>'
+      : '';
 
     return '<div style="display:flex;align-items:center;gap:10px;margin:0 0 12px;position:relative">' +
         '<span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Where each invoice stands</span>' +
         '<span style="font-size:11.5px;color:#a39e93">' + esc(_invoicePeriod()) + '</span>' + toggle + '</div>' + moneyStrip + _seg +
-      '<div style="background:#fcfaf5;border-radius:12px;padding:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;align-items:start" data-invoice-board="1" data-inv-active="' + _invMobTab + '">' +
+      '<div style="background:#fcfaf5;border-radius:12px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start" data-invoice-board="1" data-inv-active="' + _invMobTab + '">' +
         _invColHtml('Not sent', _cnt(working.length), cards || _invEmptyColHtml('Nothing billable this week<br>across any coordinator.')) +
         _invColHtml('Sent &middot; unpaid', _cnt(subs.length + _arU.length), _sentInner) +
-        _invColHtml('Paid', _cnt(paidInv.length + _arP.length), _paidInner) +
-      '</div>';
+      '</div>' + _paidSection;
   }
   // ===== List view · Variant 2 · priority groups (Jul 30 2026, Marlenyi) =====
   // The scale view for 100+ files, where the board becomes an endless scroll. Every active file is
