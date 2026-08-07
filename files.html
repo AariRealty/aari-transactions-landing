@@ -5197,6 +5197,30 @@ If anything is off track for {{loan_approval_deadline}}, flag now so I can addre
         },
       ],
       ctc: [
+        // Marlenyi 2026-08-07 · payment-link email for the coordination fee. Sent to
+        // the agent with the Stripe URL for the file's service type auto-filled from
+        // STRIPE_LINKS (via {{payment_link}} in vars). Short, warm, matches Marlenyi's voice.
+        {
+          id:'ctc_payment_link_send',
+          task:'ctc_payment_link',
+          thread:1,
+          label:'Payment link · agent',
+          to:'{{agent_name}} <{{agent_email}}>',
+          cc:'',
+          subject:'Payment link · {{street}}',
+          body:
+`{{time_of_day_greeting}} {{agent_first_name}},
+
+We're clear to close on {{street}}.
+
+Here is the secure payment link for the coordination service:
+
+{{payment_link}}
+
+Payable anytime before closing. The file closes either way.
+
+Ping me if anything comes up.`,
+        },
         {
           // Final walk-through coordination. Ties to the ctc_walkthrough_scheduled
           // checklist item. Per Para 12(b), the day prior to (or day of) closing.
@@ -7748,6 +7772,9 @@ Tell me your planned move-out date and I will set the inspection.`
       agent_name: agentName, agent_first_name: agentFirst, agent_email: agentEmail,
       agent_phone: agentPhone, agent_company: agentCompany,
       next_file_offer: next_file_offer,
+      // Marlenyi 2026-08-07 · payment link for the current service. Used by the
+      // ctc_payment_link email template so the URL renders inline.
+      payment_link: (typeof STRIPE_LINKS !== 'undefined' && STRIPE_LINKS[file.service_type]) || '',
       listing_agent_name: listAgentName, listing_agent_first_name: listAgentFirst, listing_agent_company: listAgentCo, listing_agent_phone: listAgentPhone, listing_agent_email: listAgentEmail,
       other_agent_name: listAgentName, other_agent_first_name: listAgentFirst, other_agent_email: listAgentEmail,
       title_company_name: titleCo,
@@ -23213,9 +23240,22 @@ Tell me your planned move-out date and I will set the inspection.`
     let customCtl = '';
     if(t.id === 'ctc_payment_link'){
       const _pl = (typeof STRIPE_LINKS !== 'undefined' && STRIPE_LINKS[file.service_type]) || '';
-      customCtl = _pl
+      // Marlenyi 2026-08-07 · due-date badge for the payment task. Payment is
+      // ideally sent before closing so it doesn't linger post-close. Colored per
+      // urgency: red when today or past, amber inside 3 days, quiet otherwise.
+      let _dueChip = '';
+      try {
+        const _d = (typeof daysToClose === 'function') ? daysToClose(file) : null;
+        if(_d != null){
+          const _txt = (_d < 0) ? (Math.abs(_d) + 'd past close') : (_d === 0 ? 'Due today' : ('Due in ' + _d + 'd (closing)'));
+          const _bg = (_d <= 0) ? '#f7ece8' : (_d <= 3 ? '#fbf3e2' : '#f1efe8');
+          const _fg = (_d <= 0) ? '#a3402f' : (_d <= 3 ? '#8a6d1b' : '#8a857c');
+          _dueChip = '<div style="margin:4px 0 6px 28px"><span style="display:inline-block;font-size:10.5px;font-weight:700;border-radius:999px;padding:3px 10px;background:' + _bg + ';color:' + _fg + '">' + _txt + '</span></div>';
+        }
+      } catch(_){}
+      customCtl = _dueChip + (_pl
         ? '<div style="margin:6px 0 8px 28px;display:flex;gap:8px;align-items:center"><button type="button" class="ck-send" data-copy-paylink="' + esc(_pl) + '">Copy payment link &rarr;</button><a href="' + esc(_pl) + '" target="_blank" rel="noopener" class="ck-send" style="text-decoration:none">Open</a></div>'
-        : '<div class="ck-sub" style="margin-left:28px;color:#a08a5a">No Stripe link configured for this service type.</div>';
+        : '<div class="ck-sub" style="margin-left:28px;color:#a08a5a">No Stripe link configured for this service type.</div>');
     } else if(t.id === 'ctc_cd_received'){
       customCtl = cfpbWindowNote(file);
     } else if(t.id === 'insp_extension_check'){
@@ -24047,6 +24087,29 @@ Tell me your planned move-out date and I will set the inspection.`
   const UC_TAG_OF = (function(){
     const m = {};
     UC_TRACKS.forEach(function(trk){ const tag = UC_TAGS[trk.key] || { lab:trk.label, cls:'t' }; trk.ids.forEach(function(id){ if(!m[id]) m[id] = tag; }); });
+    // Marlenyi 2026-08-07 · CTC-stage tasks now carry consistent tags too, so
+    // Send-payment-link / Wire-fraud-warning / Walk-through / etc. line up
+    // visually with UC tasks and deadlines. Cls values borrow existing pill styles.
+    const CTC_TAG_OF = {
+      ctc_payment_link:              { lab:'Pay',      cls:'a' },
+      ctc_wire_warning:              { lab:'Wire',     cls:'a' },
+      ctc_walkthrough:               { lab:'Walk',     cls:'i' },
+      ctc_turnkey_walkthrough:       { lab:'Walk',     cls:'i' },
+      ctc_home_warranty:             { lab:'Warr',     cls:'a' },
+      ctc_cd_received:               { lab:'CD',       cls:'t' },
+      ctc_closing_confirmed:         { lab:'Closing',  cls:'t' },
+      ctc_file_review:               { lab:'Review',   cls:'o' },
+      ctc_weekly_update:             { lab:'Update',   cls:'o' },
+      ctc_title_commitment_received: { lab:'Title',    cls:'t' },
+      ctc_title_review:              { lab:'Title',    cls:'t' },
+      ctc_title_exceptions_notify:   { lab:'Title',    cls:'t' },
+      ctc_title_exceptions_resolved: { lab:'Title',    cls:'t' },
+      ctc_open_permits:              { lab:'Permit',   cls:'o' },
+      ctc_estoppels:                 { lab:'Estoppel', cls:'a' },
+      ctc_fincen:                    { lab:'FinCEN',   cls:'a' },
+      ctc_firpta:                    { lab:'FIRPTA',   cls:'a' },
+    };
+    Object.keys(CTC_TAG_OF).forEach(function(id){ if(!m[id]) m[id] = CTC_TAG_OF[id]; });
     return m;
   })();
   function ucTagHtml(id, label){
@@ -25268,7 +25331,12 @@ Tell me your planned move-out date and I will set the inspection.`
     const widget = (stage === 'under_contract') ? ''
                  : (stage === 'remedy') ? renderRemedyFlags(file)
                  : (stage === 'appraisal') ? renderApprWidget(file)
-                 : (stage === 'ctc') ? renderCtcFlags(file)
+                 // Marlenyi 2026-08-07 · hid the three CTC context pills
+                 // (entity buyer / foreign seller / title exceptions). They were
+                 // cluttering the top of Clear-to-close. FinCEN / FIRPTA / title
+                 // exception tasks still exist behind their showIf flags — Marlenyi
+                 // can toggle those flags from Contract terms if the edge cases apply.
+                 : (stage === 'ctc') ? ''
                  : (stage === 'closed') ? renderClosingDateWidget(file) : '';
     const roBanner = (file.status === 'archived')
       ? '<div style="background:#f3f3f1;border:0.5px solid #e8e6e1;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:11px;color:#5f5e5a;font-weight:600">Archived \u00b7 read-only \u00b7 no further edits</div>'
