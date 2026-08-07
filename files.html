@@ -1857,6 +1857,25 @@
     .cal-done-fold > summary { list-style: none; }
     .cal-done-fold > summary::-webkit-details-marker { display: none; }
     .cal-done-fold[open] > summary .cal-done-chev { transform: rotate(90deg); }
+    /* Custom hover tooltip for done rows · appears instantly on mouseover, no
+       delay, no browser-rendering variance. Native title tooltips weren't
+       showing on Marlenyi's setup, so this replaces them. */
+    .cal-done-row .done-tip {
+      position: absolute; bottom: calc(100% + 4px); right: 8px;
+      background: #0f0f0f; color: #fff;
+      font-size: 11px; font-weight: 500; letter-spacing: 0.1px;
+      padding: 6px 10px; border-radius: 6px; white-space: nowrap;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      opacity: 0; pointer-events: none;
+      transition: opacity .12s;
+      z-index: 20;
+    }
+    .cal-done-row:hover .done-tip { opacity: 1; }
+    .cal-done-row:hover { opacity: 1 !important; }
+    .cal-done-row .done-tip::after {
+      content: ''; position: absolute; top: 100%; right: 14px;
+      border: 4px solid transparent; border-top-color: #0f0f0f;
+    }
 
     /* [active-mock2] · Active files section · pipeline card folds to a
        slim one-line bar on mobile. Marlenyi picked Mock 2 for ADHD:
@@ -12597,7 +12616,11 @@ Tell me your planned move-out date and I will set the inspection.`
       const ids = (_files || []).filter(function(f){ return deriveStage(f) !== 'closed' && f.status !== 'archived' && (f.file_type || 'sale') === 'sale'; }).map(function(f){ return f.id; });
       const need = ids.filter(function(id){ return !_deadlinesByFile[id]; });
       if(need.length && _client){
-        const { data } = await _client.from('file_deadlines').select('file_id, deadline_key, completed_at, due_date').in('file_id', need);
+        // Marlenyi 2026-08-07 · completed_by MUST be selected here so the calendar's
+        // "Done" hover tooltip can resolve the coordinator name. Without it the bulk
+        // load silently returned records without the coordinator uuid, and every
+        // popover fell back to "Checked by a coordinator" instead of "by Eileen H."
+        const { data } = await _client.from('file_deadlines').select('file_id, deadline_key, completed_at, completed_by, due_date').in('file_id', need);
         need.forEach(function(id){ _deadlinesByFile[id] = _deadlinesByFile[id] || {}; });
         (data || []).forEach(function(r){ (_deadlinesByFile[r.file_id] = _deadlinesByFile[r.file_id] || {})[r.deadline_key] = r; });
       }
@@ -13805,7 +13828,7 @@ Tell me your planned move-out date and I will set the inspection.`
   function _calTodayPanel(byDay, t0, selDay){
     const _selTs = (selDay != null) ? selDay : t0;
     const sel = new Date(_selTs), sd = byDay[_selTs] || [];
-    const _dayCountTo = function(due){ try { const c=new Date();c.setHours(0,0,0,0); const t=new Date(due);t.setHours(0,0,0,0); let n=0; const w=new Date(c); while(w<t){ w.setDate(w.getDate()+1); const dw=w.getDay(); if(dw!==0&&dw!==6)n++; } return n; } catch(_){ return null; } };
+    const _dayCountTo = function(due){ try { const c=new Date();c.setHours(0,0,0,0); const t=new Date(due);t.setHours(0,0,0,0); if(t.getTime() === c.getTime()) return 0; let n=0; const w=new Date(c); if(t > c){ while(w<t){ w.setDate(w.getDate()+1); const dw=w.getDay(); if(dw!==0&&dw!==6)n++; } return n; } while(w>t){ w.setDate(w.getDate()-1); const dw=w.getDay(); if(dw!==0&&dw!==6)n--; } return n; } catch(_){ return null; } };
     const _dueOf = function(d){ return (d.isChase && d.dueDate) ? d.dueDate : d.date; };
     // Marlenyi 2026-08-07 · Today panel is ONLY things due today. Chase items
     // (early-warning reminders whose real dueDate is 3 days out) were being
@@ -14610,7 +14633,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const sel = new Date(_calSelDay), sd = byDay[_calSelDay] || [];
     // Countdown, in business days, from TODAY to a deadline's real due date. Chase/reminder
     // items carry the real due date on d.dueDate; actual deadlines are due on d.date.
-    const _dayCountTo = function(due){ try { const c=new Date();c.setHours(0,0,0,0); const t=new Date(due);t.setHours(0,0,0,0); let n=0; const w=new Date(c); while(w<t){ w.setDate(w.getDate()+1); const dw=w.getDay(); if(dw!==0&&dw!==6)n++; } return n; } catch(_){ return null; } };
+    const _dayCountTo = function(due){ try { const c=new Date();c.setHours(0,0,0,0); const t=new Date(due);t.setHours(0,0,0,0); if(t.getTime() === c.getTime()) return 0; let n=0; const w=new Date(c); if(t > c){ while(w<t){ w.setDate(w.getDate()+1); const dw=w.getDay(); if(dw!==0&&dw!==6)n++; } return n; } while(w>t){ w.setDate(w.getDate()-1); const dw=w.getDay(); if(dw!==0&&dw!==6)n--; } return n; } catch(_){ return null; } };
     const _dueOf = function(d){ return (d.isChase && d.dueDate) ? d.dueDate : d.date; };
     // A reminder must never surface more than 3 business days ahead — drop over-eager chase
     // items. Actual deadlines always stay so a tapped day still shows its own deadlines.
@@ -14716,10 +14739,40 @@ Tell me your planned move-out date and I will set the inspection.`
       // Pastel side pills · buyer cream, seller sage, not-set soft gold — all distinct.
       const tagCol = side==='buyer' ? '#5f5e5a' : side==='seller' ? '#085041' : '#8a6d1b';
       const tagBg  = side==='buyer' ? '#f1efe8' : side==='seller' ? '#e1f5ee' : '#fbf7ee';
-      return '<div data-cal-open="'+esc(d.fileId)+'" style="display:flex;align-items:center;gap:9px;padding:9px 0;border-top:0.5px solid #f3f0ea;cursor:pointer;' + (done ? 'opacity:.55;' : '') + '">' +
+      // Marlenyi 2026-08-07 (revision N) · inline-style hover popover. Earlier
+      // approaches (native title, then CSS-class popover) both failed on her
+      // setup — the CSS class one because of aggressive browser caching. Inline
+      // styles + inline onmouseover/onmouseout handlers work regardless of the
+      // browser's CSS cache state. Popover hidden by default; JS toggles its
+      // opacity + the row's opacity on hover.
+      let doneTip = '';
+      if(done){
+        let when = '';
+        try {
+          if(doneWhenIso){
+            const _d = new Date(doneWhenIso);
+            const _dstr = _d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+            const _tstr = _d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+            when = _dstr + ' at ' + _tstr;
+          }
+        } catch(_){}
+        // Always show something · "by TC" is a better fallback than silence.
+        const whoLbl = doneWho || 'a coordinator';
+        const bits = ['by ' + whoLbl];
+        if(when) bits.push(when);
+        const tipText = 'Checked ' + bits.join(' &middot; ');
+        // Absolute-positioned popover pinned above the right edge, hidden by
+        // default. onmouseover on the ROW makes it visible; onmouseout hides.
+        doneTip = '<span class="__done_tip" style="position:absolute;bottom:calc(100% + 4px);right:8px;background:#0f0f0f;color:#fff;font-size:11px;font-weight:500;letter-spacing:0.1px;padding:6px 10px;border-radius:6px;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,0.2);opacity:0;pointer-events:none;transition:opacity .12s;z-index:20">' + tipText + '</span>';
+      }
+      const hoverHandlers = done
+        ? ' onmouseover="this.style.opacity=1;var t=this.querySelector(&quot;.__done_tip&quot;);if(t)t.style.opacity=1;" onmouseout="this.style.opacity=0.55;var t=this.querySelector(&quot;.__done_tip&quot;);if(t)t.style.opacity=0;"'
+        : '';
+      return '<div data-cal-open="'+esc(d.fileId)+'"' + hoverHandlers + ' style="position:relative;display:flex;align-items:center;gap:9px;padding:9px 0;border-top:0.5px solid #f3f0ea;cursor:pointer;' + (done ? 'opacity:.55;' : '') + '">' +
         '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:'+tagCol+';background:'+tagBg+';border-radius:20px;padding:2px 8px">'+esc(_sideTag[side])+'</span>' +
         '<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:#0f0f0f">'+esc(nm)+'</div><div style="font-size:11px;color:#8a857c;margin-top:2px">'+addr+'</div></div>' +
         bubble +
+        doneTip +
       '</div>';
     };
     // Marlenyi 2026-08-07 · split into pending + done so "already checked off" items
@@ -14741,11 +14794,12 @@ Tell me your planned move-out date and I will set the inspection.`
       html += '<div style="font-size:12px;color:#a39e95;padding:9px 0 2px">' + (_isToday ? 'Nothing due in the next 3 days. You’re ahead.' : 'Nothing due this day.') + '</div>';
     }
     if(_shownDone.length){
-      // Marlenyi 2026-08-07 · Done section collapses via native <details>. Open state
-      // persists per user in localStorage so once she collapses it, it stays collapsed
-      // through page reloads (until she opens it again).
-      let _doneOpen = true;
-      try { _doneOpen = localStorage.getItem('aari_cal_done_open') !== '0'; } catch(_){}
+      // Marlenyi 2026-08-07 · Done section collapses via native <details>. Defaults
+      // CLOSED — she asked for the section hidden by default (revised same day) so
+      // the pending list is what the eye lands on. Open state persists per user in
+      // localStorage so if she opens it, it stays open through reloads.
+      let _doneOpen = false;
+      try { _doneOpen = localStorage.getItem('aari_cal_done_open') === '1'; } catch(_){}
       html += '<details class="cal-done-fold"' + (_doneOpen ? ' open' : '') + ' style="margin-top:16px">' +
         '<summary style="list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px;padding:2px 0;font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#a99a78;margin-bottom:2px">' +
           '<span class="cal-done-chev" style="display:inline-block;transition:transform .15s;font-size:11px">&#9656;</span>' +
