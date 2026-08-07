@@ -1851,6 +1851,13 @@
     .overdue-toggle .overdue-toggle-close { display: none; }
     .overdue-open .overdue-toggle .overdue-toggle-close { display: inline; }
 
+    /* Marlenyi 2026-08-07 · calendar agenda's Done fold. Native <details> chevron
+       is hidden; my inline chevron rotates when the section is open. Persists
+       via localStorage 'aari_cal_done_open'. */
+    .cal-done-fold > summary { list-style: none; }
+    .cal-done-fold > summary::-webkit-details-marker { display: none; }
+    .cal-done-fold[open] > summary .cal-done-chev { transform: rotate(90deg); }
+
     /* [active-mock2] · Active files section · pipeline card folds to a
        slim one-line bar on mobile. Marlenyi picked Mock 2 for ADHD:
        hide the big number by default, tap to expand the breakdown.
@@ -14646,13 +14653,23 @@ Tell me your planned move-out date and I will set the inspection.`
       const addr = esc(String(d.address||'').split(',')[0]);
       // Completion (Mock B) · when the TC checks the task off inside the file, the calendar
       // row dims and its day bubble becomes a green "Done" pill. Base key strips the chase
-      // suffix so a reminder and its deadline both reflect done.
+      // suffix so a reminder and its deadline both reflect done. Marlenyi 2026-08-07 · also
+      // stash WHO checked it off and WHEN so the hover tooltip on the Done pill can show
+      // "Eileen H. · Aug 7 at 11:29 AM" without opening the file.
       let done = false;
+      let doneWho = '';
+      let doneWhenIso = '';
       try {
         const _bk = String(d.key||'').replace(/__chase$/,'');
         const _st = (typeof _deadlinesByFile !== 'undefined' && _deadlinesByFile[d.fileId]) || {};
         const _rec = (typeof _dlRecFor === 'function') ? _dlRecFor(_st, _bk) : null;
         done = !!(_rec && _rec.completed_at);
+        if(done){
+          doneWhenIso = String(_rec.completed_at || '');
+          const uid = _rec.completed_by;
+          const tc = (uid && typeof _tcsById !== 'undefined') ? _tcsById[uid] : null;
+          if(tc){ doneWho = ((tc.first_name || '') + (tc.last_name ? ' ' + tc.last_name.charAt(0).toUpperCase() + '.' : '')).trim(); }
+        }
       } catch(_){ done = false; }
       // Right-side day bubble · "Due today" is the urgent one (bold dark pill); the countdown
       // is a soft gold pill. Done swaps in a green pill.
@@ -14672,7 +14689,20 @@ Tell me your planned move-out date and I will set the inspection.`
         }
       } catch(_){}
       if(done){
-        bubble = '<span style="flex:none;font-size:10px;font-weight:600;color:#2f6b4f;background:#e8f3ec;border:0.5px solid #cfe4d6;border-radius:20px;padding:3px 11px;white-space:nowrap">Done &#10003;</span>';
+        // Tooltip · "Checked off by Eileen H. on Aug 7, 2026 at 11:29 AM" · falls back
+        // gracefully when who/when isn't resolvable so the pill still renders.
+        let doneTip = 'Checked off';
+        try {
+          if(doneWhenIso){
+            const _d = new Date(doneWhenIso);
+            const _dstr = _d.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+            const _tstr = _d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+            doneTip = (doneWho ? 'Checked off by ' + doneWho : 'Checked off') + ' on ' + _dstr + ' at ' + _tstr;
+          } else if(doneWho){
+            doneTip = 'Checked off by ' + doneWho;
+          }
+        } catch(_){}
+        bubble = '<span title="' + esc(doneTip) + '" style="flex:none;font-size:10px;font-weight:600;color:#2f6b4f;background:#e8f3ec;border:0.5px solid #cfe4d6;border-radius:20px;padding:3px 11px;white-space:nowrap;cursor:help">Done &#10003;</span>';
       } else if(_bubbleN != null){
         if(_bubbleN < 0){
           const late = Math.abs(_bubbleN);
@@ -14711,7 +14741,20 @@ Tell me your planned move-out date and I will set the inspection.`
       html += '<div style="font-size:12px;color:#a39e95;padding:9px 0 2px">' + (_isToday ? 'Nothing due in the next 3 days. You’re ahead.' : 'Nothing due this day.') + '</div>';
     }
     if(_shownDone.length){
-      html += '<div style="font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#a99a78;margin:16px 0 2px">Done &middot; ' + _shownDone.length + '</div>' + _shownDone.map(_listRow).join('');
+      // Marlenyi 2026-08-07 · Done section collapses via native <details>. Open state
+      // persists per user in localStorage so once she collapses it, it stays collapsed
+      // through page reloads (until she opens it again).
+      let _doneOpen = true;
+      try { _doneOpen = localStorage.getItem('aari_cal_done_open') !== '0'; } catch(_){}
+      html += '<details class="cal-done-fold"' + (_doneOpen ? ' open' : '') + ' style="margin-top:16px">' +
+        '<summary style="list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px;padding:2px 0;font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#a99a78;margin-bottom:2px">' +
+          '<span class="cal-done-chev" style="display:inline-block;transition:transform .15s;font-size:11px">&#9656;</span>' +
+          '<span>Done &middot; ' + _shownDone.length + '</span>' +
+          '<span style="flex:1"></span>' +
+          '<span style="font-size:9.5px;color:#c8bfa8;font-weight:600;text-transform:none;letter-spacing:0">(tap to toggle)</span>' +
+        '</summary>' +
+        _shownDone.map(_listRow).join('') +
+      '</details>';
     }
     html += '</div></div></div>';
     host.innerHTML = html; _wireCal(host);
@@ -14726,6 +14769,14 @@ Tell me your planned move-out date and I will set the inspection.`
         if(!wrap) return;
         var open = wrap.classList.toggle('overdue-open');
         btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    });
+    // Marlenyi 2026-08-07 · persist Done section open/closed state per user
+    // via localStorage. The <details> element toggles itself; we just listen
+    // and stash the state so it survives page reloads.
+    host.querySelectorAll('details.cal-done-fold').forEach(function(det){
+      det.addEventListener('toggle', function(){
+        try { localStorage.setItem('aari_cal_done_open', det.open ? '1' : '0'); } catch(_){}
       });
     });
     // Clear-all handler removed · Marlenyi asked to kill the button
