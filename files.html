@@ -24054,6 +24054,107 @@ Tell me your planned move-out date and I will set the inspection.`
     try { if(label && new RegExp('^' + tag.lab, 'i').test(String(label).trim())) return ''; } catch(_){}
     return '<span class="uc-tag ' + tag.cls + '">' + tag.lab + '</span>';
   }
+  // Marlenyi 2026-08-06 · $50 first-file credit for the OTHER-SIDE agent.
+  // Chip appears mid-transaction (under_contract / ctc) when we know the other
+  // agent's name + email. TC taps Yes → edge function generates a unique code +
+  // sends the thank-you email in the TC's voice from her Aari inbox. Nothing
+  // fires without the click. State stored in files.raw_form_data.other_side_offer_state
+  // ('sent' | 'declined') so it never re-asks.
+  function otherSideOfferChipHtml(file){
+    try {
+      if(!file) return '';
+      var raw = file.raw_form_data || {};
+      var st = raw.other_side_offer_state;
+      if(st === 'sent' || st === 'declined') return '';
+      var stage = (typeof deriveStage === 'function') ? deriveStage(file) : (file.transaction_stage || '');
+      if(['under_contract','inspection','appraisal','ctc'].indexOf(stage) === -1) return '';
+      // Pick the OTHER-side agent based on which side we represent.
+      var side = String(file.client_type || raw.client_type || '').toLowerCase();
+      if(!side || side === 'both') return '';
+      var name = '', email = '', label = '';
+      if(side === 'buyer'){
+        // We're the buyer's TC · other = listing agent
+        name = raw.listing_agent_name || raw.pa_listing_agent_name || '';
+        email = raw.listing_agent_email || raw.pa_listing_agent_email || '';
+        label = 'listing agent';
+      } else if(side === 'seller' || side === 'listing'){
+        // We're the listing TC · other = buyer agent
+        name = raw.buyer_agent_name || raw.pa_buyer_agent_name || raw.co_agent_name || '';
+        email = raw.buyer_agent_email || raw.pa_buyer_agent_email || raw.co_agent_email || '';
+        label = 'buyer agent';
+      }
+      name = String(name || '').trim();
+      email = String(email || '').trim();
+      if(!name || !email) return '';
+      var first = name.split(/\s+/)[0] || name;
+      var last = name.split(/\s+/).slice(1).join(' ');
+      return '<div class="osa-chip" data-osa-file="' + esc(file.id) + '" '
+        + 'data-osa-first="' + esc(first) + '" data-osa-last="' + esc(last) + '" data-osa-email="' + esc(email) + '" '
+        + 'style="background:linear-gradient(180deg,#faf7ef 0%,#f2ede3 100%);border:0.5px solid #e6dfcd;border-radius:12px;padding:13px 15px;margin:0 0 14px">'
+        + '<div style="font-size:12.5px;color:#0f0f0f;line-height:1.55;margin:0 0 10px">'
+        + 'Had a great experience with <strong style="font-weight:600">' + esc(name) + '</strong>, the ' + esc(label) + '? '
+        + 'Send ' + esc(first) + ' a <strong style="font-weight:600">$50 credit</strong> on her first file with Aari Transactions.'
+        + '</div>'
+        + '<div style="display:flex;gap:7px">'
+        +   '<button type="button" data-osa-yes="1" style="font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;background:#0f0f0f;color:#fff;border:0">Yes, send it</button>'
+        +   '<button type="button" data-osa-no="1" style="font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;background:transparent;color:#7a756c;border:0.5px solid #d9d1bc">No thanks</button>'
+        + '</div>'
+        + '<div style="font-size:10.5px;color:#7a756c;margin-top:8px;font-style:italic">Nothing goes out until you tap Yes. Skip and it won\'t ask again on this file.</div>'
+        + '</div>';
+    } catch(_){ return ''; }
+  }
+  // Delegated click handler for the chip. Handles both Yes (calls edge function,
+  // stores state, shows sent state) and No (marks declined, hides chip).
+  document.addEventListener('click', async function(e){
+    var btn = e.target && e.target.closest && e.target.closest('[data-osa-yes],[data-osa-no]');
+    if(!btn) return;
+    var chip = btn.closest('.osa-chip'); if(!chip) return;
+    var fileId = chip.getAttribute('data-osa-file');
+    var file = (_files || []).find(function(f){ return String(f.id) === String(fileId); }) || _currentFile;
+    if(!file || String(file.id) !== String(fileId)) return;
+    var yes = btn.hasAttribute('data-osa-yes');
+    // Optimistic UI · disable buttons and swap to "sending"
+    chip.querySelectorAll('button').forEach(function(b){ b.disabled = true; b.style.opacity = '0.5'; b.style.cursor = 'wait'; });
+    if(yes){
+      var first = chip.getAttribute('data-osa-first');
+      var last = chip.getAttribute('data-osa-last') || '';
+      var email = chip.getAttribute('data-osa-email');
+      try {
+        var sess = await _client.auth.getSession();
+        var token = sess && sess.data && sess.data.session && sess.data.session.access_token;
+        if(!token){ alert('Session expired. Sign in and try again.'); return; }
+        var res = await fetch('https://fnlrgmuvtgwzjsihqxcn.supabase.co/functions/v1/send-other-side-offer', {
+          method:'POST',
+          headers:{ 'Authorization':'Bearer ' + token, 'Content-Type':'application/json' },
+          body: JSON.stringify({ file_id: fileId, agent: { first_name: first, last_name: last, email: email } })
+        });
+        var body = await res.json().catch(function(){ return {}; });
+        if(!res.ok || body.ok !== true){
+          alert('Could not send: ' + (body.error || res.status));
+          chip.querySelectorAll('button').forEach(function(b){ b.disabled = false; b.style.opacity = ''; b.style.cursor = ''; });
+          return;
+        }
+        // Store state on the file · doesn't re-ask on future opens.
+        var prev = file.raw_form_data || {};
+        var next = Object.assign({}, prev, { other_side_offer_state:'sent', other_side_offer_code: body.code, other_side_offer_at: new Date().toISOString() });
+        file.raw_form_data = next;
+        try { await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); } catch(_){}
+        chip.innerHTML = '<div style="font-size:12.5px;color:#2f6b4f;font-weight:600">&check; Sent to ' + esc(first) + '. Code: <span style="font-family:\'SF Mono\',Menlo,monospace;letter-spacing:1px">' + esc(body.code) + '</span></div>';
+        chip.style.background = '#eef4ec';
+        chip.style.borderColor = '#cbdcc9';
+        setTimeout(function(){ try { renderPlaybook(file); } catch(_){} }, 1400);
+      } catch(err){
+        alert('Network error: ' + (err && err.message || err));
+        chip.querySelectorAll('button').forEach(function(b){ b.disabled = false; b.style.opacity = ''; b.style.cursor = ''; });
+      }
+    } else {
+      var prev2 = file.raw_form_data || {};
+      var next2 = Object.assign({}, prev2, { other_side_offer_state:'declined', other_side_offer_at: new Date().toISOString() });
+      file.raw_form_data = next2;
+      try { await _client.from('files').update({ raw_form_data: next2 }).eq('id', fileId); } catch(_){}
+      chip.remove();
+    }
+  });
   // Marlenyi 2026-08-06 · grouped Previously-done list. Every row same shape
   // (checkbox + category chip + name struck + date on the right), items chunked
   // into Deadlines hit / Tasks handled / Emails sent so the block reads like
@@ -25295,6 +25396,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // deadlines for clients." Money strip belongs on the Invoices tab, not
     // between deadline tasks. The Invoices view already surfaces per-file pay.
     host.innerHTML = contractGuardBannerHtml(file) + roBanner + saBanner + payBanner + closingBanner + gate + widget +
+      otherSideOfferChipHtml(file) +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
       // UC / CTC tracks render the deadlines card inline (right under Today) via buildUcTracksHtml,
       // so only add it here for the other views that don't use tracks · avoids a double render.
