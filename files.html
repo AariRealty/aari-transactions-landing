@@ -8157,6 +8157,62 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){}
   }
 
+  // Marlenyi 2026-08-07 · auto-roll every active file whose closing_date is
+  // in the past. Persists closing_date=today and stamps the original date in
+  // raw_form_data.closing_date_auto_rolled_from (first-roll wins, so
+  // successive rolls don't overwrite the true original). Runs from
+  // loadAndRender once per session load; also runs once per calendar day
+  // going forward, because each render pass will re-detect any file whose
+  // rolled closing_date fell into the past overnight and roll it again.
+  //
+  // The auto-roll does NOT mark the file as closed. It just moves the pipeline
+  // date forward so the file stops registering as "past due" everywhere, and
+  // surfaces an inline "was Aug 6 · confirm" prompt for the TC to resolve.
+  async function autoRollPastClosings(){
+    if(!_files || !_client) return;
+    const _todayObj = new Date(); _todayObj.setHours(0, 0, 0, 0);
+    const _todayIso = _todayObj.getFullYear() + '-' + String(_todayObj.getMonth()+1).padStart(2,'0') + '-' + String(_todayObj.getDate()).padStart(2,'0');
+    const _nowIso = new Date().toISOString();
+    const _rolls = [];
+    _files.forEach(function(f){
+      try {
+        if(!f || !f.id || !f.closing_date) return;
+        if(f.status === 'archived' || f.status === 'closed') return;
+        if((f.file_type || 'sale') !== 'sale') return;
+        if(String(f.transaction_stage || '').toLowerCase() === 'closed') return;
+        const cd = new Date(String(f.closing_date).slice(0,10) + 'T12:00:00');
+        if(isNaN(cd.getTime())) return;
+        cd.setHours(0,0,0,0);
+        if(cd >= _todayObj) return; // not past · nothing to roll
+        const prevRaw = f.raw_form_data || {};
+        // First-roll wins: keep the ORIGINAL scheduled date, not the last-rolled one, so the
+        // "was Aug 6" note keeps pointing at the real intended close all the way through.
+        const origIso = prevRaw.closing_date_auto_rolled_from || String(f.closing_date).slice(0,10);
+        const nextRaw = Object.assign({}, prevRaw, {
+          closing_date_auto_rolled_from: origIso,
+          closing_date_last_rolled: _todayIso,
+          // Rolling the date always retracts any prior "still working on it" dismissal so the
+          // Confirm date prompt re-surfaces on the freshly-rolled day — otherwise the file could
+          // roll silently every morning without the TC ever being nudged.
+          closing_reschedule_dismissed_on: null
+        });
+        // In-memory update so every render below this call sees today's date.
+        f.closing_date = _todayIso;
+        f.raw_form_data = nextRaw;
+        _rolls.push({ id: f.id, closing_date: _todayIso, raw_form_data: nextRaw });
+      } catch(_){}
+    });
+    if(!_rolls.length) return;
+    // Persist. Sequential (not parallel) to keep the update pattern predictable
+    // under a small n — this only fires on files that actually rolled, usually 0-3
+    // per morning, so latency here is negligible.
+    for(let i = 0; i < _rolls.length; i++){
+      const r = _rolls[i];
+      try { await _client.from('files').update({ closing_date: r.closing_date, raw_form_data: r.raw_form_data, updated_at: _nowIso }).eq('id', r.id); }
+      catch(err){ console.warn('autoRollPastClosings · save failed for', r.id, err); }
+    }
+  }
+
   async function loadAndRender(){
     if(!_client || !_profile){
       // Marlenyi 2026-08-07 · never leave the skeleton hanging if init bailed early.
@@ -8303,6 +8359,13 @@ Tell me your planned move-out date and I will set the inspection.`
     // the whole load. computeCreditCoverage used to be a silent kill-switch:
     // one thrown exception here would leave the kanban skeleton frozen.
     try { computeCreditCoverage(); } catch(e){ console.warn('computeCreditCoverage failed', e); }
+    // Marlenyi 2026-08-07 · past-close files (closing_date in the past + still active)
+    // silently roll their closing_date forward to today so the pipeline shows them as
+    // "closing today" instead of stuck in past-due state. The original date is preserved
+    // in raw_form_data.closing_date_auto_rolled_from so the drawer + Next closings tile
+    // can display "was Aug 6 · confirm" and the TC can use the Confirm date modal to
+    // mark it closed / pick a real new date / dismiss for today.
+    try { await autoRollPastClosings(); } catch(e){ console.warn('autoRollPastClosings failed', e); }
     // Pull email sends for the visible files
     _sendsByFile = {};
     if(_files.length){
@@ -11291,7 +11354,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // A CLOSING row that's past due also gets a "Confirm date →" button (opens the 3-option modal).
     var row = function(p){
       var _confirm = '';
-      if(daysTo(p.date) < 0 && /clos/.test(String(p.key || ''))){
+      if(/clos/.test(String(p.key || ''))){
         try { _confirm = confirmClosingDateLinkHtml(file); } catch(_){ _confirm = ''; }
       }
       return '<div class="ck-task adhd-task" style="display:flex;align-items:center;gap:11px;padding:11px 0;border-top:0.5px solid #f2eee2">' +
@@ -13354,10 +13417,11 @@ Tell me your planned move-out date and I will set the inspection.`
   function nextClosingsHtml(){
     try {
       const today = new Date(); today.setHours(0, 0, 0, 0);
-      // Every active sale file with a closing date. Split into PAST (needs attention)
-      // and FUTURE (upcoming). Closed/archived files never appear in either group.
-      // Marlenyi 2026-08-07 · was including past-close files in the upcoming carousel
-      // and counting them in the "N upcoming" total; both were misleading.
+      // Every active sale file with a closing date. Past-close files were auto-rolled
+      // forward by autoRollPastClosings() before this render runs, so `days` here is
+      // never negative for active files. A subtle "was scheduled Mmm D" note appears
+      // on any tile whose date was auto-rolled, and clicking it opens the file drawer
+      // where the "Confirm date →" button asks the TC to confirm/reschedule.
       const eligible = (_files || []).filter(function(f){
         if((f.file_type || 'sale') !== 'sale') return false;
         if(f.status === 'archived' || f.status === 'closed') return false;
@@ -13365,64 +13429,47 @@ Tell me your planned move-out date and I will set the inspection.`
         return !!f.closing_date;
       }).map(function(f){
         const c = new Date(String(f.closing_date).slice(0,10) + 'T12:00:00'); c.setHours(0, 0, 0, 0);
-        return { f:f, date:c, days: Math.round((c - today) / 86400000), addr: String(f.property_address || '').split(',')[0] };
-      }).filter(function(x){ return !isNaN(x.date.getTime()); });
+        const rolled = ((f.raw_form_data || {}).closing_date_auto_rolled_from) || '';
+        return { f:f, date:c, days: Math.round((c - today) / 86400000), addr: String(f.property_address || '').split(',')[0], rolledFrom: rolled };
+      }).filter(function(x){ return !isNaN(x.date.getTime()) && x.days >= 0; });
       if(!eligible.length) return '';
-      const past = eligible.filter(function(x){ return x.days < 0; }).sort(function(a, b){ return a.date - b.date; });
-      const future = eligible.filter(function(x){ return x.days >= 0; }).sort(function(a, b){ return a.date - b.date; });
+      eligible.sort(function(a, b){ return a.date - b.date; });
+      const maxStart = Math.max(0, eligible.length - 5);
+      _ncStep = Math.max(0, Math.min(_ncStep, maxStart));
+      const start = _ncStep;
+      const win = eligible.slice(start, start + 5);
+      const canLeft = start > 0;
+      const canRight = start + win.length < eligible.length;
       const fmt = function(d){ try { return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } };
-      // -------- Needs attention (past close, still active) --------
-      // Renders in front of the carousel. Clicking a tile opens the file drawer;
-      // the CLOSING deadline row inside will show the "Confirm date →" button that
-      // opens the same 3-option modal (Closed today / Rescheduled / Still working).
-      let needsHtml = '';
-      if(past.length){
-        const punit = function(x){
-          const cd = Math.abs(x.days) + 'd ago';
-          return '<div data-cal-open="' + esc(x.f.id) + '" style="flex:0 0 auto;cursor:pointer;background:#fdf4f1;border:0.5px solid #f3d9d0;border-radius:7px;padding:6px 9px">' +
-            '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#993c1d;line-height:1">' + fmt(x.date) + '</div>' +
-            '<div style="font-size:11px;color:#5a2517;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.addr) + '</div>' +
-            '<div style="font-size:9.5px;color:#993c1d;font-weight:700;margin-top:1px;letter-spacing:0.2px">' + cd + '</div></div>';
-        };
-        needsHtml = '<div style="background:transparent;padding:0 0 12px;margin-bottom:4px">' +
-          '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;padding:0 2px">' +
-            '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#993c1d">Needs attention</span>' +
-            '<span style="font-size:10px;font-weight:700;letter-spacing:0.4px;color:#993c1d">' + past.length + ' past close</span>' +
-          '</div>' +
-          '<div style="display:flex;gap:8px;align-items:stretch;overflow-x:auto;-webkit-overflow-scrolling:touch">' + past.map(punit).join('') + '</div>' +
+      const fmtFrom = function(iso){
+        try { const d = new Date(String(iso).slice(0,10) + 'T12:00:00'); return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; }
+      };
+      const unit = function(x){
+        const cd = x.days === 0 ? 'today' : (x.days === 1 ? 'tomorrow' : x.days + ' days');
+        const col = x.days <= 3 ? '#a3402f' : '#7a756c';
+        // A rolled tile gets a red left rail + a tiny "was Aug 6" line so the TC sees at a glance
+        // this needs their confirmation. Cheap visual, no extra section.
+        const rolledStyle = x.rolledFrom ? ';border-left:2.5px solid #993c1d' : '';
+        const rolledNote  = x.rolledFrom ? '<div style="font-size:9px;color:#993c1d;font-weight:600;margin-top:2px;letter-spacing:0.15px">was ' + esc(fmtFrom(x.rolledFrom)) + ' · confirm</div>' : '';
+        return '<div data-cal-open="' + esc(x.f.id) + '" style="flex:0 0 auto;cursor:pointer;background:transparent;border:0.5px solid rgba(15,15,15,0.10);border-radius:7px;padding:6px 9px' + rolledStyle + '">' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f;line-height:1">' + fmt(x.date) + '</div>' +
+          '<div style="font-size:11px;color:#3d3a34;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.addr) + '</div>' +
+          '<div style="font-size:9.5px;color:' + col + ';font-weight:600;margin-top:1px;letter-spacing:0.2px">' + cd + '</div>' +
+          rolledNote +
         '</div>';
-      }
-      // -------- Next closings (future only) --------
-      let upHtml = '';
-      if(future.length){
-        const maxStart = Math.max(0, future.length - 5);
-        _ncStep = Math.max(0, Math.min(_ncStep, maxStart));
-        const start = _ncStep;
-        const win = future.slice(start, start + 5);
-        const canLeft = start > 0;
-        const canRight = start + win.length < future.length;
-        const unit = function(x){
-          const cd = x.days === 0 ? 'today' : (x.days === 1 ? 'tomorrow' : x.days + ' days');
-          const col = x.days <= 3 ? '#a3402f' : '#7a756c';
-          return '<div data-cal-open="' + esc(x.f.id) + '" style="flex:0 0 auto;cursor:pointer;background:transparent;border:0.5px solid rgba(15,15,15,0.10);border-radius:7px;padding:6px 9px">' +
-            '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f;line-height:1">' + fmt(x.date) + '</div>' +
-            '<div style="font-size:11px;color:#3d3a34;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.addr) + '</div>' +
-            '<div style="font-size:9.5px;color:' + col + ';font-weight:600;margin-top:1px;letter-spacing:0.2px">' + cd + '</div></div>';
-        };
-        const arw = function(dir, lbl, on){ return '<button type="button"' + (on ? (' data-nc-step="' + dir + '"') : ' disabled') + ' aria-label="' + lbl + '" style="flex:none;border:0;background:none;color:' + (on ? '#5f5e5a' : '#e2ddd3') + ';font-size:18px;line-height:1;cursor:' + (on ? 'pointer' : 'default') + ';padding:2px 4px">' + (dir < 0 ? '&#8249;' : '&#8250;') + '</button>'; };
-        upHtml = '<div style="background:transparent;padding:0 0 12px;margin-bottom:4px">' +
-          '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;padding:0 2px">' +
-            '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f">Next closings</span>' +
-            '<span style="font-size:10px;font-weight:600;letter-spacing:0.4px;color:#a09a8f">' + future.length + ' upcoming</span>' +
-          '</div>' +
-          '<div style="display:flex;gap:6px;align-items:stretch">' +
-            arw(-1, 'Previous closings', canLeft) +
-            '<div style="flex:1;min-width:0;display:flex;gap:8px;align-items:stretch;overflow-x:auto;-webkit-overflow-scrolling:touch">' + win.map(unit).join('') + '</div>' +
-            arw(1, 'Later closings', canRight) +
-          '</div>' +
-        '</div>';
-      }
-      return needsHtml + upHtml;
+      };
+      const arw = function(dir, lbl, on){ return '<button type="button"' + (on ? (' data-nc-step="' + dir + '"') : ' disabled') + ' aria-label="' + lbl + '" style="flex:none;border:0;background:none;color:' + (on ? '#5f5e5a' : '#e2ddd3') + ';font-size:18px;line-height:1;cursor:' + (on ? 'pointer' : 'default') + ';padding:2px 4px">' + (dir < 0 ? '&#8249;' : '&#8250;') + '</button>'; };
+      return '<div style="background:transparent;padding:0 0 12px;margin-bottom:4px">' +
+        '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;padding:0 2px">' +
+          '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f">Next closings</span>' +
+          '<span style="font-size:10px;font-weight:600;letter-spacing:0.4px;color:#a09a8f">' + eligible.length + ' upcoming</span>' +
+        '</div>' +
+        '<div style="display:flex;gap:6px;align-items:stretch">' +
+          arw(-1, 'Previous closings', canLeft) +
+          '<div style="flex:1;min-width:0;display:flex;gap:8px;align-items:stretch;overflow-x:auto;-webkit-overflow-scrolling:touch">' + win.map(unit).join('') + '</div>' +
+          arw(1, 'Later closings', canRight) +
+        '</div>' +
+      '</div>';
     } catch(_){ return ''; }
   }
   // ---- Month HEATMAP calendar (replaces the kanban) · #calHeatmap ----
@@ -24335,10 +24382,17 @@ Tell me your planned move-out date and I will set the inspection.`
       if(file.status === 'archived' || String(file.transaction_stage || '') === 'closed' || file.status === 'closed') return false;
       var stage = String(file.transaction_stage || '').toLowerCase();
       if(['under_contract','ctc','inspection','appraisal','remedy'].indexOf(stage) === -1) return false;
-      var dtc = (typeof daysToClose === 'function') ? daysToClose(file) : null;
-      if(dtc == null || dtc >= 0) return false;
       var raw = file.raw_form_data || {};
       if(raw.closing_reschedule_dismissed_on === _todayIsoYmd()) return false;
+      // Two ways to qualify:
+      //   1. The file was auto-rolled today · closing_date_auto_rolled_from points at the
+      //      real original date and closing_date now sits on today. The TC still needs to
+      //      confirm whether it actually closed or when it will.
+      //   2. Fallback for edge cases where the auto-roll didn't run (network fail on load,
+      //      stage change mid-session) · plain past-due check.
+      if(raw.closing_date_auto_rolled_from) return true;
+      var dtc = (typeof daysToClose === 'function') ? daysToClose(file) : null;
+      if(dtc == null || dtc >= 0) return false;
       return true;
     } catch(_){ return false; }
   }
@@ -24453,9 +24507,19 @@ Tell me your planned move-out date and I will set the inspection.`
         if(val < todayIso){ errEl.style.display = 'block'; errEl.textContent = 'New closing date must be today or later.'; return; }
         this.disabled = true; this.textContent = 'Saving…';
         try {
-          var { error } = await _client.from('files').update({ closing_date:val, updated_at:new Date().toISOString() }).eq('id', fileId);
+          // TC picked a real new date · clear the auto-roll flag so the "was Mmm D · confirm"
+          // marker and the drawer prompt both stop appearing. Also clears the "still working"
+          // dismiss stamp since we now have a real answer, not a delay.
+          var _prevRaw = file.raw_form_data || {};
+          var _nextRaw = Object.assign({}, _prevRaw, {
+            closing_date_auto_rolled_from: null,
+            closing_date_last_rolled: null,
+            closing_reschedule_dismissed_on: null
+          });
+          var { error } = await _client.from('files').update({ closing_date:val, raw_form_data:_nextRaw, updated_at:new Date().toISOString() }).eq('id', fileId);
           if(error){ errEl.style.display = 'block'; errEl.textContent = 'Could not save: ' + (error.message || 'unknown'); this.disabled = false; this.textContent = 'Save'; return; }
           file.closing_date = val;
+          file.raw_form_data = _nextRaw;
           closeOverlay();
           try { renderKanban(); } catch(_){}
           try { renderPlaybook(file); } catch(_){}
@@ -24954,13 +25018,13 @@ Tell me your planned move-out date and I will set the inspection.`
       var txt = (n < 0) ? (Math.abs(n) + 'd late') : (n === 0 ? 'Due today' : (n <= 3 ? 'In ' + n + ' day' + (n === 1 ? '' : 's') : p.date.toLocaleDateString('en-US', { month:'short', day:'numeric' })));
       var col = (n <= 0) ? '#f7ece8;color:#a3402f' : (n <= 3 ? '#fbf3e2;color:#8a6d1b' : '#f1efe8;color:#8a857c');
       var _tagH = '<span style="flex:none;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border-radius:4px;padding:2px 6px;color:#3d6b4d;background:#eef1ee">' + esc(_tg) + '</span>';
-      // Marlenyi 2026-08-07 · when this is the CLOSING deadline row and it's
-      // past due, tack a "Confirm date →" button to the right so the fix lives
-      // where the "Xd late" pill lives. Only renders on the actual file's row
-      // (not on stage-deadlines cards that lack a file context). Clicking it
-      // opens the 3-option modal (Closed today / Rescheduled / Still working).
+      // Marlenyi 2026-08-07 · when this is the CLOSING deadline row and the
+      // file needs a date confirmation (past-due OR auto-rolled to today), tack
+      // a "Confirm date →" button to the right. confirmClosingDateLinkHtml
+      // gates on _shouldShowConfirmDateLink so it silently no-ops when nothing
+      // needs confirming. Clicking opens the 3-option modal.
       var _confirmBtn = '';
-      if(n < 0 && /clos/.test(String(p.key || ''))){
+      if(/clos/.test(String(p.key || ''))){
         try { _confirmBtn = confirmClosingDateLinkHtml(file); } catch(_){ _confirmBtn = ''; }
       }
       return '<div class="ck-task adhd-task" style="display:flex;align-items:center;gap:11px;padding:11px 0;border-top:0.5px solid #f2eee2">' +
