@@ -16136,7 +16136,18 @@ Tell me your planned move-out date and I will set the inspection.`
     working.forEach(function(g){ (g.billable || []).forEach(function(f){ if(f && f.id) _periodIds[f.id] = 1; }); });
     subs.concat(paidInv).forEach(function(i){ (i.line_items || []).forEach(function(it){ if(it && it.file_id) _periodIds[it.file_id] = 1; }); });
     var _revIn = 0, _payOut = 0;
-    Object.keys(_periodIds).forEach(function(id){ var f = _fileById[id]; if(!f) return; try { _revIn += Math.round((_svcP(f) || 0) * 100); } catch(_){} _payOut += fileTcPayCents(f); });
+    Object.keys(_periodIds).forEach(function(id){ var f = _fileById[id]; if(!f) return;
+      // Only OUTSIDE, non-credit client work counts toward Transactions' margin. In-house Realty
+      // files are an internal wash (Realty reimburses the TC cost, AT keeps $0) and membership-credit
+      // files are covered by the membership fee (separate income) — counting either at full price
+      // inflated "keeps" (Marlenyi Aug 7). Excluding them makes keeps = payout when the split is 50/50.
+      var _inhouse = false, _covered = false;
+      try { _inhouse = (typeof isAariRealtyFile === 'function') && isAariRealtyFile(f); } catch(_){}
+      try { _covered = (typeof fileIsCovered === 'function') && fileIsCovered(f); } catch(_){}
+      if(_inhouse || _covered) return;
+      try { _revIn += Math.round((_svcP(f) || 0) * 100); } catch(_){}
+      _payOut += fileTcPayCents(f);
+    });
     var _keeps = _revIn - _payOut;
     var moneyStrip = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:0 0 12px">' +
         _kpi('Coming in &middot; client fees', _money(_revIn), false) +
@@ -16179,18 +16190,24 @@ Tell me your planned move-out date and I will set the inspection.`
     // above only ever holds active work and never grows into a long list. Coordinator payouts and
     // Realty bills both land here once settled, each labeled so the direction is clear.
     var _paidRow = function(label, meta, amtCents){
-      return '<div style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-top:0.5px solid #f0ebe0">' +
+      var _s = (String(label) + ' ' + String(meta)).replace(/<[^>]*>/g, '').replace(/&[a-z]+;/g, ' ').toLowerCase();
+      return '<div data-paid-row data-search="' + esc(_s) + '" style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-top:0.5px solid #f0ebe0">' +
         '<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:#0f0f0f;font-weight:500">' + label + '</div>' +
         '<div style="font-size:10.5px;color:#a39e93;margin-top:1px">' + meta + '</div></div>' +
         '<span style="font-family:Georgia,serif;font-size:13px;color:#8a857c;font-variant-numeric:tabular-nums">' + _money(amtCents) + '</span></div>';
     };
     var _pdCoord = paidInv.map(function(i){ return _paidRow(esc(_tcDisplayName(i.tc_id).split(' ')[0]) + ' &middot; ' + esc(i.invoice_number || ''), 'Paid' + (i.paid_at ? ' ' + esc(new Date(i.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : '') + ' &middot; ' + ((i.line_items || []).length) + ' files', i.total_cents || 0); }).join('');
     var _pdAR = _arP.map(function(b){ return _paidRow(esc(String(b.file_property || 'File').split(',')[0]), '<span style="color:#8a6d1b;font-weight:600">Realty owes AT</span> &middot; ' + esc(b.tc_name || '') + (b.paid_at ? ' &middot; Paid ' + esc(new Date(b.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : ''), Math.round((parseFloat(b.amount) || 0) * 100)); }).join('');
-    var _paidSection = (paidInv.length + _arP.length)
-      ? '<div style="margin-top:16px;background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:16px 18px">' +
-          '<div style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700;margin-bottom:2px">Paid &middot; history</div>' +
-          _pdCoord + _pdAR +
-        '</div>'
+    var _paidCount = paidInv.length + _arP.length;
+    var _paidSection = _paidCount
+      ? '<details style="margin-top:16px;background:#fff;border:0.5px solid #e8e4db;border-radius:12px;padding:14px 18px">' +
+          '<summary style="list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px">' +
+            '<span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">&#9656;&nbsp; Paid &middot; history</span>' +
+            '<span style="font-size:11px;color:#a39e93">' + _paidCount + ' item' + (_paidCount === 1 ? '' : 's') + ' &middot; tap to open</span>' +
+          '</summary>' +
+          '<input type="text" data-paid-search placeholder="Search paid history by address…" style="width:100%;box-sizing:border-box;font-family:inherit;font-size:12px;padding:8px 11px;border:0.5px solid #e6e1d6;border-radius:8px;background:#fff;color:#0f0f0f;margin:10px 0 4px">' +
+          '<div data-paid-rows>' + _pdCoord + _pdAR + '</div>' +
+        '</details>'
       : '';
 
     return '<div style="display:flex;align-items:center;gap:10px;margin:0 0 12px;position:relative">' +
@@ -16675,6 +16692,17 @@ Tell me your planned move-out date and I will set the inspection.`
       try { renderInvoiceScreen(); } catch(_){}
     } catch(_){ alert('Not saved.'); }
   }
+  // Paid-history search · filters the collapsed Paid history rows by address as you type.
+  document.addEventListener('input', function(e){
+    var inp = e.target && e.target.closest && e.target.closest('[data-paid-search]');
+    if(!inp) return;
+    var q = (inp.value || '').trim().toLowerCase();
+    var box = inp.closest('details') || document;
+    box.querySelectorAll('[data-paid-row]').forEach(function(r){
+      var t = r.getAttribute('data-search') || '';
+      r.style.display = (!q || t.indexOf(q) !== -1) ? '' : 'none';
+    });
+  });
   document.addEventListener('click', function(e){
     var s = e.target && e.target.closest && e.target.closest('[data-submit-invoice]');
     if(s){ submitMyInvoice(); return; }
