@@ -24251,6 +24251,115 @@ Tell me your planned move-out date and I will set the inspection.`
     try { await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); } catch(_){}
   });
 
+  // Marlenyi 2026-08-07 · past-closing prompt. When a file's closing_date is
+  // in the past and it's still active (UC / CTC), the drawer shows a persistent
+  // banner asking whether closing actually happened, was rescheduled, or is
+  // still in progress. Solves the "tasks stuck past-due with no way to fix it"
+  // problem. Dismiss-for-today is per-day so it re-surfaces daily until acted on.
+  function closingReschedulePromptHtml(file){
+    try {
+      if(!file || !file.closing_date) return '';
+      if(file.status === 'archived' || String(file.transaction_stage || '') === 'closed' || file.status === 'closed') return '';
+      var stage = String(file.transaction_stage || '').toLowerCase();
+      if(['under_contract','ctc','inspection','appraisal','remedy'].indexOf(stage) === -1) return '';
+      // Days-to-close: negative means closing was in the past.
+      var dtc = (typeof daysToClose === 'function') ? daysToClose(file) : null;
+      if(dtc == null || dtc >= 0) return '';
+      // Dismissed already for today · check yyyy-mm-dd match.
+      var raw = file.raw_form_data || {};
+      var todayY = (function(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
+      if(raw.closing_reschedule_dismissed_on === todayY) return '';
+      var was = String(file.closing_date || '').slice(0, 10);
+      var wasFmt = '';
+      try { var d0 = new Date(was + 'T12:00:00'); wasFmt = d0.toLocaleDateString('en-US', { month:'long', day:'numeric' }); } catch(_){ wasFmt = was; }
+      var lateBy = Math.abs(dtc);
+      return '<div class="closing-past-banner" data-close-past-file="' + esc(file.id) + '" '
+        + 'style="background:linear-gradient(180deg,#fbf3f1 0%,#f6e5e0 100%);border:0.5px solid #ecd6d0;border-radius:12px;padding:13px 15px;margin:0 0 14px">'
+        + '<div style="font-size:9.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:#a3402f;margin-bottom:4px">Past closing date &middot; ' + lateBy + 'd ago</div>'
+        + '<div style="font-size:12.5px;color:#0f0f0f;line-height:1.55;margin-bottom:10px">Closing was scheduled for <strong>' + esc(wasFmt) + '</strong>. What happened?</div>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:6px">'
+        +   '<button type="button" data-close-past-done="1" style="font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;background:#0f0f0f;color:#fff;border:0">Closed today</button>'
+        +   '<button type="button" data-close-past-resched="1" style="font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;background:#fff;color:#0f0f0f;border:0.5px solid #d9d1bc">Rescheduled</button>'
+        +   '<button type="button" data-close-past-later="1" style="font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;background:transparent;color:#7a756c;border:0">Still working on it</button>'
+        + '</div></div>';
+    } catch(_){ return ''; }
+  }
+  // Delegated click handler for the three actions on the past-closing banner.
+  document.addEventListener('click', async function(e){
+    var btn = e.target && e.target.closest && e.target.closest('[data-close-past-done],[data-close-past-resched],[data-close-past-later]');
+    if(!btn) return;
+    var banner = btn.closest('.closing-past-banner'); if(!banner) return;
+    var fileId = banner.getAttribute('data-close-past-file');
+    var file = (_files || []).find(function(f){ return String(f.id) === String(fileId); }) || _currentFile;
+    if(!file || String(file.id) !== String(fileId)) return;
+    banner.querySelectorAll('button').forEach(function(b){ b.disabled = true; b.style.opacity = '0.5'; b.style.cursor = 'wait'; });
+    // -------- CLOSED TODAY --------
+    if(btn.hasAttribute('data-close-past-done')){
+      var _todayIso = (function(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
+      try {
+        var { error } = await _client.from('files').update({ transaction_stage:'closed', status:'closed', actual_closing_date:_todayIso, updated_at:new Date().toISOString() }).eq('id', fileId);
+        if(error){ alert('Could not save: ' + (error.message || 'unknown')); banner.querySelectorAll('button').forEach(function(b){ b.disabled = false; b.style.opacity = ''; b.style.cursor = ''; }); return; }
+        file.transaction_stage = 'closed'; file.status = 'closed'; file.actual_closing_date = _todayIso;
+        try { renderKanban(); } catch(_){}
+        try { renderPlaybook(file); } catch(_){}
+      } catch(err){ alert('Network error: ' + (err && err.message || err)); banner.querySelectorAll('button').forEach(function(b){ b.disabled = false; b.style.opacity = ''; b.style.cursor = ''; }); }
+      return;
+    }
+    // -------- STILL WORKING (dismiss for today) --------
+    if(btn.hasAttribute('data-close-past-later')){
+      var _tY = (function(){ var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
+      var prev = file.raw_form_data || {};
+      var next = Object.assign({}, prev, { closing_reschedule_dismissed_on: _tY });
+      file.raw_form_data = next;
+      banner.remove();
+      try { await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); } catch(_){}
+      return;
+    }
+    // -------- RESCHEDULED --------
+    if(btn.hasAttribute('data-close-past-resched')){
+      // Modal · date picker prefilled to a sane "next business day" guess. Any past date is rejected.
+      var todayObj = new Date(); todayObj.setHours(0,0,0,0);
+      var guess = new Date(todayObj.getTime() + 86400000);
+      // Skip Sun/Sat.
+      if(guess.getDay() === 0) guess = new Date(guess.getTime() + 86400000);
+      if(guess.getDay() === 6) guess = new Date(guess.getTime() + 2*86400000);
+      var guessIso = guess.getFullYear() + '-' + String(guess.getMonth()+1).padStart(2,'0') + '-' + String(guess.getDate()).padStart(2,'0');
+      var todayIso = todayObj.getFullYear() + '-' + String(todayObj.getMonth()+1).padStart(2,'0') + '-' + String(todayObj.getDate()).padStart(2,'0');
+      var ov = document.createElement('div');
+      ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,0.45);display:flex;align-items:center;justify-content:center;z-index:99999;padding:20px';
+      ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:400px;width:100%;padding:22px 24px;box-shadow:0 12px 40px rgba(0,0,0,0.25);font-family:inherit">'
+        + '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:20px;font-weight:600;color:#0f0f0f;margin-bottom:6px">Reschedule closing</div>'
+        + '<div style="font-size:12.5px;color:#5f5647;line-height:1.5;margin-bottom:14px">Pick the new closing date. Closing-day tasks (payment link, wire warning, walk-through, CD) will re-flow their due dates.</div>'
+        + '<label style="display:block;font-size:11px;font-weight:600;color:#7a756c;margin-bottom:4px">New closing date</label>'
+        + '<input type="date" id="__close-past-newd" value="' + esc(guessIso) + '" min="' + esc(todayIso) + '" style="width:100%;padding:9px 10px;border:0.5px solid #d9d1bc;border-radius:8px;font-size:14px;font-family:inherit">'
+        + '<div id="__close-past-err" style="display:none;font-size:11.5px;color:#a3402f;margin-top:6px"></div>'
+        + '<div style="display:flex;gap:9px;justify-content:flex-end;margin-top:16px">'
+        +   '<button type="button" data-close-past-cancel="1" style="font-size:12.5px;font-weight:600;color:#5f5e5a;background:#f3f0ea;border:0.5px solid rgba(15,15,15,0.12);border-radius:8px;padding:8px 16px;cursor:pointer;font-family:inherit">Cancel</button>'
+        +   '<button type="button" data-close-past-save="1" style="font-size:12.5px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:8px;padding:8px 16px;cursor:pointer;font-family:inherit">Save</button>'
+        + '</div></div>';
+      document.body.appendChild(ov);
+      var closeOv = function(){ try { ov.remove(); } catch(_){} banner.querySelectorAll('button').forEach(function(b){ b.disabled = false; b.style.opacity = ''; b.style.cursor = ''; }); };
+      ov.querySelector('[data-close-past-cancel]').addEventListener('click', closeOv);
+      ov.addEventListener('click', function(ev){ if(ev.target === ov) closeOv(); });
+      ov.querySelector('[data-close-past-save]').addEventListener('click', async function(){
+        var inp = document.getElementById('__close-past-newd');
+        var errEl = document.getElementById('__close-past-err');
+        var val = (inp && inp.value) || '';
+        if(!val){ errEl.style.display = 'block'; errEl.textContent = 'Pick a date to save.'; return; }
+        if(val < todayIso){ errEl.style.display = 'block'; errEl.textContent = 'New closing date must be today or later.'; return; }
+        this.disabled = true; this.textContent = 'Saving…';
+        try {
+          var { error } = await _client.from('files').update({ closing_date:val, updated_at:new Date().toISOString() }).eq('id', fileId);
+          if(error){ errEl.style.display = 'block'; errEl.textContent = 'Could not save: ' + (error.message || 'unknown'); this.disabled = false; this.textContent = 'Save'; return; }
+          file.closing_date = val;
+          try { ov.remove(); } catch(_){}
+          try { renderKanban(); } catch(_){}
+          try { renderPlaybook(file); } catch(_){}
+        } catch(err){ errEl.style.display = 'block'; errEl.textContent = 'Network error: ' + (err && err.message || err); this.disabled = false; this.textContent = 'Save'; }
+      });
+    }
+  });
+
   // Marlenyi 2026-08-06 · $50 first-file credit for the OTHER-SIDE agent.
   // Chip appears mid-transaction (under_contract / ctc) when we know the other
   // agent's name + email. TC taps Yes → edge function generates a unique code +
@@ -25594,6 +25703,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // deadlines for clients." Money strip belongs on the Invoices tab, not
     // between deadline tasks. The Invoices view already surfaces per-file pay.
     host.innerHTML = contractGuardBannerHtml(file) + roBanner + saBanner + payBanner + closingBanner + gate + widget +
+      closingReschedulePromptHtml(file) +
       inhouseTestBannerHtml(file) +
       otherSideOfferChipHtml(file) +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
