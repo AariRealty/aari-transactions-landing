@@ -51,19 +51,37 @@ Deno.serve(async (req) => {
 
   const admin = createClient(SUPABASE_URL, SERVICE);
 
-  // Every coordinator invoice still submitted (not paid) that was created > 7 days ago.
+  // Every coordinator invoice still submitted (not paid) that was created > 7 days ago
+  // — plus any invoice with a held line whose snooze has passed (regardless of age),
+  // since a snooze-expiry ping is what makes "Waiting on Samantha payment" actionable.
   const cutoff = new Date(Date.now() - 7 * 86400000).toISOString();
+  const todayIso = new Date().toISOString().slice(0, 10);
   const { data: unpaid, error } = await admin
     .from("tc_invoices")
-    .select("id, invoice_number, tc_id, total_cents, period_start, period_end, created_at")
+    .select("id, invoice_number, tc_id, total_cents, period_start, period_end, created_at, line_items")
     .eq("status", "submitted")
-    .lte("created_at", cutoff)
     .order("created_at", { ascending: true });
   if (error) return j(500, { ok: false, error: error.message });
-  if (!unpaid || !unpaid.length) return j(200, { ok: true, sent: false, reason: "nothing_unpaid_over_7d" });
+  const eligible = (unpaid || []).filter((i: any) => {
+    // Include if the invoice itself is older than 7 days OR any held line has a
+    // snooze that landed today or earlier. Skip invoices where every non-covered
+    // non-paid line is held with a snooze still in the future (silent).
+    const olderThanWeek = String(i.created_at || "") <= cutoff;
+    const lines = (i.line_items || []) as any[];
+    const openLines = lines.filter((it) => it && !it.covered && !it.paid_at);
+    if (!openLines.length) return false; // nothing to remind about
+    if (olderThanWeek) {
+      // Older invoice · include unless every open line is snoozed to a future date.
+      const allSnoozedFuture = openLines.every((it) => it.held_at && it.snooze_until && String(it.snooze_until) > todayIso);
+      return !allSnoozedFuture;
+    }
+    // Younger invoice · include only if it has at least one line whose snooze passed.
+    return openLines.some((it) => it.held_at && it.snooze_until && String(it.snooze_until) <= todayIso);
+  });
+  if (!eligible.length) return j(200, { ok: true, sent: false, reason: "nothing_to_remind_about" });
 
   // Resolve coordinator display names.
-  const tcIds = [...new Set(unpaid.map((i) => i.tc_id).filter(Boolean))];
+  const tcIds = [...new Set(eligible.map((i: any) => i.tc_id).filter(Boolean))];
   const { data: tcs } = await admin.from("agents").select("id, first_name, last_name").in("id", tcIds);
   const nameById: Record<string, string> = {};
   (tcs || []).forEach((t: any) => {
@@ -71,18 +89,23 @@ Deno.serve(async (req) => {
     nameById[t.id] = nm || "Coordinator";
   });
 
-  // Group by coordinator so the broker sees "Eileen · $500 across 3 invoices" not one flat list.
+  // Group by coordinator. Effective total = sum of NON-paid non-covered line amounts,
+  // not the original total_cents (which was set before any partial pay). Held lines
+  // are annotated in the email row with their note + snooze.
   const byTc: Record<string, any> = {};
-  unpaid.forEach((i: any) => {
+  eligible.forEach((i: any) => {
     const k = i.tc_id || "unknown";
     if (!byTc[k]) byTc[k] = { name: nameById[k] || "Coordinator", invoices: [], total: 0 };
-    byTc[k].invoices.push(i);
-    byTc[k].total += Number(i.total_cents) || 0;
+    const lines = (i.line_items || []) as any[];
+    const openTotal = lines.filter((it) => it && !it.covered && !it.paid_at).reduce((s, it) => s + (Number(it.amount_cents) || 0), 0);
+    const heldLines = lines.filter((it) => it && it.held_at && !it.paid_at && !it.covered);
+    byTc[k].invoices.push({ ...i, effective_total_cents: openTotal, held_lines: heldLines });
+    byTc[k].total += openTotal;
   });
   const groups = Object.values(byTc) as any[];
   groups.sort((a, b) => b.total - a.total);
   const grandTotal = groups.reduce((s, g) => s + g.total, 0);
-  const totalInvoices = unpaid.length;
+  const totalInvoices = eligible.length;
 
   // Broker email address.
   const { data: broker } = await admin.from("agents").select("email").eq("role", "broker").order("created_at", { ascending: true }).limit(1).maybeSingle();
@@ -94,10 +117,21 @@ Deno.serve(async (req) => {
       const period = iv.period_start && iv.period_end ? esc(iv.period_start + " – " + iv.period_end) : "";
       const age = daysSince(iv.created_at);
       const ageLbl = age === 1 ? "1 day" : `${age} days`;
+      // Held lines rendered as small annotations right under the invoice line so
+      // the broker sees "Waiting on Samantha payment · snoozed to Aug 15" in the
+      // reminder itself — no need to open the app to remember why the line is held.
+      const heldHtml = (iv.held_lines || []).map((hl: any) => {
+        const addr = esc(String(hl.address || "File").split(",")[0]);
+        const note = hl.held_note ? ` · ${esc(hl.held_note)}` : "";
+        const snz = hl.snooze_until ? ` · snoozed to ${esc(new Date(String(hl.snooze_until).slice(0,10) + "T12:00:00").toLocaleDateString("en-US",{ month:"short", day:"numeric" }))}` : "";
+        const amt = money(Number(hl.amount_cents) || 0);
+        return `<div style='font-size:10.5px;color:#993c1d;margin-top:3px;line-height:1.4'>&#9633; Held · <b>${addr}</b> · ${amt}${note}${snz}</div>`;
+      }).join("");
       return `<tr><td style='padding:9px 0;border-top:0.5px solid #f6e3dc'>` +
         `<div style='font-size:12.5px;font-weight:600;color:#0f0f0f'>Invoice ${esc(iv.invoice_number || "")}</div>` +
         `<div style='font-size:11px;color:#a36b58;margin-top:2px'>${period}${period ? " · " : ""}${ageLbl} pending</div>` +
-        `</td><td align='right' valign='top' style='padding:9px 0;border-top:0.5px solid #f6e3dc;font-size:13px;font-weight:600;color:#993c1d;white-space:nowrap'>${money(iv.total)}</td></tr>`;
+        heldHtml +
+        `</td><td align='right' valign='top' style='padding:9px 0;border-top:0.5px solid #f6e3dc;font-size:13px;font-weight:600;color:#993c1d;white-space:nowrap'>${money(iv.effective_total_cents)}</td></tr>`;
     }).join("");
     return `<div style='background:#fdf4f1;border:0.5px solid #f3d9d0;border-radius:11px;padding:14px 16px;margin:0 0 14px'>` +
       `<div style='display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px'>` +
