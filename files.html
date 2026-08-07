@@ -12616,7 +12616,11 @@ Tell me your planned move-out date and I will set the inspection.`
       const ids = (_files || []).filter(function(f){ return deriveStage(f) !== 'closed' && f.status !== 'archived' && (f.file_type || 'sale') === 'sale'; }).map(function(f){ return f.id; });
       const need = ids.filter(function(id){ return !_deadlinesByFile[id]; });
       if(need.length && _client){
-        const { data } = await _client.from('file_deadlines').select('file_id, deadline_key, completed_at, due_date').in('file_id', need);
+        // Marlenyi 2026-08-07 · completed_by MUST be selected here so the calendar's
+        // "Done" hover tooltip can resolve the coordinator name. Without it the bulk
+        // load silently returned records without the coordinator uuid, and every
+        // popover fell back to "Checked by a coordinator" instead of "by Eileen H."
+        const { data } = await _client.from('file_deadlines').select('file_id, deadline_key, completed_at, completed_by, due_date').in('file_id', need);
         need.forEach(function(id){ _deadlinesByFile[id] = _deadlinesByFile[id] || {}; });
         (data || []).forEach(function(r){ (_deadlinesByFile[r.file_id] = _deadlinesByFile[r.file_id] || {})[r.deadline_key] = r; });
       }
@@ -13824,7 +13828,7 @@ Tell me your planned move-out date and I will set the inspection.`
   function _calTodayPanel(byDay, t0, selDay){
     const _selTs = (selDay != null) ? selDay : t0;
     const sel = new Date(_selTs), sd = byDay[_selTs] || [];
-    const _dayCountTo = function(due){ try { const c=new Date();c.setHours(0,0,0,0); const t=new Date(due);t.setHours(0,0,0,0); let n=0; const w=new Date(c); while(w<t){ w.setDate(w.getDate()+1); const dw=w.getDay(); if(dw!==0&&dw!==6)n++; } return n; } catch(_){ return null; } };
+    const _dayCountTo = function(due){ try { const c=new Date();c.setHours(0,0,0,0); const t=new Date(due);t.setHours(0,0,0,0); if(t.getTime() === c.getTime()) return 0; let n=0; const w=new Date(c); if(t > c){ while(w<t){ w.setDate(w.getDate()+1); const dw=w.getDay(); if(dw!==0&&dw!==6)n++; } return n; } while(w>t){ w.setDate(w.getDate()-1); const dw=w.getDay(); if(dw!==0&&dw!==6)n--; } return n; } catch(_){ return null; } };
     const _dueOf = function(d){ return (d.isChase && d.dueDate) ? d.dueDate : d.date; };
     // Marlenyi 2026-08-07 · Today panel is ONLY things due today. Chase items
     // (early-warning reminders whose real dueDate is 3 days out) were being
@@ -14629,7 +14633,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const sel = new Date(_calSelDay), sd = byDay[_calSelDay] || [];
     // Countdown, in business days, from TODAY to a deadline's real due date. Chase/reminder
     // items carry the real due date on d.dueDate; actual deadlines are due on d.date.
-    const _dayCountTo = function(due){ try { const c=new Date();c.setHours(0,0,0,0); const t=new Date(due);t.setHours(0,0,0,0); let n=0; const w=new Date(c); while(w<t){ w.setDate(w.getDate()+1); const dw=w.getDay(); if(dw!==0&&dw!==6)n++; } return n; } catch(_){ return null; } };
+    const _dayCountTo = function(due){ try { const c=new Date();c.setHours(0,0,0,0); const t=new Date(due);t.setHours(0,0,0,0); if(t.getTime() === c.getTime()) return 0; let n=0; const w=new Date(c); if(t > c){ while(w<t){ w.setDate(w.getDate()+1); const dw=w.getDay(); if(dw!==0&&dw!==6)n++; } return n; } while(w>t){ w.setDate(w.getDate()-1); const dw=w.getDay(); if(dw!==0&&dw!==6)n--; } return n; } catch(_){ return null; } };
     const _dueOf = function(d){ return (d.isChase && d.dueDate) ? d.dueDate : d.date; };
     // A reminder must never surface more than 3 business days ahead — drop over-eager chase
     // items. Actual deadlines always stay so a tapped day still shows its own deadlines.
