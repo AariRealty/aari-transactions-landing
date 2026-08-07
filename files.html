@@ -16196,16 +16196,35 @@ Tell me your planned move-out date and I will set the inspection.`
     // Paid transactions live in ONE compact section at the BOTTOM (Marlenyi Aug 7) so the kanban
     // above only ever holds active work and never grows into a long list. Coordinator payouts and
     // Realty bills both land here once settled, each labeled so the direction is clear.
+    // Every paid row is keyed by the PROPERTY ADDRESS (Marlenyi Aug 7 · "why are you showing the TC
+    // name and not the address?"). A coordinator invoice covering several files breaks into one row
+    // per address. The second line (who / invoice / date) is NOT its own toggle — it obeys the board's
+    // existing Details button (_invDetails), so it's hidden by default and address+amount is all you see.
     var _paidRow = function(label, meta, amtCents){
+      var showMeta = _invDetails && meta;
       var _s = (String(label) + ' ' + String(meta)).replace(/<[^>]*>/g, '').replace(/&[a-z]+;/g, ' ').toLowerCase();
       return '<div data-paid-row data-search="' + esc(_s) + '" style="display:flex;align-items:center;gap:10px;padding:9px 4px;border-top:0.5px solid #f0ebe0">' +
         '<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:#0f0f0f;font-weight:500">' + label + '</div>' +
-        '<div style="font-size:10.5px;color:#a39e93;margin-top:1px">' + meta + '</div></div>' +
+        (showMeta ? '<div style="font-size:10.5px;color:#a39e93;margin-top:1px">' + meta + '</div>' : '') + '</div>' +
         '<span style="font-family:Georgia,serif;font-size:13px;color:#8a857c;font-variant-numeric:tabular-nums">' + _money(amtCents) + '</span></div>';
     };
-    var _pdCoord = paidInv.map(function(i){ return _paidRow(esc(_tcDisplayName(i.tc_id).split(' ')[0]) + ' &middot; ' + esc(i.invoice_number || ''), 'Paid' + (i.paid_at ? ' ' + esc(new Date(i.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : '') + ' &middot; ' + ((i.line_items || []).length) + ' files', i.total_cents || 0); }).join('');
-    var _pdAR = _arP.map(function(b){ return _paidRow(esc(String(b.file_property || 'File').split(',')[0]), '<span style="color:#8a6d1b;font-weight:600">Realty owes AT</span> &middot; ' + esc(b.tc_name || '') + (b.paid_at ? ' &middot; Paid ' + esc(new Date(b.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : ''), Math.round((parseFloat(b.amount) || 0) * 100)); }).join('');
-    var _paidCount = paidInv.length + _arP.length;
+    var _addrOf = function(s){ return String(s || 'File').split(',')[0].trim() || 'File'; };
+    var _pdCoord = paidInv.map(function(i){
+      var _tcFirst = _tcDisplayName(i.tc_id).split(' ')[0];
+      var _when = i.paid_at ? new Date(i.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '';
+      var _lis = (i.line_items || []);
+      if(_lis.length){
+        // One row per property on the invoice · address left, that line's amount right.
+        return _lis.map(function(it){
+          var _meta = esc(_tcFirst) + ' &middot; ' + esc(i.invoice_number || '') + (_when ? ' &middot; Paid ' + esc(_when) : '');
+          return _paidRow(esc(_addrOf(it.address || it.property_address)), _meta, it.amount_cents || 0);
+        }).join('');
+      }
+      // No line detail on the invoice · fall back to a single coordinator row.
+      return _paidRow(esc(_tcFirst) + ' &middot; ' + esc(i.invoice_number || ''), 'Paid' + (_when ? ' ' + esc(_when) : ''), i.total_cents || 0);
+    }).join('');
+    var _pdAR = _arP.map(function(b){ return _paidRow(esc(_addrOf(b.file_property)), '<span style="color:#8a6d1b;font-weight:600">Realty owes AT</span> &middot; ' + esc(b.tc_name || '') + (b.paid_at ? ' &middot; Paid ' + esc(new Date(b.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : ''), Math.round((parseFloat(b.amount) || 0) * 100)); }).join('');
+    var _paidCount = paidInv.reduce(function(s, i){ return s + Math.max(1, (i.line_items || []).length); }, 0) + _arP.length;
     // Paid lives in the third column (next to Sent · unpaid), not a bottom section (Marlenyi Aug 7).
     // Compact rows + a search box up top so it never sprawls.
     var _paidColInner = _paidCount
