@@ -24054,6 +24054,49 @@ Tell me your planned move-out date and I will set the inspection.`
     try { if(label && new RegExp('^' + tag.lab, 'i').test(String(label).trim())) return ''; } catch(_){}
     return '<span class="uc-tag ' + tag.cls + '">' + tag.lab + '</span>';
   }
+  // Marlenyi 2026-08-07 guardrail · in-house Aari Realty file banner. When the
+  // broker opens a file that's ours (aari_realty=true or master_import), we
+  // surface a small cream banner suggesting she use it to test the new auto-emails
+  // BEFORE they fire on real client files. Dismissible per file (stored in
+  // raw_form_data.aar_test_banner_dismissed_at). Broker-only.
+  function inhouseTestBannerHtml(file){
+    try {
+      if(!file) return '';
+      // Broker-only. Skip if we can't tell who's viewing yet.
+      if(!_profile || String(_profile.role || '') !== 'broker') return '';
+      // Skip archived / cancelled / closed · testing on an active file only.
+      if(file.archived_at || ['archived','cancelled','closed'].indexOf(String(file.status || '')) !== -1) return '';
+      if(String(file.transaction_stage || '') === 'closed') return '';
+      // Must be an in-house Aari Realty file.
+      if(typeof isAariRealtyFile !== 'function' || !isAariRealtyFile(file)) return '';
+      // Dismissed on this file already · don't re-surface.
+      var raw = file.raw_form_data || {};
+      if(raw.aar_test_banner_dismissed_at) return '';
+      return '<div class="aar-test-banner" data-aar-test-file="' + esc(file.id) + '" '
+        + 'style="background:linear-gradient(180deg,#faf7ef 0%,#f2ede3 100%);border:0.5px solid #e6dfcd;border-radius:12px;padding:12px 14px;margin:0 0 14px;position:relative">'
+        + '<button type="button" data-aar-test-dismiss="1" aria-label="Dismiss" '
+        +   'style="position:absolute;top:8px;right:10px;background:none;border:0;color:#a39e93;cursor:pointer;font-size:14px;padding:2px 6px;line-height:1">&times;</button>'
+        + '<div style="font-size:9.5px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:#8a6d1b;margin-bottom:4px;padding-right:20px">In-house file &middot; good place to test</div>'
+        + '<div style="font-size:12.5px;color:#0f0f0f;line-height:1.55;padding-right:20px">'
+        + 'This is an Aari Realty in-house transaction. Perfect candidate to test the new auto-emails on <strong>before</strong> they run on real client files &mdash; the $50 chip below, and (once shipped) the follow-up sweep.'
+        + '</div></div>';
+    } catch(_){ return ''; }
+  }
+  // Delegated dismiss handler · stamps a timestamp so the banner stays gone.
+  document.addEventListener('click', async function(e){
+    var btn = e.target && e.target.closest && e.target.closest('[data-aar-test-dismiss]');
+    if(!btn) return;
+    var banner = btn.closest('.aar-test-banner'); if(!banner) return;
+    var fileId = banner.getAttribute('data-aar-test-file');
+    var file = (_files || []).find(function(f){ return String(f.id) === String(fileId); }) || _currentFile;
+    if(!file || String(file.id) !== String(fileId)){ banner.remove(); return; }
+    var prev = file.raw_form_data || {};
+    var next = Object.assign({}, prev, { aar_test_banner_dismissed_at: new Date().toISOString() });
+    file.raw_form_data = next;
+    banner.remove();
+    try { await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); } catch(_){}
+  });
+
   // Marlenyi 2026-08-06 · $50 first-file credit for the OTHER-SIDE agent.
   // Chip appears mid-transaction (under_contract / ctc) when we know the other
   // agent's name + email. TC taps Yes → edge function generates a unique code +
@@ -25396,6 +25439,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // deadlines for clients." Money strip belongs on the Invoices tab, not
     // between deadline tasks. The Invoices view already surfaces per-file pay.
     host.innerHTML = contractGuardBannerHtml(file) + roBanner + saBanner + payBanner + closingBanner + gate + widget +
+      inhouseTestBannerHtml(file) +
       otherSideOfferChipHtml(file) +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
       // UC / CTC tracks render the deadlines card inline (right under Today) via buildUcTracksHtml,
