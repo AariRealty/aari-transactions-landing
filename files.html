@@ -15744,6 +15744,17 @@ Tell me your planned move-out date and I will set the inspection.`
   //     Tapping a TC filters the history accordion to just their weeks.
   //   Previous weeks accordion · paid invoices grouped by ISO week
   var _bfInvSelectedTc = null; // tap a TC card to filter history
+  // Marlenyi 2026-08-08 · mockup 03 (accordion). The mobile Invoices tab is
+  // pay-hero-pinned + three collapsible sections underneath. Default: only
+  // Coordinators is open so a first look shows just the pay card + the roster;
+  // Ready-to-submit and Paid-this-month start closed. Persisted per-user so
+  // her choice sticks across sessions.
+  var _invAccord = { coord:true, ready:false, paid:false };
+  try {
+    var _ac = JSON.parse(localStorage.getItem('aari_inv_accord') || 'null');
+    if(_ac && typeof _ac === 'object'){ _invAccord = Object.assign(_invAccord, _ac); }
+  } catch(_){}
+  function _saveInvAccord(){ try { localStorage.setItem('aari_inv_accord', JSON.stringify(_invAccord)); } catch(_){} }
   function _brokerInvoiceMobileHtml(){
     var mine = (_profile && _profile.id) || '';
     // Unfiltered sources (per-TC ledger cards need to see EVERYONE regardless
@@ -16125,7 +16136,130 @@ Tell me your planned move-out date and I will set the inspection.`
         '</details>';
       });
     }
-    return head + payRun + notSent + ledger + pipeSection + history + realtyBillsSectionHtml();
+    // ============================================================================
+    // Mockup 03 · accordion sections under the pay hero. Pinned pay card stays
+    // exactly where it was; ledger + not-yet-sent + paid-history now live
+    // inside labeled collapsible sections so the tab reads as one action + three
+    // "open when you need it" drawers instead of a stacked wall.
+    // ============================================================================
+    var _accSection = function(key, label, meta, bodyHtml, isEmpty){
+      // A section with no content stays hidden entirely — an empty accordion
+      // "Ready to submit · 0" would be noise, not information.
+      if(isEmpty) return '';
+      var open = !!_invAccord[key];
+      var chev = open ? '&#9662;' : '&#9656;';   // ▾ open · ▸ closed
+      var headBg = open ? '#0f0f0f' : '#ffffff';
+      var headFg = open ? '#ffffff' : '#0f0f0f';
+      var headMeta = open ? 'rgba(255,255,255,0.55)' : '#7a756c';
+      var headBorder = open ? '#0f0f0f' : 'rgba(15,15,15,0.10)';
+      var headRadius = open ? '12px 12px 0 0' : '12px';
+      var headMargin = open ? '0' : '8px';
+      var head = '<div data-inv-accord="' + esc(key) + '" role="button" tabindex="0" ' +
+        'style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;' +
+        'background:' + headBg + ';color:' + headFg + ';border:0.5px solid ' + headBorder + ';' +
+        'border-radius:' + headRadius + ';margin-bottom:' + headMargin + ';cursor:pointer;' +
+        '-webkit-tap-highlight-color:transparent;font-family:inherit">' +
+        '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:13.5px;font-weight:600;letter-spacing:-0.1px">' + label + '</span>' +
+        '<span style="display:flex;align-items:center;gap:8px;font-size:11px;color:' + headMeta + ';font-variant-numeric:tabular-nums">' +
+          (meta ? '<span>' + meta + '</span>' : '') +
+          '<span style="font-size:13px;color:' + headMeta + '">' + chev + '</span>' +
+        '</span>' +
+      '</div>';
+      if(!open) return head;
+      // Body sits under the dark header, sharing a rounded frame. Padding kept
+      // tight (8px) so slim rows read like a list, not spaced cards.
+      return head + '<div style="background:#ffffff;border:0.5px solid rgba(15,15,15,0.10);border-top:0;border-radius:0 0 12px 12px;padding:8px;margin-bottom:8px">' + bodyHtml + '</div>';
+    };
+    // ---- Coordinators accordion body · super-slim rows (avatar + name + owed
+    //      badge). Tapping a row still fires the existing data-bf-inv-tc filter
+    //      handler so drilling into "In progress · will be ready later" (the
+    //      pipeSection) still works.
+    var _coordBody = '';
+    (_shownTcList || []).forEach(function(g){
+      var isMe = String(g.tcId) === String(mine);
+      var nm = isMe ? 'You' : _tcDisplayName(g.tcId).split(' ')[0];
+      var initial = (nm.charAt(0) || '?').toUpperCase();
+      var isSel = (_bfInvSelectedTc === g.tcId);
+      var badge = '';
+      if(g.owed){
+        badge = '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:3px 8px;border-radius:5px;background:#a3402f;color:#fff">' + _money(g.owed) + '</span>';
+      } else if(g.projected){
+        badge = '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:3px 8px;border-radius:5px;background:transparent;color:#8a6a1f;border:0.5px solid #e6dfcd">' + _money(g.projected) + ' ready</span>';
+      } else {
+        badge = '<span style="flex:none;font-family:\'Playfair Display\',Georgia,serif;font-size:13px;font-weight:500;color:#a9a49a;letter-spacing:-0.1px">$0</span>';
+      }
+      _coordBody += '<div data-bf-inv-tc="' + esc(g.tcId) + '" role="button" tabindex="0" ' +
+        'style="display:flex;align-items:center;gap:12px;padding:10px 10px;border-top:0.5px solid rgba(15,15,15,0.06);cursor:pointer;background:' + (isSel ? '#faf7ef' : 'transparent') + ';border-radius:8px">' +
+        '<div style="width:28px;height:28px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font:700 12px \'Inter\',sans-serif;flex:none">' + esc(initial) + '</div>' +
+        '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:13.5px;font-weight:600;color:#0f0f0f;letter-spacing:-0.1px">' + esc(nm) + '</span>' +
+        badge +
+      '</div>';
+    });
+    // Strip the top border on the first row so it doesn't double up with the
+    // dark accordion header's bottom edge.
+    _coordBody = _coordBody.replace('border-top:0.5px solid rgba(15,15,15,0.06)', 'border-top:0');
+    // Header meta · total owed across all TCs, count.
+    var _coordCount = (_shownTcList || []).length;
+    var _coordOwed = (_shownTcList || []).reduce(function(s, g){ return s + (g.owed || 0); }, 0);
+    var _coordMeta = _coordCount + (_coordCount === 1 ? ' coordinator' : ' coordinators') + (_coordOwed ? ' &middot; ' + _money(_coordOwed) + ' owed' : '');
+    var coordAccord = _accSection('coord', 'Coordinators', _coordMeta, _coordBody, !_shownTcList.length);
+    // If a TC is selected, the "In progress · will be ready later" pipe still
+    // renders below the accordion (unchanged) so drilling in continues to work.
+    var pipeAfter = pipeSection;
+
+    // ---- Ready-to-submit accordion body · reuses the existing notSent rows
+    //      when they're present, or the projected pay-run when nothing is
+    //      submitted yet (the two used to be mutually exclusive; here they
+    //      collapse into one drawer with a consistent header).
+    var _readyBody = '';
+    var _readyMeta = '';
+    var _readyEmpty = true;
+    if(pending.length){
+      _readyEmpty = false;
+      _readyMeta = _money(pendingTotal) + ' &middot; ' + pending.length + ' coordinator' + (pending.length === 1 ? '' : 's');
+      _readyBody = pending.map(function(g){
+        var isMe = String(g.id) === String(mine);
+        var nm = isMe ? 'You' : _tcDisplayName(g.id).split(' ')[0];
+        var paidLines = g.billable.filter(function(f){ return !fileIsCovered(f); });
+        var t = paidLines.reduce(function(s, f){ return s + fileTcPayCents(f); }, 0);
+        return '<div style="display:flex;align-items:center;gap:12px;padding:10px 10px;border-top:0.5px solid rgba(15,15,15,0.06)">' +
+          '<div style="flex:1;min-width:0"><div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13.5px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
+          '<div style="font-size:10.5px;color:#7a756c;margin-top:2px">' + g.billable.length + ' file' + (g.billable.length === 1 ? '' : 's') + '</div></div>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:15px;font-weight:500;color:#0f0f0f;letter-spacing:-0.2px">' + _money(t) + '</span>' +
+        '</div>';
+      }).join('').replace('border-top:0.5px solid rgba(15,15,15,0.06)', 'border-top:0');
+    }
+    var readyAccord = _accSection('ready', 'Ready to submit', _readyMeta, _readyBody, _readyEmpty);
+
+    // ---- Paid this month accordion body · flatten the existing weekMap into
+    //      a simple row-per-invoice list, newest first. Keeps the paid history
+    //      reachable without the double-nested "week accordion inside tab"
+    //      structure the current view has.
+    var _paidBody = '';
+    var _paidMeta = '';
+    var _paidEmpty = true;
+    // Rebuild paidThisMonth from the (already filtered) paid list.
+    var _paidThisMonth = paid.filter(function(i){
+      var t = i.paid_at ? new Date(i.paid_at).getTime() : 0;
+      return t >= _m0;
+    }).sort(function(a, b){ return (new Date(b.paid_at).getTime() || 0) - (new Date(a.paid_at).getTime() || 0); });
+    if(_paidThisMonth.length){
+      _paidEmpty = false;
+      var _paidTotal = _paidThisMonth.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
+      _paidMeta = _money(_paidTotal) + ' &middot; ' + _paidThisMonth.length + ' invoice' + (_paidThisMonth.length === 1 ? '' : 's');
+      _paidBody = _paidThisMonth.map(function(i){
+        var nm = _tcDisplayName(i.tc_id).split(' ')[0];
+        var when = i.paid_at ? new Date(i.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '';
+        return '<div style="display:flex;align-items:center;gap:10px;padding:10px 10px;border-top:0.5px solid rgba(15,15,15,0.06)">' +
+          '<div style="flex:1;min-width:0"><div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13.5px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
+          '<div style="font-size:10.5px;color:#7a756c;margin-top:2px">' + esc(i.invoice_number || '') + (when ? ' &middot; paid ' + esc(when) : '') + '</div></div>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:14px;font-weight:500;color:#0f0f0f;letter-spacing:-0.2px">' + _money(i.total_cents || 0) + '</span>' +
+        '</div>';
+      }).join('').replace('border-top:0.5px solid rgba(15,15,15,0.06)', 'border-top:0');
+    }
+    var paidAccord = _accSection('paid', 'Paid this month', _paidMeta, _paidBody, _paidEmpty);
+
+    return head + payRun + coordAccord + pipeAfter + readyAccord + paidAccord + realtyBillsSectionHtml();
   }
 
   // Realty Bills section · rendered inside the broker's Invoices view (both mobile + desktop).
@@ -17127,6 +17261,18 @@ Tell me your planned move-out date and I will set the inspection.`
     if(tcClr){
       _bfInvSelectedTc = null;
       try { renderInvoiceScreen(); } catch(_){}
+      return;
+    }
+    // Mobile broker · accordion header tap · toggle Coordinators / Ready / Paid
+    // sections open+closed. Persisted to localStorage so her choice sticks.
+    var acc = e.target && e.target.closest && e.target.closest('[data-inv-accord]');
+    if(acc){
+      var key = acc.getAttribute('data-inv-accord');
+      if(key && _invAccord && Object.prototype.hasOwnProperty.call(_invAccord, key)){
+        _invAccord[key] = !_invAccord[key];
+        _saveInvAccord();
+        try { renderInvoiceScreen(); } catch(_){}
+      }
       return;
     }
     // Invoice screen · pipeline file row → open the file's playbook
