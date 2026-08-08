@@ -17748,13 +17748,12 @@ Tell me your planned move-out date and I will set the inspection.`
       standalone_review:'Standalone Review',
       offer_prep_basic:'Offer Prep · basic', offer_prep_complete:'Offer Prep · complete'
     };
-    const t0 = new Date(); t0.setHours(0,0,0,0);
-    const monthStart = new Date(t0.getFullYear(), t0.getMonth(), 1).getTime();
-    // Week bounds · Mon-Sun containing today (so "closing this week" includes
-    // yesterday's late ones without inventing a rolling window).
-    const _wk = new Date(t0.getTime()); const _dow = _wk.getDay(); const _shift = (_dow === 0 ? -6 : 1 - _dow); _wk.setDate(_wk.getDate() + _shift);
-    const weekStart = _wk.getTime();
-    const weekEnd = weekStart + 7 * 86400000;
+    // Marlenyi 2026-08-08 · pipeline-only per approved mock. The earlier
+    // 4-tile treatment (closing this week / paid this month / waiting on
+    // payment) was too much for the Board — those numbers already live on
+    // the tabs they belong to (Today, Calendar, Invoices), so surfacing
+    // them here again created noise. Board is now purely "what's on your
+    // plate + what will it earn you." One ink tile + service breakdown.
 
     // Own active files, minus test files + covered-by-credit (no pay to TC).
     const active = (_files || []).filter(function(f){
@@ -17764,7 +17763,6 @@ Tell me your planned move-out date and I will set the inspection.`
       if(typeof deriveStage === 'function' && deriveStage(f) === 'closed') return false;
       return true;
     });
-    // My pipeline · sum of TC's own fee on each active file (covered = $0).
     const _tcPay = (typeof fileTcPayCents === 'function') ? fileTcPayCents : function(){ return 0; };
     const _covered = (typeof fileIsCovered === 'function') ? fileIsCovered : function(){ return false; };
     let pipeCents = 0;
@@ -17778,75 +17776,15 @@ Tell me your planned move-out date and I will set the inspection.`
     });
     const svcRows = Object.values(bySvc).filter(function(r){ return r.sum > 0; }).sort(function(a,b){ return b.sum - a.sum; });
 
-    // Closing this week · her own active files with a closing_date in [wk, wk+7).
-    const closingThisWeek = active.filter(function(f){
-      if(!f.closing_date) return false;
-      const cd = new Date(String(f.closing_date).slice(0,10) + 'T12:00:00');
-      if(isNaN(cd)) return false;
-      cd.setHours(0,0,0,0);
-      const ts = cd.getTime();
-      return ts >= weekStart && ts < weekEnd;
-    });
-    const closingLate = closingThisWeek.filter(function(f){
-      const cd = new Date(String(f.closing_date).slice(0,10) + 'T12:00:00'); cd.setHours(0,0,0,0);
-      return cd.getTime() < t0.getTime();
-    });
-
-    // Paid this month · fully-paid invoices this month PLUS line-level paid_at
-    // on still-'submitted' partial-pays. Mirrors the mobile Invoices tile.
-    let paidMonthCents = 0, paidMonthCount = 0;
-    (_invoices || []).forEach(function(i){
-      if(!i) return;
-      if(i.status === 'paid'){
-        const pt = i.paid_at ? new Date(i.paid_at).getTime() : 0;
-        if(pt >= monthStart){ paidMonthCents += (i.total_cents || 0); paidMonthCount += 1; }
-      } else if(i.status === 'submitted' && Array.isArray(i.line_items)){
-        i.line_items.forEach(function(l){
-          if(!l || !l.paid_at) return;
-          const pt = new Date(l.paid_at).getTime();
-          if(pt >= monthStart) paidMonthCents += (l.amount_cents || 0);
-        });
-      }
-    });
-
-    // Waiting on payment · count of held invoice lines (still owed, held).
-    let heldCount = 0, heldTotal = 0, heldSample = null;
-    (_invoices || []).forEach(function(i){
-      if(!i || i.status !== 'submitted' || !Array.isArray(i.line_items)) return;
-      i.line_items.forEach(function(l){
-        if(!l || !l.held_at || l.paid_at || l.covered) return;
-        heldCount += 1;
-        heldTotal += (l.amount_cents || 0);
-        if(!heldSample) heldSample = l;
-      });
-    });
-
-    // Build HTML with the same .ownd primitives the Owner Dashboard uses.
-    let html = '<div class="ownd">';
-    html += '<div class="row-2">' +
-      '<div class="tile ink">' +
+    // Single ink pipeline tile · dominant, full-width so the number reads
+    // without needing to squint. No warn treatment anywhere — this dashboard
+    // is a calm "here's your book" view, not a nag surface.
+    let html = '<div class="ownd">' +
+      '<div class="tile ink" style="margin-bottom:12px">' +
         '<div class="k">My pipeline</div>' +
-        '<div class="big">' + _fmt$(pipeCents/100) + '</div>' +
+        '<div class="big" style="font-size:32px">' + _fmt$(pipeCents/100) + '</div>' +
         '<div class="caption">' + active.length + ' active file' + (active.length === 1 ? '' : 's') + '</div>' +
-      '</div>' +
-      '<div class="tile' + (closingLate.length ? ' warn' : '') + '">' +
-        '<div class="k">Closing this week</div>' +
-        '<div class="big">' + closingThisWeek.length + '</div>' +
-        '<div class="caption">' + (closingLate.length ? closingLate.length + ' past due' : (closingThisWeek.length ? 'on track' : 'nothing this week')) + '</div>' +
-      '</div>' +
-    '</div>';
-    html += '<div class="row-2">' +
-      '<div class="tile">' +
-        '<div class="k">Paid this month</div>' +
-        '<div class="big">' + _fmt$(paidMonthCents/100) + '</div>' +
-        '<div class="caption">' + paidMonthCount + ' invoice' + (paidMonthCount === 1 ? '' : 's') + ' cleared</div>' +
-      '</div>' +
-      '<div class="tile' + (heldCount ? ' warn' : '') + '">' +
-        '<div class="k">Waiting on payment</div>' +
-        '<div class="big">' + heldCount + '</div>' +
-        '<div class="caption">' + (heldCount ? _fmt$(heldTotal/100) + ' held' + (heldSample && heldSample.held_note ? ' · ' + _esc(String(heldSample.held_note).split(' ').slice(0,3).join(' ')) : '') : 'no held lines') + '</div>' +
-      '</div>' +
-    '</div>';
+      '</div>';
     if(svcRows.length){
       html += '<div class="card">' +
         '<div class="lb">Pipeline by service</div>';
