@@ -8301,7 +8301,7 @@ Tell me your planned move-out date and I will set the inspection.`
       if(f && f.client_type) f.client_type = String(f.client_type).toLowerCase();
       // One-time, self-healing address cleanup: normalize in memory so every view
       // reads the canonical form, and persist the change once (best-effort).
-      if(f && f.property_address){ var _na = normalizeAddress(f.property_address); if(_na && _na !== f.property_address){ f.property_address = _na; try { _client.from('files').update({ property_address: _na }).eq('id', f.id); } catch(_){} } }
+      if(f && f.property_address){ var _na = normalizeAddress(f.property_address); if(_na && _na !== f.property_address){ f.property_address = _na; try { _client.from('files').update({ property_address: _na }).eq('id', f.id).then(function(r){ if(r && r.error) console.warn('[files:' + f.id + '] address normalize did not persist', r.error.message); }); } catch(e){ console.warn('[files:' + f.id + '] address normalize threw', e); } } }
     });
     // SA cockpit lock DISABLED June 2026 · the SA is enforced upstream (signed at
     // intake + re-checked at portal login), so a file can't reach the TC portal
@@ -14242,6 +14242,48 @@ Tell me your planned move-out date and I will set the inspection.`
     document.body.appendChild(t);
     setTimeout(function(){ try { if(t.parentElement) t.remove(); } catch(_){} }, 10000);
   }
+  // Marlenyi 2026-08-08 · shared save-fail toast + rollback. Root-cause for the
+  // is_broker() RLS silent-block bug was that every _client.from(...).update() in
+  // files.html sat inside try{}catch(_){} — on RLS reject, .update() DOESN'T throw,
+  // it RESOLVES with a truthy .error, so both the try/catch AND the "just log"
+  // paths silently accepted the "save" and left the UI showing an in-memory change
+  // the DB never accepted. Route every high-blast-radius update through _trySave
+  // so a reject surfaces a red toast, rolls back the optimistic UI, and leaves a
+  // console breadcrumb with the table+id.
+  function _showSaveFailToast(opts){
+    try { const old = document.getElementById('save-fail-toast'); if(old) old.remove(); } catch(_){}
+    const label = (opts && opts.action) || 'change';
+    const detail = (opts && opts.detail) ? (' &middot; ' + esc(opts.detail)) : '';
+    const t = document.createElement('div');
+    t.id = 'save-fail-toast';
+    t.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99999;background:#a3402f;color:#fff;border-radius:12px;padding:12px 14px 12px 18px;box-shadow:0 10px 30px rgba(0,0,0,0.35);display:flex;align-items:center;gap:14px;font-family:inherit;font-size:12.5px;min-width:280px;max-width:calc(100vw - 32px)';
+    t.innerHTML = '<span style="flex:1;color:#fff"><b>Couldn&rsquo;t save</b> &middot; ' + esc(label) + ' didn&rsquo;t stick' + detail + '. Rolled back.</span>' +
+      '<button type="button" aria-label="Dismiss" onclick="var el=this.parentElement;if(el)el.remove();" style="flex:none;background:transparent;border:0;color:#f6c8be;font-size:16px;line-height:1;padding:2px 4px;cursor:pointer;font-family:inherit">&times;</button>';
+    document.body.appendChild(t);
+    setTimeout(function(){ try { if(t.parentElement) t.remove(); } catch(_){} }, 8000);
+  }
+  // Await the Supabase promise · if it throws OR resolves with .error, run revert()
+  // (if given), show the toast, log the breadcrumb, and return {ok:false}. Callers
+  // that just want the log without the toast can pass silent:true (rare · almost
+  // every save is worth surfacing on failure).
+  async function _trySave(promise, opts){
+    const tag = '[' + ((opts && opts.table) || 'db') + ':' + ((opts && opts.id) || '?') + '] ' + ((opts && opts.action) || 'save');
+    try {
+      const r = await promise;
+      if(r && r.error){
+        console.warn(tag + ' failed', r.error);
+        if(opts && opts.revert){ try { opts.revert(); } catch(_){} }
+        if(!(opts && opts.silent)) _showSaveFailToast(opts);
+        return { ok:false, error:r.error };
+      }
+      return { ok:true, data: r && r.data };
+    } catch(err){
+      console.warn(tag + ' failed', err);
+      if(opts && opts.revert){ try { opts.revert(); } catch(_){} }
+      if(!(opts && opts.silent)) _showSaveFailToast(opts);
+      return { ok:false, error: err };
+    }
+  }
   document.addEventListener('click', async function(e){
     const op = e.target && e.target.closest && e.target.closest('[data-dup-open]');
     if(op){ const f = (_files || []).find(function(x){ return x.id === op.getAttribute('data-dup-open'); }); if(f){ try { openPlaybook(f); } catch(_){} } return; }
@@ -19881,7 +19923,14 @@ Tell me your planned move-out date and I will set the inspection.`
           file.stage_tasks = dt0;
           file.closed_at = file.closed_at || nowIso;
         }
-        await _client.from('files').update(upd).eq('id', fid);
+        // Marlenyi 2026-08-08 · check .error explicitly. Supabase update() RESOLVES
+        // on RLS reject (doesn't throw) so the surrounding try/catch never fired,
+        // and the audit log + NPS trigger + undo toast all ran as if the drag had
+        // stuck — while the DB still had the old stage. Throw so the catch block
+        // below reverts transaction_stage + rerenders the kanban and shows the
+        // save-fail toast.
+        var _mvRes = await _client.from('files').update(upd).eq('id', fid);
+        if(_mvRes && _mvRes.error){ throw new Error('stage update rejected · ' + (_mvRes.error.message || _mvRes.error.code || 'unknown')); }
         // Audit log · stage change. Append-only, FREC-defensible.
         writeAuditLog('file_stage_changed', fid, {
           from_stage: prevStage || null,
@@ -19924,9 +19973,10 @@ Tell me your planned move-out date and I will set the inspection.`
           },
         });
       } catch(err){
-        console.warn('[files] stage save failed', err);
+        console.warn('[files:' + fid + '] stage save failed', err);
         file.transaction_stage = prevStage;
         renderKanban();
+        try { _showSaveFailToast({ action:'stage move', detail:'moved back to ' + (STAGE_LABELS[prevStage] || prevStage || 'previous stage') }); } catch(_){}
       }
     });
 
@@ -19977,7 +20027,7 @@ Tell me your planned move-out date and I will set the inspection.`
       const raw = (_currentFile.raw_form_data && typeof _currentFile.raw_form_data === 'object') ? _currentFile.raw_form_data : {};
       raw.contract_override = true; _currentFile.raw_form_data = raw;
       const ff = (_files || []).find(function(x){ return x.id === _currentFile.id; }); if(ff){ ff.raw_form_data = raw; }
-      try { _client.from('files').update({ raw_form_data: raw }).eq('id', _currentFile.id).then(function(){}); } catch(_){}
+      try { _client.from('files').update({ raw_form_data: raw }).eq('id', _currentFile.id).then(function(r){ if(r && r.error) console.warn('[files:' + _currentFile.id + '] contract_override save did not persist', r.error.message); }); } catch(e){ console.warn('[files:' + _currentFile.id + '] contract_override save threw', e); }
       try { renderStageChecklist(_currentFile); } catch(_){}
       return;
     }
@@ -20110,7 +20160,7 @@ Tell me your planned move-out date and I will set the inspection.`
     if(sdlCk && _currentFile){
       const lg = _currentFile.logistics || (_currentFile.logistics = {});
       if(!lg.inspection_decision) lg.inspection_decision = 'reviewed';
-      Promise.resolve(_client.from('files').update({ logistics: lg }).eq('id', _currentFile.id)).then(function(){ try { renderStageChecklist(_currentFile); } catch(_){} try { renderKanban(); } catch(_){} });
+      Promise.resolve(_client.from('files').update({ logistics: lg }).eq('id', _currentFile.id)).then(function(r){ if(r && r.error) console.warn('[files:' + _currentFile.id + '] inspection_decision save did not persist', r.error.message); try { renderStageChecklist(_currentFile); } catch(_){} try { renderKanban(); } catch(_){} });
       return;
     }
     // Later fold in the Deadlines section · open/close the far-out deadlines.
@@ -22138,10 +22188,24 @@ Tell me your planned move-out date and I will set the inspection.`
         var p = b.getAttribute('data-arch-rm');
         if(!confirm('Remove this document from the archive?')) return;
         try { await _client.storage.from('transaction-files').remove([p]); } catch(_){}
-        var rw = file.raw_form_data || {}; rw.archive_docs = (Array.isArray(rw.archive_docs) ? rw.archive_docs : []).filter(function(d){ return d.path !== p; });
+        // Optimistic UI: drop the doc from raw_form_data in memory + render. If the
+        // DB update rejects (RLS or otherwise), _trySave restores the pre-remove
+        // list and re-renders, so the removed pill snaps back into place instead
+        // of the UI lying about what actually happened.
+        var _prevRaw = file.raw_form_data || {};
+        var _prevDocs = Array.isArray(_prevRaw.archive_docs) ? _prevRaw.archive_docs.slice() : [];
+        var rw = Object.assign({}, _prevRaw); rw.archive_docs = _prevDocs.filter(function(d){ return d.path !== p; });
         file.raw_form_data = rw; if(_currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = rw;
-        try { await _client.from('files').update({ raw_form_data: rw }).eq('id', file.id); } catch(_){}
         renderComplianceArchive(file);
+        await _trySave(_client.from('files').update({ raw_form_data: rw }).eq('id', file.id), {
+          table: 'files', id: file.id, action: 'remove document', detail: (p || '').split('/').pop(),
+          revert: function(){
+            var back = Object.assign({}, file.raw_form_data || {}); back.archive_docs = _prevDocs;
+            file.raw_form_data = back;
+            if(_currentFile && _currentFile.id === file.id) _currentFile.raw_form_data = back;
+            renderComplianceArchive(file);
+          }
+        });
       });
     });
   }
@@ -24996,7 +25060,7 @@ Tell me your planned move-out date and I will set the inspection.`
   document.addEventListener('change', async function(e){
     if(e.target && e.target.matches && e.target.matches('[data-nf-type]') && _currentFile){
       const f0 = _currentFile; const v = e.target.value || null;
-      try { await _client.from('files').update({ contract_type: v }).eq('id', f0.id); } catch(_){}
+      try { const _r = await _client.from('files').update({ contract_type: v }).eq('id', f0.id); if(_r && _r.error) console.warn('[files:' + f0.id + '] contract_type save did not persist', _r.error.message); } catch(e2){ console.warn('[files:' + f0.id + '] contract_type save threw', e2); }
       f0.contract_type = v;
       try { renderContractTerms(f0); } catch(_){ try { openPlaybook(f0); } catch(__){} }
       return;
@@ -25005,7 +25069,7 @@ Tell me your planned move-out date and I will set the inspection.`
     if(!an || !_currentFile) return;
     const val = e.target.value || null;
     const f = _currentFile;
-    try { await _client.from('files').update({ [an]: val }).eq('id', f.id); } catch(_){}
+    try { const _r = await _client.from('files').update({ [an]: val }).eq('id', f.id); if(_r && _r.error) console.warn('[files:' + f.id + '] ' + an + ' save did not persist', _r.error.message); } catch(e2){ console.warn('[files:' + f.id + '] ' + an + ' save threw', e2); }
     f[an] = val;
     try { renderContractTerms(f); } catch(_){ try { openPlaybook(f); } catch(__){} }
   });
@@ -25315,7 +25379,7 @@ Tell me your planned move-out date and I will set the inspection.`
     var next = Object.assign({}, prev, { aar_test_banner_dismissed_at: new Date().toISOString() });
     file.raw_form_data = next;
     banner.remove();
-    try { await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); } catch(_){}
+    try { const _r = await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); if(_r && _r.error) console.warn('[files:' + fileId + '] aar_test_banner_dismissed save did not persist', _r.error.message); } catch(e){ console.warn('[files:' + fileId + '] aar_test_banner_dismissed save threw', e); }
   });
 
   // Marlenyi 2026-08-07 · past-closing prompt. When a file's CLOSING deadline
@@ -25428,7 +25492,7 @@ Tell me your planned move-out date and I will set the inspection.`
       var next = Object.assign({}, prev, { closing_reschedule_dismissed_on: _tY });
       file.raw_form_data = next;
       closeOverlay();
-      try { await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); } catch(_){}
+      try { const _r = await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); if(_r && _r.error) console.warn('[files:' + fileId + '] closing_reschedule_dismissed save did not persist', _r.error.message); } catch(e){ console.warn('[files:' + fileId + '] closing_reschedule_dismissed save threw', e); }
       try { renderPlaybook(file); } catch(_){}
       return;
     }
@@ -25563,7 +25627,7 @@ Tell me your planned move-out date and I will set the inspection.`
         var prev = file.raw_form_data || {};
         var next = Object.assign({}, prev, { other_side_offer_state:'sent', other_side_offer_code: body.code, other_side_offer_at: new Date().toISOString() });
         file.raw_form_data = next;
-        try { await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); } catch(_){}
+        try { const _r = await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); if(_r && _r.error) console.warn('[files:' + fileId + '] other_side_offer=sent save did not persist', _r.error.message); } catch(e2){ console.warn('[files:' + fileId + '] other_side_offer=sent save threw', e2); }
         chip.innerHTML = '<div style="font-size:12.5px;color:#2f6b4f;font-weight:600">&check; Sent to ' + esc(first) + '. Code: <span style="font-family:\'SF Mono\',Menlo,monospace;letter-spacing:1px">' + esc(body.code) + '</span></div>';
         chip.style.background = '#eef4ec';
         chip.style.borderColor = '#cbdcc9';
@@ -25576,7 +25640,7 @@ Tell me your planned move-out date and I will set the inspection.`
       var prev2 = file.raw_form_data || {};
       var next2 = Object.assign({}, prev2, { other_side_offer_state:'declined', other_side_offer_at: new Date().toISOString() });
       file.raw_form_data = next2;
-      try { await _client.from('files').update({ raw_form_data: next2 }).eq('id', fileId); } catch(_){}
+      try { const _r = await _client.from('files').update({ raw_form_data: next2 }).eq('id', fileId); if(_r && _r.error) console.warn('[files:' + fileId + '] other_side_offer=declined save did not persist', _r.error.message); } catch(e){ console.warn('[files:' + fileId + '] other_side_offer=declined save threw', e); }
       chip.remove();
     }
   });
@@ -26546,12 +26610,27 @@ Tell me your planned move-out date and I will set the inspection.`
     const cb = e.target && e.target.closest && e.target.closest('[data-op-task]');
     if(!cb || !_currentFile) return;
     const id = cb.getAttribute('data-op-task');
-    const st = Object.assign({}, _currentFile.stage_tasks || {});
+    // Snapshot the pre-change state FIRST so a save reject can restore it.
+    const _prevSt = Object.assign({}, _currentFile.stage_tasks || {});
+    const st = Object.assign({}, _prevSt);
     if(cb.checked) st[id] = { done:true, at:new Date().toISOString(), by:(_profile && (_profile.first_name || _profile.email)) || 'TC' };
     else delete st[id];
     _currentFile.stage_tasks = st;
     const ff = (_files || []).find(function(x){ return x.id === _currentFile.id; }); if(ff) ff.stage_tasks = st;
-    try { _client.from('files').update({ stage_tasks: st }).eq('id', _currentFile.id).then(function(r){ if(r && r.error) console.warn('[offer-prep] save failed', r.error.message); }); } catch(_){}
+    // On save reject: restore _prevSt, un-flip the checkbox, and re-render so the
+    // UI matches the DB. Same pattern Marlenyi got bit by on autoRoll — check
+    // .error, don't just try/catch.
+    (function(fid, prev, checkboxEl){
+      _trySave(_client.from('files').update({ stage_tasks: st }).eq('id', fid), {
+        table:'files', id:fid, action:'save offer-prep step',
+        revert: function(){
+          _currentFile.stage_tasks = prev;
+          var ff2 = (_files || []).find(function(x){ return x.id === fid; }); if(ff2) ff2.stage_tasks = prev;
+          try { if(checkboxEl) checkboxEl.checked = !checkboxEl.checked; } catch(_){}
+          try { renderStageChecklist(_currentFile); } catch(_){}
+        }
+      });
+    })(_currentFile.id, _prevSt, cb);
     try { renderStageChecklist(_currentFile); } catch(_){}
   });
   function renderOfferPrepChecklist(file, host){
@@ -28958,7 +29037,14 @@ Tell me your planned move-out date and I will set the inspection.`
         var fields=null, docs=null, _noText=false;
         if(_nfFile){
           try{ var ec = await _client.functions.invoke('extract-contract-fields', { body:{ file_id:id } }); fields=(ec&&ec.data&&ec.data.fields)||null; docs=(ec&&ec.data&&ec.data.documents)||null; _noText=!!(ec&&ec.data&&ec.data.no_text_layer); }catch(exErr){ console.warn('extract skipped', exErr); }
-          if(fields && (fields.address || fields.street)){ var _addr = normalizeAddress(fields.address || [fields.street,fields.city,fields.state,fields.zip].filter(Boolean).join(', ')); if(_addr){ try{ await _client.from('files').update({ property_address:_addr }).eq('id', id); }catch(_){ } } }
+          if(fields && (fields.address || fields.street)){
+            var _addr = normalizeAddress(fields.address || [fields.street,fields.city,fields.state,fields.zip].filter(Boolean).join(', '));
+            if(_addr){
+              await _trySave(_client.from('files').update({ property_address:_addr }).eq('id', id), {
+                table:'files', id:id, action:'save extracted address', detail:_addr
+              });
+            }
+          }
         }
         // Auto-confirm what the scan reliably reads (contract type, parties, financing) +
         // set the contract type and dates, so the file lands on "3 of 4 confirmed" with
@@ -28966,7 +29052,7 @@ Tell me your planned move-out date and I will set the inspection.`
         // Sale-only: a listing has no purchase contract, financing, or price to confirm; a
         // file-organization or standalone-review file has no purchase contract at all (docs
         // cleanup / compliance review, not a deal), so the auto-confirm skips these too.
-        if(_nfSide !== 'listing' && !_isMinimal) try{
+        if(_nfSide !== 'listing' && !_isMinimal){
           var _iso=function(s){ if(!s) return null; var d=new Date(s); return isNaN(d)?null:d.toISOString().slice(0,10); };
           var _cents=function(s){ if(!s) return null; var n=parseFloat(String(s).replace(/[^0-9.]/g,'')); return isNaN(n)?null:Math.round(n*100); };
           var _exf=fields||{}; var _now=new Date().toISOString();
@@ -28977,8 +29063,10 @@ Tell me your planned move-out date and I will set the inspection.`
           var _eff=_iso(_exf.effective_date); if(_eff) _patch.effective_date=_eff;
           var _cls=_iso(_exf.closing_date); if(_cls) _patch.closing_date=_cls;
           var _pc=_cents(_exf.price); if(_pc) _patch.purchase_price_cents=_pc;
-          await _client.from('files').update(_patch).eq('id', id);
-        }catch(setupErr){ console.warn('auto-confirm skipped', setupErr); }
+          await _trySave(_client.from('files').update(_patch).eq('id', id), {
+            table:'files', id:id, action:'auto-confirm terms + dates'
+          });
+        }
         var fresh = await _client.from('files').select('*').eq('id', id).single();
         var f = (fresh && fresh.data) ? fresh.data : row;
         if(f && f.client_type) f.client_type = String(f.client_type).toLowerCase();
