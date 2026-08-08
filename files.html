@@ -2093,6 +2093,11 @@
        on the Calendar mobile tab. -->
   <div id="closings-list"></div>
   <div id="calHeatmap"></div>
+  <!-- Marlenyi 2026-08-07 · desktop mirror of the mobile Today aggregation.
+       Sits under the calendar heatmap so the right-panel day-picker keeps
+       working for date browsing, and this shows the "everything on you now"
+       task list grouped by file (populated by renderTodayAggregated). -->
+  <div id="todayAggregated" style="margin-top:14px"></div>
   <div id="fileCalendar" style="margin-top:22px"></div>
   <!-- Board · part of the Active files section, shown when its Board/List toggle is on Board.
        It sits directly under that header because it REPLACES the agenda rows rather than adding
@@ -8426,6 +8431,7 @@ Tell me your planned move-out date and I will set the inspection.`
     try{ loadAndRenderAgentMessages(); }catch(e){ console.warn('loadAndRenderAgentMessages failed', e); }
     try{ renderPriorityQueue(); }catch(e){ console.warn('renderPriorityQueue failed', e); }
     try{ renderTodayHero(); }catch(e){ console.warn('renderTodayHero failed', e); }
+    try{ renderTodayAggregated(); }catch(e){ console.warn('renderTodayAggregated failed', e); }
     try{ renderClosingsList(); }catch(e){ console.warn('renderClosingsList failed', e); }
     try{ loadNotifications(); }catch(e){ console.warn('loadNotifications failed', e); }
     try{ maybeOpenFromUrl(); }catch(e){ console.warn('maybeOpenFromUrl failed', e); }
@@ -8854,6 +8860,236 @@ Tell me your planned move-out date and I will set the inspection.`
   // "Due in 2 days" ages correctly if she leaves the tab open.
   setInterval(function(){ try { renderTodayHero(); } catch(_){} }, 5 * 60 * 1000);
 
+  // Marlenyi 2026-08-08 · desktop mirror of renderTodayHero. She wants the
+  // same "everything on you right now" aggregation card on desktop, sitting
+  // under the calendar heatmap. Mobile's Today tab replaces the calendar with
+  // the hero; desktop keeps the calendar and pins the aggregation card below.
+  // Same aggregation rules (overdue + today + tomorrow stage tasks, plus
+  // calendar chase items due today), same bucket labels, styled with inline
+  // styles so a browser cache never leaves the card unstyled.
+  function renderTodayAggregated(){
+    const host = document.getElementById('todayAggregated');
+    if(!host) return;
+    // Desktop only · mobile has renderTodayHero already.
+    try {
+      if(window.matchMedia && window.matchMedia('(max-width: 720px)').matches){ host.innerHTML = ''; return; }
+    } catch(_){}
+    if(!_files || !_files.length){ host.innerHTML = ''; return; }
+    const _t0 = new Date(); _t0.setHours(0, 0, 0, 0);
+    const items = [];
+    _files.forEach(function(f){
+      try {
+        if(f.status === 'archived') return;
+        const stg = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || '');
+        if(['new','intake_received','waiting_for_tc','','closed'].indexOf(stg) !== -1) return;
+        const ft = f.file_type || 'sale';
+        if(ft !== 'sale' && ft !== 'rental') return;
+        const tasks = ((STAGE_CHECKLISTS[ft] || {})[stg] || []);
+        const done = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
+        const dls = (typeof fileDeadlines === 'function') ? fileDeadlines(f) : {};
+        tasks.forEach(function(t){
+          if(done[t.id]) return;
+          if(_sweptTasksThisSession && _sweptTasksThisSession.has(f.id + ':' + t.id)) return;
+          if(t.showIf && !t.showIf(f)) return;
+          let days = null;
+          if(t.dl && dls[t.dl] && dls[t.dl].date){
+            const dd = new Date(dls[t.dl].date.getTime()); dd.setHours(0, 0, 0, 0);
+            days = Math.round((dd - _t0) / 86400000);
+          }
+          if(days == null) return;
+          if(days > 1) return;
+          const _sort = days < 0 ? (-100 + days * 0.01) : days;
+          items.push({ file: f, task: t, days: days, sortKey: _sort });
+        });
+      } catch(_){}
+    });
+    // Calendar chase merge · same rule as mobile: today only, dedupe against
+    // any stage_task that owns that deadline key.
+    try {
+      const _dlKeysSeen = {};
+      _files.forEach(function(f){
+        try {
+          if(f.status === 'archived') return;
+          const stg = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || '');
+          const ft = f.file_type || 'sale';
+          const allTasks = ((STAGE_CHECKLISTS[ft] || {})[stg] || []);
+          allTasks.forEach(function(t){ if(t && t.dl) _dlKeysSeen[f.id + ':' + t.dl] = 1; });
+        } catch(_){}
+      });
+      const calItems = (typeof _tcCalDeadlines === 'function') ? _tcCalDeadlines() : [];
+      calItems.forEach(function(ci){
+        if(!ci || !(ci.date instanceof Date)) return;
+        if(ci.done) return;
+        const d = new Date(ci.date.getTime()); d.setHours(0, 0, 0, 0);
+        const days = Math.round((d - _t0) / 86400000);
+        if(days !== 0) return;
+        const rawKey = String(ci.key || '').replace(/__chase$/, '');
+        if(_dlKeysSeen[ci.fileId + ':' + rawKey]) return;
+        const f = _files.find(function(x){ return x.id === ci.fileId; });
+        if(!f) return;
+        let lbl = String(ci.label || '').replace(/^Reminder\s*·\s*/i, '');
+        let _deadlineDays = 0;
+        if(ci.dueDate instanceof Date){
+          const _dd = new Date(ci.dueDate.getTime()); _dd.setHours(0, 0, 0, 0);
+          _deadlineDays = Math.round((_dd - _t0) / 86400000);
+        }
+        items.push({ file: f, task: { id: ci.key, label: lbl, dl: rawKey }, days: _deadlineDays, sortKey: 0.5, isReminder: true });
+        _dlKeysSeen[ci.fileId + ':' + rawKey] = 1;
+      });
+    } catch(err){ console.warn('[today-aggregated] calendar merge failed', err); }
+
+    const _dateLbl = new Date().toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' });
+    if(!items.length){
+      host.innerHTML =
+        '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:14px;padding:22px 20px">' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:17px;font-weight:600;color:#0f0f0f;margin-bottom:2px">Today &middot; ' + esc(_dateLbl) + '</div>' +
+          '<div style="font-size:11.5px;color:#8a857c;letter-spacing:0.2px">Nothing on you right now. You&rsquo;re ahead.</div>' +
+        '</div>';
+      return;
+    }
+    items.sort(function(a, b){ return a.sortKey - b.sortKey; });
+    const hero = items[0];
+    const rest = items.slice(1);
+    const _byFile = {};
+    const _fileOrder = [];
+    rest.forEach(function(it){
+      const fid = it.file.id;
+      if(!_byFile[fid]){ _byFile[fid] = { file: it.file, items: [] }; _fileOrder.push(fid); }
+      _byFile[fid].items.push(it);
+    });
+    let _nOver = 0, _nToday = 0, _nSoon = 0;
+    items.forEach(function(it){
+      if(!it.isReminder && it.days != null && it.days < 0) _nOver++;
+      else if(!it.isReminder && it.days === 0) _nToday++;
+      else _nSoon++;
+    });
+    const _subParts = [];
+    if(_nOver)  _subParts.push('<span style="color:#a3402f;font-weight:600">' + _nOver + ' overdue</span>');
+    if(_nToday) _subParts.push(_nToday + ' due today');
+    if(_nSoon)  _subParts.push(_nSoon + ' upcoming');
+    const _sub = _subParts.length ? _subParts.join(' &middot; ') : (items.length + ' items');
+
+    const _addr = String(hero.file.property_address || 'File').split(',')[0];
+    let _dueTxt = '';
+    if(hero.isReminder) _dueTxt = 'Due in 3 days';
+    else if(hero.days != null){
+      if(hero.days < 0) _dueTxt = Math.abs(hero.days) + ' day' + (hero.days === -1 ? '' : 's') + ' overdue';
+      else if(hero.days === 0) _dueTxt = 'Due today';
+      else if(hero.days === 1) _dueTxt = 'Due tomorrow';
+    }
+    const _isUrgent = !hero.isReminder && hero.days != null && hero.days <= 0;
+    const _ebColor = _isUrgent ? '#a3402f' : '#8a7a5b';
+    const _ebLbl = _isUrgent ? 'Do this now' : 'Get ahead of this';
+
+    // Header + hero.
+    let html = '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:14px;padding:20px 20px 8px">' +
+      '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding-bottom:14px;border-bottom:0.5px solid #f2eee2;margin-bottom:14px">' +
+        '<div>' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:17px;font-weight:600;color:#0f0f0f">Today &middot; ' + esc(_dateLbl) + '</div>' +
+          '<div style="font-size:11.5px;color:#7a756c;letter-spacing:0.2px;margin-top:3px">' + _sub + '</div>' +
+        '</div>' +
+      '</div>' +
+      // Hero row · address + task, with a Send action on the right.
+      '<div data-tag-file="' + esc(hero.file.id) + '" data-tag-task="' + esc(hero.task.id) + '" data-tag-dl="' + esc(hero.task.dl || '') + '" data-tag-days="' + (hero.days == null ? '' : hero.days) + '"' + (hero.isReminder ? ' data-tag-reminder="1"' : '') +
+        ' style="background:#faf8f4;border:0.5px solid #eee7d8;border-radius:12px;padding:14px 16px;margin-bottom:14px;cursor:pointer;display:flex;align-items:center;gap:14px">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font:700 9.5px \'Inter\',sans-serif;letter-spacing:1.4px;text-transform:uppercase;color:' + _ebColor + ';margin-bottom:6px">' + _ebLbl + '</div>' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;color:#7a756c;margin-bottom:2px">' + esc(_addr) + '</div>' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:16px;font-weight:600;color:#0a0a0a;line-height:1.3">' + esc(hero.task.label) + '</div>' +
+          (_dueTxt ? '<div style="font-size:11.5px;color:' + (_isUrgent ? '#a3402f' : '#8a7a5b') + ';font-weight:600;margin-top:4px">' + esc(_dueTxt) + '</div>' : '') +
+        '</div>' +
+        '<button type="button" data-tag-send="1" data-tag-file="' + esc(hero.file.id) + '" data-tag-task="' + esc(hero.task.id) + '" style="background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:10px 16px;font:700 12px \'Inter\',sans-serif;letter-spacing:0.3px;cursor:pointer;white-space:nowrap;flex:none">Send &rarr;</button>' +
+      '</div>';
+
+    // "Also due today" grouped per file · rows use the same category ·
+    // prefix · label · day format as the mobile hero.
+    if(_fileOrder.length){
+      html += '<div style="font:700 9.5px \'Inter\',sans-serif;letter-spacing:1.4px;text-transform:uppercase;color:#a9a49a;margin:6px 0 8px">Also on you</div>';
+      _fileOrder.forEach(function(fid){
+        const grp = _byFile[fid];
+        const addr = String(grp.file.property_address || '').split(',')[0];
+        html += '<div style="border:0.5px solid #f0ece2;border-radius:11px;margin-bottom:8px;overflow:hidden">' +
+          '<div data-tag-file="' + esc(fid) + '" style="padding:9px 14px;background:#faf8f4;border-bottom:0.5px solid #f2eee2;cursor:pointer;font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;color:#0a0a0a">' + esc(addr) + '</div>' +
+          grp.items.map(function(it){
+            const raw = String(it.task.label || '');
+            let prefix = '', restLbl = raw;
+            const m = raw.match(/^(Follow up|Confirm|Remind|Request|Send|Order)\s*[·:.-]?\s*(.+)$/i);
+            if(m){
+              prefix = m[1];
+              restLbl = m[2];
+              if(restLbl && restLbl.length > 1 && restLbl[0] === restLbl[0].toUpperCase() && restLbl[1] === restLbl[1].toLowerCase()){
+                restLbl = restLbl[0].toLowerCase() + restLbl.slice(1);
+              }
+            }
+            let catLbl = '';
+            try {
+              let tag = (typeof UC_TAG_OF !== 'undefined') ? UC_TAG_OF[it.task.id] : null;
+              if(!tag && typeof isOpeningTaskId === 'function' && isOpeningTaskId(it.task.id)) tag = (typeof UC_TAGS !== 'undefined') ? UC_TAGS.open : null;
+              if(!tag){
+                const dk = String(it.task.dl || it.task.id || '').toLowerCase();
+                if(/title|survey|commitment|policy|lien|estoppel|hoa|condo/.test(dk)) catLbl = 'Title';
+                else if(/insp/.test(dk)) catLbl = 'Insp';
+                else if(/loan|financ|apprais|approval/.test(dk)) catLbl = 'Loan';
+                else if(/emd|deposit|escrow|opening|kickoff/.test(dk)) catLbl = 'Open';
+              } else { catLbl = tag.lab || ''; }
+            } catch(_){}
+            let d = '';
+            if(it.days != null){
+              if(it.days < 0) d = Math.abs(it.days) + 'd late';
+              else if(it.days === 0) d = 'Today';
+              else if(it.days === 1) d = '1 day';
+              else if(it.days <= 6) d = it.days + ' days';
+              else d = 'In ' + it.days + 'd';
+            }
+            if(it.isReminder) d = '3 days';
+            const isWarn = (it.days != null && it.days <= 0 && !it.isReminder);
+            const isHeads = (it.isReminder || (it.days != null && it.days > 0));
+            const dStyle = isWarn
+              ? 'color:#a3402f;font-weight:600;font:600 11px \'Inter\',sans-serif'
+              : (isHeads
+                  ? 'background:#f4f0e5;color:#8a7a5b;padding:2px 8px;border-radius:6px;font:600 10px \'Inter\',sans-serif;letter-spacing:0.2px'
+                  : 'color:#a9a49a;font:500 11px Georgia,serif');
+            const parts = [];
+            if(catLbl) parts.push(esc(catLbl));
+            if(prefix) parts.push(esc(prefix));
+            parts.push(esc(restLbl));
+            return '<div data-tag-file="' + esc(fid) + '" data-tag-task="' + esc(it.task.id) + '" data-tag-dl="' + esc(it.task.dl || '') + '" data-tag-days="' + (it.days == null ? '' : it.days) + '"' + (it.isReminder ? ' data-tag-reminder="1"' : '') +
+              ' style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-top:0.5px solid #f5f1e5;cursor:pointer;background:#fff">' +
+              '<span style="width:6px;height:6px;border-radius:50%;background:' + (isWarn ? '#a3402f' : '#c9c3b3') + ';flex:none"></span>' +
+              '<span style="flex:1;min-width:0;font-size:12.5px;color:#0a0a0a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + parts.join(' &middot; ') + '</span>' +
+              (d ? '<span style="' + dStyle + ';flex:none">' + esc(d) + '</span>' : '') +
+            '</div>';
+          }).join('') +
+        '</div>';
+      });
+    }
+    html += '</div>';
+    host.innerHTML = html;
+
+    // Wire · same behavior as mobile hero. Send button on the hero fires the
+    // task sheet with autoSend; row click just opens the sheet; header row
+    // (no task id) opens the file drawer.
+    host.querySelectorAll('[data-tag-file]').forEach(function(el){
+      el.addEventListener('click', function(ev){
+        const isSend = el.getAttribute('data-tag-send') === '1' || (ev.target && ev.target.closest && ev.target.closest('[data-tag-send="1"]'));
+        const fid = el.getAttribute('data-tag-file');
+        const tid = el.getAttribute('data-tag-task');
+        const dl  = el.getAttribute('data-tag-dl') || '';
+        const daysAttr = el.getAttribute('data-tag-days');
+        const days = (daysAttr === '' || daysAttr == null) ? null : parseInt(daysAttr, 10);
+        const isReminder = el.getAttribute('data-tag-reminder') === '1';
+        const f = _files.find(function(x){ return x.id === fid; });
+        if(!f) return;
+        if(!tid){ try { openPlaybook(f); } catch(_){} return; }
+        try { openTaskSheet(f, { id: tid, dl: dl, days: days, isReminder: isReminder, autoSend: isSend }); } catch(_){
+          try { openPlaybook(f); } catch(__){}
+        }
+      });
+    });
+  }
+  // Re-render on the same cadence as the mobile hero.
+  setInterval(function(){ try { renderTodayAggregated(); } catch(_){} }, 5 * 60 * 1000);
+
   // ============ TASK SHEET (Marlenyi Jul 27 · Direction 02A) ============
   // Tap a row on the Today tab → focused task sheet slides up. Just this
   // ONE task: address + label + category chip + due chip + contact avatars
@@ -9142,6 +9378,7 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(err){ console.warn('[task-sheet] send failed', err); }
     setTimeout(_tsClose, 500);
     try { renderTodayHero(); } catch(_){}
+    try { renderTodayAggregated(); } catch(_){}
   }
   async function _tsMarkDone(file, taskId, doneNow){
     try {
@@ -9161,6 +9398,7 @@ Tell me your planned move-out date and I will set the inspection.`
       }
       _tsClose();
       try { renderTodayHero(); } catch(_){}
+      try { renderTodayAggregated(); } catch(_){}
       try { renderKanban(); } catch(_){}
     } catch(err){ console.warn('[task-sheet] markDone failed', err); }
   }
@@ -9335,6 +9573,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // Re-render immediately (in-memory + local sweep set already applied).
     // The DB persist runs after so the render doesn't wait on network.
     try { renderTodayHero(); } catch(_){}
+    try { renderTodayAggregated(); } catch(_){}
     try { renderPriorityQueue(); } catch(_){}
     try { renderKanban(); } catch(_){}
     if(_currentFile){ try { renderStageChecklist(_currentFile); } catch(_){} }
@@ -12566,7 +12805,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // renderers don't error.
     const c = document.getElementById('fileCalendar');
     if(c) c.style.display = '';
-    try { renderTcCalendar(); renderCalHeatmap(); renderDupBanner(); if(!_calLoaded) loadCalDeadlines(); } catch(_){}
+    try { renderTcCalendar(); renderCalHeatmap(); renderDupBanner(); renderTodayAggregated(); if(!_calLoaded) loadCalDeadlines(); } catch(_){}
   }
   // "More" menu (Review link · Gmail label setup · Keyboard shortcuts) · toggle + outside-close.
   document.addEventListener('click', function(e){
@@ -12626,7 +12865,7 @@ Tell me your planned move-out date and I will set the inspection.`
       }
     } catch(_){}
     _calLoaded = true;
-    try { renderTcCalendar(); renderCalHeatmap(); renderKpis(); renderDupBanner(); } catch(_){}
+    try { renderTcCalendar(); renderCalHeatmap(); renderKpis(); renderDupBanner(); renderTodayAggregated(); } catch(_){}
   }
   // TC chase rule · for the deadlines a coordinator actually chases someone on, the
   // task surfaces 3 BUSINESS days before the due date (so weekends are skipped going
@@ -13315,6 +13554,7 @@ Tell me your planned move-out date and I will set the inspection.`
     // Today tab hero · re-render when she taps Today so the hero picks up
     // the latest task state, and empties on other tabs so nothing lingers.
     try { renderTodayHero(); } catch(_){}
+    try { renderTodayAggregated(); } catch(_){}
     // Closings list · same pattern, only shows on Calendar tab.
     try { renderClosingsList(); } catch(_){}
     window.scrollTo({ top:0, behavior:'auto' });
