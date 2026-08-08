@@ -29696,6 +29696,50 @@ Tell me your planned move-out date and I will set the inspection.`
     });
   })();
 
+  // Marlenyi 2026-08-08 · new-version notifier. Every visible bug we hit today
+  // ("still showing old numbers", "Realty Bills still there") turned out to be
+  // Safari holding a pre-fix JS bundle after a same-day ship. HEAD-poll the
+  // main HTML every 5 min; if the ETag changes, show a black "New version"
+  // banner with a Refresh button. Uses cache:'no-store' so the ping itself
+  // bypasses the cache we're trying to detect.
+  (function(){
+    if(window.__aariVersionCheck) return; window.__aariVersionCheck = true;
+    var _initialEtag = null;
+    var _bannerShown = false;
+    function _showBanner(){
+      if(_bannerShown) return; _bannerShown = true;
+      var b = document.createElement('div');
+      b.id = 'aari-version-banner';
+      b.style.cssText = 'position:fixed;left:50%;top:calc(env(safe-area-inset-top,0) + 8px);transform:translateX(-50%);z-index:99999;background:#0f0f0f;color:#fff;padding:10px 14px 10px 18px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.35);display:flex;align-items:center;gap:12px;font:600 12.5px \'Inter\',sans-serif;letter-spacing:0.2px;max-width:calc(100vw - 24px)';
+      b.innerHTML = '<span style="flex:1;color:#f5f0e8">New version available</span>' +
+        '<button type="button" id="aari-vb-refresh" style="flex:none;background:#fff;color:#0f0f0f;border:0;border-radius:8px;padding:7px 14px;font:700 11.5px \'Inter\',sans-serif;cursor:pointer;font-family:inherit">Refresh</button>' +
+        '<button type="button" id="aari-vb-close" aria-label="Dismiss" style="flex:none;background:transparent;color:#a09a8f;border:0;font-size:16px;line-height:1;padding:2px 4px;cursor:pointer;font-family:inherit">&times;</button>';
+      document.body.appendChild(b);
+      b.querySelector('#aari-vb-refresh').addEventListener('click', function(){
+        try { location.reload(); } catch(_){}
+      });
+      b.querySelector('#aari-vb-close').addEventListener('click', function(){
+        try { b.remove(); _bannerShown = false; } catch(_){}
+      });
+    }
+    function _ping(){
+      try {
+        fetch(location.pathname + '?_ver=' + Date.now(), { method: 'HEAD', cache: 'no-store' })
+          .then(function(r){
+            if(!r || !r.ok) return;
+            var etag = r.headers.get('etag') || r.headers.get('last-modified') || '';
+            if(!etag) return;
+            if(_initialEtag == null){ _initialEtag = etag; return; }
+            if(etag !== _initialEtag) _showBanner();
+          })
+          .catch(function(){ /* silent — offline or network flake, try again next tick */ });
+      } catch(_){}
+    }
+    // First ping captures the initial etag; subsequent pings compare against it.
+    _ping();
+    setInterval(_ping, 5 * 60 * 1000);
+  })();
+
   // Boot when auth.js is ready
   function boot(){
     if(window.AariAuth && window.AariAuth.ensureClient){ init(); }
