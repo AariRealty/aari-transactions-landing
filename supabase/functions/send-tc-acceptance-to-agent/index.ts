@@ -12,6 +12,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import * as React from "npm:react@18";
 import { TcAcceptanceToAgent } from "../_email-templates/TcAcceptanceToAgent.tsx";
 import { sendEmail } from "../_shared/send-email.ts";
+import { resolveClientEmailRedirect, reviewSubjectPrefix } from "../_shared/client-email-hold.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -61,16 +62,23 @@ Deno.serve(async (req) => {
   const startFormatted = formatStartTime(f.tc_expected_start_at);
   const fileShortId = String(f.id).slice(0, 8).toUpperCase();
 
+  // Client-email review-hold gate · redirect to Marlenyi during Samantha beta.
+  const redirect = await resolveClientEmailRedirect({ agentId: f.agent_id, email: agent.email });
+  const emailTo = redirect ? redirect.redirectTo : agent.email;
+  const emailSubject = redirect
+    ? reviewSubjectPrefix(redirect, `${tcName} accepted your file · starts ${startFormatted}`)
+    : `${tcName} accepted your file · starts ${startFormatted}`;
+
   // Send through the shared helper with a reactElement (the signature every working
   // email uses, e.g. send-tc-message). The old code rendered `html` and passed it to
   // sendEmail, which only reads `reactElement` — so this email had been sending empty.
   try {
     const result = await sendEmail({
-      to: agent.email,
+      to: emailTo,
       toUserId: agent.id,
       relatedFileId: f.id,
       category: "transactional",
-      subject: `${tcName} accepted your file · starts ${startFormatted}`,
+      subject: emailSubject,
       templateName: "tc_acceptance_to_agent",
       reactElement: React.createElement(TcAcceptanceToAgent, {
         firstName: agent.first_name ?? "there",

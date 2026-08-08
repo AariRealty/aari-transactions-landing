@@ -23,6 +23,7 @@
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { resend, FROM } from "../_shared/resend.ts";
+import { resolveClientEmailRedirect, reviewSubjectPrefix, reviewBannerHtml, reviewBannerText } from "../_shared/client-email-hold.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -131,11 +132,19 @@ If the experience was a good one, a Google review would mean a lot.
 *It takes about two minutes: ${reviewLink}*
 
 Thank you.`;
+      // Client-email review-hold gate · beta redirect for Samantha etc.
+      const agentRedirect = await resolveClientEmailRedirect({ agentId: f.agent_id, email: agentEmail });
+      const agentTo = agentRedirect ? agentRedirect.redirectTo : agentEmail;
+      const agentSubject = agentRedirect
+        ? reviewSubjectPrefix(agentRedirect, `A quick favor · ${street}`)
+        : `A quick favor · ${street}`;
+      const agentText = agentRedirect ? reviewBannerText(agentRedirect) + text : text;
+      const agentHtml = agentRedirect ? reviewBannerHtml(agentRedirect) + htmlWrap(text) : htmlWrap(text);
       try {
         await resend.emails.send({
-          from: fromLine, to: agentEmail, reply_to: replyTo,
-          subject: `A quick favor · ${street}`,
-          text, html: htmlWrap(text),
+          from: fromLine, to: agentTo, reply_to: replyTo,
+          subject: agentSubject,
+          text: agentText, html: agentHtml,
         });
         await supabase.from("files").update({ agent_review_sent_at: new Date().toISOString() }).eq("id", f.id);
         sent++;
@@ -160,9 +169,14 @@ It was a pleasure working alongside you on this one.
 Your words carry a lot of weight in our industry.
 
 ${reviewLink}`;
+        // If the agent is on hold, strip them from CC so their address doesn't
+        // leak via a message that still goes to title/lender (title/lender are
+        // vendors, not clients · they still receive the ask directly).
+        const ccRedirect = await resolveClientEmailRedirect({ agentId: f.agent_id, email: agentEmail });
+        const ccList = ccRedirect ? undefined : (agentEmail ? [agentEmail] : undefined);
         try {
           await resend.emails.send({
-            from: fromLine, to, cc: agentEmail ? [agentEmail] : undefined, reply_to: replyTo,
+            from: fromLine, to, cc: ccList, reply_to: replyTo,
             subject: `One quick favor · ${street}`,
             text, html: htmlWrap(text),
           });
