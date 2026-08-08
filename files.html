@@ -15699,7 +15699,30 @@ Tell me your planned move-out date and I will set the inspection.`
     var _matchTc = function(i){ return !_bfInvSelectedTc || String(i.tc_id) === String(_bfInvSelectedTc); };
     var submitted = submittedAll.filter(_matchTc);
     var paid = paidAll.filter(_matchTc);
-    var owedNow = submitted.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
+    // Marlenyi 2026-08-08 · owed reads the line_items, not total_cents. Partial-pay
+    // marks individual lines as paid_at (see markInvoiceLinesPaid) but leaves the
+    // invoice's total_cents at the original submitted amount, so a $400 invoice
+    // where $200 has already cleared was still showing "$400 owed · Pay $400" —
+    // exactly the mobile bug that made me think today's payment hadn't landed.
+    // Same rule the weekly reminder edge function uses: skip covered lines,
+    // skip lines with paid_at set. Falls back to total_cents on invoices with no
+    // structured line_items (legacy invoices from before partial-pay shipped).
+    var _invEffectiveOwedCents = function(i){
+      var lines = (i && i.line_items) || [];
+      if(!Array.isArray(lines) || !lines.length) return i && i.total_cents || 0;
+      var sum = 0, hadAny = false;
+      lines.forEach(function(l){
+        if(!l) return;
+        hadAny = true;
+        if(l.covered) return;
+        if(l.paid_at) return;
+        sum += Number(l.amount_cents) || 0;
+      });
+      return hadAny ? sum : (i.total_cents || 0);
+    };
+    var owedNow = submitted.reduce(function(s, i){ return s + _invEffectiveOwedCents(i); }, 0);
+    // "In flight" = still-owed on submitted + already-banked on paid. Paid invoices
+    // keep total_cents because that IS what was banked at pay time.
     var totalInFlight = owedNow + paid.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
     // Year + month boundaries for YTD / MTD (always computed off ALL invoices)
     var _now = new Date();
@@ -15758,14 +15781,21 @@ Tell me your planned move-out date and I will set the inspection.`
       var payRows = submitted.map(function(i){
         var isMe = String(i.tc_id) === String(mine);
         var nm = isMe ? 'You' : _tcDisplayName(i.tc_id).split(' ')[0];
+        var owed = _invEffectiveOwedCents(i);
+        // Count only the OPEN lines (non-covered, non-paid) so the sub-label
+        // matches the amount — a $400 invoice with $200 already paid reads
+        // "1 file open" not "5 files".
+        var openLines = ((i.line_items || []).filter(function(l){ return l && !l.covered && !l.paid_at; }));
+        var totalLines = ((i.line_items || []).length);
+        var lineLbl = openLines.length + ' open' + (openLines.length !== totalLines ? ' of ' + totalLines : '');
         // Row flex-wraps so on ≤375px the Pay button drops to its own line
         // instead of crushing the name/amount. min-height:44px on the button
         // meets iOS tap-target guidance.
         return '<div style="display:flex;align-items:center;gap:10px;padding:12px 0;border-top:0.5px solid rgba(15,15,15,0.06);flex-wrap:wrap">' +
           '<div style="flex:1 1 55%;min-width:0"><div style="font-size:14px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
-          '<div style="font-size:11px;color:#7a756c;margin-top:2px">' + ((i.line_items || []).length) + ' file' + (((i.line_items || []).length) === 1 ? '' : 's') + ' &middot; ' + esc(i.invoice_number || '') + '</div></div>' +
-          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:18px;font-weight:500;color:#0f0f0f;letter-spacing:-0.3px;text-align:right">' + _money(i.total_cents || 0) + '</span>' +
-          '<button type="button" data-mark-invoice-paid="' + esc(i.id) + '" style="flex:1 1 100%;min-height:44px;background:#0f0f0f;color:#fff;border:0;padding:0 18px;border-radius:8px;font:700 12px \'Inter\',sans-serif;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer;font-family:inherit;margin-top:2px">Pay ' + _money(i.total_cents || 0) + '</button>' +
+          '<div style="font-size:11px;color:#7a756c;margin-top:2px">' + lineLbl + ' &middot; ' + esc(i.invoice_number || '') + '</div></div>' +
+          '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:18px;font-weight:500;color:#0f0f0f;letter-spacing:-0.3px;text-align:right">' + _money(owed) + '</span>' +
+          '<button type="button" data-mark-invoice-paid="' + esc(i.id) + '" style="flex:1 1 100%;min-height:44px;background:#0f0f0f;color:#fff;border:0;padding:0 18px;border-radius:8px;font:700 12px \'Inter\',sans-serif;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer;font-family:inherit;margin-top:2px">Pay ' + _money(owed) + '</button>' +
         '</div>';
       }).join('');
       payRun = '<div style="background:#faf7ef;border:0.5px solid #eae5d6;border-radius:16px;padding:20px 20px 16px;margin-bottom:16px">' +
@@ -15861,7 +15891,7 @@ Tell me your planned move-out date and I will set the inspection.`
       if(!i || !i.tc_id) return;
       var g = _ensureTc(i.tc_id);
       g.hasInv = true;
-      if(i.status === 'submitted') g.owed += (i.total_cents || 0);
+      if(i.status === 'submitted') g.owed += _invEffectiveOwedCents(i);
       if(i.status === 'paid'){
         var t = i.paid_at ? new Date(i.paid_at).getTime() : 0;
         if(t >= _y0) g.ytd += (i.total_cents || 0);
@@ -15896,10 +15926,15 @@ Tell me your planned move-out date and I will set the inspection.`
     // unfiltered, show every TC as the switcher.
     var _shownTcList = _bfInvSelectedTc ? tcList.filter(function(g){ return String(g.tcId) === String(_bfInvSelectedTc); }) : tcList;
     if(_shownTcList.length){
+      // Marlenyi 2026-08-08 · ADHD-friendlier density. Default shows a compact
+      // one-line row per coordinator (avatar + name + owed/ready badge). The
+      // MTD / YTD / Pipeline grid only expands on the CURRENTLY-SELECTED card
+      // so scanning the list stays a single sweep, and the numbers she wanted
+      // last week are still one tap away.
       var ledHead = _bfInvSelectedTc
         ? '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 4px;margin-top:6px">Coordinator</div>' +
           '<div style="font-size:11px;color:#a9a49a;padding:0 4px 8px;line-height:1.4">Tap the card to switch back to all coordinators.</div>'
-        : '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:6px">Per coordinator &middot; tap to switch</div>';
+        : '<div style="font-size:10px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase;color:#7a756c;padding:0 4px 8px;margin-top:6px">Coordinators &middot; tap to see details</div>';
       ledger = ledHead;
       _shownTcList.forEach(function(g){
         var isMe = String(g.tcId) === String(mine);
@@ -15913,19 +15948,25 @@ Tell me your planned move-out date and I will set the inspection.`
         } else if(g.projected){
           badge = '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:0.6px;text-transform:uppercase;padding:3px 8px;border-radius:5px;background:' + (isSel ? '#f6edd9' : '#faf7ef') + ';color:' + (isSel ? '#8a6a1f' : '#8a6a1f') + ';border:0.5px solid ' + (isSel ? '#f6edd9' : '#e6dfcd') + '">' + _money(g.projected) + ' ready</span>';
         }
-        ledger += '<button type="button" data-bf-inv-tc="' + esc(g.tcId) + '" style="width:100%;text-align:left;background:' + (isSel ? '#0f0f0f' : '#fff') + ';color:' + (isSel ? '#fff' : '#0f0f0f') + ';border:0.5px solid ' + (isSel ? '#0f0f0f' : 'rgba(15,15,15,0.10)') + ';border-radius:12px;padding:14px 14px 12px;margin-bottom:8px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;display:block">' +
-          '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">' +
-            '<div style="width:34px;height:34px;border-radius:50%;background:' + (isSel ? '#fff' : '#0f0f0f') + ';color:' + (isSel ? '#0f0f0f' : '#fff') + ';display:flex;align-items:center;justify-content:center;font:700 13px \'Inter\',sans-serif;flex:none">' + esc(initial) + '</div>' +
+        // Detail grid only on the selected card. Everything else stays as the
+        // slim single-line row so the list is quick to scan.
+        var detailHtml = '';
+        if(isSel){
+          detailHtml = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px;padding-top:12px;border-top:0.5px solid rgba(255,255,255,0.12)">' +
+            '<div><div style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#a9a49a;margin-bottom:3px">This month</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;letter-spacing:-0.4px;line-height:1">' + _money(g.mtd) + '</div></div>' +
+            '<div><div style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#a9a49a;margin-bottom:3px">YTD</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;letter-spacing:-0.4px;line-height:1">' + _money(g.ytd) + '</div></div>' +
+            '<div><div style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#a9a49a;margin-bottom:3px">Pipeline</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;letter-spacing:-0.4px;line-height:1' + (g.pipeline ? ';color:#fff' : '') + '">' + _money(g.pipeline || 0) + '</div>' +
+              (g.pipelineCount ? '<div style="font-size:9px;color:#a9a49a;margin-top:2px">' + g.pipelineCount + ' file' + (g.pipelineCount === 1 ? '' : 's') + '</div>' : '') +
+            '</div>' +
+          '</div>';
+        }
+        ledger += '<button type="button" data-bf-inv-tc="' + esc(g.tcId) + '" style="width:100%;text-align:left;background:' + (isSel ? '#0f0f0f' : '#fff') + ';color:' + (isSel ? '#fff' : '#0f0f0f') + ';border:0.5px solid ' + (isSel ? '#0f0f0f' : 'rgba(15,15,15,0.10)') + ';border-radius:12px;padding:' + (isSel ? '14px 14px 14px' : '11px 14px') + ';margin-bottom:8px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;display:block">' +
+          '<div style="display:flex;align-items:center;gap:12px">' +
+            '<div style="width:32px;height:32px;border-radius:50%;background:' + (isSel ? '#fff' : '#0f0f0f') + ';color:' + (isSel ? '#0f0f0f' : '#fff') + ';display:flex;align-items:center;justify-content:center;font:700 13px \'Inter\',sans-serif;flex:none">' + esc(initial) + '</div>' +
             '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:15px;font-weight:600;letter-spacing:-0.1px">' + esc(nm) + '</span>' +
             badge +
           '</div>' +
-          '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">' +
-            '<div><div style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:' + (isSel ? '#a9a49a' : '#7a756c') + ';margin-bottom:3px">This month</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;letter-spacing:-0.4px;line-height:1">' + _money(g.mtd) + '</div></div>' +
-            '<div><div style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:' + (isSel ? '#a9a49a' : '#7a756c') + ';margin-bottom:3px">YTD</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;letter-spacing:-0.4px;line-height:1">' + _money(g.ytd) + '</div></div>' +
-            '<div><div style="font-size:8.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:' + (isSel ? '#a9a49a' : '#7a756c') + ';margin-bottom:3px">Pipeline</div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:500;letter-spacing:-0.4px;line-height:1' + (g.pipeline ? ';color:' + (isSel ? '#fff' : '#8a6a1f') : '') + '">' + _money(g.pipeline || 0) + '</div>' +
-              (g.pipelineCount ? '<div style="font-size:9px;color:' + (isSel ? '#a9a49a' : '#a9a49a') + ';margin-top:2px">' + g.pipelineCount + ' file' + (g.pipelineCount === 1 ? '' : 's') + '</div>' : '') +
-            '</div>' +
-          '</div>' +
+          detailHtml +
         '</button>';
       });
     }
@@ -16347,7 +16388,18 @@ Tell me your planned move-out date and I will set the inspection.`
     // thing the broker sees is where the money is: ready to go out, out and unpaid,
     // and paid. "Ready to send" carries the one hot border because it is the only
     // number she can act on. Columns below drop to a plain count.
-    var subsTotal = subs.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
+    // Marlenyi 2026-08-08 · subsTotal reads open line-item amounts (skip covered,
+    // skip paid_at). Partial-pay leaves total_cents untouched, so the old formula
+    // showed a $400 invoice with $200 already paid still contributing $400 to the
+    // desktop "Sent" money strip — same bug that made mobile show "$400 owed".
+    var _invEffOwedDesk = function(i){
+      var lines = (i && i.line_items) || [];
+      if(!Array.isArray(lines) || !lines.length) return i && i.total_cents || 0;
+      var sum = 0, hadAny = false;
+      lines.forEach(function(l){ if(!l) return; hadAny = true; if(l.covered) return; if(l.paid_at) return; sum += Number(l.amount_cents) || 0; });
+      return hadAny ? sum : (i.total_cents || 0);
+    };
+    var subsTotal = subs.reduce(function(s, i){ return s + _invEffOwedDesk(i); }, 0);
     var paidTotal = paidInv.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
     var _kpi = function(label, amt, hot){
       return '<div style="background:#fff;border:0.5px solid #eeeae0;' + (hot ? 'border-left:2px solid #14110c;' : '') + 'border-radius:9px;padding:9px 12px">' +
