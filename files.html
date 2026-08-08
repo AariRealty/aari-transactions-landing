@@ -15866,12 +15866,32 @@ Tell me your planned move-out date and I will set the inspection.`
           var totalLines = ((i.line_items || []).length);
           lineLbl = openLines.length + ' open' + (openLines.length !== totalLines ? ' of ' + totalLines : '');
         }
+        // Marlenyi 2026-08-08 · surface the held reason on the pay row itself.
+        // Without this, tapping Pay on a partial-paid invoice with one held
+        // line waiting on external money reads as a normal "$200 due" nudge —
+        // no signal that she intentionally paused it. Amber annotation under
+        // the address line: "Held · Waiting on Samantha payment · Aug 22".
+        var heldNote = '';
+        var _held = openLines.filter(function(l){ return l && l.held_at; });
+        if(_held.length){
+          var _hl = _held[0];
+          var _sn = '';
+          if(_hl.snooze_until){
+            try {
+              var _sd = new Date(String(_hl.snooze_until).slice(0,10) + 'T12:00:00');
+              if(!isNaN(_sd)) _sn = ' &middot; ' + _sd.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+            } catch(_){}
+          }
+          heldNote = 'Held &middot; ' + esc(_hl.held_note || 'no note') + _sn;
+        }
         // Row flex-wraps so on ≤375px the Pay button drops to its own line
         // instead of crushing the name/amount. min-height:44px on the button
         // meets iOS tap-target guidance.
         return '<div style="display:flex;align-items:center;gap:10px;padding:12px 0;border-top:0.5px solid rgba(15,15,15,0.06);flex-wrap:wrap">' +
           '<div style="flex:1 1 55%;min-width:0"><div style="font-size:14px;font-weight:600;color:#0f0f0f">' + esc(nm) + '</div>' +
-          '<div style="font-size:11px;color:#7a756c;margin-top:2px">' + lineLbl + ' &middot; ' + esc(i.invoice_number || '') + '</div></div>' +
+          '<div style="font-size:11px;color:#7a756c;margin-top:2px">' + lineLbl + ' &middot; ' + esc(i.invoice_number || '') + '</div>' +
+          (heldNote ? '<div style="font-size:10.5px;color:#993c1d;margin-top:3px;font-weight:600;line-height:1.35">' + heldNote + '</div>' : '') +
+          '</div>' +
           '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:18px;font-weight:500;color:#0f0f0f;letter-spacing:-0.3px;text-align:right">' + _money(owed) + '</span>' +
           '<button type="button" data-mark-invoice-paid="' + esc(i.id) + '" style="flex:1 1 100%;min-height:44px;background:#0f0f0f;color:#fff;border:0;padding:0 18px;border-radius:8px;font:700 12px \'Inter\',sans-serif;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer;font-family:inherit;margin-top:2px">Pay ' + _money(owed) + '</button>' +
         '</div>';
@@ -15963,17 +15983,40 @@ Tell me your planned move-out date and I will set the inspection.`
     // unreachable from the switcher.
     var byTc = {};
     var _ensureTc = function(id){
-      return byTc[id] || (byTc[id] = { tcId:id, owed:0, ytd:0, mtd:0, projected:0, hasInv:false });
+      return byTc[id] || (byTc[id] = { tcId:id, owed:0, ytd:0, mtd:0, projected:0, hasInv:false, heldLines:[], lastPaidAt:0, lastPaidCents:0 });
     };
     (_invoices || []).forEach(function(i){
       if(!i || !i.tc_id) return;
       var g = _ensureTc(i.tc_id);
       g.hasInv = true;
-      if(i.status === 'submitted') g.owed += _invEffectiveOwedCents(i);
+      if(i.status === 'submitted'){
+        g.owed += _invEffectiveOwedCents(i);
+        // Marlenyi 2026-08-08 · pull held lines + line-level paid_at from
+        // partial-paid invoices. Partial pays leave the invoice status at
+        // 'submitted' but stamp paid_at into individual line_items — without
+        // this scan a $200 partial-pay on Eileen's A-1045 was totally
+        // invisible in the coordinator's MTD/YTD/lastPaid, and any held line
+        // was invisible to the "why is this coordinator owed money" glance.
+        (i.line_items || []).forEach(function(l){
+          if(!l) return;
+          if(l.held_at && !l.paid_at && !l.covered){
+            g.heldLines.push(l);
+          }
+          if(l.paid_at){
+            var pt = new Date(l.paid_at).getTime();
+            if(!isNaN(pt)){
+              if(pt >= _y0) g.ytd += (l.amount_cents || 0);
+              if(pt >= _m0) g.mtd += (l.amount_cents || 0);
+              if(pt > g.lastPaidAt){ g.lastPaidAt = pt; g.lastPaidCents = l.amount_cents || 0; }
+            }
+          }
+        });
+      }
       if(i.status === 'paid'){
         var t = i.paid_at ? new Date(i.paid_at).getTime() : 0;
         if(t >= _y0) g.ytd += (i.total_cents || 0);
         if(t >= _m0) g.mtd += (i.total_cents || 0);
+        if(t > g.lastPaidAt){ g.lastPaidAt = t; g.lastPaidCents = i.total_cents || 0; }
       }
     });
     // Pull in TCs with pending billable work · projected total surfaced too
@@ -16200,10 +16243,38 @@ Tell me your planned move-out date and I will set the inspection.`
       } else {
         badge = '<span style="flex:none;font-family:\'Playfair Display\',Georgia,serif;font-size:13px;font-weight:500;color:#a9a49a;letter-spacing:-0.1px">$0</span>';
       }
+      // Marlenyi 2026-08-08 · sub-label per coordinator so the row communicates
+      // WHY (held reason wins) or WHAT (recent-paid confirmation) instead of
+      // just leaving her guessing on a bare "$0" or "$200 owed". Held reason
+      // takes priority — a held line means her attention IS actually still
+      // needed on this coordinator, just gated by an external event.
+      var subLabel = '', subColor = '#7a756c';
+      if(g.heldLines && g.heldLines.length){
+        var hl = g.heldLines[0];
+        var _sn = '';
+        if(hl.snooze_until){
+          try {
+            var _sd = new Date(String(hl.snooze_until).slice(0,10) + 'T12:00:00');
+            if(!isNaN(_sd)) _sn = ' &middot; ' + _sd.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+          } catch(_){}
+        }
+        subLabel = 'Held &middot; ' + esc(hl.held_note || 'no note') + _sn;
+        subColor = '#993c1d';
+      } else if(g.lastPaidAt){
+        var _daysAgo = Math.floor((Date.now() - g.lastPaidAt) / 86400000);
+        if(_daysAgo <= 14){
+          var _pd = new Date(g.lastPaidAt).toLocaleDateString('en-US', { month:'short', day:'numeric' });
+          subLabel = 'Paid ' + _money(g.lastPaidCents) + ' &middot; ' + esc(_pd);
+          subColor = '#2f6b4f';
+        }
+      }
       _coordBody += '<div data-bf-inv-tc="' + esc(g.tcId) + '" role="button" tabindex="0" ' +
         'style="display:flex;align-items:center;gap:12px;padding:10px 10px;border-top:0.5px solid rgba(15,15,15,0.06);cursor:pointer;background:' + (isSel ? '#faf7ef' : 'transparent') + ';border-radius:8px">' +
         '<div style="width:28px;height:28px;border-radius:50%;background:#0f0f0f;color:#fff;display:flex;align-items:center;justify-content:center;font:700 12px \'Inter\',sans-serif;flex:none">' + esc(initial) + '</div>' +
-        '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:13.5px;font-weight:600;color:#0f0f0f;letter-spacing:-0.1px">' + esc(nm) + '</span>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13.5px;font-weight:600;color:#0f0f0f;letter-spacing:-0.1px">' + esc(nm) + '</div>' +
+          (subLabel ? '<div style="font-size:10.5px;color:' + subColor + ';margin-top:2px;line-height:1.35">' + subLabel + '</div>' : '') +
+        '</div>' +
         badge +
       '</div>';
     });
