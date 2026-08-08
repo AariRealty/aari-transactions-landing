@@ -13593,6 +13593,21 @@ Tell me your planned move-out date and I will set the inspection.`
     if(_activeView !== 'board'){ _activeView = 'board'; _mnavSaveView('board'); try { renderTcCalendar(); } catch(_){} }
     _mnavDest = dest;
     _mnavSaveDest(dest);
+    // Marlenyi 2026-08-08 · when she taps Calendar, always land on today. The
+    // month/week grid was preserving the last-tapped day across tab switches,
+    // so she'd hop away and come back to find "Aug 25's items" instead of
+    // today's. Reset the selected day to today + jump the visible month/week
+    // to contain today so the agenda card matches what she just tapped for.
+    if(dest === 'calendar'){
+      try {
+        const _t = new Date(); _t.setHours(0, 0, 0, 0);
+        _calSelDay = _t.getTime();
+        window._calSelDayTapped = true;   // treat today as the tapped day so agenda shows Today's items only, not the whole month
+        _calMonth = new Date(_t.getFullYear(), _t.getMonth(), 1);
+        const _ws = new Date(_t.getTime()); _ws.setDate(_ws.getDate() - _ws.getDay());
+        _calWeekStart = _ws;
+      } catch(_){}
+    }
     // Always re-sync body[data-mnav-view] and inline show/hide even when
     // _activeView didn't change, so switching between Today / Board / Calendar
     // updates which section is visible (mobile CSS scopes hides by mnav view).
@@ -14434,6 +14449,10 @@ Tell me your planned move-out date and I will set the inspection.`
     const t0 = today.getTime();
     if(!_calMonth) _calMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     if(_calSelDay == null) _calSelDay = t0;
+    // First-render default: today is auto-selected so the agenda card below
+    // reads "Today · N" instead of the whole month's grab-bag. Only becomes
+    // "all in view" when she explicitly taps See all.
+    if(typeof window._calSelDayTapped === 'undefined') window._calSelDayTapped = true;
     const byDay = {};
     items.forEach(function(d){ const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); const k = x.getTime(); (byDay[k] = byDay[k] || []).push(d); });
     const _segBtn = function(v, label){ const on = _calView === v; return '<button type="button" data-bcal-view="' + v + '" style="border:0;background:' + (on ? '#fff' : 'transparent') + ';' + (on ? 'box-shadow:0 1px 2px rgba(0,0,0,.06);color:#0f0f0f;' : 'color:#7a756c;') + 'font:inherit;font-size:10.5px;font-weight:600;padding:5px 11px;border-radius:18px;cursor:pointer">' + label + '</button>'; };
@@ -14512,7 +14531,14 @@ Tell me your planned move-out date and I will set the inspection.`
     const inVisibleRange = _calView === 'month'
       ? function(ts){ const dd = new Date(ts); return dd.getFullYear() === Ycur && dd.getMonth() === Mcur; }
       : function(ts){ return ts >= wk0.getTime() && ts <= wk0.getTime() + 6 * 86400000; };
-    const tapped = !!window._calSelDayTapped && (byDay[_calSelDay] || []).length > 0;
+    // Marlenyi 2026-08-08 · default agenda is TODAY's items (not "everything in
+    // this month"). Previously, a fresh Calendar tap fell through to the "all
+    // visible-range items" branch because _calSelDayTapped was undefined —
+    // showing 30+ rows for the month when she just wanted to see today. Now
+    // the default is: show today's items, even if today has 0 items ("You're
+    // clear."). She still gets the whole-month view by tapping "See all".
+    // A drilled-into day (tap-flag set explicitly) beats both.
+    const tapped = !!window._calSelDayTapped;
     let agendaItems, agendaLabel;
     if(tapped){
       const selD = new Date(_calSelDay);
