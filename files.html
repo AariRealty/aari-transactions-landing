@@ -24845,7 +24845,26 @@ Tell me your planned move-out date and I will set the inspection.`
         for(var i = 0; i < rows.length; i++){ if(rows[i] && rows[i].key === t.dl && rows[i].date instanceof Date && !isNaN(rows[i].date)) return rows[i].date; }
       }
       if(t && t.dueFrom){
-        var base = (t.dueFrom === 'closing') ? _asDate(file.closing_date) : (t.dueFrom === 'effective' ? _asDate(file.effective_date) : null);
+        // Marlenyi 2026-08-09 · when the closing was auto-rolled forward, every
+        // dueFrom:'closing' task (FIRPTA, weekly update, etc.) is really tied
+        // to the ORIGINAL scheduled closing · a rolled closing means those
+        // obligations are ALREADY LATE. Using the rolled date silently made
+        // them read "Due in 1 day" when they should read "N days overdue".
+        // Applies to closing-derived tasks only; effective-date derivations
+        // stay as-is because effective date doesn't get rolled.
+        var base = null;
+        if(t.dueFrom === 'closing'){
+          var _rf = (file && file.raw_form_data && file.raw_form_data.closing_date_auto_rolled_from) || '';
+          if(_rf){
+            try {
+              var _orig = new Date(String(_rf).slice(0,10) + 'T12:00:00');
+              if(!isNaN(_orig.getTime())) base = _orig;
+            } catch(_){}
+          }
+          if(!base) base = _asDate(file.closing_date);
+        } else if(t.dueFrom === 'effective'){
+          base = _asDate(file.effective_date);
+        }
         if(base && !isNaN(base)){ var d = new Date(base.getTime()); d.setDate(d.getDate() + (t.dueOffset || 0)); return d; }
       }
     } catch(_){}
