@@ -14341,7 +14341,9 @@ Tell me your planned move-out date and I will set the inspection.`
       let chips=shown.map(function(it){
         const done=_done(it), over=!it.isChase&&(ts<t0)&&!done;
         let cs; if(done)cs='background:#eef1ea;color:#8a938a;text-decoration:line-through;'; else if(over)cs='background:#f3ddd6;color:#8a4b2f;'; else if(it.isChase)cs='background:#f6edd9;color:#8a6a1f;'; else cs='background:#0f0f0f;color:#fff;';
-        return '<span style="'+chipBase+cs+'">'+esc(_calChipTag(it.key,it.label))+'</span>';
+        // Chip is clickable · opens the file directly. Day cell handler
+        // ignores clicks routed through a [data-cal-chip] element.
+        return '<span data-cal-chip data-cal-open="'+esc(it.fileId)+'" title="'+esc((it.label||'')+' · '+(it.address||''))+'" style="'+chipBase+cs+'cursor:pointer">'+esc(_calChipTag(it.key,it.label))+'</span>';
       }).join('');
       if(moreN>0) chips+='<span style="'+chipBase+'background:#efece6;color:#5f5e5a;">+'+moreN+' more</span>';
       if(!items.length) chips='<span style="font-size:10px;color:#d6d1c8;text-align:center">&mdash;</span>';
@@ -15035,8 +15037,11 @@ Tell me your planned move-out date and I will set the inspection.`
       // is a one-time setup, not something to see on every calendar view.
       host.innerHTML = html; _wireCal(host); return;
     }
-    // ---- two columns: heatmap (left) · today + overdue pinned (right) ----
-    html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:15px 16px"><div style="display:grid;grid-template-columns:1.4fr 1fr;gap:22px;align-items:start">';
+    // ---- stacked: heatmap (top full-width) · today + overdue pinned (bottom full-width) ----
+    // Marlenyi 2026-08-09 · matches the week view · calendar breathes at full
+    // width so day cells fit more chips before truncation, then the Today
+    // panel sits below at full width so rows aren't squeezed into a column.
+    html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:15px 16px"><div style="display:grid;grid-template-columns:1fr;gap:22px;align-items:start">';
     // LEFT · month heatmap
     const Y = _calMonth.getFullYear(), M = _calMonth.getMonth();
     html += '<div><div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">' +
@@ -15074,7 +15079,9 @@ Tell me your planned move-out date and I will set the inspection.`
           else if(over) cs = 'background:#f3ddd6;color:#8a4b2f;';                             // overdue · soft clay
           else if(it.isChase) cs = 'background:#f6edd9;color:#8a6a1f;';                       // follow-up · amber
           else cs = 'background:#0f0f0f;color:#fff;';                                         // deadline · ink
-          return '<span style="' + chipBase + cs + '">' + esc(_calChipTag(it.key, it.label)) + '</span>';
+          // Chip is clickable · opens the file directly. data-cal-chip stops
+          // the surrounding day-cell click from stealing the tap.
+          return '<span data-cal-chip data-cal-open="' + esc(it.fileId) + '" title="' + esc((it.label || '') + ' · ' + (it.address || '')) + '" style="' + chipBase + cs + 'cursor:pointer">' + esc(_calChipTag(it.key, it.label)) + '</span>';
         }).join('');
         if(moreN > 0) chip += '<span style="' + chipBase + 'background:#efece6;color:#5f5e5a;">+' + moreN + ' more</span>';
       }
@@ -15429,12 +15436,13 @@ Tell me your planned move-out date and I will set the inspection.`
     // Mobile List | Week tab. Separate from the desktop Month/Week toggle on purpose: on a phone
     // there is no month grid to switch to, so this picks between the agenda and the week strip.
     host.querySelectorAll('[data-cal-mtab]').forEach(function(b){ b.addEventListener('click', function(){ const v = this.getAttribute('data-cal-mtab'); if(v === _calMobileTab) return; _calMobileTab = v; renderCalHeatmap(); }); });
-    host.querySelectorAll('[data-cal-day]').forEach(function(b){ b.addEventListener('click', function(){
+    host.querySelectorAll('[data-cal-day]').forEach(function(b){ b.addEventListener('click', function(e){
+      // Marlenyi 2026-08-09 · clicking blank cell space just SELECTS the day
+      // (updates the panel below the calendar). Clicking a chip inside the
+      // cell opens the file for that deadline · the chip's own data-cal-open
+      // handler runs first, and we bail here so we don't also re-render.
+      if(e.target && e.target.closest && e.target.closest('[data-cal-chip]')) return;
       const ts = parseInt(this.getAttribute('data-cal-day'), 10);
-      // Marlenyi 2026-08-09 · clicking a day NEVER opens a file, even if
-      // there's only one deadline on it. The day cell just selects the day
-      // so the right-side panel updates to show that day's items. Opening
-      // a file happens only when she taps a specific row in that panel.
       _calSelDay = ts;
       window._calSelDayTapped = true;
       renderCalHeatmap();
