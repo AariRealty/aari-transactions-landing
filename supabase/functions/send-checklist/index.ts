@@ -81,7 +81,7 @@ function buildChecklistHtml(checklistUrl: string): string {
 
       <p style="font-size:14px;color:#0f0f0f;margin:26px 0 0;line-height:1.5;">
         <strong style="color:#0f0f0f;">&mdash; Marlenyi Paredes</strong><br>
-        <span style="font-size:11px;color:#888;letter-spacing:0.3px;">Florida Real Estate Broker &middot; Aari Transactions</span>
+        <span style="font-size:11px;color:#888;letter-spacing:0.3px;">Aari Transactions</span>
       </p>
     </div>
 
@@ -121,7 +121,7 @@ You can also print it as a PDF for closing-day prep — there's a Print button a
 If you ever want a broker-owned TC to run this for you on every file, hit reply. That's how this whole thing started.
 
 — Marlenyi Paredes
-Florida Real Estate Broker · Aari Transactions
+Aari Transactions
 
 hello@aaritransactions.com · 239.688.1770 · aaritransactions.com
 Aari Transactions LLC · ${POSTAL_ADDRESS}

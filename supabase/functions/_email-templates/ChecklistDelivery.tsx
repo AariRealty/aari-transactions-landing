@@ -58,7 +58,7 @@ export const ChecklistDelivery: React.FC<Props> = ({ checklistUrl, unsubscribeUr
 
           <p style={signoffStyle}>
             <strong style={{ color: "#0f0f0f" }}>&mdash; Marlenyi Paredes</strong><br />
-            <span style={signoffMetaStyle}>Florida Real Estate Broker &middot; License BK3530153 &middot; Aari Transactions</span>
+            <span style={signoffMetaStyle}>Aari Transactions</span>
           </p>
         </div>
 

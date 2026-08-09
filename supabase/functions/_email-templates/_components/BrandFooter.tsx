@@ -20,7 +20,6 @@ export const BrandFooter: React.FC<FooterProps> = ({ category = "transactional",
 
     <Text style={signatureStyle}>
       <strong style={{ color: "#0f0f0f" }}>Marlenyi Paredes</strong><br />
-      Florida Real Estate Broker &middot; License BK3530153<br />
       Aari Transactions LLC
     </Text>
 

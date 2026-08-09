@@ -237,7 +237,7 @@ Deno.serve(async (req) => {
       + doneBlock
       + tomorrowBlock
       + `<div style=\"text-align:center;margin-top:24px\"><a href=\"${PORTAL}\" style=\"display:inline-block;background:${INK};color:#fff;text-decoration:none;font-size:12.5px;font-weight:600;padding:11px 22px;border-radius:8px\">See every task in the portal</a></div>`
-      + `<div style=\"text-align:center;font-size:10.5px;color:#8a8073;margin-top:22px;padding-top:14px;border-top:0.5px solid #f2eee4\">Aari Transactions LLC · FL Broker BK3530153</div>`
+      + `<div style=\"text-align:center;font-size:10.5px;color:#8a8073;margin-top:22px;padding-top:14px;border-top:0.5px solid #f2eee4\">Aari Transactions LLC</div>`
       + `</div></div></body></html>`;
 
     const textLines = [

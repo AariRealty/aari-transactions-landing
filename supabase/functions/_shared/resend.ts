@@ -16,7 +16,5 @@ export const SITE_URL = Deno.env.get("SITE_URL") ?? "https://aaritransactions.co
 
 export const BROKER_STAMP = {
   name: "Marlenyi Paredes",
-  title: "Florida Real Estate Broker",
-  license: "BK3530153",
   company: "Aari Transactions",
 };
