@@ -8663,22 +8663,13 @@ Tell me your planned move-out date and I will set the inspection.`
               }
             }
           } catch(_){}
-          // Marlenyi 2026-08-09 · drawer parity. Show what the file drawer's
-          // Today + Next 3 days sections show:
-          //   · overdue + today (days <= 0)
-          //   · next 3 days (days 1-3)
-          //   · opening tasks (no deadline, always on the sprint)
-          //   · stage tasks with no deadline set on this file (FIRPTA etc.)
-          // Anything >3 days out still bounces here so we don't drown Today
-          // with the entire stage backlog.
-          const _isOpening = (typeof isOpeningTaskId === 'function') && isOpeningTaskId(t.id);
-          if(days != null && days > 3) return;
-          // Sort: overdue first (most negative), then today, tomorrow, 2-3d;
-          // opening tasks group with today (sortKey 0.1); no-deadline stage
-          // tasks sink to the bottom of the card (sortKey 10).
-          let _sort;
-          if(days == null) _sort = _isOpening ? 0.1 : 10;
-          else _sort = days < 0 ? (-100 + days * 0.01) : days;
+          // Marlenyi 2026-08-09 · strict Today. Show overdue + due today only.
+          // No no-date tasks, no opening tasks, no future lookahead · previous
+          // attempts pulled in too many items and made the card unusable.
+          if(days == null) return;
+          if(days > 0) return;
+          // Sort: overdue first (most negative), then today.
+          const _sort = days < 0 ? (-100 + days * 0.01) : 0;
           items.push({ file: f, task: t, days: days, sortKey: _sort });
         });
       } catch(_){}
@@ -14256,19 +14247,14 @@ Tell me your planned move-out date and I will set the inspection.`
           } catch(_){}
           // Skip if a deadline row for the same key is already in the panel
           if(t.dl && _dlKeysShown[f.id + ':' + t.dl]) return;
-          const _isOpening = (typeof isOpeningTaskId === 'function') && isOpeningTaskId(t.id);
+          // Marlenyi 2026-08-09 · strict day-match. Panel shows tasks whose
+          // deadline lands on the selected day, PLUS overdue tasks when the
+          // selected day is today (backlog surfacing). No no-date tasks, no
+          // opening tasks, no 3-day lookahead · previous attempts pulled in
+          // too many items with no due date and made the Today card unusable.
           const _onSelectedDay = (taskDay != null && taskDay === _selTs);
-          const _noDateAndToday = (taskDay == null && _isToday);
-          const _openingAndToday = (_isOpening && _isToday);
-          // When today is selected, also pull in every overdue task so the
-          // 26-day-late "Deliver existing survey" style items don't hide just
-          // because their original deadline date is off-screen in July.
           const _overdueAndToday = (_isToday && taskDay != null && taskDay < _selTs);
-          // And pull in the Next 3 days · tasks like "Confirm FIRPTA" whose
-          // deadline lives 1-3 days out. Mirrors the file drawer, which shows
-          // Today + Next 3 days in one card.
-          const _nextThreeAndToday = (_isToday && taskDay != null && taskDay > _selTs && (taskDay - _selTs) <= 3 * 86400000);
-          if(!_onSelectedDay && !_noDateAndToday && !_openingAndToday && !_overdueAndToday && !_nextThreeAndToday) return;
+          if(!_onSelectedDay && !_overdueAndToday) return;
           _panelTasks.push({ file: f, task: t, taskDay: taskDay });
         });
       });
