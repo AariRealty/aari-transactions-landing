@@ -14199,12 +14199,78 @@ Tell me your planned move-out date and I will set the inspection.`
     // looked up separately so they can sit under the "Done" divider, struck through, as a record.
     const _pending=_shown.filter(function(d){ return !d.done; }); // done ones render under the Done divider, not as pending
     const _done=_doneDeadlinesForDay(_selTs);
+
+    // Marlenyi 2026-08-09 · surface stage_checklist tasks in the day panel so
+    // it mirrors what each file drawer shows under Due today / Next 3 days.
+    // For the selected day: include any task whose t.dl deadline resolves to
+    // that day, PLUS (if today is selected) tasks without a resolved
+    // deadline (opening tasks + stage tasks like FIRPTA that live off-date).
+    // Dedupe against deadline rows already in _pending so we never show both
+    // the deadline label AND its associated task twice.
+    const _dlKeysShown = {};
+    _pending.forEach(function(d){
+      const bk = String(d.key || '').replace(/__chase$/, '');
+      _dlKeysShown[d.fileId + ':' + bk] = 1;
+    });
+    const _panelTasks = [];
+    try {
+      (_files || []).forEach(function(f){
+        if(!f || f.status === 'archived') return;
+        const stg = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || '');
+        if(['new','intake_received','waiting_for_tc','','closed'].indexOf(stg) !== -1) return;
+        const ft = f.file_type || 'sale';
+        if(ft !== 'sale' && ft !== 'rental') return;
+        const tasks = ((STAGE_CHECKLISTS[ft] || {})[stg] || []);
+        const done = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
+        const dls = (typeof fileDeadlines === 'function') ? fileDeadlines(f) : {};
+        tasks.forEach(function(t){
+          if(done[t.id]) return;
+          if(t.showIf && !t.showIf(f)) return;
+          let taskDay = null;
+          if(t.dl && dls[t.dl] && dls[t.dl].date){
+            const dd = new Date(dls[t.dl].date.getTime()); dd.setHours(0, 0, 0, 0);
+            taskDay = dd.getTime();
+          }
+          // Skip if a deadline row for the same key is already in the panel
+          if(t.dl && _dlKeysShown[f.id + ':' + t.dl]) return;
+          const _isOpening = (typeof isOpeningTaskId === 'function') && isOpeningTaskId(t.id);
+          const _onSelectedDay = (taskDay != null && taskDay === _selTs);
+          const _noDateAndToday = (taskDay == null && _isToday);
+          const _openingAndToday = (_isOpening && _isToday);
+          if(!_onSelectedDay && !_noDateAndToday && !_openingAndToday) return;
+          _panelTasks.push({ file: f, task: t, taskDay: taskDay });
+        });
+      });
+    } catch(err){ console.warn('[cal-panel] task merge failed', err); }
+    const _taskRow = function(it){
+      const addr = esc(String(it.file.property_address || '').split(',')[0]);
+      const nm = esc(it.task.label || 'Task');
+      let bubble = '';
+      if(it.taskDay != null){
+        const _n = _dayCountTo(new Date(it.taskDay));
+        if(_n != null){
+          bubble = _n <= 0
+            ? '<span style="flex:none;font-size:10px;font-weight:700;color:#993c1d;background:#faece7;border:0.5px solid #f3d9d0;border-radius:20px;padding:3px 11px;white-space:nowrap">Due today</span>'
+            : '<span style="flex:none;font-size:10px;font-weight:600;color:#8a6d1b;background:#faf3e6;border:0.5px solid #ecdfc4;border-radius:20px;padding:3px 11px;white-space:nowrap">Due in ' + _n + ' day' + (_n === 1 ? '' : 's') + '</span>';
+        }
+      }
+      return '<div data-cal-open="' + esc(it.file.id) + '" style="display:flex;align-items:center;gap:9px;padding:9px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
+        '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#5f5e5a;background:#f1efe8;border-radius:20px;padding:2px 8px">Task</span>' +
+        '<div style="flex:1;min-width:0"><div style="font-size:12.5px;color:#0f0f0f">' + nm + '</div><div style="font-size:11px;color:#8a857c;margin-top:2px">' + addr + '</div></div>' +
+        bubble + '</div>';
+    };
+
+    const _totalDue = _pending.length + _panelTasks.length;
     // Overdue safety net pinned above the day (same as the desktop panel) so nothing passed slips.
     let h=_calOverdueBlockHtml(_calOverdueItems())+'<div style="display:flex;align-items:baseline;justify-content:space-between;border-bottom:1px solid #ece8e0;padding-bottom:12px;margin-bottom:12px">'+
       '<div><div style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;font-weight:500;line-height:1;color:#0f0f0f">'+esc(_bigLab)+'</div>'+
       '<div style="font-size:11px;color:#8a857c;margin-top:3px;letter-spacing:.02em">'+esc(_subLab)+'</div></div>'+
-      '<span style="flex:none;font-size:11px;font-weight:600;color:#8a857c;white-space:nowrap">'+_pending.length+' due'+(_done.length?' &middot; '+_done.length+' done':'')+'</span></div>';
-    h += _pending.length ? _pending.map(_row).join('') : '<div style="font-size:12px;color:#a39e95;padding:9px 0 2px">'+(_isToday?'Nothing due in the next 3 days. You’re ahead.':'Nothing due this day.')+'</div>';
+      '<span style="flex:none;font-size:11px;font-weight:600;color:#8a857c;white-space:nowrap">'+_totalDue+' due'+(_done.length?' &middot; '+_done.length+' done':'')+'</span></div>';
+    if(_totalDue){
+      h += _pending.map(_row).join('') + _panelTasks.map(_taskRow).join('');
+    } else {
+      h += '<div style="font-size:12px;color:#a39e95;padding:9px 0 2px">'+(_isToday?'Nothing due in the next 3 days. You’re ahead.':'Nothing due this day.')+'</div>';
+    }
     if(_done.length){ h += '<div style="font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#a99a78;margin:16px 0 2px">Done</div>'+_done.map(_doneRow).join(''); }
     return h;
   }
@@ -15319,10 +15385,13 @@ Tell me your planned move-out date and I will set the inspection.`
     host.querySelectorAll('[data-cal-mtab]').forEach(function(b){ b.addEventListener('click', function(){ const v = this.getAttribute('data-cal-mtab'); if(v === _calMobileTab) return; _calMobileTab = v; renderCalHeatmap(); }); });
     host.querySelectorAll('[data-cal-day]').forEach(function(b){ b.addEventListener('click', function(){
       const ts = parseInt(this.getAttribute('data-cal-day'), 10);
-      // One deadline on the day → open that file directly (like Week). Several → preview them on the right to pick.
-      const items = (_tcCalDeadlines() || []).filter(function(d){ if(d.done) return false; const x = new Date(d.date.getTime()); x.setHours(0, 0, 0, 0); return x.getTime() === ts; });
-      if(items.length === 1){ const f = (_files || []).find(function(x){ return x.id === items[0].fileId; }); if(f){ openPlaybook(f); return; } }
-      _calSelDay = ts; renderCalHeatmap();
+      // Marlenyi 2026-08-09 · clicking a day NEVER opens a file, even if
+      // there's only one deadline on it. The day cell just selects the day
+      // so the right-side panel updates to show that day's items. Opening
+      // a file happens only when she taps a specific row in that panel.
+      _calSelDay = ts;
+      window._calSelDayTapped = true;
+      renderCalHeatmap();
     }); });
     host.querySelectorAll('[data-cal-open]').forEach(function(r){ r.addEventListener('click', function(){ const id = this.getAttribute('data-cal-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f){ openPlaybook(f); } }); });
     host.querySelectorAll('[data-nc-step]').forEach(function(b){ b.addEventListener('click', function(){ _ncStep += (parseInt(b.getAttribute('data-nc-step'), 10) || 0); try { renderCalHeatmap(); } catch(_){} }); });
