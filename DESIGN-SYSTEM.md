@@ -279,7 +279,7 @@ Four SVG curve shapes between sections — `div-scallop`, `div-arch`, `div-slash
 - White text
 - Sections: brand identity left, navigation columns center, social/legal right
 - Wordmark uses white border instead of dark (`footer .brand .mark-wordmark { color: #fff; border-color: #fff }`)
-- Disclosure line at the very bottom: `Marlenyi Paredes · Licensed FL Real Estate Broker · BK3530153 · Aari Realty`
+- Disclosure line at the very bottom: `Aari Transactions LLC`
 
 ---
 
@@ -288,12 +288,12 @@ Four SVG curve shapes between sections — `div-scallop`, `div-arch`, `div-slash
 Every page must include the company attribution conspicuously:
 > *Aari Transactions LLC*
 
-Where Marlenyi's broker license is referenced for compliance, authority, or attribution (privacy, reviews, refer, about, blog bylines, JSON-LD author), the original license phrasing stays — these serve real DBPR/RESPA/E-E-A-T purposes and removal creates risk. The misleading "operated under Aari Realty" framing was retired May 2026 because Aari Transactions is not a brokerage.
+Attribution across the site is to Aari Transactions LLC and to Marlenyi Paredes as founder. The Aari Realty broker credential is not used as a compliance stamp on Aari Transactions surfaces — the two brands are kept visually and operationally separate.
 
 Already present in:
 1. Pricing-section footnote (above the fold of conversion)
 2. Footer disclosure
-3. Team section ("Reviewed by Marlenyi Paredes · FL Broker")
+3. Team section ("Reviewed by Marlenyi Paredes")
 
 Interior pages should mirror this attribution somewhere visible.
 

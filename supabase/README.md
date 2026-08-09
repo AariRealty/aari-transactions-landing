@@ -193,7 +193,7 @@ The win-back and broadcast functions read from this view. Build it in your `tc_f
 | Rule | How we comply |
 |---|---|
 | **CAN-SPAM** | Physical address in footer. Unsubscribe link in all marketing. Clear from-name. No deceptive subject lines. |
-| **Florida Chapter 475** | Every email signed with Marlenyi's name + license BK3530153. Broker stamp in footer. |
+| **Florida Chapter 475** | Emails signed with Marlenyi's name and Aari Transactions LLC in the footer. |
 | **FTC Endorsement Guides** | Review-request email states attribution choice + pre-publish review. |
 | **FREC** | No income claims. No guarantees. No fair-housing-triggering language. |
 | **GDPR / CCPA** | `email_preferences` table for granular opt-out. One-click unsubscribe via `unsub_token`. Stored consent timestamps on review submission. |

@@ -1,6 +1,6 @@
 # Aari Transactions · Blog Content Roadmap
 
-**Authored by:** Marlenyi Paredes (Florida Broker BK3530153).
+**Authored by:** Marlenyi Paredes, founder of Aari Transactions.
 **Target audience:** Florida real estate agents searching mid-deal for specific answers.
 **Goal:** Build the SEO traffic engine that compounds. Capture high-intent agent searches that lead to TC submissions and membership signups.
 **Locked:** 2026-05-12.
@@ -119,7 +119,7 @@ Every post on aaritransactions.com/blog/ must include:
 - **Title tag** ≤ 60 characters with primary keyword early
 - **Meta description** ≤ 155 characters with the question the post answers
 - **One H1** matching the title
-- **Schema.org BlogPosting JSON-LD** with author identifier (BK3530153)
+- **Schema.org BlogPosting JSON-LD** with author name (Marlenyi Paredes)
 - **Canonical URL** to prevent duplicate content issues
 - **Open Graph + Twitter card meta** for shareability
 - **Author byline + bio at end** for E-E-A-T trust signal

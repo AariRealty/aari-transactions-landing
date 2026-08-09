@@ -255,7 +255,7 @@ Every email template MUST follow:
 - **Opening line**: name the recipient + the specific event. No "Hi there."
 - **Body**: ≤ 120 words. Period stops. One ask.
 - **CTA**: One button. Black on cream. Inter font.
-- **Footer**: Florida broker stamp · BK3530153 · unsubscribe link (marketing only, not transactional).
+- **Footer**: Aari Transactions LLC · unsubscribe link (marketing only, not transactional).
 - **No emoji. No em-dashes. No filler.**
 
 ### Example · #1 Intake Confirmation
@@ -274,7 +274,6 @@ If anything on the file needs to change before then, reply to this email.
 [BUTTON · View your portal]
 
 Marlenyi Paredes
-Florida Real Estate Broker · BK3530153
 Aari Transactions
 ```
 
@@ -294,7 +293,6 @@ Two minutes of your time would help us a lot. One link. No login.
 Reviews are FTC-compliant. You choose your attribution: first name + last initial, full name, or anonymous.
 
 Marlenyi Paredes
-Florida Real Estate Broker · BK3530153
 Aari Transactions
 ```
 
@@ -305,7 +303,7 @@ Aari Transactions
 | Requirement | How we comply |
 |---|---|
 | **CAN-SPAM** | Physical mailing address in footer (PO Box recommended). Unsubscribe link in all marketing. Clear from-name. |
-| **Florida Chapter 475** | Every email signed with Marlenyi's name + license BK3530153. Broker stamp in footer. |
+| **Florida Chapter 475** | Emails signed with Marlenyi's name and Aari Transactions LLC in the footer. |
 | **FTC Endorsement Guides** | Review-request email tells recipient their attribution is their choice + reviewed before publishing. |
 | **FREC** | No income claims, no guarantees, no fair-housing-triggering language in any template. |
 | **GDPR / CCPA** | Email preferences table lets users opt out granularly. Unsubscribe is one-click. |

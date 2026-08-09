@@ -31,6 +31,7 @@ import { supabaseAdmin } from "../_shared/supabase.ts";
 import { sendEmail } from "../_shared/send-email.ts";
 import { SITE_URL } from "../_shared/resend.ts";
 import { AgentIntroduction } from "../_email-templates/AgentIntroduction.tsx";
+import { resolveClientEmailRedirect, reviewSubjectPrefix } from "../_shared/client-email-hold.ts";
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
@@ -48,11 +49,19 @@ Deno.serve(async (req) => {
   if (error || !ref) return json({ ok: false, error: "referral_not_found" }, 404);
   if (ref.intro_sent_at) return json({ ok: false, error: "already_sent" }, 200);
 
+  // Client-email review-hold gate · redirect to Marlenyi if this peer is
+  // an agent under beta review.
+  const redirect = await resolveClientEmailRedirect({ email: ref.peer_email });
+  const emailTo = redirect ? redirect.redirectTo : ref.peer_email;
+  const emailSubject = redirect
+    ? reviewSubjectPrefix(redirect, `${ref.referrer_first_name} thought you should know about us.`)
+    : `${ref.referrer_first_name} thought you should know about us.`;
+
   const result = await sendEmail({
-    to: ref.peer_email,
+    to: emailTo,
     toUserId: null, // peer is not yet an auth user
     category: "transactional",
-    subject: `${ref.referrer_first_name} thought you should know about us.`,
+    subject: emailSubject,
     templateName: "agent_introduction",
     reactElement: React.createElement(AgentIntroduction, {
       peerFirstName: ref.peer_first_name,

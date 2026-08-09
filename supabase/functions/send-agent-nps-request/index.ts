@@ -13,6 +13,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { resolveClientEmailRedirect, reviewSubjectPrefix, reviewBannerHtml } from "../_shared/client-email-hold.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -97,6 +98,15 @@ Deno.serve(async (req) => {
       </div>
     `;
 
+    // Client-email review-hold gate · redirect to Marlenyi if this agent is
+    // under beta review. See _shared/client-email-hold.ts.
+    const redirect = await resolveClientEmailRedirect({ agentId: file.agent_id, email: agent.email });
+    const toAddress = redirect ? redirect.redirectTo : agent.email;
+    const subjectLine = redirect
+      ? reviewSubjectPrefix(redirect, `Quick favor · 30 seconds about ${addr}`)
+      : `Quick favor · 30 seconds about ${addr}`;
+    const bodyHtml = redirect ? reviewBannerHtml(redirect) + html : html;
+
     let emailOk = false;
     if (RESEND_API_KEY) {
       try {
@@ -104,9 +114,9 @@ Deno.serve(async (req) => {
           method: "POST",
           headers: { "Authorization": `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
           body: JSON.stringify({
-            from: FROM_EMAIL, to: [agent.email],
-            subject: `Quick favor · 30 seconds about ${addr}`,
-            html,
+            from: FROM_EMAIL, to: [toAddress],
+            subject: subjectLine,
+            html: bodyHtml,
           }),
         });
         emailOk = r.ok;

@@ -14,6 +14,7 @@
 
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { resolveClientEmailRedirect, reviewSubjectPrefix, reviewBannerHtml } from "../_shared/client-email-hold.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -93,9 +94,14 @@ serve(async (req) => {
     const addr = file.property_address || "your file";
     const portalLink = `https://aaritransactions.com/portal.html#file-${file.id}`;
 
+    // Client-email review-hold gate · beta redirect for Samantha etc.
+    // On hold, SMS is skipped entirely (no Marlenyi-facing SMS path yet); the
+    // email below is redirected to Marlenyi's inbox with a banner + prefix.
+    const holdRedirect = await resolveClientEmailRedirect({ agentId: file.agent_id, email: agent?.email ?? null });
+
     // SMS
     let smsOk = false;
-    if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_FROM && agent?.phone) {
+    if (!holdRedirect && TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_FROM && agent?.phone) {
       try {
         const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
           method: "POST",
@@ -115,6 +121,10 @@ serve(async (req) => {
     // Email
     let emailOk = false;
     if (RESEND_API_KEY && agent?.email) {
+      const emailTo = holdRedirect ? holdRedirect.redirectTo : agent.email;
+      const emailSubject = holdRedirect
+        ? reviewSubjectPrefix(holdRedirect, `${tcName} replied · ${addr}`)
+        : `${tcName} replied · ${addr}`;
       try {
         const html = `
           <div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:24px;color:#0f0f0f">
@@ -130,17 +140,18 @@ serve(async (req) => {
             <a href="${portalLink}" style="display:inline-block;background:#0f0f0f;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500">Open the file →</a>
           </div>
         `;
+        const bodyHtml = holdRedirect ? reviewBannerHtml(holdRedirect) + html : html;
         const r = await fetch("https://api.resend.com/emails", {
           method: "POST",
           headers: { "Authorization": `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
           body: JSON.stringify({
-            from: FROM_EMAIL, to: [agent.email],
+            from: FROM_EMAIL, to: [emailTo],
             // Route the agent's Reply to the TC who actually replied, not the
             // unmonitored noreply@ sender. Without this, an agent hitting Reply
             // dead-ended into a black hole.
             ...(user.email ? { reply_to: user.email } : {}),
-            subject: `${tcName} replied · ${addr}`,
-            html,
+            subject: emailSubject,
+            html: bodyHtml,
           }),
         });
         emailOk = r.ok;

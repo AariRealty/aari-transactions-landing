@@ -200,7 +200,7 @@ Deno.serve(async (req) => {
     const missedBlock = missedItems.length > 0
       ? `<div style=\"margin-top:20px;background:#fbf3f1;border:0.5px solid #ecd6d0;border-radius:10px;padding:12px 14px\">`
         + `<div style=\"font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#a3402f;font-weight:700;margin-bottom:8px\">Missed today's 2 PM</div>`
-        + missedItems.slice(0, 6).map(m => `<div style=\"font-size:12.5px;color:#14110c;line-height:1.5;margin-bottom:4px\"><span style=\"width:6px;height:6px;border-radius:50%;background:#a3402f;display:inline-block;vertical-align:middle;margin-right:8px\"></span>${esc(m.name)} · <strong>${esc(m.addr)}</strong>${m.tc ? " · " + esc(m.tc) : ""}</div>`).join("")
+        + missedItems.slice(0, 6).map(m => `<div style=\"padding:6px 0;margin-bottom:2px\"><div style=\"font-size:12.5px;color:#14110c;line-height:1.4\"><span style=\"width:6px;height:6px;border-radius:50%;background:#a3402f;display:inline-block;vertical-align:middle;margin-right:8px\"></span><strong>${esc(m.name)}</strong></div><div style=\"font-size:11.5px;color:#8a7a6a;line-height:1.4;padding-left:14px;margin-top:2px\">${esc(m.addr)}${m.tc ? " · " + esc(m.tc) : ""}</div></div>`).join("")
         + `<div style=\"font-size:11.5px;color:#6f6656;margin-top:8px;padding-left:14px\">Push to first thing tomorrow, or send now.</div>`
         + `</div>`
       : "";
@@ -218,7 +218,7 @@ Deno.serve(async (req) => {
       ? `<div style=\"font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#2f6b4f;font-weight:700;margin:20px 2px 2px\">What got done</div>${actorLines}`
       : `<div style=\"text-align:center;color:#8a8073;font-size:13px;padding:14px 0\">A quiet day. Nothing was checked off.</div>`;
 
-    const tomorrowRows = tomorrowItems.slice(0, 6).map(t => `<div style=\"padding:10px 4px;border-top:0.5px solid #f2eee4\"><span style=\"display:inline-block;width:7px;height:7px;border-radius:50%;background:#c9932f;vertical-align:middle;margin-right:10px\"></span><span style=\"font-size:12.5px;font-weight:600;color:${INK}\">${esc(t.name)}<span style=\"color:#9a8c6d;font-weight:400\"> · ${esc(t.addr)}${t.tc ? " · " + esc(t.tc) : ""}</span></span></div>`).join("");
+    const tomorrowRows = tomorrowItems.slice(0, 6).map(t => `<div style=\"padding:10px 4px;border-top:0.5px solid #f2eee4\"><div style=\"font-size:12.5px;font-weight:600;color:${INK};line-height:1.4\"><span style=\"display:inline-block;width:7px;height:7px;border-radius:50%;background:#c9932f;vertical-align:middle;margin-right:10px\"></span>${esc(t.name)}</div><div style=\"font-size:11.5px;color:#9a8c6d;line-height:1.4;padding-left:17px;margin-top:2px\">${esc(t.addr)}${t.tc ? " · " + esc(t.tc) : ""}</div></div>`).join("");
     const tomorrowBlock = tomorrowItems.length > 0
       ? `<div style=\"font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#8a6d1b;font-weight:700;margin:20px 2px 2px\">${tomorrowItems.length} for tomorrow</div>${tomorrowRows}`
       : `<div style=\"font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#8a6d1b;font-weight:700;margin:20px 2px 6px\">For tomorrow</div><div style=\"font-size:12.5px;color:#6f6656;padding:2px 4px 4px\">Nothing due tomorrow. Nice.</div>`;
@@ -237,7 +237,7 @@ Deno.serve(async (req) => {
       + doneBlock
       + tomorrowBlock
       + `<div style=\"text-align:center;margin-top:24px\"><a href=\"${PORTAL}\" style=\"display:inline-block;background:${INK};color:#fff;text-decoration:none;font-size:12.5px;font-weight:600;padding:11px 22px;border-radius:8px\">See every task in the portal</a></div>`
-      + `<div style=\"text-align:center;font-size:10.5px;color:#8a8073;margin-top:22px;padding-top:14px;border-top:0.5px solid #f2eee4\">Aari Transactions LLC · FL Broker BK3530153</div>`
+      + `<div style=\"text-align:center;font-size:10.5px;color:#8a8073;margin-top:22px;padding-top:14px;border-top:0.5px solid #f2eee4\">Aari Transactions LLC</div>`
       + `</div></div></body></html>`;
 
     const textLines = [

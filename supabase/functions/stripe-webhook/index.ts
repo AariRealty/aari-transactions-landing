@@ -98,6 +98,21 @@ Deno.serve(async (req) => {
   let event: { type?: string; data?: { object?: Record<string, unknown> } };
   try { event = JSON.parse(body); } catch { return new Response("bad json", { status: 400 }); }
 
+  // Once the signature verified and the payload parsed, ALWAYS return 200 to
+  // Stripe. If our downstream processing (Supabase update, notification fetch)
+  // throws, we log it and still ack the delivery. Returning 500 to Stripe just
+  // starts the retry cycle that generates the "webhook trouble/recovered"
+  // email pair; the underlying event is already stored on Stripe's side and
+  // will show up in their dashboard's event log for manual replay if needed.
+  try {
+    return await handleEvent(event);
+  } catch (e) {
+    console.error("[stripe-webhook] handler threw", e instanceof Error ? e.message : String(e));
+    return json({ received: true, processed: false, error: "internal_processing_error" });
+  }
+});
+
+async function handleEvent(event: { type?: string; data?: { object?: Record<string, unknown> } }): Promise<Response> {
   const type = event.type || "";
   const obj = (event.data?.object ?? {}) as Record<string, unknown>;
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
@@ -208,16 +223,24 @@ Deno.serve(async (req) => {
     return json({ received: true, updated: false });
   }
 
-  // Best-effort TC ping · payment confirmed, file is ready to work.
-  try {
-    await fetch(`${SUPABASE_URL}/functions/v1/send-file-notification`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${SERVICE_KEY}` },
-      body: JSON.stringify({ file_id: fileId, event: "payment_confirmed" }),
-    });
-  } catch (e) {
+  // Best-effort TC ping · fire-and-forget so Stripe gets a fast 200 even if
+  // send-file-notification is slow. Awaiting this used to block the response
+  // long enough that Stripe flagged the endpoint as troubled on cold-start
+  // days, generating the "webhook trouble/recovered" email cycle.
+  // EdgeRuntime.waitUntil keeps the isolate alive until the background
+  // promise settles, so the ping still fires; we just don't make Stripe wait.
+  const notifyPromise = fetch(`${SUPABASE_URL}/functions/v1/send-file-notification`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${SERVICE_KEY}` },
+    body: JSON.stringify({ file_id: fileId, event: "payment_confirmed" }),
+  }).catch((e) => {
     console.warn("[stripe-webhook] TC ping failed (payment still confirmed)", e);
+  });
+  // deno-lint-ignore no-explicit-any
+  const runtime = (globalThis as any).EdgeRuntime;
+  if (runtime && typeof runtime.waitUntil === "function") {
+    runtime.waitUntil(notifyPromise);
   }
 
   return json({ received: true, updated: !!upd.data });
-});
+}
