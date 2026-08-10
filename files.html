@@ -8947,24 +8947,34 @@ Tell me your planned move-out date and I will set the inspection.`
       calItems.forEach(function(ci){
         if(!ci || !(ci.date instanceof Date)) return;
         if(ci.done) return;
-        // Chase items are today-only reminders · skip when a non-today day
-        // is selected on the calendar (Marlenyi doesn't want Monday's card
-        // showing today's chase pings).
-        if(!_isTodaySel) return;
         const d = new Date(ci.date.getTime()); d.setHours(0, 0, 0, 0);
-        const days = Math.round((d - _t0) / 86400000);
-        if(days !== 0) return;
+        const days = Math.round((d - _t0.getTime()) / 86400000);
         const rawKey = String(ci.key || '').replace(/__chase$/, '');
         if(_dlKeysSeen[ci.fileId + ':' + rawKey]) return;
         const f = _files.find(function(x){ return x.id === ci.fileId; });
         if(!f) return;
-        let lbl = String(ci.label || '').replace(/^Reminder\s*·\s*/i, '');
-        let _deadlineDays = 0;
-        if(ci.dueDate instanceof Date){
-          const _dd = new Date(ci.dueDate.getTime()); _dd.setHours(0, 0, 0, 0);
-          _deadlineDays = Math.round((_dd - _t0) / 86400000);
+        if(ci.isChase){
+          // Chase reminders · today-only pings, skip on non-today days.
+          if(!_isTodaySel) return;
+          if(days !== 0) return;
+          let lbl = String(ci.label || '').replace(/^Reminder\s*·\s*/i, '');
+          let _deadlineDays = 0;
+          if(ci.dueDate instanceof Date){
+            const _dd = new Date(ci.dueDate.getTime()); _dd.setHours(0, 0, 0, 0);
+            _deadlineDays = Math.round((_dd - _t0.getTime()) / 86400000);
+          }
+          items.push({ file: f, task: { id: ci.key, label: lbl, dl: rawKey }, days: _deadlineDays, sortKey: 0.5, isReminder: true });
+        } else {
+          // Real contract deadlines (INSP, LOAN, SURVEY, CLOSE, etc.) ·
+          // include when they land on the selected day OR when overdue,
+          // matching the stage-task rule so the aggregated card shows
+          // every deadline that day's calendar chips are surfacing.
+          const _onSelDay = (d.getTime() === _selDayMs);
+          const _overdue = (days < 0);
+          if(!_onSelDay && !_overdue) return;
+          const _sort = _overdue ? (-100 + days * 0.01) : (_onSelDay ? -1 : days);
+          items.push({ file: f, task: { id: ci.key, label: ci.label || 'Deadline', dl: rawKey }, days: days, sortKey: _sort });
         }
-        items.push({ file: f, task: { id: ci.key, label: lbl, dl: rawKey }, days: _deadlineDays, sortKey: 0.5, isReminder: true });
         _dlKeysSeen[ci.fileId + ':' + rawKey] = 1;
       });
     } catch(err){ console.warn('[today-aggregated] calendar merge failed', err); }
