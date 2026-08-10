@@ -8791,87 +8791,64 @@ Tell me your planned move-out date and I will set the inspection.`
       '<div class="th-meta">' + _tagInline + (_dueTxt ? '<span class="' + (hero.days != null && hero.days <= 0 && !hero.isReminder ? 'due' : '') + '">' + esc(_dueTxt) + '</span>' : '') + '</div>' +
       '<button type="button" class="th-send" data-th-file="' + esc(hero.file.id) + '" data-th-task="' + esc(hero.task.id) + '">Send &rarr;</button>' +
     '</div>';
-    // Queue is now grouped by file · every file that has open work today
-    // gets its own mini-card with all its tasks stacked. Nothing hidden.
+    // Marlenyi 2026-08-10 · flat rows. Each task carries its own address on
+    // line 2 · dropping the grouped header means row 2+ of a same-file cluster
+    // don't read as anonymous line items requiring a scan up to figure out
+    // which property they belong to.
     let _queueHtml = '';
-    if(_fileOrder.length){
-      _queueHtml = '<div class="th-queue-eb">Also due today</div>';
-      _fileOrder.forEach(function(fid){
-        const grp = _byFile[fid];
-        const addr = String(grp.file.property_address || '').split(',')[0];
-        _queueHtml += '<div class="th-group">' +
-          '<div class="th-group-hd" data-th-file="' + esc(fid) + '">' +
-            '<span class="th-group-addr">' + esc(addr) + '</span>' +
-          '</div>' +
-          grp.items.map(function(it){
-            // Marlenyi Jul 27 · standardize row format · every row reads
-            // as "Category · Prefix · task · day". Category tag (Title /
-            // Loan / Insp / Open) comes first as inline text so every row
-            // announces what track it belongs to before the verb. Then
-            // the leading verb (Confirm / Remind / Follow up) as its own
-            // segment, then the lowercase task label. Consistent rhythm.
-            const raw = String(it.task.label || '');
-            let prefix = '', rest = raw;
-            const m = raw.match(/^(Follow up|Confirm|Remind|Request|Send|Order)\s*[·:.-]?\s*(.+)$/i);
-            if(m){
-              prefix = m[1];
-              rest = m[2];
-              // Only lowercase the first letter when we extracted a prefix
-              // (e.g., "Confirm · loan application"). Rows WITHOUT a prefix
-              // are proper deadline names like "Title Evidence Deadline" and
-              // must stay title-case (Marlenyi Jul 27).
-              if(rest && rest.length > 1 && rest[0] === rest[0].toUpperCase() && rest[1] === rest[1].toLowerCase()){
-                rest = rest[0].toLowerCase() + rest.slice(1);
-              }
+    if(rest.length){
+      _queueHtml = '<div class="th-queue-eb">Also due today</div>' +
+        rest.map(function(it){
+          const addr = String(it.file.property_address || '').split(',')[0];
+          const raw = String(it.task.label || '');
+          let prefix = '', restLbl = raw;
+          const m = raw.match(/^(Follow up|Confirm|Remind|Request|Send|Order)\s*[·:.-]?\s*(.+)$/i);
+          if(m){
+            prefix = m[1];
+            restLbl = m[2];
+            if(restLbl && restLbl.length > 1 && restLbl[0] === restLbl[0].toUpperCase() && restLbl[1] === restLbl[1].toLowerCase()){
+              restLbl = restLbl[0].toLowerCase() + restLbl.slice(1);
             }
-            // Category tag · inline text prefix. Look up UC_TAG_OF by task
-            // id first (stage tasks). For chase/reminder items whose id
-            // doesn't match, fall back to keyword matching on the deadline
-            // key. Returns 'Title' / 'Loan' / 'Insp' / 'Open' / ''.
-            let catLbl = '';
-            try {
-              let tag = (typeof UC_TAG_OF !== 'undefined') ? UC_TAG_OF[it.task.id] : null;
-              if(!tag && typeof isOpeningTaskId === 'function' && isOpeningTaskId(it.task.id)) tag = (typeof UC_TAGS !== 'undefined') ? UC_TAGS.open : null;
-              if(!tag){
-                const dk = String(it.task.dl || it.task.id || '').toLowerCase();
-                if(/title|survey|commitment|policy|lien|estoppel|hoa|condo/.test(dk)) catLbl = 'Title';
-                else if(/insp/.test(dk)) catLbl = 'Insp';
-                else if(/loan|financ|apprais|approval/.test(dk)) catLbl = 'Loan';
-                else if(/emd|deposit|escrow|opening|kickoff/.test(dk)) catLbl = 'Open';
-              } else {
-                catLbl = tag.lab || '';
-              }
-            } catch(_){}
-            let d = '';
-            if(it.days != null){
-              if(it.days < 0) d = Math.abs(it.days) + 'd late';
-              else if(it.days === 0) d = 'Today';
-              else if(it.days === 1) d = '1 day';
-              else if(it.days <= 6) d = it.days + ' days';
-              else d = 'In ' + it.days + 'd';
+          }
+          let catLbl = '';
+          try {
+            let tag = (typeof UC_TAG_OF !== 'undefined') ? UC_TAG_OF[it.task.id] : null;
+            if(!tag && typeof isOpeningTaskId === 'function' && isOpeningTaskId(it.task.id)) tag = (typeof UC_TAGS !== 'undefined') ? UC_TAGS.open : null;
+            if(!tag){
+              const dk = String(it.task.dl || it.task.id || '').toLowerCase();
+              if(/title|survey|commitment|policy|lien|estoppel|hoa|condo/.test(dk)) catLbl = 'Title';
+              else if(/insp/.test(dk)) catLbl = 'Insp';
+              else if(/loan|financ|apprais|approval/.test(dk)) catLbl = 'Loan';
+              else if(/emd|deposit|escrow|opening|kickoff/.test(dk)) catLbl = 'Open';
+            } else {
+              catLbl = tag.lab || '';
             }
-            // Heads-up chase rows always read "3 days" · the chase only ever
-            // fires on the 3-business-day mark, so the horizon is constant.
-            if(it.isReminder) d = '3 days';
-            // Chip color · red for anything past-due or hitting today,
-            // cream for upcoming (tomorrow / heads-up).
-            const warnCls = (it.days != null && it.days <= 0 && !it.isReminder) ? ' warn' : '';
-            const headsCls = (it.isReminder || (it.days != null && it.days > 0)) ? ' heads' : '';
-            const parts = [];
-            if(catLbl) parts.push(esc(catLbl));
-            if(prefix) parts.push(esc(prefix));
-            parts.push(esc(rest));
-            const labelHtml = parts.join(' &middot; ');
-            return '<div class="th-r th-r-grouped" data-th-file="' + esc(fid) + '" data-th-task="' + esc(it.task.id) + '" data-th-days="' + (it.days == null ? '' : it.days) + '"' + (it.isReminder ? ' data-th-reminder="1"' : '') + (it.task.dl ? ' data-th-dl="' + esc(it.task.dl) + '"' : '') + '>' +
-              '<div class="dot"></div>' +
-              '<div class="body">' +
-                '<div class="nm">' + labelHtml + '</div>' +
-              '</div>' +
-              (d ? '<span class="d' + warnCls + headsCls + '">' + esc(d) + '</span>' : '') +
-            '</div>';
-          }).join('') +
-        '</div>';
-      });
+          } catch(_){}
+          let d = '';
+          if(it.days != null){
+            if(it.days < 0) d = Math.abs(it.days) + 'd late';
+            else if(it.days === 0) d = 'Today';
+            else if(it.days === 1) d = '1 day';
+            else if(it.days <= 6) d = it.days + ' days';
+            else d = 'In ' + it.days + 'd';
+          }
+          if(it.isReminder) d = '3 days';
+          const warnCls = (it.days != null && it.days <= 0 && !it.isReminder) ? ' warn' : '';
+          const headsCls = (it.isReminder || (it.days != null && it.days > 0)) ? ' heads' : '';
+          const parts = [];
+          if(catLbl) parts.push(esc(catLbl));
+          if(prefix) parts.push(esc(prefix));
+          parts.push(esc(restLbl));
+          const labelHtml = parts.join(' &middot; ');
+          return '<div class="th-r th-r-flat" data-th-file="' + esc(it.file.id) + '" data-th-task="' + esc(it.task.id) + '" data-th-days="' + (it.days == null ? '' : it.days) + '"' + (it.isReminder ? ' data-th-reminder="1"' : '') + (it.task.dl ? ' data-th-dl="' + esc(it.task.dl) + '"' : '') + '>' +
+            '<div class="dot"></div>' +
+            '<div class="body">' +
+              '<div class="nm">' + labelHtml + '</div>' +
+              '<div class="addr">' + esc(addr) + '</div>' +
+            '</div>' +
+            (d ? '<span class="d' + warnCls + headsCls + '">' + esc(d) + '</span>' : '') +
+          '</div>';
+        }).join('');
     }
     host.innerHTML = _headHtml + _focusHtml + _queueHtml;
     // Wire: tap any row (hero, group header, or grouped row) → open the
@@ -9069,67 +9046,69 @@ Tell me your planned move-out date and I will set the inspection.`
         '<button type="button" data-tag-send="1" data-tag-file="' + esc(hero.file.id) + '" data-tag-task="' + esc(hero.task.id) + '" style="background:#0f0f0f;color:#fff;border:0;border-radius:9px;padding:10px 16px;font:700 12px \'Inter\',sans-serif;letter-spacing:0.3px;cursor:pointer;white-space:nowrap;flex:none">Send &rarr;</button>' +
       '</div>';
 
-    // "Also due today" grouped per file · rows use the same category ·
-    // prefix · label · day format as the mobile hero.
-    if(_fileOrder.length){
-      html += '<div style="font:700 9.5px \'Inter\',sans-serif;letter-spacing:1.4px;text-transform:uppercase;color:#a9a49a;margin:6px 0 8px">Also on you</div>';
-      _fileOrder.forEach(function(fid){
-        const grp = _byFile[fid];
-        const addr = String(grp.file.property_address || '').split(',')[0];
-        html += '<div style="border:0.5px solid #f0ece2;border-radius:11px;margin-bottom:8px;overflow:hidden">' +
-          '<div data-tag-file="' + esc(fid) + '" style="padding:9px 14px;background:#faf8f4;border-bottom:0.5px solid #f2eee2;cursor:pointer;font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;color:#0a0a0a">' + esc(addr) + '</div>' +
-          grp.items.map(function(it){
-            const raw = String(it.task.label || '');
-            let prefix = '', restLbl = raw;
-            const m = raw.match(/^(Follow up|Confirm|Remind|Request|Send|Order)\s*[·:.-]?\s*(.+)$/i);
-            if(m){
-              prefix = m[1];
-              restLbl = m[2];
-              if(restLbl && restLbl.length > 1 && restLbl[0] === restLbl[0].toUpperCase() && restLbl[1] === restLbl[1].toLowerCase()){
-                restLbl = restLbl[0].toLowerCase() + restLbl.slice(1);
-              }
+    // Marlenyi 2026-08-10 · flat rows. Each task shows its own address on
+    // line 2 instead of stacking N tasks under a shared address header.
+    // With the header pattern, rows 2+ read anonymous and force a scan up
+    // to figure out which file they belong to.
+    if(rest.length){
+      html += '<div style="font:700 9.5px \'Inter\',sans-serif;letter-spacing:1.4px;text-transform:uppercase;color:#a9a49a;margin:6px 0 8px">Also on you</div>' +
+        '<div style="border:0.5px solid #f0ece2;border-radius:11px;overflow:hidden">' +
+        rest.map(function(it, idx){
+          const addr = String(it.file.property_address || '').split(',')[0];
+          const raw = String(it.task.label || '');
+          let prefix = '', restLbl = raw;
+          const m = raw.match(/^(Follow up|Confirm|Remind|Request|Send|Order)\s*[·:.-]?\s*(.+)$/i);
+          if(m){
+            prefix = m[1];
+            restLbl = m[2];
+            if(restLbl && restLbl.length > 1 && restLbl[0] === restLbl[0].toUpperCase() && restLbl[1] === restLbl[1].toLowerCase()){
+              restLbl = restLbl[0].toLowerCase() + restLbl.slice(1);
             }
-            let catLbl = '';
-            try {
-              let tag = (typeof UC_TAG_OF !== 'undefined') ? UC_TAG_OF[it.task.id] : null;
-              if(!tag && typeof isOpeningTaskId === 'function' && isOpeningTaskId(it.task.id)) tag = (typeof UC_TAGS !== 'undefined') ? UC_TAGS.open : null;
-              if(!tag){
-                const dk = String(it.task.dl || it.task.id || '').toLowerCase();
-                if(/title|survey|commitment|policy|lien|estoppel|hoa|condo/.test(dk)) catLbl = 'Title';
-                else if(/insp/.test(dk)) catLbl = 'Insp';
-                else if(/loan|financ|apprais|approval/.test(dk)) catLbl = 'Loan';
-                else if(/emd|deposit|escrow|opening|kickoff/.test(dk)) catLbl = 'Open';
-              } else { catLbl = tag.lab || ''; }
-            } catch(_){}
-            let d = '';
-            if(it.days != null){
-              if(it.days < 0) d = Math.abs(it.days) + 'd late';
-              else if(it.days === 0) d = 'Today';
-              else if(it.days === 1) d = '1 day';
-              else if(it.days <= 6) d = it.days + ' days';
-              else d = 'In ' + it.days + 'd';
-            }
-            if(it.isReminder) d = '3 days';
-            const isWarn = (it.days != null && it.days <= 0 && !it.isReminder);
-            const isHeads = (it.isReminder || (it.days != null && it.days > 0));
-            const dStyle = isWarn
-              ? 'color:#a3402f;font-weight:600;font:600 11px \'Inter\',sans-serif'
-              : (isHeads
-                  ? 'background:#f4f0e5;color:#8a7a5b;padding:2px 8px;border-radius:6px;font:600 10px \'Inter\',sans-serif;letter-spacing:0.2px'
-                  : 'color:#a9a49a;font:500 11px Georgia,serif');
-            const parts = [];
-            if(catLbl) parts.push(esc(catLbl));
-            if(prefix) parts.push(esc(prefix));
-            parts.push(esc(restLbl));
-            return '<div data-tag-file="' + esc(fid) + '" data-tag-task="' + esc(it.task.id) + '" data-tag-dl="' + esc(it.task.dl || '') + '" data-tag-days="' + (it.days == null ? '' : it.days) + '"' + (it.isReminder ? ' data-tag-reminder="1"' : '') +
-              ' style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-top:0.5px solid #f5f1e5;cursor:pointer;background:#fff">' +
-              '<span style="width:6px;height:6px;border-radius:50%;background:' + (isWarn ? '#a3402f' : '#c9c3b3') + ';flex:none"></span>' +
-              '<span style="flex:1;min-width:0;font-size:12.5px;color:#0a0a0a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + parts.join(' &middot; ') + '</span>' +
-              (d ? '<span style="' + dStyle + ';flex:none">' + esc(d) + '</span>' : '') +
-            '</div>';
-          }).join('') +
+          }
+          let catLbl = '';
+          try {
+            let tag = (typeof UC_TAG_OF !== 'undefined') ? UC_TAG_OF[it.task.id] : null;
+            if(!tag && typeof isOpeningTaskId === 'function' && isOpeningTaskId(it.task.id)) tag = (typeof UC_TAGS !== 'undefined') ? UC_TAGS.open : null;
+            if(!tag){
+              const dk = String(it.task.dl || it.task.id || '').toLowerCase();
+              if(/title|survey|commitment|policy|lien|estoppel|hoa|condo/.test(dk)) catLbl = 'Title';
+              else if(/insp/.test(dk)) catLbl = 'Insp';
+              else if(/loan|financ|apprais|approval/.test(dk)) catLbl = 'Loan';
+              else if(/emd|deposit|escrow|opening|kickoff/.test(dk)) catLbl = 'Open';
+            } else { catLbl = tag.lab || ''; }
+          } catch(_){}
+          let d = '';
+          if(it.days != null){
+            if(it.days < 0) d = Math.abs(it.days) + 'd late';
+            else if(it.days === 0) d = 'Today';
+            else if(it.days === 1) d = '1 day';
+            else if(it.days <= 6) d = it.days + ' days';
+            else d = 'In ' + it.days + 'd';
+          }
+          if(it.isReminder) d = '3 days';
+          const isWarn = (it.days != null && it.days <= 0 && !it.isReminder);
+          const isHeads = (it.isReminder || (it.days != null && it.days > 0));
+          const dStyle = isWarn
+            ? 'color:#a3402f;font-weight:600;font:600 11px \'Inter\',sans-serif'
+            : (isHeads
+                ? 'background:#f4f0e5;color:#8a7a5b;padding:2px 8px;border-radius:6px;font:600 10px \'Inter\',sans-serif;letter-spacing:0.2px'
+                : 'color:#a9a49a;font:500 11px Georgia,serif');
+          const parts = [];
+          if(catLbl) parts.push(esc(catLbl));
+          if(prefix) parts.push(esc(prefix));
+          parts.push(esc(restLbl));
+          const border = idx === 0 ? '' : 'border-top:0.5px solid #f2eee2;';
+          return '<div data-tag-file="' + esc(it.file.id) + '" data-tag-task="' + esc(it.task.id) + '" data-tag-dl="' + esc(it.task.dl || '') + '" data-tag-days="' + (it.days == null ? '' : it.days) + '"' + (it.isReminder ? ' data-tag-reminder="1"' : '') +
+            ' style="display:flex;align-items:center;gap:11px;padding:11px 14px;' + border + 'cursor:pointer;background:#fff">' +
+            '<span style="width:6px;height:6px;border-radius:50%;background:' + (isWarn ? '#a3402f' : '#c9c3b3') + ';flex:none"></span>' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="font-size:12.5px;color:#0a0a0a;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + parts.join(' &middot; ') + '</div>' +
+              '<div style="font-size:11px;color:#8a857c;margin-top:2px;font-family:Georgia,\'Times New Roman\',serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(addr) + '</div>' +
+            '</div>' +
+            (d ? '<span style="' + dStyle + ';flex:none">' + esc(d) + '</span>' : '') +
+          '</div>';
+        }).join('') +
         '</div>';
-      });
     }
     html += '</div>';
     host.innerHTML = html;
