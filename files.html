@@ -8889,6 +8889,10 @@ Tell me your planned move-out date and I will set the inspection.`
     const _selDayMs = (typeof _calSelDay !== 'undefined' && _calSelDay != null) ? _calSelDay : _t0.getTime();
     const _isTodaySel = (_selDayMs === _t0.getTime());
     const items = [];
+    // Dedupe · only counts stage_tasks that ACTUALLY made it into items,
+    // so a stage task that got filtered out (wrong day, not overdue) does
+    // not block its matching calendar deadline from surfacing.
+    const _dlKeysSeen = {};
     _files.forEach(function(f){
       try {
         if(f.status === 'archived') return;
@@ -8941,22 +8945,14 @@ Tell me your planned move-out date and I will set the inspection.`
           if(!_onSelDay && !_includeOverdue) return;
           const _sort = _overdue ? (-100 + days * 0.01) : (_onSelDay ? -1 : days);
           items.push({ file: f, task: t, days: days, sortKey: _sort });
+          if(t.dl) _dlKeysSeen[f.id + ':' + t.dl] = 1;
         });
       } catch(_){}
     });
-    // Calendar chase merge · same rule as mobile: today only, dedupe against
-    // any stage_task that owns that deadline key.
+    // Calendar deadlines + chase merge · dedup against _dlKeysSeen which
+    // only knows about stage_tasks that WERE surfaced. Deadlines whose
+    // matching stage task didn't make it into items still get through.
     try {
-      const _dlKeysSeen = {};
-      _files.forEach(function(f){
-        try {
-          if(f.status === 'archived') return;
-          const stg = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || '');
-          const ft = f.file_type || 'sale';
-          const allTasks = ((STAGE_CHECKLISTS[ft] || {})[stg] || []);
-          allTasks.forEach(function(t){ if(t && t.dl) _dlKeysSeen[f.id + ':' + t.dl] = 1; });
-        } catch(_){}
-      });
       const calItems = (typeof _tcCalDeadlines === 'function') ? _tcCalDeadlines() : [];
       calItems.forEach(function(ci){
         if(!ci || !(ci.date instanceof Date)) return;
