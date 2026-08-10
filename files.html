@@ -8940,14 +8940,14 @@ Tell me your planned move-out date and I will set the inspection.`
               }
             }
           } catch(_){}
-          // Marlenyi 2026-08-09 · drawer parity. Same rules as renderTodayHero:
-          // overdue/today/next-3-days/opening/no-deadline all surface. See the
-          // matching comment block in renderTodayHero for the full rationale.
-          const _isOpening = (typeof isOpeningTaskId === 'function') && isOpeningTaskId(t.id);
-          if(days != null && days > 3) return;
-          let _sort;
-          if(days == null) _sort = _isOpening ? 0.1 : 10;
-          else _sort = days < 0 ? (-100 + days * 0.01) : days;
+          // Marlenyi 2026-08-10 · strict Today. Only tasks with a resolved
+          // date that are overdue or due today. No no-date noise (opening
+          // tasks like "Add lender contact", "Confirm comp agreement" etc.),
+          // no future lookahead. On Sunday the aggregated card should show
+          // only the overdue backlog · nothing is due Sunday.
+          if(days == null) return;
+          if(days > 0) return;
+          const _sort = days < 0 ? (-100 + days * 0.01) : 0;
           items.push({ file: f, task: t, days: days, sortKey: _sort });
         });
       } catch(_){}
@@ -14814,8 +14814,15 @@ Tell me your planned move-out date and I will set the inspection.`
       // day, no truncation), and the Today panel sits below it at the same
       // full width so the DO THIS NOW copy and ALSO ON YOU rows breathe
       // instead of getting squeezed into a half-column.
-      html += _calWeekGridHtml(byDay, t0) +
-        '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:15px 16px;margin-top:16px">' + _calTodayPanel(byDay, t0, _calSelDay) + '</div>';
+      html += _calWeekGridHtml(byDay, t0);
+      // Marlenyi 2026-08-10 · when today is the selected day, the DO THIS
+      // NOW / ALSO ON YOU aggregated card below the calendar already shows
+      // today's items · rendering the panel here would double it up. Panel
+      // still renders when she clicks a different day (Mon, Tue, ...) so
+      // day-browsing keeps working.
+      if(_calSelDay != null && _calSelDay !== t0){
+        html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:15px 16px;margin-top:16px">' + _calTodayPanel(byDay, t0, _calSelDay) + '</div>';
+      }
       host.innerHTML = html; _wireCal(host); return;
     }
     // ---- MOBILE · agenda first, month grid replaced by a single-column list ----
@@ -15096,6 +15103,13 @@ Tell me your planned move-out date and I will set the inspection.`
         '<div style="flex:1;min-width:0"><div style="font-size:' + (narrow ? '11.5px;line-height:1.35' : '12.5px') + ';color:#0f0f0f">' + esc(dispLabel) + '</div><div style="font-size:' + (narrow ? '10.5px' : '11px') + ';color:#8a857c;margin-top:1px">' + esc(addr) + '</div></div>' +
         rightHtml + '</div>';
     };
+    // Marlenyi 2026-08-10 · when today is selected, the DO THIS NOW /
+    // ALSO ON YOU aggregated card below the calendar shows the same
+    // overdue backlog + today's items · skip this right-column panel to
+    // avoid a duplicate Today. Panel still renders when she clicks a
+    // different day so day-browsing keeps working.
+    const _monthPanelHidden = (_calSelDay === t0);
+    if(!_monthPanelHidden){
     html += '<div>';
     // Overdue safety net · pinned at the top of the panel, always visible no matter which day is
     // selected, so a deadline that passed unchecked never gets missed (Marlenyi Aug 1).
@@ -15280,7 +15294,9 @@ Tell me your planned move-out date and I will set the inspection.`
         _shownDone.map(_listRow).join('') +
       '</details>';
     }
-    html += '</div></div></div>';
+    html += '</div>'; // close the right-column <div> opened above
+    } // close if(!_monthPanelHidden)
+    html += '</div></div>';
     host.innerHTML = html; _wireCal(host);
   }
   // Shared wiring · attaches only what exists inside the given host (scoped, so
