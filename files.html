@@ -8869,14 +8869,12 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){}
     if(!_files || !_files.length){ host.innerHTML = ''; return; }
     const _t0 = new Date(); _t0.setHours(0, 0, 0, 0);
-    // Marlenyi 2026-08-10 · exactly one Today/day panel visible at a
-    // time. When she clicks a non-today chip on the calendar, the
-    // calendar-inside day panel takes over · this aggregated "always
-    // today" card hides so both aren't stacked at once.
-    if(typeof _calSelDay !== 'undefined' && _calSelDay != null && _calSelDay !== _t0.getTime()){
-      host.innerHTML = '';
-      return;
-    }
+    // Marlenyi 2026-08-10 · day-aware. The card renders for whatever day
+    // is currently selected on the calendar, using the same DO THIS NOW /
+    // ALSO ON YOU layout. Click Monday → same card, Monday's items +
+    // overdue backlog. No more separate calendar-inside panel styling.
+    const _selDayMs = (typeof _calSelDay !== 'undefined' && _calSelDay != null) ? _calSelDay : _t0.getTime();
+    const _isTodaySel = (_selDayMs === _t0.getTime());
     const items = [];
     _files.forEach(function(f){
       try {
@@ -8918,14 +8916,16 @@ Tell me your planned move-out date and I will set the inspection.`
               }
             }
           } catch(_){}
-          // Marlenyi 2026-08-10 · strict Today. Only tasks with a resolved
-          // date that are overdue or due today. No no-date noise (opening
-          // tasks like "Add lender contact", "Confirm comp agreement" etc.),
-          // no future lookahead. On Sunday the aggregated card should show
-          // only the overdue backlog · nothing is due Sunday.
+          // Marlenyi 2026-08-10 · include this task if it lands on the
+          // selected day OR if it's already overdue (relative to today).
+          // Overdue backlog surfaces on every day so the ones she owes
+          // don't disappear when she looks at Monday. Skips no-date tasks.
           if(days == null) return;
-          if(days > 0) return;
-          const _sort = days < 0 ? (-100 + days * 0.01) : 0;
+          const _taskDayMs = _t0.getTime() + (days * 86400000);
+          const _onSelDay = (_taskDayMs === _selDayMs);
+          const _overdue = (days < 0);
+          if(!_onSelDay && !_overdue) return;
+          const _sort = _overdue ? (-100 + days * 0.01) : (_onSelDay ? -1 : days);
           items.push({ file: f, task: t, days: days, sortKey: _sort });
         });
       } catch(_){}
@@ -8947,6 +8947,10 @@ Tell me your planned move-out date and I will set the inspection.`
       calItems.forEach(function(ci){
         if(!ci || !(ci.date instanceof Date)) return;
         if(ci.done) return;
+        // Chase items are today-only reminders · skip when a non-today day
+        // is selected on the calendar (Marlenyi doesn't want Monday's card
+        // showing today's chase pings).
+        if(!_isTodaySel) return;
         const d = new Date(ci.date.getTime()); d.setHours(0, 0, 0, 0);
         const days = Math.round((d - _t0) / 86400000);
         if(days !== 0) return;
@@ -8965,12 +8969,14 @@ Tell me your planned move-out date and I will set the inspection.`
       });
     } catch(err){ console.warn('[today-aggregated] calendar merge failed', err); }
 
-    const _dateLbl = new Date().toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' });
+    const _selDate = new Date(_selDayMs);
+    const _dateLbl = _selDate.toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' });
+    const _headPrefix = _isTodaySel ? 'Today &middot; ' : '';
     if(!items.length){
       host.innerHTML =
         '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:14px;padding:22px 20px">' +
-          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:17px;font-weight:600;color:#0f0f0f;margin-bottom:2px">Today &middot; ' + esc(_dateLbl) + '</div>' +
-          '<div style="font-size:11.5px;color:#8a857c;letter-spacing:0.2px">Nothing on you right now. You&rsquo;re ahead.</div>' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:17px;font-weight:600;color:#0f0f0f;margin-bottom:2px">' + _headPrefix + esc(_dateLbl) + '</div>' +
+          '<div style="font-size:11.5px;color:#8a857c;letter-spacing:0.2px">' + (_isTodaySel ? 'Nothing on you right now. You&rsquo;re ahead.' : 'Nothing due this day.') + '</div>' +
         '</div>';
       return;
     }
@@ -9013,7 +9019,7 @@ Tell me your planned move-out date and I will set the inspection.`
     let html = '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:14px;padding:20px 20px 8px">' +
       '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding-bottom:14px;border-bottom:0.5px solid #f2eee2;margin-bottom:14px">' +
         '<div>' +
-          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:17px;font-weight:600;color:#0f0f0f">Today &middot; ' + esc(_dateLbl) + '</div>' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:17px;font-weight:600;color:#0f0f0f">' + _headPrefix + esc(_dateLbl) + '</div>' +
           '<div style="font-size:11.5px;color:#7a756c;letter-spacing:0.2px;margin-top:3px">' + _sub + '</div>' +
         '</div>' +
       '</div>' +
@@ -14770,14 +14776,10 @@ Tell me your planned move-out date and I will set the inspection.`
       // full width so the DO THIS NOW copy and ALSO ON YOU rows breathe
       // instead of getting squeezed into a half-column.
       html += _calWeekGridHtml(byDay, t0);
-      // Marlenyi 2026-08-10 · when today is the selected day, the DO THIS
-      // NOW / ALSO ON YOU aggregated card below the calendar already shows
-      // today's items · rendering the panel here would double it up. Panel
-      // still renders when she clicks a different day (Mon, Tue, ...) so
-      // day-browsing keeps working.
-      if(_calSelDay != null && _calSelDay !== t0){
-        html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:15px 16px;margin-top:16px">' + _calTodayPanel(byDay, t0, _calSelDay) + '</div>';
-      }
+      // Marlenyi 2026-08-10 · calendar-inside day panel removed. The
+      // aggregated Today card below the calendar is now day-aware · it
+      // shows the DO THIS NOW / ALSO ON YOU layout for whatever day she
+      // has selected, so this panel would just be a stripped-down duplicate.
       host.innerHTML = html; _wireCal(host); return;
     }
     // ---- MOBILE · agenda first, month grid replaced by a single-column list ----
@@ -15058,12 +15060,10 @@ Tell me your planned move-out date and I will set the inspection.`
         '<div style="flex:1;min-width:0"><div style="font-size:' + (narrow ? '11.5px;line-height:1.35' : '12.5px') + ';color:#0f0f0f">' + esc(dispLabel) + '</div><div style="font-size:' + (narrow ? '10.5px' : '11px') + ';color:#8a857c;margin-top:1px">' + esc(addr) + '</div></div>' +
         rightHtml + '</div>';
     };
-    // Marlenyi 2026-08-10 · when today is selected, the DO THIS NOW /
-    // ALSO ON YOU aggregated card below the calendar shows the same
-    // overdue backlog + today's items · skip this right-column panel to
-    // avoid a duplicate Today. Panel still renders when she clicks a
-    // different day so day-browsing keeps working.
-    const _monthPanelHidden = (_calSelDay === t0);
+    // Marlenyi 2026-08-10 · calendar-inside day panel removed for the
+    // month view too. The aggregated Today card below the calendar is
+    // now day-aware and covers every selected day with the same layout.
+    const _monthPanelHidden = true;
     if(!_monthPanelHidden){
     html += '<div>';
     // Overdue safety net · pinned at the top of the panel, always visible no matter which day is
