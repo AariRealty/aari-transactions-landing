@@ -232,7 +232,7 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
       ...(amountTotal != null ? { amount_paid_cents: amountTotal } : {}),
     })
     .eq("id", fileId)
-    .select("id, assigned_tc_id, property_address, service_type, service_package, agent_name, agent_email")
+    .select("id, assigned_tc_id, property_address, service_type, agent_id")
     .maybeSingle();
 
   if (upd.error) {
@@ -248,12 +248,21 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
     if (RESEND_API_KEY && upd.data) {
       const f = upd.data as Record<string, unknown>;
       const addr = String(f.property_address || "unknown property");
-      const svc = String(f.service_type || "").trim();
-      const pkg = String(f.service_package || "").trim();
-      const svcLabel = [svc, pkg].filter(Boolean).join(" · ") || "Service";
+      const svcLabel = String(f.service_type || "").trim() || "Service";
       const dollars = amountTotal != null ? (amountTotal / 100).toFixed(2) : "?.??";
-      const agentName = String(f.agent_name || "").trim();
-      const agentEmail = String(f.agent_email || "").trim();
+      // Resolve agent name/email from the agents row if we have an agent_id.
+      // Best-effort; the email still sends without it.
+      let agentName = "", agentEmail = "";
+      try {
+        const agentId = f.agent_id as string | undefined;
+        if (agentId) {
+          const ag = await supabase.from("agents").select("first_name, last_name, email").eq("id", agentId).maybeSingle();
+          if (ag.data) {
+            agentName = ((ag.data.first_name || "") + " " + (ag.data.last_name || "")).trim();
+            agentEmail = String(ag.data.email || "");
+          }
+        }
+      } catch (_ae) { /* leave agentName / email empty */ }
       const subject = `$${dollars} · ${addr} · ${svcLabel} paid`;
       const html =
         `<div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;color:#0f0f0f;line-height:1.55">` +
