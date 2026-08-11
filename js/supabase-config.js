@@ -64,6 +64,18 @@
       if (k === 'aari-auth-session') return;
     }
   } catch (_e) { return; }
+  // TC-only surfaces (files, briefing, marlenyi/eileen/milennys, tc-*, broker-*)
+  // don't need the cross-domain Hub bounce · Marlenyi kept landing on the
+  // Agent Hub sign-in when she opened a "File needs you" email link on mobile
+  // and reasonably read it as "wrong portal." Keep her on this domain,
+  // redirect to the local /login.html which routes broker/TC → /files.html.
+  // Also pin the current path so the login modal returns her here.
+  var TC_ONLY = /^\/(files|files-|tc-cockpit|tc-portal|broker-cockpit|broker-backoffice|broker-weekly-report|aari-agent-crm|aari-crm|briefing|eileen|milennys|marlenyi)(\.html)?(\/|$)/;
+  if (TC_ONLY.test(p)) {
+    try { sessionStorage.setItem('aari-after-auth', window.location.pathname + window.location.search + window.location.hash); } catch (_) {}
+    window.location.replace('/login.html');
+    return;
+  }
   window.location.replace('https://hub.joinaari.com/');
 })();
 
