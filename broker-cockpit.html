@@ -460,6 +460,28 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
   .cl-row{grid-template-columns:1fr;gap:6px;padding:14px}
 }
 
+/* SECTION 7B · RECENT PAYMENTS · Stripe checkouts landed lately (Aug 2026) */
+.pay-section{margin-bottom:30px}
+.pay-wrap{background:#ffffff;border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden}
+.pay-grid-head,.pay-row{display:grid;grid-template-columns:100px 100px 1.6fr 1.4fr 1.2fr;gap:12px;padding:12px 18px;align-items:center;font-size:12px}
+.pay-grid-head{background:var(--cream);border-bottom:1px solid var(--line);font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink);opacity:0.7}
+.pay-row{border-bottom:1px solid var(--line)}
+.pay-row:last-child{border-bottom:0}
+.pay-row:hover{background:var(--soft-bg)}
+.pay-when{color:var(--ink);font-variant-numeric:tabular-nums}
+.pay-when small{display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:2px}
+.pay-amount{color:var(--ink);font-family:var(--serif);font-weight:600;font-variant-numeric:tabular-nums}
+.pay-addr,.pay-service,.pay-agent{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pay-agent small{display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:2px}
+.pay-empty{padding:32px 20px;text-align:center;color:var(--muted);font-size:13px;background:var(--soft-bg);border-top:1px solid var(--line)}
+@media(max-width:980px){
+  .pay-grid-head,.pay-row{grid-template-columns:90px 90px 1.4fr 1.2fr 1fr;gap:8px;padding:10px 14px}
+}
+@media(max-width:680px){
+  .pay-grid-head{display:none}
+  .pay-row{grid-template-columns:1fr;gap:6px;padding:14px}
+}
+
 /* SECTION 6 · TC PERFORMANCE · monthly scoreboard (May 2026 redesign · white/cream/black) */
 .tcperf-section{margin-bottom:30px}
 .tcperf-wrap{background:#ffffff;border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden}
@@ -833,6 +855,29 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
       </div>
     </div>
 
+    <!-- SECTION 7B · RECENT PAYMENTS · Stripe checkouts landed lately (Aug 2026)
+         Sits right under the client roster so the owner scans "who paid, how
+         much, on what" without leaving the cockpit. Rows source from
+         public.files.paid_at + amount_paid_cents, populated by stripe-webhook.
+         Read-only. Files that pre-date paid_at (before Aug 2026) never show up
+         here because their paid_at is null. -->
+    <div class="pay-section" id="pay-section">
+      <div class="section-head">
+        <h3>Recent payments</h3>
+        <div class="meta" id="pay-meta">Loading…</div>
+      </div>
+      <div class="pay-wrap">
+        <div class="pay-grid-head">
+          <div>Paid</div>
+          <div>Amount</div>
+          <div>Property</div>
+          <div>Service</div>
+          <div>Agent</div>
+        </div>
+        <div id="pay-rows"></div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -936,7 +981,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
     // Pull: agents (with brokerage), files (with price), pay requests, reviews, memberships
     const [agentsR, filesR, payR, reviewsR, memR] = await Promise.all([
       client.from('agents').select('id, first_name, last_name, email, role, brokerage_name, license_number, broker_last_seen_at, is_house_agent'),
-      client.from('files').select('id, property_address, service_type, service_price_cents, agent_id, assigned_tc_id, status, tc_accepted_at, closing_date, created_at, delete_request'),
+      client.from('files').select('id, property_address, service_type, service_package, service_price_cents, amount_paid_cents, paid_at, agent_id, assigned_tc_id, status, tc_accepted_at, closing_date, created_at, delete_request'),
       client.from('pay_requests').select('id, status, total_pay, paid_at, submitted_at').order('submitted_at',{ascending:false}),
       client.from('client_reviews').select('id, tc_id, stars, status, submitted_at').then(r => r, err => ({ data:[], error:err })),
       client.from('memberships').select('agent_id, tier, status').then(r => r, err => ({ data:[], error:err })),
@@ -983,6 +1028,9 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
 
     // ---- SECTION 7A · CLIENT ROSTER + CHURN RADAR (NEW · May 2026) ----
     renderClientRoster(agents, files, memberships);
+
+    // ---- SECTION 7B · RECENT PAYMENTS · Stripe checkouts landed lately (Aug 2026) ----
+    renderRecentPayments(files, byId);
 
     // SECTION · Agent messages awaiting TC reply (broker oversight + nudge)
     loadAndRenderBrokerMessages(files, byId);
@@ -2619,6 +2667,67 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1
         '<div class="roster-meta-row">Last activity ' + esc(lastActivityLbl) + '</div>' +
       '</div>';
     }).join('');
+  }
+
+  // SECTION 7B · Recent payments · Stripe checkouts landed lately (Aug 2026)
+  // Read-only list of files where paid_at is stamped. Sorted newest first,
+  // capped at 20 rows. amount_paid_cents is the actual Stripe charge (not the
+  // catalog price), so tips/discounts show correctly.
+  function renderRecentPayments(files, byId){
+    const rowsHost = document.getElementById('pay-rows');
+    const metaEl = document.getElementById('pay-meta');
+    if (!rowsHost) return;
+    const paid = (files || [])
+      .filter(f => f && f.paid_at)
+      .slice()
+      .sort((a, b) => new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime());
+    const CAP = 20;
+    const shown = paid.slice(0, CAP);
+    if (metaEl) {
+      metaEl.textContent = paid.length
+        ? (paid.length + ' Stripe payment' + (paid.length === 1 ? '' : 's') + ' captured' + (paid.length > CAP ? ' · showing latest ' + CAP : ''))
+        : 'Waiting for the first Stripe payment to land · nothing here yet';
+    }
+    if (!shown.length) {
+      rowsHost.innerHTML = '<div class="pay-empty">Waiting for the first Stripe payment to land. New payments will appear here as they confirm.</div>';
+      return;
+    }
+    const fmtWhen = (iso) => {
+      try {
+        const d = new Date(iso);
+        const date = d.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+        const time = d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
+        return { date, time };
+      } catch (_e) { return { date:'—', time:'' }; }
+    };
+    const fmt$ = (cents) => {
+      if (cents == null) return '<span class="cl-money empty">—</span>';
+      const dollars = (cents / 100);
+      return '<span class="pay-amount">$' + dollars.toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }) + '</span>';
+    };
+    const svcLabel = (f) => {
+      const svc = String(f.service_type || '').trim();
+      const pkg = String(f.service_package || '').trim();
+      return [svc, pkg].filter(Boolean).join(' · ') || '—';
+    };
+    const agentLabel = (f) => {
+      const a = f.agent_id && byId ? byId[f.agent_id] : null;
+      if (!a) return '<span class="pay-agent">—</span>';
+      const nm = ((a.first_name || '') + ' ' + (a.last_name || '')).trim() || (a.email || '—');
+      return '<span class="pay-agent">' + esc(nm) + (a.email ? '<small>' + esc(a.email) + '</small>' : '') + '</span>';
+    };
+    const html = shown.map(f => {
+      const w = fmtWhen(f.paid_at);
+      const addr = String(f.property_address || '').split(',')[0] || '—';
+      return '<div class="pay-row">' +
+        '<div class="pay-when">' + esc(w.date) + '<small>' + esc(w.time) + '</small></div>' +
+        '<div>' + fmt$(f.amount_paid_cents) + '</div>' +
+        '<div class="pay-addr" title="' + esc(f.property_address || '') + '">' + esc(addr) + '</div>' +
+        '<div class="pay-service">' + esc(svcLabel(f)) + '</div>' +
+        agentLabel(f) +
+      '</div>';
+    }).join('');
+    rowsHost.innerHTML = html;
   }
 
   async function renderClientRoster(agents, files, memberships){

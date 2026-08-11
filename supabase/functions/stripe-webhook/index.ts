@@ -36,6 +36,21 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const WEBHOOK_SECRET = Deno.env.get("STRIPE_WEBHOOK_SECRET") || "";
+// Owner ping · every confirmed file payment emails the owner so she doesn't
+// have to log in to see when money lands. Overridable via env in case the
+// owning email changes; hardcoded default keeps deploys idempotent.
+const OWNER_EMAIL = Deno.env.get("OWNER_EMAIL") || "marlenyi@aarirealty.com";
+const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") || "";
+const FROM_ADDRESS = Deno.env.get("FROM_ADDRESS") || "files@aaritransactions.com";
+
+function escapeHtmlSimple(s: string): string {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);
@@ -207,20 +222,55 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
   // Stripe gives amount_total in the smallest currency unit (cents for USD).
   const amountTotal = typeof session.amount_total === "number" ? session.amount_total : null;
 
+  const paidAtIso = new Date().toISOString();
   const upd = await supabase
     .from("files")
     .update({
       payment_pending: false,
       payment_confirmed: true,
+      paid_at: paidAtIso,
       ...(amountTotal != null ? { amount_paid_cents: amountTotal } : {}),
     })
     .eq("id", fileId)
-    .select("id, assigned_tc_id, property_address")
+    .select("id, assigned_tc_id, property_address, service_type, service_package, agent_name, agent_email")
     .maybeSingle();
 
   if (upd.error) {
     console.error("[stripe-webhook] update failed", upd.error.message);
     return json({ received: true, updated: false });
+  }
+
+  // Owner ping · fire the email to the owner so she doesn't have to log in
+  // to see money landing. Best-effort, wrapped so a Resend hiccup can't
+  // reject the webhook (Stripe would retry the whole event otherwise, causing
+  // duplicate TC pings and a confusing "webhook trouble" alert email).
+  try {
+    if (RESEND_API_KEY && upd.data) {
+      const f = upd.data as Record<string, unknown>;
+      const addr = String(f.property_address || "unknown property");
+      const svc = String(f.service_type || "").trim();
+      const pkg = String(f.service_package || "").trim();
+      const svcLabel = [svc, pkg].filter(Boolean).join(" · ") || "Service";
+      const dollars = amountTotal != null ? (amountTotal / 100).toFixed(2) : "?.??";
+      const agentName = String(f.agent_name || "").trim();
+      const agentEmail = String(f.agent_email || "").trim();
+      const subject = `$${dollars} · ${addr} · ${svcLabel} paid`;
+      const html =
+        `<div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;color:#0f0f0f;line-height:1.55">` +
+          `<p style="margin:0 0 12px"><strong>$${dollars}</strong> just landed in Stripe.</p>` +
+          `<p style="margin:0 0 6px"><strong>Property:</strong> ${escapeHtmlSimple(addr)}</p>` +
+          `<p style="margin:0 0 6px"><strong>Service:</strong> ${escapeHtmlSimple(svcLabel)}</p>` +
+          (agentName ? `<p style="margin:0 0 6px"><strong>Agent:</strong> ${escapeHtmlSimple(agentName)}${agentEmail ? ` &lt;${escapeHtmlSimple(agentEmail)}&gt;` : ""}</p>` : "") +
+          `<p style="margin:16px 0 0;color:#6f6a61;font-size:12px">Paid at ${paidAtIso} UTC. Recent payments live on the broker cockpit.</p>` +
+        `</div>`;
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${RESEND_API_KEY}` },
+        body: JSON.stringify({ from: FROM_ADDRESS, to: [OWNER_EMAIL], subject, html }),
+      });
+    }
+  } catch (e) {
+    console.warn("[stripe-webhook] owner ping failed (payment still confirmed)", e);
   }
 
   // Best-effort TC ping · fire-and-forget so Stripe gets a fast 200 even if
