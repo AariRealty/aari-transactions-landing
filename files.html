@@ -22375,14 +22375,37 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     // Stage-7 gate — the closing-critical tasks before Closed. This IS the "tasks still open"
     // case Move anyway exists for, so override bypasses it.
+    //
+    // SELLER-SIDE EXEMPT · same class of bug as the loan-approval gate above.
+    // The four required task IDs (ctc_cd_received / ctc_closing_confirmed /
+    // ctc_walkthrough / ctc_title_commitment_received) live on the BUYER-side
+    // checklist. A seller-rep file has none of them — it has s_ctc_cd_review,
+    // s_ctc_walk_ready, s_ctc_commission, s_ctc_deed_docs, s_uc_title_evidence.
+    // Without this branch, Eileen ticks every seller-side task, hits Move to
+    // Closed, and the gate lists four tasks she has no way to check off (they
+    // aren't even rendered on her checklist). Only Move anyway would advance
+    // it, defeating the point of the gate.
+    //
+    // Marlenyi Aug 12 · 1317 NE 9th Ave was the fresh trap: seller file, all
+    // s_ctc_* + s_uc_title_evidence done, gate wouldn't budge.
     if(!override && newStage === 'closed' && cur === 'ctc'){
-      const required = [
-        ['ctc_cd_received', 'Closing disclosure confirmed'],
-        ['ctc_closing_confirmed', 'Closing confirmed with all parties'],
-        ['ctc_walkthrough', 'Walk-through scheduled'],
+      const _clientType = String(file.client_type || '').toLowerCase();
+      const isSeller = _clientType === 'seller';
+      const required = isSeller ? [
+        ['s_ctc_cd_review',   'Seller CD reviewed'],
+        ['s_ctc_walk_ready',  'Ready for buyer walk-through'],
+        ['s_ctc_deed_docs',   'Warranty deed + seller closing docs prepared'],
+        ['s_ctc_commission',  'Commission disbursement authorization sent'],
+      ] : [
+        ['ctc_cd_received',      'Closing disclosure confirmed'],
+        ['ctc_closing_confirmed','Closing confirmed with all parties'],
+        ['ctc_walkthrough',      'Walk-through scheduled'],
       ];
       const missing = required.filter(r => !dt[r[0]]).map(r => r[1]);
-      if(!(dt['ctc_title_commitment_received'] || dt['app_title_commitment'])) missing.unshift('Title commitment received');
+      const _titleOk = isSeller
+        ? (dt['s_uc_title_evidence'] || dt['ctc_title_commitment_received'] || dt['app_title_commitment'])
+        : (dt['ctc_title_commitment_received'] || dt['app_title_commitment']);
+      if(!_titleOk) missing.unshift('Title commitment received');
       if(missing.length) return 'This file cannot move to Closed yet. Still unchecked:\n\n· ' + missing.join('\n· ');
     }
     return '';
