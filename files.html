@@ -7805,8 +7805,10 @@ Tell me your planned move-out date and I will set the inspection.`
       agent_phone: agentPhone, agent_company: agentCompany,
       next_file_offer: next_file_offer,
       // Marlenyi 2026-08-07 · payment link for the current service. Used by the
-      // ctc_payment_link email template so the URL renders inline.
-      payment_link: (typeof STRIPE_LINKS !== 'undefined' && STRIPE_LINKS[file.service_type]) || '',
+      // ctc_payment_link email template so the URL renders inline. Tagged with
+      // client_reference_id so Stripe's webhook can match the payment back to
+      // this exact file (see paymentLinkFor() above).
+      payment_link: (typeof paymentLinkFor === 'function') ? paymentLinkFor(file) : ((typeof STRIPE_LINKS !== 'undefined' && STRIPE_LINKS[file.service_type]) || ''),
       listing_agent_name: listAgentName, listing_agent_first_name: listAgentFirst, listing_agent_company: listAgentCo, listing_agent_phone: listAgentPhone, listing_agent_email: listAgentEmail,
       other_agent_name: listAgentName, other_agent_first_name: listAgentFirst, other_agent_email: listAgentEmail,
       title_company_name: titleCo,
@@ -22269,6 +22271,22 @@ Tell me your planned move-out date and I will set the inspection.`
     tc_one_side:                 'https://buy.stripe.com/8x23cn8bZ9uzc0H6EGcAo04',
     tc_both_sides:               'https://buy.stripe.com/cNi4grdwj9uz3ubfbccAo03',
   };
+  // Every payment link we send or copy MUST carry the file id so Stripe's
+  // webhook can tag the payment back to the exact file (property + service).
+  // Without this suffix the client's payment lands in Stripe untagged and
+  // shows as "still pending" in Aari, which is exactly how Samantha's
+  // 3815 NW 22nd Ter TC fee slipped through: raw links were sent, so even
+  // if payment had landed, the webhook had nothing to match on.
+  // Stripe's hosted Payment Links treat `client_reference_id` as a first-
+  // class query parameter and put it on the resulting session.
+  function paymentLinkFor(file){
+    if(!file || !file.service_type) return '';
+    const base = STRIPE_LINKS[file.service_type] || '';
+    if(!base) return '';
+    if(!file.id) return base;
+    const sep = base.indexOf('?') === -1 ? '?' : '&';
+    return base + sep + 'client_reference_id=' + encodeURIComponent(file.id);
+  }
   // Payment gate (Section 4 · Item 13) — HARD block, mirrors the SA gate. An
   // upfront-service file whose payment has not confirmed is locked: tasks grayed
   // and unclickable, file cannot move columns. Releases when payment_confirmed.
@@ -25034,7 +25052,9 @@ Tell me your planned move-out date and I will set the inspection.`
     // CFPB-window calculation note.
     let customCtl = '';
     if(t.id === 'ctc_payment_link'){
-      const _pl = (typeof STRIPE_LINKS !== 'undefined' && STRIPE_LINKS[file.service_type]) || '';
+      // Tagged link so the webhook can match Samantha's / anyone's payment
+      // back to this file. Raw STRIPE_LINKS[...] alone lands untagged.
+      const _pl = paymentLinkFor(file);
       // Marlenyi 2026-08-07 · due-date badge for the payment task. Payment is
       // ideally sent before closing so it doesn't linger post-close. Colored per
       // urgency: red when today or past, amber inside 3 days, quiet otherwise.
@@ -25048,8 +25068,23 @@ Tell me your planned move-out date and I will set the inspection.`
           _dueChip = '<div style="margin:4px 0 6px 28px"><span style="display:inline-block;font-size:10.5px;font-weight:700;border-radius:999px;padding:3px 10px;background:' + _bg + ';color:' + _fg + '">' + _txt + '</span></div>';
         }
       } catch(_){}
+      // "Last copied" chip · after Marlenyi copies the tagged link (see the
+      // data-copy-paylink handler at the bottom of this file, which patches
+      // payment_link_last_copied_at on the row), show when she last shared it
+      // so she can chase without re-hunting the button.
+      let _copiedChip = '';
+      try {
+        if(file.payment_link_last_copied_at){
+          const _t = new Date(file.payment_link_last_copied_at);
+          const _mins = Math.max(1, Math.round((Date.now() - _t.getTime()) / 60000));
+          const _rel = _mins < 60 ? (_mins + ' min ago')
+                    : _mins < 60 * 24 ? (Math.round(_mins / 60) + ' hr ago')
+                    : (Math.round(_mins / (60 * 24)) + ' d ago');
+          _copiedChip = '<span style="font-size:10.5px;color:#8a857c;white-space:nowrap">Last copied ' + esc(_rel) + '</span>';
+        }
+      } catch(_){}
       customCtl = _dueChip + (_pl
-        ? '<div style="margin:6px 0 8px 28px;display:flex;gap:8px;align-items:center"><button type="button" class="ck-send" data-copy-paylink="' + esc(_pl) + '">Copy payment link &rarr;</button><a href="' + esc(_pl) + '" target="_blank" rel="noopener" class="ck-send" style="text-decoration:none">Open</a></div>'
+        ? '<div style="margin:6px 0 8px 28px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="ck-send" data-copy-paylink="' + esc(_pl) + '">Copy payment link &rarr;</button><a href="' + esc(_pl) + '" target="_blank" rel="noopener" class="ck-send" style="text-decoration:none">Open</a>' + _copiedChip + '</div>'
         : '<div class="ck-sub" style="margin-left:28px;color:#a08a5a">No Stripe link configured for this service type.</div>');
     } else if(t.id === 'ctc_cd_received'){
       customCtl = cfpbWindowNote(file);
@@ -27618,16 +27653,33 @@ Tell me your planned move-out date and I will set the inspection.`
     _clip(txt).then(function(ok){ if(ok) _flashCopied(c); });
   });
   // Copy payment link (Section 11 · Fix 1) — copies the Stripe link to clipboard.
+  // Also records the copy on the file so the drawer can show "Last copied X ago"
+  // next to the button and Marlenyi can see when she last shared the link
+  // without hunting through email. Failure to persist is silent — the copy
+  // itself always succeeds because the clipboard write is what the user asked
+  // for. Payment_link_last_copied_at added in the 20260811 migration.
   document.addEventListener('click', function(e){
     const btn = e.target.closest && e.target.closest('[data-copy-paylink]');
     if(!btn) return;
     const link = btn.getAttribute('data-copy-paylink');
+    const persistCopy = function(){
+      try {
+        if(!_currentFile || !_currentFile.id || typeof _client === 'undefined') return;
+        const nowIso = new Date().toISOString();
+        _currentFile.payment_link_last_copied_at = nowIso;
+        _client.from('files')
+          .update({ payment_link_last_copied_at: nowIso })
+          .eq('id', _currentFile.id)
+          .then(function(){ try { renderPlaybook(_currentFile); } catch(_){} });
+      } catch(_){}
+    };
     try {
       navigator.clipboard.writeText(link).then(function(){
         const orig = btn.textContent; btn.textContent = 'Copied ✓';
         setTimeout(function(){ btn.textContent = orig; }, 1500);
+        persistCopy();
       });
-    } catch(_){ window.prompt('Copy this payment link:', link); }
+    } catch(_){ window.prompt('Copy this payment link:', link); persistCopy(); }
   });
   // Copy the agent-approved confidential remarks so the TC pastes them straight into the MLS.
   document.addEventListener('click', function(e){
