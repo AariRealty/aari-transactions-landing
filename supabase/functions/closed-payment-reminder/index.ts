@@ -3,8 +3,11 @@
 // POST-CLOSING TC-fee reminder ladder for TC services billed at closing (NOT
 // the upfront pre-work flow — that's `payment-reminder`). Runs daily.
 //
-// Targets: status='closed', closed_at not null, payment_confirmed=false, and
-// service_type in ('tc_one_side','tc_both_sides').
+// Targets: status='closed', payment_status='pending', service_type in
+// ('tc_one_side','tc_both_sides'), actual_closing_date (falls back to
+// closing_date) not null. Prior versions filtered on `closed_at` (nonexistent
+// column) and `payment_confirmed=false` (contradicts the TC-file schema which
+// seeds it true) — this cron sent zero emails until Aug 11, 2026.
 //
 // Ladder, measured from closed_at:
 //   Day 1  · 20–28h after closing  → email the agent (Thread 1 tone)
@@ -68,12 +71,23 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("ok", { status: 200 });
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
+  // Two schema-alignment fixes vs the original (Marlenyi Aug 11):
+  //   1. `closed_at` doesn't exist on public.files. The closing date lives in
+  //      `actual_closing_date` (falls back to `closing_date` for legacy rows
+  //      that never got actual_closing_date backfilled).
+  //   2. `.eq("payment_confirmed", false)` matched nothing on TC files, because
+  //      migration 20260607_payment_gate.sql defaults every TC file to
+  //      payment_confirmed=true (they're billed at closing, not upfront). The
+  //      real pending signal for TC files is payment_status='pending', which is
+  //      what the manual "mark paid" flow flips. Filter on that instead.
+  // The two together explain why this cron has been active but never sent a
+  // single email (Samantha's 3815 NW 22nd Ter TC fee sat 5 days past close
+  // with payment_reminder_count=0).
   const { data: files, error } = await supabase
     .from("files")
-    .select("id, agent_id, assigned_tc_id, property_address, service_type, closed_at, payment_confirmed, payment_reminder_last_sent_at")
+    .select("id, agent_id, assigned_tc_id, property_address, service_type, actual_closing_date, closing_date, payment_status, payment_reminder_last_sent_at")
     .eq("status", "closed")
-    .eq("payment_confirmed", false)
-    .not("closed_at", "is", null)
+    .eq("payment_status", "pending")
     .in("service_type", TC_SERVICES)
     .limit(200);
 
@@ -84,10 +98,21 @@ Deno.serve(async (req) => {
 
   let sent = 0;
   for (const f of files ?? []) {
-    const payLink = STRIPE_LINKS[f.service_type as string];
-    if (!payLink) continue; // no Stripe link for this service · skip silently
+    const baseLink = STRIPE_LINKS[f.service_type as string];
+    if (!baseLink) continue; // no Stripe link for this service · skip silently
 
-    const closedMs = new Date(f.closed_at).getTime();
+    // Tag the link so the webhook can match this file when the agent pays.
+    // Without ?client_reference_id, the payment lands in Stripe untagged and
+    // the file stays "pending" in Aari — the exact bug we're patching.
+    const sep = baseLink.indexOf("?") === -1 ? "?" : "&";
+    const payLink = `${baseLink}${sep}client_reference_id=${encodeURIComponent(f.id)}`;
+
+    // Closed timestamp source — prefer actual (title-confirmed), fall back to
+    // scheduled closing_date for older rows that predate the actual field.
+    const closedSource = f.actual_closing_date || f.closing_date;
+    if (!closedSource) continue;
+    const closedMs = new Date(closedSource).getTime();
+    if (!Number.isFinite(closedMs)) continue;
     const hrs = (Date.now() - closedMs) / HOUR;
 
     // Which rung is due by window? (Day 14 is handled by the morning briefing.)
