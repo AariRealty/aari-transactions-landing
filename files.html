@@ -8873,7 +8873,15 @@ Tell me your planned move-out date and I will set the inspection.`
         }
         const warnCls = (it.days != null && it.days <= 0 && !it.isReminder) ? ' warn' : '';
         const headsCls = (it.isReminder || (it.days != null && it.days > 0)) ? ' heads' : '';
+        // Marlenyi 2026-08-12 · inline checkbox so she can tick off an
+        // overdue Also-on-you task straight from the today panel without
+        // opening the drawer. Skipped for reminder rows (those are deadline
+        // nudges, not real completable stage_tasks).
+        const _cbox = it.isReminder ? '' :
+          '<button type="button" data-th-check="1" data-th-file="' + esc(it.file.id) + '" data-th-task="' + esc(it.task.id) + '" aria-label="Mark done" title="Mark done" ' +
+          'style="flex:none;width:22px;height:22px;border-radius:6px;border:1.5px solid #cfc9bb;background:#fff;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;color:transparent;font:700 14px/1 \'Inter\',sans-serif">&#10003;</button>';
         _queueHtml += '<div class="th-r th-r-flat" data-th-file="' + esc(it.file.id) + '" data-th-task="' + esc(it.task.id) + '" data-th-days="' + (it.days == null ? '' : it.days) + '"' + (it.isReminder ? ' data-th-reminder="1"' : '') + (it.task.dl ? ' data-th-dl="' + esc(it.task.dl) + '"' : '') + '>' +
+          _cbox +
           '<span class="th-side" style="flex:none;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:' + pillCol + ';background:' + pillBg + ';border-radius:20px;padding:2px 8px">' + sidePill + '</span>' +
           '<div class="body">' +
             '<div class="nm">' + esc(nm) + '</div>' +
@@ -8887,8 +8895,23 @@ Tell me your planned move-out date and I will set the inspection.`
     // Wire: tap any row (hero, group header, or grouped row) → open the
     // focused task sheet. Send button on hero → open sheet AND auto-fire
     // Send after render. Group header (no task id) → open the full file.
+    // Marlenyi 2026-08-12 · checkbox click marks the task done inline and
+    // re-renders. Must run before the row click below (and stopPropagate)
+    // so tapping the check doesn't also open the task sheet.
+    host.querySelectorAll('[data-th-check="1"]').forEach(function(btn){
+      btn.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        const fid = btn.getAttribute('data-th-file');
+        const tid = btn.getAttribute('data-th-task');
+        const f = _files.find(function(x){ return x.id === fid; });
+        if(!f || !tid) return;
+        try { _tsMarkDone(f, tid, true); } catch(_){}
+      });
+    });
     host.querySelectorAll('[data-th-file]').forEach(function(el){
       el.addEventListener('click', function(ev){
+        // Checkbox handles its own click.
+        if(ev.target && ev.target.closest && ev.target.closest('[data-th-check="1"]')) return;
         const isSend = el.classList.contains('th-send') || (ev.target && ev.target.closest && ev.target.closest('.th-send'));
         const fid = el.getAttribute('data-th-file');
         const tid = el.getAttribute('data-th-task');
@@ -9151,8 +9174,15 @@ Tell me your planned move-out date and I will set the inspection.`
             bubble = '<span style="flex:none;font-size:10px;font-weight:600;color:#8a6d1b;background:#faf3e6;border:0.5px solid #ecdfc4;border-radius:20px;padding:3px 11px;white-space:nowrap">Due in ' + it.days + ' day' + (it.days === 1 ? '' : 's') + '</span>';
           }
         }
+        // Marlenyi 2026-08-12 · inline checkbox to mark an overdue
+        // Also-on-you task done straight from the today panel (skipped for
+        // reminder-only rows, which don't map to a completable stage_task).
+        const cbox = it.isReminder ? '' :
+          '<button type="button" data-tag-check="1" data-tag-file="' + esc(it.file.id) + '" data-tag-task="' + esc(it.task.id) + '" aria-label="Mark done" title="Mark done" ' +
+          'style="flex:none;width:22px;height:22px;border-radius:6px;border:1.5px solid #cfc9bb;background:#fff;cursor:pointer;padding:0;display:inline-flex;align-items:center;justify-content:center;color:transparent;font:700 14px/1 \'Inter\',sans-serif">&#10003;</button>';
         html += '<div data-tag-file="' + esc(it.file.id) + '" data-tag-task="' + esc(it.task.id) + '" data-tag-dl="' + esc(it.task.dl || '') + '" data-tag-days="' + (it.days == null ? '' : it.days) + '"' + (it.isReminder ? ' data-tag-reminder="1"' : '') +
           ' style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
+          cbox +
           '<span style="flex:none;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:' + pillCol + ';background:' + pillBg + ';border-radius:20px;padding:2px 8px">' + sidePill + '</span>' +
           '<div style="flex:1;min-width:0">' +
             '<div style="font-size:12.5px;color:#0f0f0f;line-height:1.35">' + esc(nm) + '</div>' +
@@ -9168,8 +9198,21 @@ Tell me your planned move-out date and I will set the inspection.`
     // Wire · same behavior as mobile hero. Send button on the hero fires the
     // task sheet with autoSend; row click just opens the sheet; header row
     // (no task id) opens the file drawer.
+    // Marlenyi 2026-08-12 · desktop inline checkbox handler for Also-on-you.
+    host.querySelectorAll('[data-tag-check="1"]').forEach(function(btn){
+      btn.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        const fid = btn.getAttribute('data-tag-file');
+        const tid = btn.getAttribute('data-tag-task');
+        const f = _files.find(function(x){ return x.id === fid; });
+        if(!f || !tid) return;
+        try { _tsMarkDone(f, tid, true); } catch(_){}
+      });
+    });
     host.querySelectorAll('[data-tag-file]').forEach(function(el){
       el.addEventListener('click', function(ev){
+        // Checkbox handles its own click.
+        if(ev.target && ev.target.closest && ev.target.closest('[data-tag-check="1"]')) return;
         const isSend = el.getAttribute('data-tag-send') === '1' || (ev.target && ev.target.closest && ev.target.closest('[data-tag-send="1"]'));
         const fid = el.getAttribute('data-tag-file');
         const tid = el.getAttribute('data-tag-task');
@@ -15649,7 +15692,21 @@ Tell me your planned move-out date and I will set the inspection.`
         // care which kanban column the card sits in. Any active financed sale
         // file with unconfirmed approval \u22645 days out (or past) \u2192 DO FIRST with
         // the same wording the 8am SMS uses. Cash files never ping.
-        if(!isCashFile(f)){
+        // Marlenyi Aug 12 · Two guards on this escalation:
+        //   (1) SELLER-SIDE EXEMPT · loan approval is the buyer TC's task; the
+        //       seller-side checklist has no loan_approval task, so this chase
+        //       has no target on a seller file (1317 NE 9th Ave hit this).
+        //   (2) DEADLINE-CLEARED · if the loan_approval deadline is already
+        //       marked complete in file_deadlines (via the app_loan_approved
+        //       task, the Mark met button, or the field editor), the chase is
+        //       stale — the work is documented as done. lg.loan_approval_status
+        //       and f.loan_approval_confirmed are legacy signals that aren't
+        //       written by any current task, so relying on them alone leaves
+        //       ghost reminders.
+        const _isSeller = String(f.client_type || '').toLowerCase() === 'seller';
+        const _dlStatus = (typeof _deadlinesByFile !== 'undefined' && _deadlinesByFile[f.id]) || {};
+        const _laDone = (typeof _dlDoneFor === 'function') && _dlDoneFor(_dlStatus, 'loan_approval');
+        if(!isCashFile(f) && !_isSeller && !_laDone){
           const lg = (f.logistics && typeof f.logistics === 'object') ? f.logistics : {};
           if(lg.loan_approval_status !== 'approved' && !f.loan_approval_confirmed && dls.loan_approval){
             const ld = new Date(dls.loan_approval.date.getTime()); ld.setHours(0,0,0,0);
