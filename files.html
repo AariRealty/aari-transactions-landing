@@ -2017,6 +2017,7 @@
           <button type="button" class="gml-link" id="rl-open-link" title="Aari Google review link" style="display:none;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Review link</button>
           <button type="button" class="gml-link" id="svc-open-link" title="Turn services on or off" style="display:none;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Services</button>
           <button type="button" class="gml-link" id="pr-open-link" title="Post-close payment reminder cadence" style="display:none;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Payment reminders</button>
+          <button type="button" class="gml-link" id="dlfix-open-link" title="Reopen any not-yet-due deadline that was checked off, across all active files" style="display:none;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Fix checked-off deadlines</button>
           <button type="button" class="gml-link" id="gml-open-link" title="Gmail label setup" style="width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Gmail label setup</button>
           <button type="button" id="kbd-hint-btn" title="Keyboard shortcuts" style="width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Keyboard shortcuts</button>
         </div>
@@ -8135,6 +8136,8 @@ Tell me your planned move-out date and I will set the inspection.`
       const _sv = document.getElementById('svc-open-link'); if(_sv) _sv.style.display = '';
       // Payment reminders kill-switch is broker-only.
       const _pr = document.getElementById('pr-open-link'); if(_pr) _pr.style.display = '';
+      // "Fix checked-off deadlines" is broker-only (writes every file's deadlines · broker RLS).
+      const _df = document.getElementById('dlfix-open-link'); if(_df) _df.style.display = '';
     }
     wireUi();
     await loadAndRender();
@@ -13027,6 +13030,7 @@ Tell me your planned move-out date and I will set the inspection.`
   document.addEventListener('click', function(e){
     const mn = document.getElementById('files-menu'); if(!mn) return;
     if(e.target.closest && e.target.closest('#files-menu-btn')){ mn.style.display = (mn.style.display === 'none' || !mn.style.display) ? 'block' : 'none'; return; }
+    if(e.target.closest && e.target.closest('#dlfix-open-link')){ mn.style.display = 'none'; try { reopenFutureDeadlines(); } catch(_){} return; }
     if(!(e.target.closest && e.target.closest('#files-menu'))) mn.style.display = 'none';
   });
 
@@ -13192,6 +13196,53 @@ Tell me your planned move-out date and I will set the inspection.`
     return status[key] || null;
   }
   function _dlDoneFor(status, key){ const r = _dlRecFor(status, key); return !!(r && r.completed_at); }
+  // Broker-only self-serve fix for the recurring "future deadlines got checked off" problem
+  // (Marlenyi Aug 12 2026). Walks every active sale file, computes each deadline's real date with
+  // fileContractDeadlines (which already applies the manual date overrides in deadline_overrides._dates),
+  // and un-checks any deadline whose date is today or later but is marked done. Past deadlines are never
+  // touched. Survey is skipped on purpose: the past "existing survey" deliverable and the future "survey
+  // notice" share an alias group, so auto-reopening survey could resurrect a genuinely-done past item.
+  async function reopenFutureDeadlines(){
+    if(!window.confirm('Reopen every deadline that is not due yet but was checked off, across all active files?\n\nPast deadlines are left exactly as they are. This only un-checks future deadlines that should not have been marked done.')) return;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const SURVEY = { survey:1, survey_seller:1, survey_existing:1, survey_notice:1 };
+    let groups = []; try { groups = _dlAliasGroups(); } catch(_){}
+    const groupFor = function(key){ for(let i = 0; i < groups.length; i++){ if(groups[i].indexOf(key) !== -1) return groups[i]; } return [key]; };
+    const targets = {};
+    (_files || []).forEach(function(f){
+      try {
+        if(!f || f.status === 'archived') return;
+        if((typeof deriveStage === 'function') && deriveStage(f) === 'closed') return;
+        if((f.file_type || 'sale') !== 'sale') return;
+        const dls = (typeof fileContractDeadlines === 'function') ? (fileContractDeadlines(f) || []) : [];
+        const status = (typeof _deadlinesByFile !== 'undefined' && _deadlinesByFile[f.id]) || {};
+        dls.forEach(function(d){
+          if(!d || !(d.date instanceof Date) || isNaN(d.date.getTime())) return;
+          if(SURVEY[d.key]) return;
+          const dd = new Date(d.date.getTime()); dd.setHours(0, 0, 0, 0);
+          if(dd.getTime() < today.getTime()) return;   // already past · leave it
+          if(!_dlDoneFor(status, d.key)) return;        // not marked done · nothing to reopen
+          groupFor(d.key).forEach(function(k){ if(!SURVEY[k] && status[k] && status[k].completed_at){ targets[f.id + '|' + k] = { file_id:f.id, key:k }; } });
+        });
+      } catch(_){}
+    });
+    const list = Object.keys(targets).map(function(k){ return targets[k]; });
+    if(!list.length){ window.alert('Nothing to fix. No not-yet-due deadline is checked off.'); return; }
+    let failed = 0; const filesTouched = {};
+    for(let i = 0; i < list.length; i++){
+      try {
+        const r = await _client.from('file_deadlines').update({ completed_at:null, completed_by:null }).eq('file_id', list[i].file_id).eq('deadline_key', list[i].key);
+        if(r && r.error){ failed++; }
+        else { filesTouched[list[i].file_id] = 1; const _s = _deadlinesByFile[list[i].file_id]; if(_s && _s[list[i].key]) _s[list[i].key].completed_at = null; }
+      } catch(_){ failed++; }
+    }
+    try { if(typeof loadCalDeadlines === 'function'){ _calLoaded = false; await loadCalDeadlines(); } } catch(_){}
+    try { renderTodayAggregated(); } catch(_){}
+    try { renderTodayHero(); } catch(_){}
+    try { renderKanban(); } catch(_){}
+    try { if(typeof renderTcCalendar === 'function') renderTcCalendar(); if(typeof renderCalHeatmap === 'function') renderCalHeatmap(); } catch(_){}
+    window.alert('Reopened not-yet-due deadlines on ' + Object.keys(filesTouched).length + ' file(s). Past deadlines were left as-is.' + (failed ? ' (' + failed + ' could not save)' : ''));
+  }
   function _tcCalDeadlines(){
     const out = [];
     const _t0c = (function(){ const t = new Date(); t.setHours(0, 0, 0, 0); return t.getTime(); })();
