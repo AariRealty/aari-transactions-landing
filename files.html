@@ -28711,6 +28711,11 @@ Tell me your planned move-out date and I will set the inspection.`
       var _csStg; try { _csStg = (typeof deriveStage === 'function' && _currentFile) ? deriveStage(_currentFile) : ((_currentFile && _currentFile.transaction_stage) || 'new'); } catch(_){ _csStg = (_currentFile && _currentFile.transaction_stage) || 'new'; }
       var _csStages = (typeof STAGES_BY_TYPE === 'object' && STAGES_BY_TYPE[_csFt]) ? STAGES_BY_TYPE[_csFt] : ['new'];
       var _csOpts = _csStages.map(function(s){ var lab = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[s]) ? STAGE_LABELS[s] : s; var on = s === _csStg; return '<button type="button" data-set-stage="' + esc(s) + '" style="display:block;width:100%;text-align:left;border:0;background:' + (on ? '#f1ede6' : '#fff') + ';font-family:inherit;font-size:12px;color:#0f0f0f;padding:7px 12px;cursor:pointer;white-space:nowrap;border-radius:6px">' + (on ? '&#10003; ' : '') + esc(lab) + '</button>'; }).join('');
+      // Broker-only "Catch this file up" · one click clears every computed overdue deadline + task on
+      // this file (Marlenyi Aug 12 2026). Broker can write any file, so ghosts never get stuck the way
+      // a coordinator's tick does on another coordinator's file. Additive + reversible.
+      var _isBrokerUser = !!(_profile && String(_profile._realRole || _profile.role || '').toLowerCase() === 'broker');
+      var _catchUpBtn = _isBrokerUser ? '<button type="button" data-catch-up="1" style="display:block;width:100%;text-align:left;border:0;border-top:0.5px solid #f1eee7;background:none;font-family:inherit;font-size:12.5px;color:#0f0f0f;padding:8px 12px;cursor:pointer;border-radius:6px">Catch this file up</button>' : '';
       ref.innerHTML =
         '<div style="position:relative">' +
           '<button type="button" id="rail-more-btn" aria-label="More" style="background:none;border:0.5px solid rgba(15,15,15,.16);border-radius:8px;padding:5px 11px;font-size:16px;line-height:1;color:#8a857c;cursor:pointer;font-family:inherit">&#8943;</button>' +
@@ -28720,6 +28725,7 @@ Tell me your planned move-out date and I will set the inspection.`
             '<button type="button" data-client-profile="1" style="display:block;width:100%;text-align:left;border:0;border-top:0.5px solid #f1eee7;background:none;font-family:inherit;font-size:12.5px;color:#0f0f0f;padding:8px 12px;cursor:pointer;border-radius:6px">Client profile</button>' +
             '<button type="button" data-stage-toggle style="display:block;width:100%;text-align:left;border:0;border-top:0.5px solid #f1eee7;background:none;font-family:inherit;font-size:12.5px;color:#0f0f0f;padding:8px 12px;cursor:pointer;border-radius:6px">Change stage</button>' +
             '<div data-stage-menu hidden style="position:fixed;background:#fff;border:0.5px solid rgba(15,15,15,0.14);border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:4px;min-width:160px;z-index:200">' + _csOpts + '</div>' +
+            _catchUpBtn +
             // Mobile only (Mock C) · Request + Delete move off the bar into this menu. Hidden on
             // desktop via .rail-menu-mobile; they forward to the real bar controls.
             '<button type="button" data-proxy-request="1" class="rail-menu-mobile" style="display:none;width:100%;text-align:left;border:0;border-top:0.5px solid #f1eee7;background:none;font-family:inherit;font-size:12.5px;color:#0f0f0f;padding:8px 12px;cursor:pointer;border-radius:6px">Request from agent</button>' +
@@ -28727,6 +28733,53 @@ Tell me your planned move-out date and I will set the inspection.`
           '</div>' +
         '</div>';
     }
+  }
+  // Broker-only · mark every computed deadline and checklist task on ONE file as caught up. Uses the
+  // same upserting write paths as a manual tick (markDeadlineDone upserts + audit-logs each deadline;
+  // stage_tasks gets a done marker per task), so it's additive and reversible — untick any item to
+  // reopen it. Broker RLS can write any file, so this never gets blocked the way a coordinator's tick
+  // does on someone else's file. (Marlenyi Aug 12 2026.)
+  async function catchFileUp(file){
+    if(!file) return;
+    var addr = String(file.property_address || 'this file').split(',')[0];
+    if(!window.confirm('Mark every deadline and task on ' + addr + ' as caught up?\n\nThis clears all overdue items on this file. You can untick any item afterward.')) return;
+    var ft = file.file_type || 'sale';
+    var by = (_profile && (_profile.first_name || _profile.email)) || 'Broker';
+    var okDl = 0, okTask = 0, failed = false;
+    try {
+      // 1 · Deadlines — complete every key this file's engine computes.
+      var keys = [];
+      try { (fileContractDeadlines(file) || []).forEach(function(d){ if(d && d.key && keys.indexOf(d.key) === -1) keys.push(d.key); }); } catch(_){}
+      var today = new Date().toISOString().slice(0, 10);
+      for(var i = 0; i < keys.length; i++){
+        try { await markDeadlineDone(file, keys[i], today, ''); okDl++; } catch(_){ }
+      }
+      // 2 · Tasks — mark every checklist task (across all of this type's stages) done.
+      var stages = (typeof STAGES_BY_TYPE === 'object' && STAGES_BY_TYPE[ft]) ? STAGES_BY_TYPE[ft] : [];
+      var prev = (file.stage_tasks && typeof file.stage_tasks === 'object') ? file.stage_tasks : {};
+      var next = Object.assign({}, prev);
+      stages.forEach(function(stg){
+        var tasks = (typeof ckTasksFor === 'function') ? (ckTasksFor(file, stg) || []) : (((STAGE_CHECKLISTS[ft] || {})[stg]) || []);
+        tasks.forEach(function(t){
+          if(t && t.id && !(next[t.id] && next[t.id].done)){
+            next[t.id] = { done: true, at: new Date().toISOString(), by: by, via: 'broker_catch_up' };
+            okTask++;
+          }
+        });
+      });
+      file.stage_tasks = next;
+      var r = await _client.from('files').update({ stage_tasks: next }).eq('id', file.id);
+      if(r && r.error){ file.stage_tasks = prev; failed = true; }
+    } catch(err){ console.warn('[catch-up] failed', err); failed = true; }
+    // 3 · Refresh every surface.
+    try { renderDeadlinesForFile(file); } catch(_){}
+    try { renderStageChecklist(file); } catch(_){}
+    try { renderKanban(); } catch(_){}
+    try { renderTodayHero(); } catch(_){}
+    try { renderTodayAggregated(); } catch(_){}
+    try { renderPriorityQueue(); } catch(_){}
+    if(failed){ window.alert('Some updates did not save (database permission). Nothing was partially left overdue for the deadlines that did save.'); }
+    else { window.alert(addr + ' is caught up.\n' + okDl + ' deadline' + (okDl === 1 ? '' : 's') + ' and ' + okTask + ' task' + (okTask === 1 ? '' : 's') + ' marked done. Untick any item to reopen it.'); }
   }
   let _hubWired = false, _openPopKey = null;
   const _POP_TITLES = { terms:'Contract terms', ck:'Your work', dl:'Deadlines', vf:'Verification', lg:'Closing logistics', fd:'File details', next:'Coming up' };
@@ -28820,6 +28873,7 @@ Tell me your planned move-out date and I will set the inspection.`
       if(e.target.closest('[data-client-profile]')){ if(mm) mm.style.display = 'none'; if(_currentFile) openClientProfile(_currentFile.agent_id, _currentFile); return; }
       if(e.target.closest('[data-proxy-request]')){ if(mm) mm.style.display = 'none'; var _rq = document.getElementById('rail-request-agent'); if(_rq) _rq.click(); return; }
       if(e.target.closest('[data-proxy-delete]')){ if(mm) mm.style.display = 'none'; var _dl = document.querySelector('#tpb-del-head [data-del-link]') || document.querySelector('#tpb-delete [data-del-link]'); if(_dl) _dl.click(); return; }
+      if(e.target.closest('[data-catch-up]')){ if(mm) mm.style.display = 'none'; if(_currentFile){ try { catchFileUp(_currentFile); } catch(_){} } return; }
       if(e.target.closest('[data-reextract]')){ if(_currentFile) _reExtractContract(_currentFile); return; }
       const b = e.target.closest('[data-open-pop]');
       if(b && pv0.contains(b)){ openSectionPop(b.getAttribute('data-open-pop')); if(mm) mm.style.display = 'none'; return; }
