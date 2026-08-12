@@ -71,6 +71,31 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("ok", { status: 200 });
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
+  // Kill-switch · Marlenyi controls the arm/disarm from /files.html More menu
+  // > Payment reminders. Column added in
+  // 20260812_org_settings_payment_reminders_enabled.sql, default false so
+  // redeploying this function never surprises anyone with a burst of emails.
+  // We fetch the singleton row (id=1) and bail early on false or on any error
+  // reading it — safer to skip a run than to send when we can't confirm the
+  // flag.
+  try {
+    const { data: os, error: osErr } = await supabase
+      .from("org_settings")
+      .select("payment_reminders_enabled")
+      .eq("id", 1)
+      .maybeSingle();
+    if (osErr) {
+      console.warn("[closed-payment-reminder] org_settings read failed, skipping run", osErr.message);
+      return new Response(JSON.stringify({ ok: true, skipped: "org_settings_read_error" }), { status: 200 });
+    }
+    if (!os || os.payment_reminders_enabled !== true) {
+      return new Response(JSON.stringify({ ok: true, skipped: "disabled_by_broker", sent: 0 }), { status: 200 });
+    }
+  } catch (e) {
+    console.warn("[closed-payment-reminder] kill-switch check threw, skipping run", e);
+    return new Response(JSON.stringify({ ok: true, skipped: "kill_switch_exception" }), { status: 200 });
+  }
+
   // Two schema-alignment fixes vs the original (Marlenyi Aug 11):
   //   1. `closed_at` doesn't exist on public.files. The closing date lives in
   //      `actual_closing_date` (falls back to `closing_date` for legacy rows
