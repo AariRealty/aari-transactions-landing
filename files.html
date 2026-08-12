@@ -14197,26 +14197,36 @@ Tell me your planned move-out date and I will set the inspection.`
   // closing date never hides a month ahead (or under a long deadline list). One
   // unit per active sale file with a closing date, soonest first, tap to open.
   let _ncStep = 0; // "Next closings" · window offset from the first upcoming; the arrows step it
+  let _ncInit = false; // first render aligns the window to the first UPCOMING closing (past ones sit to the left)
   function nextClosingsHtml(){
     try {
       const today = new Date(); today.setHours(0, 0, 0, 0);
-      // Every active sale file with a closing date. Past-close files were auto-rolled
-      // forward by autoRollPastClosings() before this render runs, so `days` here is
-      // never negative for active files. A subtle "was scheduled Mmm D" note appears
-      // on any tile whose date was auto-rolled, and clicking it opens the file drawer
-      // where the "Confirm date →" button asks the TC to confirm/reschedule.
-      const eligible = (_files || []).filter(function(f){
-        if((f.file_type || 'sale') !== 'sale') return false;
-        if(f.status === 'archived' || f.status === 'closed') return false;
-        if(typeof deriveStage === 'function' && deriveStage(f) === 'closed') return false;
-        return !!f.closing_date;
-      }).map(function(f){
+      const _isClosed = function(f){ return f.status === 'closed' || (typeof deriveStage === 'function' && deriveStage(f) === 'closed'); };
+      const _mk = function(f){
         const c = new Date(String(f.closing_date).slice(0,10) + 'T12:00:00'); c.setHours(0, 0, 0, 0);
         const rolled = ((f.raw_form_data || {}).closing_date_auto_rolled_from) || '';
         return { f:f, date:c, days: Math.round((c - today) / 86400000), addr: String(f.property_address || '').split(',')[0], rolledFrom: rolled };
-      }).filter(function(x){ return !isNaN(x.date.getTime()) && x.days >= 0; });
+      };
+      // Upcoming · active sale files closing today or later. Auto-rolled ones read their real overdue count.
+      const upcoming = (_files || []).filter(function(f){
+        if((f.file_type || 'sale') !== 'sale') return false;
+        if(f.status === 'archived' || _isClosed(f)) return false;
+        return !!f.closing_date;
+      }).map(_mk).filter(function(x){ return !isNaN(x.date.getTime()) && x.days >= 0; });
+      upcoming.sort(function(a, b){ return a.date - b.date; });
+      // Past · recently CLOSED sale files, so the LEFT arrow reveals closed deals (Marlenyi Aug 12 2026).
+      // Most recent sits nearest the divider; capped so the strip never becomes an endless history.
+      const pastClosed = (_files || []).filter(function(f){
+        if((f.file_type || 'sale') !== 'sale') return false;
+        if(f.status === 'archived' || !_isClosed(f)) return false;
+        return !!f.closing_date;
+      }).map(function(f){ const u = _mk(f); u.closed = true; u.rolledFrom = ''; return u; })
+        .filter(function(x){ return !isNaN(x.date.getTime()); });
+      pastClosed.sort(function(a, b){ return a.date - b.date; });
+      const eligible = pastClosed.slice(-12).concat(upcoming);
       if(!eligible.length) return '';
-      eligible.sort(function(a, b){ return a.date - b.date; });
+      const firstUpcomingIdx = Math.min(pastClosed.slice(-12).length, Math.max(0, eligible.length - 5));
+      if(!_ncInit){ _ncStep = firstUpcomingIdx; _ncInit = true; }
       const maxStart = Math.max(0, eligible.length - 5);
       _ncStep = Math.max(0, Math.min(_ncStep, maxStart));
       const start = _ncStep;
@@ -14232,7 +14242,9 @@ Tell me your planned move-out date and I will set the inspection.`
         // from the original scheduled date, not "today" from the rolled date. Keeps
         // the pipeline slot but tells the truth about how late the closing is.
         let cd, col, dateLine;
-        if(x.rolledFrom){
+        if(x.closed){
+          cd = 'closed'; col = '#1f7a4d'; dateLine = fmt(x.date);
+        } else if(x.rolledFrom){
           try {
             const orig = new Date(String(x.rolledFrom).slice(0,10) + 'T12:00:00'); orig.setHours(0,0,0,0);
             // Marlenyi 2026-08-09 · use BUSINESS days so this pill agrees with
@@ -14255,8 +14267,8 @@ Tell me your planned move-out date and I will set the inspection.`
           col = x.days <= 3 ? '#a3402f' : '#7a756c';
           dateLine = fmt(x.date);
         }
-        const rolledStyle = x.rolledFrom ? ';border-left:2.5px solid #993c1d;background:#fdf6f4' : '';
-        const rolledNote  = x.rolledFrom ? '<div style="font-size:9px;color:#993c1d;font-weight:600;margin-top:2px;letter-spacing:0.15px">tap to confirm</div>' : '';
+        const rolledStyle = x.closed ? ';opacity:.72' : (x.rolledFrom ? ';border-left:2.5px solid #993c1d;background:#fdf6f4' : '');
+        const rolledNote  = (x.rolledFrom && !x.closed) ? '<div style="font-size:9px;color:#993c1d;font-weight:600;margin-top:2px;letter-spacing:0.15px">tap to confirm</div>' : '';
         return '<div data-cal-open="' + esc(x.f.id) + '" style="flex:0 0 auto;cursor:pointer;background:transparent;border:0.5px solid rgba(15,15,15,0.10);border-radius:7px;padding:6px 9px' + rolledStyle + '">' +
           '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f;line-height:1">' + dateLine + '</div>' +
           '<div style="font-size:11px;color:#3d3a34;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.addr) + '</div>' +
@@ -14268,7 +14280,7 @@ Tell me your planned move-out date and I will set the inspection.`
       return '<div style="background:transparent;padding:0 0 12px;margin-bottom:4px">' +
         '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;padding:0 2px">' +
           '<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f">Next closings</span>' +
-          '<span style="font-size:10px;font-weight:600;letter-spacing:0.4px;color:#a09a8f">' + eligible.length + ' upcoming</span>' +
+          '<span style="font-size:10px;font-weight:600;letter-spacing:0.4px;color:#a09a8f">' + upcoming.length + ' upcoming</span>' +
         '</div>' +
         '<div style="display:flex;gap:6px;align-items:stretch">' +
           arw(-1, 'Previous closings', canLeft) +
