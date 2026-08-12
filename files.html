@@ -2016,6 +2016,7 @@
           <a href="/contract-guide.html" target="_blank" rel="noopener" title="Contract comparison & deadline calculator" style="display:block;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer;text-decoration:none">Contract guide</a>
           <button type="button" class="gml-link" id="rl-open-link" title="Aari Google review link" style="display:none;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Review link</button>
           <button type="button" class="gml-link" id="svc-open-link" title="Turn services on or off" style="display:none;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Services</button>
+          <button type="button" class="gml-link" id="pr-open-link" title="Post-close payment reminder cadence" style="display:none;width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Payment reminders</button>
           <button type="button" class="gml-link" id="gml-open-link" title="Gmail label setup" style="width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Gmail label setup</button>
           <button type="button" id="kbd-hint-btn" title="Keyboard shortcuts" style="width:100%;text-align:left;border:0;background:none;font-family:inherit;font-size:13px;color:#0f0f0f;padding:9px 11px;border-radius:7px;cursor:pointer">Keyboard shortcuts</button>
         </div>
@@ -2196,6 +2197,35 @@
   </div>
   <div class="gml-foot">
     <button type="button" class="gml-dismiss" id="svc-close">Done</button>
+  </div>
+</div>
+
+<!-- Payment reminders · broker-only kill switch for the closed-payment-reminder
+     edge function (post-close TC-fee cadence). OFF by default so nothing sends
+     until Marlenyi flips it on. Saved to org_settings.payment_reminders_enabled.
+     Same gml-modal chrome as Review link / Services for visual consistency. -->
+<div class="gml-backdrop" id="pr-backdrop"></div>
+<div class="gml-modal" id="pr-modal" role="dialog" aria-modal="true" aria-labelledby="pr-title">
+  <div class="gml-head">
+    <p class="gml-title" id="pr-title">Payment reminders</p>
+  </div>
+  <div class="gml-body">
+    <p class="gml-intro">Automatic post-close email cadence for TC files whose fee is still <b>pending</b>. When ON, the assigned TC's name and email are used as the sender, and the client sees a Day 1 nudge and a Day 7 follow-up with their tagged payment link. Day 14+ is handled by the morning briefing SMS.</p>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0 6px;border-top:0.5px solid #f0ebe0">
+      <div style="min-width:0">
+        <div style="font-size:13px;font-weight:500;color:#0f0f0f">Send post-close reminders automatically</div>
+        <div style="font-size:11.5px;color:#8a857c;margin-top:2px" id="pr-sub">Off — nothing sends until you turn this on.</div>
+      </div>
+      <label style="flex:none;position:relative;display:inline-block;width:44px;height:24px;cursor:pointer">
+        <input type="checkbox" id="pr-switch" style="opacity:0;width:0;height:0;position:absolute">
+        <span id="pr-track" style="position:absolute;inset:0;background:#d9d4ca;border-radius:999px;transition:background .18s"></span>
+        <span id="pr-thumb" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:#fff;border-radius:50%;box-shadow:0 1px 2px rgba(0,0,0,.15);transition:transform .18s"></span>
+      </label>
+    </div>
+    <div id="pr-status" style="font-size:11.5px;margin-top:10px;min-height:14px"></div>
+  </div>
+  <div class="gml-foot">
+    <button type="button" class="gml-dismiss" id="pr-close">Done</button>
   </div>
 </div>
 
@@ -8031,6 +8061,10 @@ Tell me your planned move-out date and I will set the inspection.`
   // Service keys the broker has paused (org_settings.paused_services). Empty = everything is on.
   // Paused = not orderable, not billable; still fully trackable. See svcPaused().
   let _pausedServices = [];
+  // Kill-switch mirror for org_settings.payment_reminders_enabled. When false,
+  // the closed-payment-reminder edge function returns early on its daily cron.
+  // Flipped from the /files.html More menu > Payment reminders panel.
+  let _paymentRemindersEnabled = false;
   // ============== INIT ==============
   async function init(){
     // Set the post-auth return URL so an email/deep link that hits the login
@@ -8089,15 +8123,18 @@ Tell me your planned move-out date and I will set the inspection.`
     if(role === 'broker'){ document.getElementById('tc-filter').style.display = 'flex'; }
     // Load the global Aari Google review link + the broker's paused-service list (org_settings singleton).
     try {
-      const { data: _os } = await _client.from('org_settings').select('google_review_link_aari, paused_services').eq('id', 1).maybeSingle();
+      const { data: _os } = await _client.from('org_settings').select('google_review_link_aari, paused_services, payment_reminders_enabled').eq('id', 1).maybeSingle();
       _orgReviewLink = (_os && _os.google_review_link_aari) ? String(_os.google_review_link_aari).trim() : '';
       _pausedServices = (_os && Array.isArray(_os.paused_services)) ? _os.paused_services.map(function(s){ return String(s).toLowerCase(); }) : [];
-    } catch(_){ _orgReviewLink = ''; _pausedServices = []; }
+      _paymentRemindersEnabled = !!(_os && _os.payment_reminders_enabled);
+    } catch(_){ _orgReviewLink = ''; _pausedServices = []; _paymentRemindersEnabled = false; }
     // The Aari review-link setting is broker-only (org_settings RLS: broker writes).
     if(role === 'broker'){
       const _rl = document.getElementById('rl-open-link'); if(_rl) _rl.style.display = '';
       // Services on/off is broker-only too (org_settings RLS: broker writes).
       const _sv = document.getElementById('svc-open-link'); if(_sv) _sv.style.display = '';
+      // Payment reminders kill-switch is broker-only.
+      const _pr = document.getElementById('pr-open-link'); if(_pr) _pr.style.display = '';
     }
     wireUi();
     await loadAndRender();
@@ -28945,6 +28982,7 @@ Tell me your planned move-out date and I will set the inspection.`
     wireGmailLabelModal();
     wireReviewLinkModal();
     wireServicesModal();
+    wirePaymentRemindersModal();
     wireOfferEmailModal();
 
   // ===== GMAIL LABEL SETUP · first-login onboarding (Section 14) =====
@@ -29092,6 +29130,72 @@ Tell me your planned move-out date and I will set the inspection.`
         _pausedServices = prev;               // the database said no · put the switch back
         renderSvcToggles();
         console.warn('[services] save failed', err);
+        if(status){ status.style.color = '#c0392b'; status.textContent = 'Not saved. Only the broker can change this.'; }
+      }
+    });
+  }
+
+  // ===== Payment reminders · broker-only kill switch (org_settings) =====
+  // Mirror of the review-link/services modals. Single boolean flag persisted
+  // on org_settings.payment_reminders_enabled; the closed-payment-reminder
+  // edge function reads it at the top of every run and bails early if false.
+  // Optimistic-with-rollback like Services on/off — the switch never appears
+  // to succeed if RLS refuses the write (only brokers can flip it).
+  function _prRenderSwitch(){
+    const sw = document.getElementById('pr-switch');
+    const track = document.getElementById('pr-track');
+    const thumb = document.getElementById('pr-thumb');
+    const sub = document.getElementById('pr-sub');
+    if(!sw || !track || !thumb) return;
+    const on = !!_paymentRemindersEnabled;
+    sw.checked = on;
+    track.style.background = on ? '#0f0f0f' : '#d9d4ca';
+    thumb.style.transform = on ? 'translateX(20px)' : 'translateX(0)';
+    if(sub){
+      sub.textContent = on
+        ? 'On — sends automatically the day after close and again on day 7.'
+        : 'Off — nothing sends until you turn this on.';
+    }
+  }
+  function wirePaymentRemindersModal(){
+    const modal = document.getElementById('pr-modal');
+    const back = document.getElementById('pr-backdrop');
+    const link = document.getElementById('pr-open-link');
+    const closeBtn = document.getElementById('pr-close');
+    const sw = document.getElementById('pr-switch');
+    const status = document.getElementById('pr-status');
+    if(!modal || !back) return;
+    const open = function(){
+      if(status) status.textContent = '';
+      _prRenderSwitch();
+      modal.classList.add('open');
+      back.classList.add('open');
+    };
+    const close = function(){ modal.classList.remove('open'); back.classList.remove('open'); };
+    if(link) link.addEventListener('click', open);
+    if(back) back.addEventListener('click', close);
+    if(closeBtn) closeBtn.addEventListener('click', close);
+    if(sw) sw.addEventListener('change', async function(){
+      const next = !!sw.checked;
+      const prev = _paymentRemindersEnabled;
+      _paymentRemindersEnabled = next;
+      _prRenderSwitch();
+      if(status){ status.style.color = '#9a9a9a'; status.textContent = 'Saving…'; }
+      try {
+        const r = await _client.from('org_settings')
+          .update({ payment_reminders_enabled: next, updated_at: new Date().toISOString() })
+          .eq('id', 1);
+        if(r && r.error) throw r.error;
+        if(status){
+          status.style.color = '#2f6b48';
+          status.textContent = next
+            ? '✓ Armed. Next daily run at 14:00 UTC will start sending.'
+            : '✓ Paused. Nothing will send.';
+        }
+      } catch(err){
+        _paymentRemindersEnabled = prev;
+        _prRenderSwitch();
+        console.warn('[payment-reminders] save failed', err);
         if(status){ status.style.color = '#c0392b'; status.textContent = 'Not saved. Only the broker can change this.'; }
       }
     });
