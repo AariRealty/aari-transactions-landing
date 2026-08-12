@@ -11727,7 +11727,7 @@ Tell me your planned move-out date and I will set the inspection.`
       const isDone = !!(rec && rec.completed_at);
       const dd = new Date(d.date.getTime()); dd.setHours(0,0,0,0);
       const days = Math.round((dd - t0) / 86400000);
-      const row = { name:d.name, date:d.date, days:days };
+      const row = { key:d.key, name:d.name, date:d.date, days:days };
       if(isDone) out.done.push(row);
       else if(days < 0) out.late.push(row);
       // 5 calendar days ≈ the 3-business-day reminder window (which can span a weekend).
@@ -11749,9 +11749,19 @@ Tell me your planned move-out date and I will set the inspection.`
   function deadlineWatchHtml(file){
     const w = deadlineWatchData(file);
     const _fmt = function(d){ try { return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch(_){ return ''; } };
+    // Late-row escape hatch (Marlenyi Aug 12) · Eileen kept getting stuck on
+    // "1 late" because the strict TASK_CLEARS_DL wiring means only ONE task
+    // per deadline actually closes it (e.g. only insp_proceed_confirmed closes
+    // inspection_end). If the file's decision fields aren't logged, that
+    // task is hidden by showIf and she has no checkbox at all. Give the late
+    // deadline its OWN "Mark met" button so she can close any overdue row in
+    // one tap. Logs an audit entry via markDeadlineDone → FREC-defensible.
     const _row = function(r, late){
+      const markBtn = late
+        ? ' <button type="button" class="dw-mark" data-dw-mark="' + esc(r.key || '') + '" title="Confirm this deadline was met" style="border:0;background:#0f0f0f;color:#fff;font:600 10px/1.2 Inter,sans-serif;letter-spacing:.04em;text-transform:uppercase;padding:4px 9px;border-radius:999px;margin-left:8px;cursor:pointer">Mark met</button>'
+        : '';
       return '<div class="dw-row"><span><span class="dw-nm">' + esc(r.name) + '</span> <span class="dw-sub' + (late ? ' lt' : '') + '">due ' + _fmt(r.date) + '</span></span>' +
-        '<span class="dw-badge' + (late ? ' lt' : '') + '">' + _wDay(r.days) + '</span></div>';
+        '<span style="display:inline-flex;align-items:center"><span class="dw-badge' + (late ? ' lt' : '') + '">' + _wDay(r.days) + '</span>' + markBtn + '</span></div>';
     };
     let html = '';
     if(w.late.length){ html += '<div class="dw-glabel lt">Late &middot; ' + w.late.length + '</div>' + w.late.map(function(r){ return _row(r, true); }).join(''); }
@@ -25090,6 +25100,21 @@ Tell me your planned move-out date and I will set the inspection.`
       customCtl = cfpbWindowNote(file);
     } else if(t.id === 'insp_extension_check'){
       customCtl = inspExtendHtml(file);
+    } else if(t.id === 'insp_decision_followup'){
+      // Marlenyi Aug 12 · Eileen kept ticking this and expecting the
+      // Inspection Period Ends deadline to close. It doesn't — only
+      // insp_proceed_confirmed clears that deadline (see TASK_CLEARS_DL), and
+      // that task is hidden until logistics.inspection_decision is set. Nudge
+      // her to pick the decision now with a clear visual pointer, so the next
+      // step actually appears. Only shows once the task is checked AND no
+      // decision has been logged yet — otherwise it's noise.
+      try {
+        const _decDone = !!(rec && rec.done);
+        const _decVal = String((file.logistics || {}).inspection_decision || '');
+        if(_decDone && !_decVal){
+          customCtl = '<div style="margin:6px 0 8px 28px;padding:8px 11px;border-radius:8px;background:#fbf3e2;border:0.5px solid #ecdfc4;font-size:11.5px;color:#8a6d1b;line-height:1.45"><b>&#8595; Log the buyer decision below</b> — the &ldquo;Buyer proceeding&rdquo; step won&rsquo;t appear (and the inspection deadline stays open) until you pick <em>Proceeding</em> or <em>Canceling</em>.</div>';
+        }
+      } catch(_){}
     } else if(t.id === 'uc_loan_approval_acknowledged' && typeof isCashFile === 'function' && !isCashFile(file)){
       // The appraisal-result + loan-badge widget lives with the loan-approval task now
       // that tracks are one flat list (no per-track box to host it).
@@ -27652,6 +27677,39 @@ Tell me your planned move-out date and I will set the inspection.`
     const txt = (which === 'to') ? to : (which === 'subject' ? subj : (subj + '\n\n' + body));
     _clip(txt).then(function(ok){ if(ok) _flashCopied(c); });
   });
+  // Deadline watch · "Mark met" button on late rows (Marlenyi Aug 12).
+  // Closes the deadline directly from the read-only deadline watch panel
+  // without needing to find the matching TASK_CLEARS_DL task. Uses
+  // markDeadlineDone so the audit log records who marked it met, the actual
+  // date (today, since the deadline slipped past unconfirmed), and no note.
+  // A quick confirm keeps stray taps from mis-stamping a compliance record.
+  document.addEventListener('click', function(e){
+    const btn = e.target && e.target.closest && e.target.closest('[data-dw-mark]');
+    if(!btn) return;
+    e.preventDefault();
+    if(!_currentFile){ return; }
+    if(_currentFile.status === 'archived'){ alert('This file is archived — deadlines can no longer be edited.'); return; }
+    if(typeof saUnsigned === 'function' && saUnsigned(_currentFile)){
+      alert('This file is locked until the agent signs the Aari Transactions Service Agreement. Notify Marlenyi.');
+      return;
+    }
+    const key = btn.getAttribute('data-dw-mark') || '';
+    if(!key){ return; }
+    if(!confirm('Mark this deadline as met? An audit-log entry with your name and today’s date will be recorded.')) return;
+    const today = new Date().toISOString().slice(0, 10);
+    btn.disabled = true;
+    const _prev = btn.textContent;
+    btn.textContent = 'Saving…';
+    Promise.resolve(markDeadlineDone(_currentFile, key, today, ''))
+      .then(function(){ try { renderPlaybook(_currentFile); } catch(_){} })
+      .catch(function(err){
+        console.warn('[dw-mark] markDeadlineDone failed for', key, err);
+        btn.disabled = false;
+        btn.textContent = _prev;
+        alert('Could not save that. Check your connection and try again.');
+      });
+  });
+
   // Copy payment link (Section 11 · Fix 1) — copies the Stripe link to clipboard.
   // Also records the copy on the file so the drawer can show "Last copied X ago"
   // next to the button and Marlenyi can see when she last shared the link
