@@ -15649,7 +15649,21 @@ Tell me your planned move-out date and I will set the inspection.`
         // care which kanban column the card sits in. Any active financed sale
         // file with unconfirmed approval \u22645 days out (or past) \u2192 DO FIRST with
         // the same wording the 8am SMS uses. Cash files never ping.
-        if(!isCashFile(f)){
+        // Marlenyi Aug 12 · Two guards on this escalation:
+        //   (1) SELLER-SIDE EXEMPT · loan approval is the buyer TC's task; the
+        //       seller-side checklist has no loan_approval task, so this chase
+        //       has no target on a seller file (1317 NE 9th Ave hit this).
+        //   (2) DEADLINE-CLEARED · if the loan_approval deadline is already
+        //       marked complete in file_deadlines (via the app_loan_approved
+        //       task, the Mark met button, or the field editor), the chase is
+        //       stale — the work is documented as done. lg.loan_approval_status
+        //       and f.loan_approval_confirmed are legacy signals that aren't
+        //       written by any current task, so relying on them alone leaves
+        //       ghost reminders.
+        const _isSeller = String(f.client_type || '').toLowerCase() === 'seller';
+        const _dlStatus = (typeof _deadlinesByFile !== 'undefined' && _deadlinesByFile[f.id]) || {};
+        const _laDone = (typeof _dlDoneFor === 'function') && _dlDoneFor(_dlStatus, 'loan_approval');
+        if(!isCashFile(f) && !_isSeller && !_laDone){
           const lg = (f.logistics && typeof f.logistics === 'object') ? f.logistics : {};
           if(lg.loan_approval_status !== 'approved' && !f.loan_approval_confirmed && dls.loan_approval){
             const ld = new Date(dls.loan_approval.date.getTime()); ld.setHours(0,0,0,0);
