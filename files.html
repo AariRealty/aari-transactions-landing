@@ -15666,8 +15666,19 @@ Tell me your planned move-out date and I will set the inspection.`
     if((f.file_type || 'sale') === 'sale' && stage !== 'closed'){
       try {
         const dls = fileDeadlines(f);
+        // Marlenyi 2026-08-12 · ghost chase fix. fileDeadlines only computes
+        // dates from contract terms; it doesn't know completion state. Without
+        // this filter, every already-completed deadline still counted toward
+        // "Chase X · Nd late" on the file card and on Clear-to-Close badges,
+        // because the past-date scan ignored file_deadlines.completed_at.
+        // (1317 NE 9th Ave was hitting this even after PR #268 fixed the
+        // loan-approval-specific escalation — the general lastPast scan is
+        // the other path.)
+        const _dlDoneStatus = (typeof _deadlinesByFile !== 'undefined' && _deadlinesByFile[f.id]) || {};
+        const _dlDoneCheck = (typeof _dlDoneFor === 'function') ? _dlDoneFor : null;
         let next = null, lastPast = null;
         Object.keys(dls).forEach(k => {
+          if(_dlDoneCheck && _dlDoneCheck(_dlDoneStatus, k)) return;
           const dd = new Date(dls[k].date.getTime()); dd.setHours(0,0,0,0);
           if(dd >= today){ if(!next || dd < next.d) next = { d: dd, label: dls[k].label }; }
           else { if(!lastPast || dd > lastPast.d) lastPast = { d: dd, label: dls[k].label }; }
