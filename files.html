@@ -9538,6 +9538,19 @@ Tell me your planned move-out date and I will set the inspection.`
         alert('Could not save — check your connection.');
         return;
       }
+      // Marlenyi 2026-08-12 · cascade to file_deadlines so ticking a task
+      // that maps to a deadline (via TASK_CLEARS_DL) also clears the
+      // deadline row. Without this, Eileen ticks inspection_end / uc_loan_app
+      // and the today panel still counts them overdue because the deadline
+      // completion lives in a separate table. Same cascade already runs in
+      // the file drawer checklist at line ~28038; task_sheet + the new
+      // inline Also-on-you checkbox never had it, which is why 1611 NW 38th
+      // Ave stayed "Inspection Period Ends 1d late" after she ticked it.
+      try {
+        if(doneNow && typeof TASK_CLEARS_DL === 'object' && TASK_CLEARS_DL[taskId] && typeof markDeadlineDone === 'function'){
+          await markDeadlineDone(file, TASK_CLEARS_DL[taskId], new Date().toISOString().slice(0,10), '');
+        }
+      } catch(_){}
       _tsClose();
       try { renderTodayHero(); } catch(_){}
       try { renderTodayAggregated(); } catch(_){}
@@ -13051,7 +13064,11 @@ Tell me your planned move-out date and I will set the inspection.`
   //   survey_notice · no task exists at all. Standard A, buyer's written notice of survey defects.
   // Those three need new checklist tasks, which is a workflow decision, not a mapping one.
   const TASK_CLEARS_DL = {
-    uc_emd_followup:'emd_initial', uc_addl_followup:'emd_additional', uc_loan_app:'loan_app',
+    // Marlenyi 2026-08-12 · uc_loan_app was mapped to 'loan_app' but the
+    // deadline engine's key is 'loan_approval' (see js/deadline-engine.js).
+    // Result: ticking uc_loan_app wrote to a phantom deadline row and
+    // "Loan Approval Period Expires" never cleared (see 12643 Kinross Ln).
+    uc_emd_followup:'emd_initial', uc_addl_followup:'emd_additional', uc_loan_app:'loan_approval',
     uc_comp_agreement:'compensation', uc_tenant_lease:'tenant_lease', uc_survey_received:'survey',
     // Buyer confirmed they are proceeding, so the inspection period is satisfied. This one was the
     // worst of the five: Eileen ticks every insp_* task on every file and "Inspection Period Ends"
