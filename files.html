@@ -12842,23 +12842,37 @@ Tell me your planned move-out date and I will set the inspection.`
         itemsSub +
       '</div>';
     }).join('');
-    // Need you · grouped-by-urgency layout (Marlenyi picked "A" Aug 12 2026). One calm line per file,
-    // one chip. Three groups: Due today (red), This week (amber), Needs setup · no deadline yet (neutral).
-    // Fixes the old two-row table that left setup files with a blank date and read messy.
-    let needsBody = '';
+    // Every KPI popup uses ONE calm line per file, grouped by a meaningful dimension, one chip each
+    // (Marlenyi picked "A" Aug 12 2026, then asked for the same treatment on Active / Closing / Closed).
+    // Retires the old Property/Stage/Closing/TC table. Shared helpers:
+    const _chip = function(txt, cc, bg, bd){ return '<span style="flex:none;font-size:10px;font-weight:700;color:' + cc + ';background:' + bg + ';border:0.5px solid ' + bd + ';border-radius:20px;padding:3px 10px;white-space:nowrap">' + txt + '</span>'; };
+    const _row = function(f, chip, note){
+      const parts = String(f.property_address || 'File').split(',');
+      const l1 = parts[0].trim(); const l2 = parts.slice(1).join(',').trim();
+      const tcLbl = tcNameFor(f);
+      return '<div class="kpi-row" data-kpi-open="' + esc(f.id) + '" style="display:flex;align-items:center;gap:12px;padding:10px 4px;border-top:0.5px solid #f2eee2;cursor:pointer">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(l1) + '</div>' +
+          '<div style="font-size:11px;color:#a39e93;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(l2) + (note ? ' &middot; ' + esc(note) : '') + '</div></div>' +
+        (tcLbl ? '<span style="flex:none;font-size:10.5px;color:#a09a8f;white-space:nowrap">' + esc(tcLbl) + '</span>' : '') +
+        chip +
+      '</div>';
+    };
+    const _sh = function(txt, col, top){ return '<div style="font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:' + col + ';margin:' + (top ? '8' : '16') + 'px 2px 4px">' + txt + '</div>'; };
+    const _fmtMD = function(iso){ try { return new Date(String(iso).slice(0,10) + 'T12:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; } };
+    const _closeChip = function(f){
+      const cd = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+      if(cd == null) return _chip('No date', '#a09a8f', '#f4f2ec', '#e6e2d8');
+      if(cd < 0) return _chip(Math.abs(cd) + 'd overdue', '#993c1d', '#faece7', '#f3d9d0');
+      if(cd === 0) return _chip('Today', '#993c1d', '#faece7', '#f3d9d0');
+      if(cd === 1) return _chip('Tomorrow', '#8a6d1b', '#faf3e6', '#ecdfc4');
+      if(cd <= 7) return _chip('In ' + cd + ' days', '#8a6d1b', '#faf3e6', '#ecdfc4');
+      return _chip('In ' + cd + ' days', '#6f6a61', '#f1efe8', '#e4e0d6');
+    };
+    const _byClose = function(a, b){ var ad = a.closing_date ? new Date(String(a.closing_date).slice(0,10)).getTime() : 8.64e15; var bd = b.closing_date ? new Date(String(b.closing_date).slice(0,10)).getTime() : 8.64e15; return ad - bd; };
+
+    let groupedBody = '';
     if(kind === 'needs'){
-      const _chip = function(txt, cc, bg, bd){ return '<span style="flex:none;font-size:10px;font-weight:700;color:' + cc + ';background:' + bg + ';border:0.5px solid ' + bd + ';border-radius:20px;padding:3px 10px;white-space:nowrap">' + txt + '</span>'; };
-      const _row = function(f, chip, note){
-        const parts = String(f.property_address || 'File').split(',');
-        const l1 = parts[0].trim(); const l2 = parts.slice(1).join(',').trim();
-        const tcLbl = tcNameFor(f);
-        return '<div class="kpi-row" data-kpi-open="' + esc(f.id) + '" style="display:flex;align-items:center;gap:12px;padding:10px 4px;border-top:0.5px solid #f2eee2;cursor:pointer">' +
-          '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(l1) + '</div>' +
-            '<div style="font-size:11px;color:#a39e93;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(l2) + (note ? ' &middot; ' + esc(note) : '') + '</div></div>' +
-          (tcLbl ? '<span style="flex:none;font-size:10.5px;color:#a09a8f;white-space:nowrap">' + esc(tcLbl) + '</span>' : '') +
-          chip +
-        '</div>';
-      };
+      // Grouped by urgency · Due today (red), This week (amber), Needs setup (neutral).
       const gToday = [], gWeek = [], gSetup = [];
       list.forEach(function(f){
         const its = _pendingItemsFor(f);
@@ -12869,8 +12883,7 @@ Tell me your planned move-out date and I will set the inspection.`
           const over = its.filter(function(x){ return x.days != null && x.days < 0; }).length;
           const chip = over ? _chip(over + ' day' + (over === 1 ? '' : 's') + ' overdue', '#993c1d', '#faece7', '#f3d9d0') : _chip('Today', '#993c1d', '#faece7', '#f3d9d0');
           const act = its.find(function(x){ return !x.isSetup; });
-          const note = act ? String(act.label).replace(/^Follow up · /, '') : '';
-          gToday.push(_row(f, chip, note));
+          gToday.push(_row(f, chip, act ? String(act.label).replace(/^Follow up · /, '') : ''));
         } else if(cdto != null && cdto >= 0 && cdto <= 7){
           const txt = cdto === 0 ? 'Today' : (cdto === 1 ? 'Tomorrow' : 'In ' + cdto + ' days');
           gWeek.push(_row(f, _chip(txt, '#8a6d1b', '#faf3e6', '#ecdfc4'), 'closing'));
@@ -12878,10 +12891,34 @@ Tell me your planned move-out date and I will set the inspection.`
           gSetup.push(_row(f, _chip('Set up', '#6f6a61', '#f1efe8', '#e4e0d6'), 'no contract entered yet'));
         }
       });
-      const _sh = function(txt, col){ return '<div style="font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:' + col + ';margin:16px 2px 4px">' + txt + '</div>'; };
-      if(gToday.length) needsBody += _sh('Due today', '#a3402f').replace('margin:16px', 'margin:8px') + gToday.join('');
-      if(gWeek.length)  needsBody += _sh('This week', '#8a6d1b') + gWeek.join('');
-      if(gSetup.length) needsBody += _sh('Needs setup &middot; no deadline yet', '#a09a8f') + gSetup.join('');
+      if(gToday.length) groupedBody += _sh('Due today', '#a3402f', true) + gToday.join('');
+      if(gWeek.length)  groupedBody += _sh('This week', '#8a6d1b') + gWeek.join('');
+      if(gSetup.length) groupedBody += _sh('Needs setup &middot; no deadline yet', '#a09a8f') + gSetup.join('');
+    } else if(kind === 'active'){
+      // Grouped by pipeline stage (board order), each file showing its closing countdown.
+      const order = ['new','waiting_for_tc','intake_received','under_contract','appraisal','inspection','ctc','clear_to_close','pending','listing_live','listing','signed','active'];
+      const byStage = {};
+      list.forEach(function(f){ var s = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || 'active'); (byStage[s] = byStage[s] || []).push(f); });
+      Object.keys(byStage).sort(function(a, b){ var ia = order.indexOf(a), ib = order.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); }).forEach(function(s, i){
+        var lbl = (typeof STAGE_LABELS === 'object' && STAGE_LABELS[s]) ? STAGE_LABELS[s] : (s || 'Active');
+        byStage[s].sort(_byClose);
+        groupedBody += _sh(esc(lbl) + ' &middot; ' + byStage[s].length, '#8a7a5b', i === 0);
+        byStage[s].forEach(function(f){ groupedBody += _row(f, _closeChip(f), f.closing_date ? 'closes ' + _fmtMD(f.closing_date) : 'no closing date'); });
+      });
+    } else if(kind === 'closing'){
+      // Closing in the next 7 days · soonest first, one group.
+      list.sort(_byClose);
+      groupedBody += _sh('Closing this week', '#8a6d1b', true);
+      list.forEach(function(f){ groupedBody += _row(f, _closeChip(f), f.closing_date ? _fmtMD(f.closing_date) : ''); });
+    } else if(kind === 'ytd'){
+      // Closed this year · most recent first, grouped by month.
+      list.sort(function(a, b){ return -_byClose(a, b); });
+      var curMonth = null, first = true;
+      list.forEach(function(f){
+        var m = ''; try { m = new Date(String(f.closing_date).slice(0,10) + 'T12:00:00').toLocaleDateString('en-US', { month:'long', year:'numeric' }); } catch(_){}
+        if(m !== curMonth){ groupedBody += _sh(esc(m || 'Closed'), '#a09a8f', first); curMonth = m; first = false; }
+        groupedBody += _row(f, _chip('Closed ' + _fmtMD(f.closing_date), '#1f7a4d', '#e6f4ec', '#cce7d6'), '');
+      });
     }
     const empty = '<div style="padding:32px 12px;text-align:center;font-size:12.5px;color:#7a756c">Nothing here. You&rsquo;re ahead.</div>';
     const ov = document.createElement('div');
@@ -12895,14 +12932,7 @@ Tell me your planned move-out date and I will set the inspection.`
         '<button type="button" data-kpi-close="1" aria-label="Close" style="flex:none;background:transparent;border:0;color:#7a756c;font-size:20px;line-height:1;padding:4px 6px;cursor:pointer;font-family:inherit">&times;</button>' +
       '</div>' +
       (list.length
-        ? (kind === 'needs'
-            ? '<div style="margin-top:10px;max-height:64vh;overflow-y:auto">' + needsBody + '</div>'
-            : '<div style="margin-top:12px">' +
-                '<div style="display:grid;grid-template-columns:1.6fr 1fr 1fr .8fr;gap:12px;padding:8px 12px;font-size:9.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#a09a8f">' +
-                  '<div>Property</div><div>Stage</div><div>Closing</div><div>TC</div>' +
-                '</div>' +
-                '<div style="max-height:60vh;overflow-y:auto">' + rowHtml + '</div>' +
-              '</div>')
+        ? '<div style="margin-top:10px;max-height:64vh;overflow-y:auto">' + groupedBody + '</div>'
         : empty) +
     '</div>';
     document.body.appendChild(ov);
