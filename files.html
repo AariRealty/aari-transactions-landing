@@ -294,6 +294,18 @@
   .lane-body{display:flex;flex-direction:column;gap:6px}
   .card{background:#fdfcf8;border:0.5px solid #e8e4db;border-radius:10px;padding:0;overflow:hidden;cursor:grab;transition:transform .12s,box-shadow .12s;user-select:none}
   .card:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,0.05)}
+  /* Service swimlanes (Marlenyi picked "G" Aug 12 2026) · one horizontal lane per service line,
+     every service on screen at once. Reuses the existing .card so clicks/badges keep working. */
+  #kanban.swim{display:block}
+  .swim-lane{display:flex;gap:16px;align-items:flex-start;padding:14px 2px;border-top:0.5px solid #e7e1d4}
+  .swim-lane:first-child{border-top:0;padding-top:4px}
+  .swim-head{flex:0 0 132px;padding-top:2px}
+  .swim-head .svc-lane-name{font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#0f0f0f}
+  .swim-head .svc-lane-count{font-family:'Playfair Display',Georgia,serif;font-size:26px;font-weight:700;line-height:1;margin-top:4px}
+  .swim-head .swim-note{font-size:10px;margin-top:5px;line-height:1.3}
+  .swim-cards{flex:1;min-width:0;display:flex;gap:9px;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px}
+  .swim-cards .card{flex:0 0 214px}
+  @media(max-width:700px){ .swim-lane{flex-direction:column;gap:8px} .swim-head{flex:none} }
   .cardv2-face{padding:9px 11px 8px;background:#fdfcf8}
   .card.cash .cardv2-face{background:linear-gradient(180deg,#fdfcf8 0%,#faf6ea 100%)}
   .cardv2-top{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
@@ -17917,70 +17929,60 @@ Tell me your planned move-out date and I will set the inspection.`
     return haystack.indexOf(q) >= 0;
   }
 
+  // Which service lane a file belongs to. Sales stay together (their stage lives on the card), and
+  // every other service Aari runs gets its own lane. Closed files pool into one lane at the bottom.
+  function _svcLaneOf(f){
+    try { if(typeof deriveStage === 'function' && deriveStage(f) === 'closed') return { key:'closed', label:'Closed', order:9 }; } catch(_){}
+    var ft = f.file_type || 'sale';
+    var st = String(f.service_type || '').toLowerCase();
+    if(ft === 'sale') return { key:'sales', label:'Sales', order:1 };
+    if(st === 'mls_setup') return { key:'mls', label:'MLS Setup', order:3 };
+    if(st === 'file_organization') return { key:'fileorg', label:'File Organization', order:4 };
+    if(st === 'listing_docs' || st === 'listing_coordinator') return { key:'listings', label:'Listings', order:2 };
+    if(st.indexOf('offer_prep') === 0) return { key:'offer', label:'Offer Prep', order:5 };
+    if(st === 'standalone_review') return { key:'review', label:'Compliance', order:6 };
+    if(ft === 'listing') return { key:'listings', label:'Listings', order:2 };
+    return { key:'other', label:'Other', order:8 };
+  }
+  // Service swimlanes (Marlenyi picked "G" Aug 12 2026) · one horizontal lane per service line so every
+  // service is on screen at once. Reuses cardHtml, so click-to-open, drag and badges keep working (the
+  // click delegation already lives on #kanban). Replaces the stage-column grid.
+  function renderSwimlanes(){
+    const k = document.getElementById('kanban');
+    if(!k) return;
+    const active = (_files || []).filter(function(f){ return f && f.status !== 'archived' && !((f.raw_form_data || {}).test_pool); }).filter(matchesSearch);
+    if(!active.length){
+      k.classList.remove('swim'); k.style.gridTemplateColumns = '1fr';
+      k.innerHTML = '<div class="kanban-zero"><p class="kz-title">' + (_searchQuery ? 'No files match &ldquo;' + esc(_searchQuery) + '&rdquo;.' : 'No files assigned to you yet.') + '</p>' +
+        (_searchQuery ? '' : '<p class="kz-sub" style="margin-top:8px"><a href="/index.html#apply" class="kz-link">Send the intake link to an agent &rarr;</a></p>') + '</div>';
+      return;
+    }
+    const lanes = {}, meta = {};
+    active.forEach(function(f){ var L = _svcLaneOf(f); if(!lanes[L.key]){ lanes[L.key] = []; meta[L.key] = L; } lanes[L.key].push(f); });
+    const keys = Object.keys(lanes).sort(function(a, b){ return meta[a].order - meta[b].order; });
+    var html = '';
+    keys.forEach(function(key){
+      var arr = lanes[key].slice().sort(function(a, b){ return _cardRank(a) - _cardRank(b); });
+      var urgent = arr.filter(function(f){ return _cardRank(f) <= 2; }).length;
+      var note = key === 'closed' ? '<span style="color:#a09a8f">funded, paid</span>'
+        : (urgent ? '<span style="color:#a3402f;font-weight:700">' + urgent + ' need you</span>' : '<span style="color:#8a857c">on track</span>');
+      html += '<div class="swim-lane">' +
+          '<div class="swim-head">' +
+            '<div class="svc-lane-name lane-name">' + esc(meta[key].label) + '</div>' +
+            '<div class="svc-lane-count lane-count">' + arr.length + '</div>' +
+            '<div class="swim-note">' + note + '</div>' +
+          '</div>' +
+          '<div class="swim-cards">' + arr.map(cardHtml).join('') + '</div>' +
+        '</div>';
+    });
+    k.style.gridTemplateColumns = '';
+    k.classList.add('swim');
+    k.innerHTML = html;
+    wireKanbanDelegation();
+  }
   function renderKanban(){
     if(_serviceFilter && TC_SVC_TRACKS[_serviceFilter]){ return renderServiceKanban(TC_SVC_TRACKS[_serviceFilter]); }
-    const stages = getStages();
-    // Whole-kanban empty state · TC has zero files across ALL file_types.
-    // Shows a single CTA instead of 7 "Empty" placeholders.
-    if(_files.length === 0 && !_searchQuery){
-      const k = document.getElementById('kanban');
-      if(k){
-        k.style.gridTemplateColumns = '1fr';
-        k.innerHTML = '<div class="kanban-zero">' +
-          '<p class="kz-title">No files assigned to you yet.</p>' +
-          '<p class="kz-sub">Once agents submit through the intake form, files will land here with the right kanban for the workflow.</p>' +
-          '<p class="kz-sub" style="margin-top:14px"><a href="/index.html#apply" class="kz-link">Send the intake link to an agent &rarr;</a></p>' +
-          '</div>';
-      }
-      return;
-    }
-    // Filter empty state for active search query
-    const filtered = _files.filter(f => (f.file_type || 'sale') === _fileTypeFilter).filter(f => f.status !== 'archived' || _searchQuery).filter(matchesSearch);
-    if(filtered.length === 0 && _searchQuery){
-      const k = document.getElementById('kanban');
-      if(k){
-        k.style.gridTemplateColumns = '1fr';
-        k.innerHTML = '<div class="kanban-zero">' +
-          '<p class="kz-title">No files match &ldquo;' + esc(_searchQuery) + '&rdquo;.</p>' +
-          '<p class="kz-sub">Try clearing the search or checking another file type.</p>' +
-          '</div>';
-      }
-      return;
-    }
-    // Restore grid for the lane render
-    const k0 = document.getElementById('kanban');
-    if(k0) k0.style.gridTemplateColumns = 'repeat(' + stages.length + ',1fr)';
-    // Ensure lanes are present (shell may have been replaced by zero-state)
-    if(k0 && !k0.querySelector('.lane')){ renderKanbanShell(); }
-    const buckets = {}; stages.forEach(s => { buckets[s] = []; });
-    filtered.forEach(f => {
-      const s = deriveStage(f);
-      // If the derived stage isn't valid for this file_type (e.g., a sale file
-      // with stage 'inspection' viewed as 'listing'), bucket into the first lane.
-      if(buckets[s]) buckets[s].push(f);
-      else buckets[stages[0]].push(f);
-    });
-    stages.forEach(stage => {
-      const laneEl = document.getElementById('lane-'+stage);
-      const countEl = document.getElementById('count-'+stage);
-      if(countEl){
-        countEl.textContent = buckets[stage].length;
-        const urgent = (stage === 'ctc' || stage === 'inspection') && buckets[stage].some(f => {
-          const d = daysToClose(f);
-          return d != null && d <= 2;
-        });
-        countEl.classList.toggle('danger', urgent);
-      }
-      if(!laneEl) return;
-      if(buckets[stage].length === 0){
-        laneEl.innerHTML = '<div class="lane-empty">—</div>';
-        return;
-      }
-      // Calm cards (Muck B) · float what needs a person to the top of its lane so the flagged
-      // ones never hide in a tall stack. Stable sort keeps the existing order within each rank.
-      laneEl.innerHTML = buckets[stage].slice().sort(function(a, b){ return _cardRank(a) - _cardRank(b); }).map(cardHtml).join('');
-    });
-    wireKanbanDelegation();
+    renderSwimlanes();
     // List view mirrors every kanban refresh · honors the saved toggle.
     try { applyView(); } catch(_){}
     try { _renderKanbanChips(); } catch(_){}
