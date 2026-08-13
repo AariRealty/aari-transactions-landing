@@ -14724,30 +14724,46 @@ Tell me your planned move-out date and I will set the inspection.`
     const _dstat=(typeof _deadlinesByFile!=='undefined'&&_deadlinesByFile)||{};
     const _done=function(it){ try{ const bk=String(it.key||'').replace(/__chase$/,''); const st=_dstat[it.fileId]||{}; const rc=(typeof _dlRecFor==='function')?_dlRecFor(st,bk):null; return !!(rc&&rc.completed_at);}catch(_){return false;} };
     const chipBase='max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:8.5px;font-weight:800;letter-spacing:.2px;text-transform:uppercase;line-height:1;padding:3px 6px;border-radius:5px;';
+    // Marlenyi picked "C · pill + property inline" Aug 13 2026. Two changes vs the old grid:
+    // (1) finished deadlines collapse into one small "N done" pill so the week only shows LIVE work
+    //     (tap the day to see the done ones in the agenda panel below); (2) each live chip keeps its
+    //     colored tag pill but now shows the property beside it + a faint agent · side line, and a
+    //     rescheduled closing names its original date ("moved from Aug 12") so it never slips silently.
     let cols='';
     days.forEach(function(d,i){
       const ts=d.getTime(), items=byDay[ts]||[], isToday=ts===t0, isSel=ts===_calSelDay;
-      const real=items.filter(function(x){return !x.isChase;});
-      const ordered=real.concat(items.filter(function(x){return x.isChase;}));
-      const MAXC=6, shown=ordered.slice(0,MAXC), moreN=items.length-shown.length;
-      let chips=shown.map(function(it){
-        const done=_done(it), over=!it.isChase&&(ts<t0)&&!done;
-        // Closing chips get a distinct green fill so the highest-signal
-        // event on the file jumps off the grid (Marlenyi 2026-08-10).
+      const doneItems=items.filter(function(x){ return !x.isChase && _done(x); });
+      const live=items.filter(function(x){ return x.isChase || !_done(x); });
+      const liveOrdered=live.filter(function(x){return !x.isChase;}).concat(live.filter(function(x){return x.isChase;}));
+      let chips=liveOrdered.map(function(it){
+        const over=!it.isChase&&(ts<t0);
+        // Closing chips get a distinct green fill so the highest-signal event jumps off the grid.
         const isClose = /clos/i.test(String(it.key||''));
         let cs;
-        if(done) cs='background:#eef1ea;color:#8a938a;text-decoration:line-through;';
-        else if(over) cs='background:#f3ddd6;color:#8a4b2f;';
+        if(over) cs='background:#f3ddd6;color:#8a4b2f;';
         else if(it.isChase) cs=(isClose?'background:#d9ecdf;color:#1f5a3a;':'background:#f6edd9;color:#8a6a1f;');
         else cs=(isClose?'background:#085041;color:#fff;':'background:#0f0f0f;color:#fff;');
-        // Chip is clickable · opens the file directly. Day cell handler
-        // ignores clicks routed through a [data-cal-chip] element.
-        return '<span data-cal-chip data-cal-open="'+esc(it.fileId)+'" title="'+esc((it.label||'')+' · '+(it.address||''))+'" style="'+chipBase+cs+'cursor:pointer">'+esc(_calChipTag(it.key,it.label))+'</span>';
+        const f=(_files||[]).find(function(x){ return x.id===it.fileId; });
+        const propShort=String(it.address||(f&&f.property_address)||'').split(',')[0];
+        const agent=(f&&typeof _svcAgentName==='function')?_svcAgentName(f):'';
+        const side=(f&&typeof _svcSideLabel==='function')?_svcSideLabel(f):'';
+        const sub=[side, (agent&&agent!=='Agent TBD'?agent:'')].filter(Boolean).join(' · ');
+        // Moved closing · if the file kept an original closing date that differs, surface it.
+        let movedTxt='';
+        try{ if(isClose&&f){ const oc=(f.raw_form_data&&(f.raw_form_data.closing_date_original||f.raw_form_data.original_closing_date))||null; if(oc&&String(oc).slice(0,10)!==String(f.closing_date||'').slice(0,10)){ const od=new Date(String(oc).slice(0,10)+'T00:00:00'); movedTxt=(sub?' · ':'')+'moved from '+od.toLocaleDateString('en-US',{month:'short',day:'numeric'}); } } }catch(_){}
+        // Chip is clickable · opens the file. Day-cell handler ignores clicks routed through [data-cal-chip].
+        return '<div data-cal-chip data-cal-open="'+esc(it.fileId)+'" title="'+esc((it.label||'')+' · '+(it.address||''))+'" style="cursor:pointer;line-height:1.15">'+
+            '<div style="display:flex;align-items:center;gap:4px">'+
+              '<span style="flex:0 0 auto;font-size:8px;font-weight:800;letter-spacing:.2px;text-transform:uppercase;line-height:1;padding:3px 6px;border-radius:5px;'+cs+'">'+esc(_calChipTag(it.key,it.label))+'</span>'+
+              '<span style="min-width:0;font-size:9.5px;font-weight:700;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(propShort)+'</span>'+
+            '</div>'+
+            ((sub||movedTxt)?'<div style="font-size:8px;color:'+(movedTxt?'#a3402f':'#8a857c')+';margin:2px 0 0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(sub+movedTxt)+'</div>':'')+
+          '</div>';
       }).join('');
-      if(moreN>0) chips+='<span style="'+chipBase+'background:#efece6;color:#5f5e5a;">+'+moreN+' more</span>';
+      if(doneItems.length) chips+='<div style="'+chipBase+'background:#f5f4ef;border:0.5px solid #f0ece4;color:#9a9488;text-align:center;font-weight:700">&#10003; '+doneItems.length+' done</div>';
       if(!items.length) chips='<span style="font-size:10px;color:#d6d1c8;text-align:center">&mdash;</span>';
       const hdr='<div style="text-align:center;font-size:11px;font-weight:'+(isToday?'700':'600')+';color:'+(isToday?'#0f0f0f':'#9a958c')+'"><small style="display:block;font-size:8.5px;text-transform:uppercase;color:#9a958c;font-weight:700">'+dn[i]+'</small>'+d.getDate()+'</div>';
-      cols+='<div data-cal-day="'+ts+'" style="flex:1;min-width:0;min-height:190px;display:flex;flex-direction:column;gap:6px;padding:10px 8px;border-radius:9px;cursor:pointer;'+(isToday?'box-shadow:inset 0 0 0 2px #0f0f0f;':(isSel?'box-shadow:inset 0 0 0 1.5px #0f0f0f;':''))+'">'+hdr+chips+'</div>';
+      cols+='<div data-cal-day="'+ts+'" style="flex:1;min-width:0;min-height:150px;display:flex;flex-direction:column;gap:6px;padding:10px 8px;border-radius:9px;cursor:pointer;'+(isToday?'box-shadow:inset 0 0 0 2px #0f0f0f;':(isSel?'box-shadow:inset 0 0 0 1.5px #0f0f0f;':''))+'">'+hdr+chips+'</div>';
     });
     return '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:15px 16px">'+
       '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:15px;font-weight:600;color:#0f0f0f;margin-bottom:11px">'+esc(rangeLab)+'</div>'+
