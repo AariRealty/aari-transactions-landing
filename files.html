@@ -13776,8 +13776,10 @@ Tell me your planned move-out date and I will set the inspection.`
       // net" with its revenue and TC-pay breakdown was sitting directly above her own invoice.
       // Marlenyi: "I didn't want to show too much information as far as how we're splitting the
       // income. The invoice section should actually show an invoice."
+      // Pipeline box stays hidden by default now (the header's Net chip reveals it). Only force it
+      // shut on view changes; the chip is the one thing that opens it.
       const earn = document.getElementById('earnBox');
-      if(earn) earn.style.display = (_activeView === 'invoice') ? 'none' : '';
+      if(earn) earn.style.display = 'none';
       if(_activeView === 'invoice') renderInvoiceScreen();
       if(_activeView === 'list') { try { renderListScreen(); } catch(_){} }
     } catch(_){}
@@ -14157,10 +14159,47 @@ Tell me your planned move-out date and I will set the inspection.`
         (mp.detail ? ('<div class="cal-money-detail" data-money-detail="' + esc(f.id) + '">' + mp.detail + '</div>') : '') +
         '</div>';
     };
-    let html = '<div style="display:flex;align-items:center;gap:9px;margin-bottom:13px">' +
-      '<span style="flex:1;font-family:Georgia,\'Times New Roman\',serif;font-size:19px;font-weight:600;color:#0f0f0f">Active files</span>' +
-      _viewToggleHtml() +
-      '<input id="cal-search" value="' + esc(_calSearch) + '" placeholder="Search…" style="width:140px;font-size:12px;color:#0f0f0f;border:0.5px solid #ece8e0;border-radius:8px;padding:7px 11px;font-family:inherit;background:#fff"></div>';
+    // ===== Top section · lead with what needs you (Marlenyi picked "C" Aug 13 2026) =====
+    // The old bar was three equal tabs (Overview / List / Invoice) + a tall money box. Board and list
+    // are the SAME work shown two ways, billing is a different job, and the forecast is not an action.
+    // So: a hero naming how many files need you, a small board/list view switch, a Billing pill, and
+    // the pipeline figure shrunk to a "Net $X ▾" chip that reveals the full box (hidden by default).
+    var _activeForHdr = (_files || []).filter(function(f){ return f && f.status !== 'archived' && !((f.raw_form_data || {}).test_pool); });
+    var _needFilesHdr = _activeForHdr.filter(function(f){ try { return deriveStage(f) !== 'closed' && _cardRank(f) <= 2; } catch(_){ return false; } });
+    var _needN = _needFilesHdr.length, _nToday = 0, _nWeek = 0, _nDocs = 0;
+    _needFilesHdr.forEach(function(f){
+      var lg = f.logistics || {};
+      var docs = lg.reply_review || (lg.broker_review && lg.broker_review.status === 'needs_docs') || f.status === 'awaiting_broker_review';
+      if(docs){ _nDocs++; return; }
+      var a = (typeof cardAction === 'function') ? cardAction(f) : { tone:'green' };
+      if(a.tone === 'rose') _nToday++; else if(a.tone === 'amber') _nWeek++;
+    });
+    var _heroTxt = _needN ? (_needN + ' file' + (_needN === 1 ? '' : 's') + ' need you') : 'Nothing needs you';
+    var _subParts = [];
+    if(_nToday) _subParts.push(_nToday + ' due today');
+    if(_nWeek) _subParts.push(_nWeek + ' this week');
+    if(_nDocs) _subParts.push(_nDocs + ' waiting on docs');
+    var _subTxt = _needN ? (_subParts.join(' · ') || 'across your services') : 'Everything is on track';
+    var _roleHdr = (_profile && String(_profile.role || '').toLowerCase()) || '';
+    var _showInvHdr = (_roleHdr === 'tc') || (_roleHdr === 'broker');
+    var _invNHdr = _showInvHdr ? _invoiceBadgeCount() : 0;
+    var _vIcon = function(v, label, glyph){ var on = _activeView === v; return '<span data-active-view="' + v + '" title="' + label + '" style="display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:28px;padding:0 9px;cursor:pointer;border-radius:7px;font-size:13px;' + (on ? 'background:#0f0f0f;color:#fff' : 'color:#8a857c') + '">' + glyph + '</span>'; };
+    var _controls =
+      '<span style="display:inline-flex;gap:2px;background:#f2efe9;border-radius:9px;padding:3px">' + _vIcon('board', 'Board', '&#9638;') + _vIcon('list', 'List', '&#9776;') + '</span>' +
+      (_showInvHdr ? ('<span data-active-view="invoice" style="display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 13px;font-size:11px;font-weight:600;cursor:pointer;' + (_activeView === 'invoice' ? 'background:#0f0f0f;color:#fff;border:0.5px solid #0f0f0f' : 'background:#fff;color:#0f0f0f;border:0.5px solid #e6e1d6') + '">Billing' + (_invNHdr ? (' <span style="font-size:9px;font-weight:700;border-radius:999px;padding:1px 6px;' + (_activeView === 'invoice' ? 'background:#fff;color:#0f0f0f' : 'background:#0f0f0f;color:#fff') + '">' + _invNHdr + '</span>') : '') + '</span>') : '') +
+      '<span data-earn-toggle style="display:inline-flex;align-items:baseline;gap:6px;background:#fff;border:0.5px solid #e6e1d6;border-radius:999px;padding:5px 12px;cursor:pointer">' +
+        '<span style="font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#a39e93">Net</span>' +
+        '<b data-earn-amt style="font-size:13px;color:#0f0f0f;font-variant-numeric:tabular-nums">&mdash;</b>' +
+        '<span style="color:#a39e93;font-size:11px">&#9662;</span></span>' +
+      '<input id="cal-search" value="' + esc(_calSearch) + '" placeholder="Search…" style="width:120px;font-size:12px;color:#0f0f0f;border:0.5px solid #ece8e0;border-radius:8px;padding:7px 11px;font-family:inherit;background:#fff">';
+    let html = '<div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px;flex-wrap:wrap">' +
+        '<div style="flex:1;min-width:220px">' +
+          '<div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#a39e93">Active files &middot; today</div>' +
+          '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:26px;font-weight:700;line-height:1.12;margin-top:4px;color:#0f0f0f">' + esc(_heroTxt) + '</div>' +
+          '<div style="font-size:12px;color:#8a857c;margin-top:4px">' + esc(_subTxt) + '</div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + _controls + '</div>' +
+      '</div>';
     const ntc = g.needstc.filter(keep), nyou = g.needsyou.filter(keep), ont = g.ontrack.filter(keep);
     if(!(ntc.length + nyou.length + ont.length)){
       html += '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:26px;text-align:center;font-size:13px;color:#a39e95">No active files.</div>';
@@ -14274,7 +14313,7 @@ Tell me your planned move-out date and I will set the inspection.`
         // button, the active pill. Her own pipeline forecast is not urgent and should not wear the
         // loudest colour she owns. Marlenyi's call, and the breakdown stays behind a tap.
         var _stat = function(v, lab){ return '<span style="color:#5f5e5a"><b style="color:#0f0f0f;font-variant-numeric:tabular-nums">' + v + '</b> ' + lab + '</span>'; };
-        html += '<div id="earnBox" style="background:#faf8f3;border:0.5px solid #e8e4db;color:#0f0f0f;border-radius:12px;padding:22px 20px;margin-top:4px">' +
+        html += '<div id="earnBox" data-earn-amount="$' + _payFmt(_net) + '" data-earn-display="block" style="display:none;background:#faf8f3;border:0.5px solid #e8e4db;color:#0f0f0f;border-radius:12px;padding:22px 20px;margin-top:4px">' +
           '<div data-pl-toggle="1" style="text-align:center;cursor:pointer">' +
             '<div style="font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#a39e93;font-weight:700;margin-bottom:6px">Pipeline net &middot; if all ' + _pipeN + ' active file' + (_pipeN === 1 ? '' : 's') + ' close</div>' +
             '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:46px;line-height:1;font-variant-numeric:tabular-nums">$' + _payFmt(_net) + '</div>' +
@@ -14291,7 +14330,7 @@ Tell me your planned move-out date and I will set the inspection.`
         // Counts come from _mine so the headline can never disagree with the rows above it.
         var _myEarning = _mine.filter(function(it){ return tcPayFor(it.f) > 0; }).length;
         var _myCovered = _mine.filter(function(it){ return isCreditCovered(it.f); }).length;
-        html += '<div id="earnBox" style="display:flex;align-items:center;gap:12px;background:#0f0f0f;color:#fff;border-radius:12px;padding:14px 18px;margin-top:4px">' +
+        html += '<div id="earnBox" data-earn-amount="$' + _payFmt(_tcTotal) + '" data-earn-display="flex" style="display:none;align-items:center;gap:12px;background:#0f0f0f;color:#fff;border-radius:12px;padding:14px 18px;margin-top:4px">' +
           '<span style="flex:1;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#cfcabf">You earn &middot; ' + _mine.length + ' active</span>' +
           '<span style="font-size:11px;color:#a8a39a">' + _myEarning + ' paid' + (_myCovered ? (' &middot; ' + _myCovered + ' covered') : '') + '</span>' +
           '<span style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums">$' + _payFmt(_tcTotal) + '</span></div>';
@@ -14299,6 +14338,21 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     host.innerHTML = html; _wireCal(host);
     host.querySelectorAll('[data-pl-toggle]').forEach(function(h){ h.addEventListener('click', function(){ var d = this.parentElement.querySelector('.cal-pl-detail'); if(d) d.classList.toggle('cal-open'); }); });
+    // Net chip · mirrors the pipeline box's figure and reveals it on tap (the box is display:none by
+    // default now, so the forecast no longer owns the top of the screen). If there's no box to show
+    // (no company money for this viewer), the chip hides itself.
+    try {
+      var _earnEl = host.querySelector('#earnBox');
+      var _chipEl = host.querySelector('[data-earn-toggle]');
+      var _amtEl = host.querySelector('[data-earn-amt]');
+      if(_chipEl && _earnEl){
+        if(_amtEl) _amtEl.textContent = _earnEl.getAttribute('data-earn-amount') || '';
+        _chipEl.addEventListener('click', function(){
+          var open = _earnEl.style.display !== 'none';
+          _earnEl.style.display = open ? 'none' : (_earnEl.getAttribute('data-earn-display') || 'block');
+        });
+      } else if(_chipEl){ _chipEl.style.display = 'none'; }
+    } catch(_){}
   }
   // Next closings · always-on card pinned at the top of the calendar so a deal's
   // closing date never hides a month ahead (or under a long deadline list). One
