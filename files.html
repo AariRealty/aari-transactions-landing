@@ -19731,6 +19731,8 @@ Tell me your planned move-out date and I will set the inspection.`
         file.raw_form_data = raw; file.contract_filename = f.name; file._resolvedContract = undefined;
         if(_currentFile && _currentFile.id === file.id){ _currentFile.raw_form_data = raw; _currentFile.contract_filename = f.name; _currentFile._resolvedContract = undefined; }
         const ff = (_files || []).find(function(x){ return x.id === file.id; }); if(ff){ ff.raw_form_data = raw; ff.contract_filename = f.name; }
+        // Doc is now on file — clear the required-document gate wall if it was up.
+        try { file._gateHasDoc = true; if(typeof _enforceDocGate === 'function') _enforceDocGate(file); } catch(_){}
         renderPlaybook(file);
         // FREE contract extraction · drop a draft the terms + parties steppers
         // pre-fill from. Non-blocking: the attach already shows; this enriches it.
@@ -22306,6 +22308,74 @@ Tell me your planned move-out date and I will set the inspection.`
       '</div>';
   }
 
+  // ===== Required-document gate · Marlenyi picked "A" (front upload wall) Aug 13 2026 =====
+  // A listing needs a signed listing agreement and a sale needs an executed contract before the
+  // TC can work the file. When the required document is missing, openPlaybook covers the workspace
+  // with an upload wall — the checklist and everything behind it stay unreachable until the doc is
+  // on file, so a listing can never live in a compliance gap. Uploading reuses attachContract().
+  function _requiredDocName(file){
+    var ft = String((file && file.file_type) || 'sale').toLowerCase();
+    if(ft === 'listing') return 'signed listing agreement';
+    if(ft === 'sale')    return 'executed contract';
+    return null; // only listings and sales are gated
+  }
+  function _fileHasContractDoc(file){
+    var raw = file.raw_form_data || {};
+    if(raw.contract_removed) return false;
+    return !!(file.contract_url || raw.contract_url || raw.contract_path || file._resolvedContract);
+  }
+  // Older/imported files store the doc in transaction-files under <file_id>/ without a contract_path
+  // field. Check storage directly so those never get falsely walled.
+  async function _fileHasDocInStorage(file){
+    try {
+      var res = await _client.storage.from('transaction-files').list(String(file.id), { limit: 100 });
+      var objs = res && res.data;
+      if(objs && objs.length){
+        return objs.some(function(o){ return o && o.name && /\.(pdf|jpe?g|png|docx?)$/i.test(o.name); });
+      }
+    } catch(_){}
+    return false;
+  }
+  function _renderDocGateWall(file, docName){
+    var modal = document.getElementById('tpb-modal'); if(!modal) return;
+    var old = document.getElementById('doc-gate-wall'); if(old) old.remove();
+    var addr = esc(file.property_address || 'This file');
+    var wall = document.createElement('div');
+    wall.id = 'doc-gate-wall';
+    wall.style.cssText = 'position:absolute;inset:0;z-index:45;background:#fbfaf7;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:36px 26px;text-align:center;overflow:auto;border-radius:inherit';
+    wall.innerHTML =
+      '<div style="max-width:440px">' +
+        '<div style="width:44px;height:44px;border-radius:12px;background:#fff;border:1px solid #ece8e0;display:flex;align-items:center;justify-content:center;font-size:22px;color:#993c1d;margin:0 auto">&#8682;</div>' +
+        '<div style="font-family:Georgia,serif;font-weight:700;font-size:20px;margin:14px 0 4px">Upload the ' + esc(docName) + '</div>' +
+        '<div style="font-size:12.5px;color:#8a857c;line-height:1.5">' + addr + ' can’t be set up or worked until the ' + esc(docName) + ' is on file. This keeps every file audit-ready.</div>' +
+        '<div style="display:inline-block;margin-top:12px;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#993c1d;background:#faece7;border:0.5px solid #f0cdbc;border-radius:20px;padding:4px 11px">&#9650; Required to continue</div>' +
+        '<div style="margin-top:18px"><button type="button" data-gate-upload style="font-size:13px;font-weight:600;color:#fff;background:#0f0f0f;border:0;border-radius:9px;padding:11px 22px;cursor:pointer">Choose file</button></div>' +
+        '<div style="margin-top:12px"><button type="button" data-gate-close style="font-size:11.5px;color:#8a857c;background:none;border:0;cursor:pointer;text-decoration:underline;text-underline-offset:3px">Back to files</button></div>' +
+      '</div>';
+    modal.appendChild(wall);
+    var ub = wall.querySelector('[data-gate-upload]'); if(ub) ub.addEventListener('click', function(){ try { attachContract(file); } catch(_){} });
+    var cb = wall.querySelector('[data-gate-close]'); if(cb) cb.addEventListener('click', function(){ var c = document.getElementById('tpb-close'); if(c) c.click(); });
+  }
+  async function _enforceDocGate(file){
+    try {
+      if(!file) return;
+      var wallId = 'doc-gate-wall';
+      var docName = _requiredDocName(file);
+      var wall = document.getElementById(wallId);
+      if(!docName){ if(wall) wall.remove(); return; }
+      if(_fileHasContractDoc(file)){ if(wall) wall.remove(); return; }
+      // No doc in the saved fields — resolve once from storage before deciding to block.
+      if(file._gateHasDoc === undefined){
+        try { await resolveContractUrl(file); } catch(_){}
+        file._gateHasDoc = _fileHasContractDoc(file) ? true : await _fileHasDocInStorage(file);
+      }
+      wall = document.getElementById(wallId);
+      if(file._gateHasDoc){ if(wall) wall.remove(); return; }
+      if(!_currentFile || _currentFile.id !== file.id){ if(wall) wall.remove(); return; }
+      _renderDocGateWall(file, docName);
+    } catch(_){}
+  }
+
   function openPlaybook(file){
     _currentFile = file;
     renderClosingPassedBanner();
@@ -22333,6 +22403,9 @@ Tell me your planned move-out date and I will set the inspection.`
     // Work rail · open the workspace immediately; sections fill in as the async
     // loads (deadlines, verifications) land — no blank wait on the hub.
     if(typeof _railMode !== 'undefined' && _railMode){ try { wireHubNav(); openWorkRail(); } catch(_){} }
+    // Required-document gate (Item A) · cover the workspace with an upload wall if the listing
+    // agreement / executed contract isn't on file. Async so it never blocks the drawer opening.
+    try { _enforceDocGate(file); } catch(_){}
   }
 
   // ===== Unified stage work · email-card builder + delegation (Mockup 1) =====
