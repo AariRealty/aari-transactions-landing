@@ -18060,74 +18060,107 @@ Tell me your planned move-out date and I will set the inspection.`
     '</div>';
   }
 
+  // Action wording for a board card · honest about WHY a file needs you. A file flagged for
+  // docs/review used to show "On track" (the deadline engine had no phrase for it) — this names it.
+  function _svcActionParts(f){
+    var lg = f.logistics || {};
+    var docs = lg.reply_review || (lg.broker_review && lg.broker_review.status === 'needs_docs') || f.status === 'awaiting_broker_review';
+    var act = (typeof cardAction === 'function') ? cardAction(f) : { text:'', tone:'green' };
+    var tone = act.tone; var txt = String(act.text || ''); var line = txt, chip = '';
+    var mi = txt.indexOf(' · '); if(mi !== -1){ line = txt.slice(0, mi); chip = txt.slice(mi + 3); }
+    if(docs && (!line || line.indexOf('On track') === 0)){ line = 'Waiting on docs'; if(!chip) chip = 'Docs'; if(tone === 'green') tone = 'amber'; }
+    var col = tone === 'rose' ? '#a3402f' : (tone === 'amber' ? '#8a6d1b' : '#8a857c');
+    return { line: line, chip: chip, tone: tone, col: col };
+  }
+
+  // One board card · address + side, action in its tone, agent + urgency chip. No black bar, no rails.
+  function _svcColCard(f){
+    var l1 = String(f.property_address || 'File').split(',')[0].trim();
+    var side = _svcSideLabel(f);
+    var isCash = false; try { isCash = isCashFile(f); } catch(_){}
+    var p = _svcActionParts(f);
+    var agent = _svcAgentName(f); var init = _svcInitials(agent);
+    var chipStyle = p.tone === 'rose' ? 'color:#a3402f;background:#faece7;border:0.5px solid #f3d9d0' : (p.tone === 'amber' ? 'color:#8a6d1b;background:#faf3e6;border:0.5px solid #ecdfc4' : 'color:#8a857c;background:#f1efe8;border:0.5px solid #e4e0d6');
+    return '<div class="card" data-file-id="' + esc(f.id) + '" style="background:#fff;border:0.5px solid #e8e3d8;border-radius:10px;padding:10px 11px;margin-bottom:8px;cursor:pointer">' +
+      '<div style="font-size:12.5px;font-weight:700;line-height:1.15;color:#0f0f0f">' + esc(l1) +
+        (side ? '<span style="' + _SIDE_CHIP + '">' + esc(side) + (isCash ? ' &middot; Cash' : '') + '</span>' : '') + '</div>' +
+      '<div style="font-size:10.5px;font-weight:700;margin-top:6px;color:' + p.col + '">' + esc(p.line || 'On track') + '</div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px">' +
+        '<span style="display:flex;align-items:center;gap:5px;font-size:9.5px;color:#8a857c;min-width:0">' +
+          '<span style="width:14px;height:14px;border-radius:50%;background:#ded8ca;color:#5f5a50;font-size:7px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto">' + esc(init) + '</span>' +
+          '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(agent) + '</span></span>' +
+        (p.chip ? '<span style="font-size:9px;font-weight:700;border-radius:20px;padding:2px 8px;white-space:nowrap;flex:0 0 auto;' + chipStyle + '">' + esc(p.chip) + '</span>' : '') +
+      '</div>' +
+    '</div>';
+  }
+
+  // Overview = service columns (Marlenyi picked "1" Aug 13 2026). One column per service line, all on
+  // screen. Cards with the ones that need you on top; the on-track / closed pile folds into a pill so a
+  // 16-file column never buries the two that matter. Card click opens the file (wireKanbanDelegation).
   function renderServiceTiles(){
     const k = document.getElementById('kanban');
     if(!k) return;
     const active = (_files || []).filter(function(f){ return f && f.status !== 'archived' && !((f.raw_form_data || {}).test_pool); });
     k.classList.remove('swim'); k.style.gridTemplateColumns = '';
     if(!active.length){
-      _svcOpen = null;
       k.innerHTML = '<div class="kanban-zero"><p class="kz-title">No files assigned to you yet.</p>' +
         '<p class="kz-sub" style="margin-top:8px"><a href="/index.html#apply" class="kz-link">Send the intake link to an agent &rarr;</a></p></div>';
-      _wireSvcTiles(); return;
+      _wireSvcCols(); return;
     }
-    // Search cuts across services · show a flat result list instead of tiles.
+    // Search cuts across services · flat ranked result list instead of columns.
     if(_searchQuery){
       var hits = active.filter(matchesSearch).sort(function(a, b){ return _cardRank(a) - _cardRank(b); });
-      k.innerHTML = '<div style="background:#fcfaf5;border-radius:16px;padding:14px 18px">' +
-        '<div style="font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#a39e93;margin:2px 2px 8px">' + hits.length + ' result' + (hits.length === 1 ? '' : 's') + '</div>' +
-        (hits.length ? hits.map(_svcFileRow).join('') : '<div style="font-size:12px;color:#8a857c;padding:6px 4px">No files match &ldquo;' + esc(_searchQuery) + '&rdquo;.</div>') +
+      k.innerHTML = '<div style="background:#fcfaf5;border-radius:16px;padding:14px 18px;max-width:560px">' +
+        '<div style="font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#a39e93;margin:2px 2px 10px">' + hits.length + ' result' + (hits.length === 1 ? '' : 's') + '</div>' +
+        (hits.length ? hits.map(_svcColCard).join('') : '<div style="font-size:12px;color:#8a857c;padding:6px 4px">No files match &ldquo;' + esc(_searchQuery) + '&rdquo;.</div>') +
       '</div>';
-      _wireSvcTiles(); return;
+      _wireSvcCols(); return;
     }
     // Group into service lanes.
     var lanes = {}, meta = {};
     active.forEach(function(f){ var L = _svcLaneOf(f); if(!lanes[L.key]){ lanes[L.key] = []; meta[L.key] = L; } lanes[L.key].push(f); });
     var keys = Object.keys(lanes).sort(function(a, b){ return meta[a].order - meta[b].order; });
 
-    // Drilled into one service · show its file list.
-    if(_svcOpen && lanes[_svcOpen]){
-      var arr = lanes[_svcOpen].slice().sort(function(a, b){ return _cardRank(a) - _cardRank(b); });
-      var isClosed = _svcOpen === 'closed';
+    var colsHtml = keys.map(function(key){
+      var isClosed = key === 'closed';
+      var arr = lanes[key].slice().sort(function(a, b){ return _cardRank(a) - _cardRank(b); });
       var need = isClosed ? [] : arr.filter(function(f){ return _cardRank(f) <= 2; });
       var calm = isClosed ? arr : arr.filter(function(f){ return _cardRank(f) > 2; });
-      var body = '';
-      if(need.length){
-        body += '<div style="font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#a3402f;margin:6px 2px 6px">Needs you now</div>' + need.map(_svcFileRow).join('');
-      }
+      var cards = need.map(_svcColCard).join('');
+      if(!need.length && !isClosed) cards += '<div style="font-size:10px;color:#a39e93;text-align:center;padding:8px 4px 10px">Nothing needs you</div>';
       if(calm.length){
-        body += '<div style="font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#a39e93;margin:' + (need.length ? '18px' : '6px') + ' 2px 6px">' + (isClosed ? 'Closed &middot; ' + calm.length : 'On track &middot; ' + calm.length) + '</div>' + calm.map(_svcFileRow).join('');
+        var lbl = (isClosed ? calm.length + ' closed' : calm.length + ' on track') + ' ›';
+        cards += '<button type="button" data-col-fold="' + esc(key) + '" data-col-lbl="' + esc(lbl) + '" style="width:100%;font-size:10px;color:#8a857c;text-align:center;padding:8px;background:#f6f3ec;border:0.5px dashed #e2dccd;border-radius:9px;cursor:pointer">' + lbl + '</button>' +
+          '<div data-col-hidden="' + esc(key) + '" style="display:none;margin-top:8px">' + calm.map(_svcColCard).join('') + '</div>';
       }
-      if(!need.length && !calm.length) body = '<div style="font-size:12px;color:#8a857c;padding:8px 4px">No files in this service.</div>';
-      k.innerHTML = '<div style="background:#fcfaf5;border-radius:16px;padding:16px 18px">' +
-        '<button type="button" data-svc-back="1" style="background:none;border:0;font-size:12px;color:#8a857c;cursor:pointer;padding:0;margin-bottom:10px">&lsaquo; All services</button>' +
-        '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;font-weight:700;line-height:1">' + esc(meta[_svcOpen].label) + '</div>' +
-        '<div style="font-size:11px;color:#a39e93;margin:2px 0 12px">' + arr.length + ' file' + (arr.length === 1 ? '' : 's') + (need.length ? ' &middot; ' + need.length + ' need you' : '') + '</div>' +
-        body +
-      '</div>';
-      _wireSvcTiles(); return;
-    }
-
-    // Overview · the tile grid.
-    _svcOpen = null;
-    var tiles = keys.map(function(key){ return _svcTileHtml(key, meta[key], lanes[key]); }).join('');
-    k.innerHTML = '<div class="svc-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">' + tiles + '</div>';
-    _wireSvcTiles();
+      return '<div style="flex:1 1 0;min-width:182px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;padding:0 4px 9px">' +
+            '<span style="font-size:9.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#a39e93">' + esc(meta[key].label) + '</span>' +
+            '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:16px;font-weight:700">' + arr.length + '</span>' +
+          '</div>' + cards +
+        '</div>';
+    }).join('');
+    k.innerHTML = '<div style="display:flex;gap:11px;align-items:flex-start;overflow-x:auto;padding-bottom:4px">' + colsHtml + '</div>';
+    _wireSvcCols();
   }
 
-  // Delegated once on #kanban · tile-open and back. File-open is handled by the existing
+  // Delegated once on #kanban · the on-track / closed fold pills. File-open is handled by the existing
   // wireKanbanDelegation click listener (any .card[data-file-id] opens the playbook).
-  function _wireSvcTiles(){
+  function _wireSvcCols(){
     wireKanbanDelegation();
     const k = document.getElementById('kanban');
-    if(!k || k._svcWired) return;
-    k._svcWired = true;
+    if(!k || k._svcColWired) return;
+    k._svcColWired = true;
     k.addEventListener('click', function(e){
-      if(e.target.closest('.card[data-file-id]')) return; // file rows / peeks open the file
-      var back = e.target.closest('[data-svc-back]');
-      if(back){ e.stopPropagation(); _svcOpen = null; renderServiceTiles(); return; }
-      var tile = e.target.closest('[data-svc-open]');
-      if(tile){ _svcOpen = tile.getAttribute('data-svc-open'); renderServiceTiles(); }
+      var btn = e.target.closest('[data-col-fold]');
+      if(!btn) return;
+      e.stopPropagation();
+      var key = btn.getAttribute('data-col-fold');
+      var hid = k.querySelector('[data-col-hidden="' + key + '"]');
+      if(!hid) return;
+      var showing = hid.style.display !== 'none';
+      hid.style.display = showing ? 'none' : 'block';
+      btn.textContent = showing ? btn.getAttribute('data-col-lbl') : 'Hide';
     });
   }
   function renderKanban(){
