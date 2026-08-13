@@ -12705,9 +12705,15 @@ Tell me your planned move-out date and I will set the inspection.`
         if(d != null && d >= 0 && d <= 7) closingWk++;
       }
     });
-    // "need you" = the same set as the Needs-you card (overdue / due today / needs setup),
-    // so the top number can never disagree with the list below it.
-    let needs = 0; try { needs = (_fileTriage().needsyou || []).length; } catch(_){}
+    // "need you" = the ONE shared _needsYou() definition, so the strip, the header hero, the modal
+    // and the board columns always agree. Respects the same active/claim-pool filters as the loop.
+    let needs = 0;
+    _files.forEach(f => {
+      if((f.raw_form_data || {}).test_pool) return;
+      if(f.status === 'archived') return;
+      if(_tcView && !f.assigned_tc_id) return;
+      if(_needsYou(f)) needs++;
+    });
     const needsEl = document.getElementById('kpi-needs');
     needsEl.textContent = needs;
     needsEl.classList.toggle('danger', needs > 0);
@@ -12727,11 +12733,11 @@ Tell me your planned move-out date and I will set the inspection.`
     const _tcView = String((_profile && _profile.role) || '').toLowerCase() === 'tc';
     const today = new Date(); today.setHours(0, 0, 0, 0);
     if(kind === 'needs'){
-      try {
-        const trg = _fileTriage();
-        return (trg.needsyou || []).map(function(it){ return it.f; })
-          .concat((trg.needstc || []).map(function(it){ return it.f; }));
-      } catch(_){ return []; }
+      return (_files || []).filter(function(f){
+        if(!f) return false;
+        if(_tcView && !f.assigned_tc_id) return false;
+        return _needsYou(f);
+      });
     }
     return (_files || []).filter(function(f){
       if(!f) return false;
@@ -14174,20 +14180,23 @@ Tell me your planned move-out date and I will set the inspection.`
     // So: a hero naming how many files need you, a small board/list view switch, a Billing pill, and
     // the pipeline figure shrunk to a "Net $X ▾" chip that reveals the full box (hidden by default).
     var _activeForHdr = (_files || []).filter(function(f){ return f && f.status !== 'archived' && !((f.raw_form_data || {}).test_pool); });
-    var _needFilesHdr = _activeForHdr.filter(function(f){ try { return deriveStage(f) !== 'closed' && _cardRank(f) <= 2; } catch(_){ return false; } });
-    var _needN = _needFilesHdr.length, _nToday = 0, _nWeek = 0, _nDocs = 0;
+    var _needFilesHdr = _activeForHdr.filter(_needsYou); // ONE shared definition · matches the KPI strip + board
+    var _needN = _needFilesHdr.length, _nToday = 0, _nWeek = 0, _nDocs = 0, _nSetup = 0;
     _needFilesHdr.forEach(function(f){
       var lg = f.logistics || {};
       var docs = lg.reply_review || (lg.broker_review && lg.broker_review.status === 'needs_docs') || f.status === 'awaiting_broker_review';
       if(docs){ _nDocs++; return; }
       var a = (typeof cardAction === 'function') ? cardAction(f) : { tone:'green' };
-      if(a.tone === 'rose') _nToday++; else if(a.tone === 'amber') _nWeek++;
+      if(a.tone === 'rose') _nToday++;
+      else if(a.tone === 'amber') _nWeek++;
+      else _nSetup++; // green tone but still in the set = a new file that needs setup
     });
     var _heroTxt = _needN ? (_needN + ' file' + (_needN === 1 ? '' : 's') + ' need you') : 'Nothing needs you';
     var _subParts = [];
     if(_nToday) _subParts.push(_nToday + ' due today');
     if(_nWeek) _subParts.push(_nWeek + ' this week');
     if(_nDocs) _subParts.push(_nDocs + ' waiting on docs');
+    if(_nSetup) _subParts.push(_nSetup + ' to set up');
     var _subTxt = _needN ? (_subParts.join(' · ') || 'across your services') : 'Everything is on track';
     var _roleHdr = (_profile && String(_profile.role || '').toLowerCase()) || '';
     var _showInvHdr = (_roleHdr === 'tc') || (_roleHdr === 'broker');
@@ -18205,8 +18214,8 @@ Tell me your planned move-out date and I will set the inspection.`
     var colsHtml = keys.map(function(key){
       var isClosed = key === 'closed';
       var arr = lanes[key].slice().sort(function(a, b){ return _cardRank(a) - _cardRank(b); });
-      var need = isClosed ? [] : arr.filter(function(f){ return _cardRank(f) <= 2; });
-      var calm = isClosed ? arr : arr.filter(function(f){ return _cardRank(f) > 2; });
+      var need = isClosed ? [] : arr.filter(_needsYou);
+      var calm = isClosed ? arr : arr.filter(function(f){ return !_needsYou(f); });
       var cards = need.map(_svcColCard).join('');
       if(!need.length && !isClosed) cards += '<div style="font-size:10px;color:#a39e93;text-align:center;padding:8px 4px 10px">Nothing needs you</div>';
       if(calm.length){
@@ -20745,6 +20754,22 @@ Tell me your planned move-out date and I will set the inspection.`
       if(a.tone === 'amber') return 2;
     } catch(_){}
     return 3;
+  }
+  // ===== ONE definition of "needs you" (Marlenyi Aug 13 2026) =====
+  // The KPI strip, the header hero, the KPI modal list and the board columns all route through this,
+  // so the count can never disagree between surfaces (it used to: the strip used overdue/today/setup
+  // while the board used red/amber urgency). A file needs you if it's board-urgent (today / this week
+  // / flagged for docs = _cardRank <= 2) OR it's a genuinely new file assigned to a coordinator that
+  // hasn't been set up yet. Closed / archived / test-pool never count.
+  function _needsYou(f){
+    if(!f) return false;
+    if((f.raw_form_data || {}).test_pool) return false;
+    if(f.status === 'archived') return false;
+    var s = ''; try { s = deriveStage(f); } catch(_){}
+    if(s === 'closed') return false;
+    try { if(_cardRank(f) <= 2) return true; } catch(_){}
+    if(f.assigned_tc_id && (s === 'new' || s === 'waiting_for_tc')) return true;
+    return false;
   }
 
   // ============== CLOSING CERTAINTY SCORE ==============
