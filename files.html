@@ -12842,6 +12842,47 @@ Tell me your planned move-out date and I will set the inspection.`
         itemsSub +
       '</div>';
     }).join('');
+    // Need you · grouped-by-urgency layout (Marlenyi picked "A" Aug 12 2026). One calm line per file,
+    // one chip. Three groups: Due today (red), This week (amber), Needs setup · no deadline yet (neutral).
+    // Fixes the old two-row table that left setup files with a blank date and read messy.
+    let needsBody = '';
+    if(kind === 'needs'){
+      const _chip = function(txt, cc, bg, bd){ return '<span style="flex:none;font-size:10px;font-weight:700;color:' + cc + ';background:' + bg + ';border:0.5px solid ' + bd + ';border-radius:20px;padding:3px 10px;white-space:nowrap">' + txt + '</span>'; };
+      const _row = function(f, chip, note){
+        const parts = String(f.property_address || 'File').split(',');
+        const l1 = parts[0].trim(); const l2 = parts.slice(1).join(',').trim();
+        const tcLbl = tcNameFor(f);
+        return '<div class="kpi-row" data-kpi-open="' + esc(f.id) + '" style="display:flex;align-items:center;gap:12px;padding:10px 4px;border-top:0.5px solid #f2eee2;cursor:pointer">' +
+          '<div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:600;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(l1) + '</div>' +
+            '<div style="font-size:11px;color:#a39e93;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(l2) + (note ? ' &middot; ' + esc(note) : '') + '</div></div>' +
+          (tcLbl ? '<span style="flex:none;font-size:10.5px;color:#a09a8f;white-space:nowrap">' + esc(tcLbl) + '</span>' : '') +
+          chip +
+        '</div>';
+      };
+      const gToday = [], gWeek = [], gSetup = [];
+      list.forEach(function(f){
+        const its = _pendingItemsFor(f);
+        const hasOver = its.some(function(x){ return x.days != null && x.days < 0; });
+        const hasToday = its.some(function(x){ return x.days === 0; });
+        const cdto = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+        if(hasOver || hasToday){
+          const over = its.filter(function(x){ return x.days != null && x.days < 0; }).length;
+          const chip = over ? _chip(over + ' day' + (over === 1 ? '' : 's') + ' overdue', '#993c1d', '#faece7', '#f3d9d0') : _chip('Today', '#993c1d', '#faece7', '#f3d9d0');
+          const act = its.find(function(x){ return !x.isSetup; });
+          const note = act ? String(act.label).replace(/^Follow up · /, '') : '';
+          gToday.push(_row(f, chip, note));
+        } else if(cdto != null && cdto >= 0 && cdto <= 7){
+          const txt = cdto === 0 ? 'Today' : (cdto === 1 ? 'Tomorrow' : 'In ' + cdto + ' days');
+          gWeek.push(_row(f, _chip(txt, '#8a6d1b', '#faf3e6', '#ecdfc4'), 'closing'));
+        } else {
+          gSetup.push(_row(f, _chip('Set up', '#6f6a61', '#f1efe8', '#e4e0d6'), 'no contract entered yet'));
+        }
+      });
+      const _sh = function(txt, col){ return '<div style="font-size:9.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:' + col + ';margin:16px 2px 4px">' + txt + '</div>'; };
+      if(gToday.length) needsBody += _sh('Due today', '#a3402f').replace('margin:16px', 'margin:8px') + gToday.join('');
+      if(gWeek.length)  needsBody += _sh('This week', '#8a6d1b') + gWeek.join('');
+      if(gSetup.length) needsBody += _sh('Needs setup &middot; no deadline yet', '#a09a8f') + gSetup.join('');
+    }
     const empty = '<div style="padding:32px 12px;text-align:center;font-size:12.5px;color:#7a756c">Nothing here. You&rsquo;re ahead.</div>';
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;background:rgba(15,15,15,0.45);display:flex;align-items:flex-start;justify-content:center;z-index:99999;padding:60px 20px 20px;overflow-y:auto';
@@ -12854,12 +12895,14 @@ Tell me your planned move-out date and I will set the inspection.`
         '<button type="button" data-kpi-close="1" aria-label="Close" style="flex:none;background:transparent;border:0;color:#7a756c;font-size:20px;line-height:1;padding:4px 6px;cursor:pointer;font-family:inherit">&times;</button>' +
       '</div>' +
       (list.length
-        ? '<div style="margin-top:12px">' +
-            '<div style="display:grid;grid-template-columns:1.6fr 1fr 1fr .8fr;gap:12px;padding:8px 12px;font-size:9.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#a09a8f">' +
-              '<div>Property</div><div>Stage</div><div>Closing</div><div>TC</div>' +
-            '</div>' +
-            '<div style="max-height:60vh;overflow-y:auto">' + rowHtml + '</div>' +
-          '</div>'
+        ? (kind === 'needs'
+            ? '<div style="margin-top:10px;max-height:64vh;overflow-y:auto">' + needsBody + '</div>'
+            : '<div style="margin-top:12px">' +
+                '<div style="display:grid;grid-template-columns:1.6fr 1fr 1fr .8fr;gap:12px;padding:8px 12px;font-size:9.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#a09a8f">' +
+                  '<div>Property</div><div>Stage</div><div>Closing</div><div>TC</div>' +
+                '</div>' +
+                '<div style="max-height:60vh;overflow-y:auto">' + rowHtml + '</div>' +
+              '</div>')
         : empty) +
     '</div>';
     document.body.appendChild(ov);
