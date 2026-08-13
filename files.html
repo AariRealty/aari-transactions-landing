@@ -8984,43 +8984,47 @@ Tell me your planned move-out date and I will set the inspection.`
       if(f){ try { openPlaybook(f); } catch(_){} }
     });
   }
-  function _comingUpHtml(){
+  // Coming-up data · deadlines due in the next 1-3 BUSINESS days (matches the file card + engine · a
+  // loan approval 2 business days out is 4 calendar days over a weekend, so calendar days hid it).
+  function _comingUpData(){
     try {
-      _wireComingUp();
       const _t0 = new Date(); _t0.setHours(0, 0, 0, 0);
       const cal = (typeof _tcCalDeadlines === 'function') ? _tcCalDeadlines() : [];
       const seen = {}, rows = [];
       cal.forEach(function(ci){
         if(!ci || ci.isChase || ci.done || !(ci.date instanceof Date)) return;
         const dd = new Date(ci.date.getTime()); dd.setHours(0, 0, 0, 0);
-        // BUSINESS days · matches the file card + the deadline engine (Marlenyi Aug 13 2026). Calendar
-        // days hid real work: a loan approval 2 business days out (Aug 17) is 4 CALENDAR days over the
-        // weekend, so the old ">3 calendar" cutoff dropped it here even though the file card showed it
-        // as "In 2 days". Now the portal's Coming up surfaces exactly what the file cards do.
         const days = (typeof _bizDaysTo === 'function') ? _bizDaysTo(dd) : Math.round((dd - _t0) / 86400000);
         if(days == null || days < 1 || days > 3) return;
         const k = ci.fileId + ':' + String(ci.key || '').replace(/__chase$/, '');
         if(seen[k]) return; seen[k] = 1;
         rows.push({ fileId: ci.fileId, addr: String(ci.address || 'File').split(',')[0], name: ci.label || 'Deadline', days: days });
       });
-      if(!rows.length) return '';
       rows.sort(function(a, b){ return a.days - b.days || a.addr.localeCompare(b.addr); });
       rows.splice(6); // keep it scannable · the six soonest
-      const when = function(d){ return d === 1 ? 'Tomorrow' : ('In ' + d + ' days'); };
-      let h = '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:14px;padding:18px 20px;margin-top:12px">' +
-        '<div style="font:700 9.5px \'Inter\',sans-serif;letter-spacing:1.4px;text-transform:uppercase;color:#8a7a5b;margin-bottom:10px">Coming up &middot; next 3 days</div>';
-      rows.forEach(function(r){
-        h += '<div data-comingup-file="' + esc(r.fileId) + '" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
-          '<div style="flex:1;min-width:0">' +
-            '<div style="font-size:12.5px;color:#0f0f0f;line-height:1.35">' + esc(r.name) + '</div>' +
-            '<div style="font-size:11px;color:#8a857c;margin-top:2px">' + esc(r.addr) + '</div>' +
-          '</div>' +
-          '<span style="flex:none;font-size:10px;font-weight:600;color:#8a6d1b;background:#faf3e6;border:0.5px solid #ecdfc4;border-radius:20px;padding:3px 11px;white-space:nowrap">' + when(r.days) + '</span>' +
-        '</div>';
-      });
-      h += '</div>';
-      return h;
-    } catch(_){ return ''; }
+      return rows;
+    } catch(_){ return []; }
+  }
+  // inline=true → returns just the "Next 3 days" section (no card wrapper) so it can live INSIDE the
+  // Today card (Marlenyi picked "combined" Aug 13 2026). inline=false → its own card (mobile hero).
+  function _comingUpHtml(inline){
+    _wireComingUp();
+    const rows = _comingUpData();
+    if(!rows.length) return '';
+    const when = function(d){ return d === 1 ? 'Tomorrow' : ('In ' + d + ' days'); };
+    const labelTxt = inline ? 'Next 3 days' : 'Coming up &middot; next 3 days';
+    let inner = '<div style="font:700 9.5px \'Inter\',sans-serif;letter-spacing:1.4px;text-transform:uppercase;color:#a9a49a;margin:0 0 8px">' + labelTxt + '</div>';
+    rows.forEach(function(r){
+      inner += '<div data-comingup-file="' + esc(r.fileId) + '" style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:0.5px solid #f3f0ea;cursor:pointer">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:12.5px;color:#0f0f0f;line-height:1.35">' + esc(r.name) + '</div>' +
+          '<div style="font-size:11px;color:#8a857c;margin-top:2px">' + esc(r.addr) + '</div>' +
+        '</div>' +
+        '<span style="flex:none;font-size:10px;font-weight:600;color:#8a6d1b;background:#faf3e6;border:0.5px solid #ecdfc4;border-radius:20px;padding:3px 11px;white-space:nowrap">' + when(r.days) + '</span>' +
+      '</div>';
+    });
+    if(inline) return '<div style="margin-top:14px;padding-top:14px;border-top:0.5px solid #f2eee2">' + inner + '</div>';
+    return '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:14px;padding:18px 20px;margin-top:12px">' + inner + '</div>';
   }
   function renderTodayAggregated(){
     const host = document.getElementById('todayAggregated');
@@ -9165,11 +9169,16 @@ Tell me your planned move-out date and I will set the inspection.`
       return;
     }
     if(!items.length){
+      var _cuRows = _isTodaySel ? _comingUpData() : [];
+      var _emptySub = _isTodaySel
+        ? (_cuRows.length ? 'Nothing due today' : 'Nothing on you right now. You&rsquo;re ahead.')
+        : 'Nothing due this day.';
       host.innerHTML =
         '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:14px;padding:22px 20px">' +
           '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:17px;font-weight:600;color:#0f0f0f;margin-bottom:2px">' + _headPrefix + esc(_dateLbl) + '</div>' +
-          '<div style="font-size:11.5px;color:#8a857c;letter-spacing:0.2px">' + (_isTodaySel ? 'Nothing on you right now. You&rsquo;re ahead.' : 'Nothing due this day.') + '</div>' +
-        '</div>' + (_isTodaySel ? _comingUpHtml() : '');
+          '<div style="font-size:11.5px;color:#8a857c;letter-spacing:0.2px">' + _emptySub + '</div>' +
+          (_isTodaySel ? _comingUpHtml(true) : '') +
+        '</div>';
       return;
     }
     items.sort(function(a, b){ return a.sortKey - b.sortKey; });
@@ -9188,10 +9197,12 @@ Tell me your planned move-out date and I will set the inspection.`
       else if(!it.isReminder && it.days === 0) _nToday++;
       else _nSoon++;
     });
+    const _cuN = _isTodaySel ? _comingUpData().length : 0;
     const _subParts = [];
     if(_nOver)  _subParts.push('<span style="color:#a3402f;font-weight:600">' + _nOver + ' overdue</span>');
     if(_nToday) _subParts.push(_nToday + ' due today');
     if(_nSoon)  _subParts.push(_nSoon + ' upcoming');
+    if(_cuN)    _subParts.push(_cuN + ' coming up');
     const _sub = _subParts.length ? _subParts.join(' &middot; ') : (items.length + ' items');
 
     const _addr = String(hero.file.property_address || 'File').split(',')[0];
@@ -9207,8 +9218,8 @@ Tell me your planned move-out date and I will set the inspection.`
     const _ebColor = _isUrgent ? '#a3402f' : '#8a7a5b';
     const _ebLbl = _isUrgent ? 'Do this now' : 'Get ahead of this';
 
-    // Header + hero.
-    let html = '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:14px;padding:20px 20px 8px">' +
+    // Header + hero. margin-top sets the combined Today card apart from the calendar above it.
+    let html = '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:14px;padding:20px 20px 8px;margin-top:18px">' +
       '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding-bottom:14px;border-bottom:0.5px solid #f2eee2;margin-bottom:14px">' +
         '<div>' +
           '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:17px;font-weight:600;color:#0f0f0f">' + _headPrefix + esc(_dateLbl) + '</div>' +
@@ -9274,8 +9285,9 @@ Tell me your planned move-out date and I will set the inspection.`
         '</div>';
       });
     }
+    // Coming up · Next 3 days now lives INSIDE the Today card (one combined section, Marlenyi Aug 13 2026).
+    if(_isTodaySel) html += _comingUpHtml(true);
     html += '</div>';
-    if(_isTodaySel) html += _comingUpHtml();
     host.innerHTML = html;
 
     // Wire · same behavior as mobile hero. Send button on the hero fires the
