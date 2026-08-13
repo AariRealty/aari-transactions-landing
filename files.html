@@ -12772,8 +12772,9 @@ Tell me your planned move-out date and I will set the inspection.`
       let closed = false; try { closed = (deriveStage(f) === 'closed') || f.status === 'closed'; } catch(_){ closed = f.status === 'closed'; }
       if(closed) return;
       const tc = f.assigned_tc_id || 'unassigned';
-      if(!by[tc]) by[tc] = { active:0, sales:0, listings:0, other:0, closingWk:0 };
+      if(!by[tc]) by[tc] = { active:0, needYou:0, sales:0, listings:0, other:0, closingWk:0 };
       by[tc].active++; totalActive++;
+      try { if(_needsYou(f)) by[tc].needYou++; } catch(_){}
       const ft = f.file_type || 'sale';
       if(ft === 'sale') by[tc].sales++; else if(ft === 'listing') by[tc].listings++; else by[tc].other++;
       const d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
@@ -12783,14 +12784,14 @@ Tell me your planned move-out date and I will set the inspection.`
       const tc = (_tcsById && _tcsById[id]) || {};
       const nm = ((tc.first_name || '') + ' ' + (tc.last_name || '')).trim() || 'Coordinator';
       const init = (((tc.first_name || '?').charAt(0)) + ((tc.last_name || '').charAt(0))).toUpperCase();
-      return { id:id, nm:nm, init:init, active:by[id].active, sales:by[id].sales, listings:by[id].listings, other:by[id].other, closingWk:by[id].closingWk };
+      return { id:id, nm:nm, init:init, active:by[id].active, needYou:by[id].needYou, sales:by[id].sales, listings:by[id].listings, other:by[id].other, closingWk:by[id].closingWk };
     }).sort(function(a, b){ return b.active - a.active; });
     if(rows.length < 2){ host.innerHTML = ''; return; } // only useful with multiple coordinators
     const top = rows[0];
     const roomNames = rows.slice(1).filter(function(r){ return r.active < 8; }).map(function(r){ return r.nm.split(' ')[0]; });
     const insight = '<b style="color:#a3402f">' + esc(top.nm.split(' ')[0]) + ' is carrying ' + top.active + ' of ' + totalActive + '</b>' + (roomNames.length ? ' &mdash; route new files to ' + esc(roomNames.join(', ')) + '.' : '.');
     const tagOf = function(a){ return a >= 15 ? { t:'Heavy', c:'#a3402f', bg:'#faece7', bd:'#f3d9d0', bar:'#a3402f' } : (a >= 8 ? { t:'Busy', c:'#8a6d1b', bg:'#faf3e6', bd:'#ecdfc4', bar:'#c99a3e' } : { t:'Room', c:'#1f7a4d', bg:'#e9f3ec', bd:'#cfe6d7', bar:'#1f7a4d' }); };
-    const mixOf = function(r){ const p = []; if(r.sales) p.push(r.sales + ' sale' + (r.sales > 1 ? 's' : '')); if(r.listings) p.push(r.listings + ' listing' + (r.listings > 1 ? 's' : '')); if(r.other) p.push(r.other + ' other'); if(r.closingWk) p.push(r.closingWk + ' closing this week'); return p.join(' · '); };
+    const mixOf = function(r){ const p = []; if(r.sales) p.push(r.sales + ' sale' + (r.sales > 1 ? 's' : '')); if(r.listings) p.push(r.listings + ' listing' + (r.listings > 1 ? 's' : '')); if(r.other) p.push(r.other + ' other'); return p.join(' · '); };
     let h = '<div style="background:#fff;border:1px solid #ece8e0;border-radius:14px;padding:16px 18px;margin-top:12px;max-width:720px">' +
       '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:3px"><span style="font-family:Georgia,\'Times New Roman\',serif;font-weight:700;font-size:15px">Coordinator workload</span><span style="font-size:9.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#a09a8f">' + totalActive + ' active</span></div>' +
       '<div style="font-size:11.5px;color:#5f5e5a;margin-bottom:12px">' + insight + '</div>';
@@ -12803,7 +12804,11 @@ Tell me your planned move-out date and I will set the inspection.`
           '<div style="height:7px;border-radius:5px;background:#eee7d8;overflow:hidden;margin-top:6px"><span style="display:block;height:100%;border-radius:5px;width:' + pct + '%;background:' + tg.bar + '"></span></div>' +
           '<div style="font-size:10px;color:#8a857c;margin-top:5px">' + esc(mixOf(r) || '—') + '</div>' +
         '</div>' +
-        '<div style="text-align:right;flex:0 0 auto"><div style="font-family:Georgia,\'Times New Roman\',serif;font-weight:700;font-size:21px;line-height:1">' + r.active + '</div><div style="font-size:8px;color:#a09a8f;text-transform:uppercase;letter-spacing:.06em">active</div></div>' +
+        '<div style="text-align:right;flex:0 0 auto">' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-weight:700;font-size:21px;line-height:1">' + r.active + '</div>' +
+          '<div style="font-size:8px;color:#a09a8f;text-transform:uppercase;letter-spacing:.06em;margin-top:1px">active</div>' +
+          '<div style="font-size:9px;margin-top:5px;white-space:nowrap">' + (r.needYou ? '<span style="color:#a3402f;font-weight:700">' + r.needYou + ' need you</span>' : '<span style="color:#a9a49a">0 need you</span>') + (r.closingWk ? ' <span style="color:#8a857c">&middot; ' + r.closingWk + ' closing</span>' : '') + '</div>' +
+        '</div>' +
         '<span style="flex:0 0 auto;font-size:9px;font-weight:700;border-radius:20px;padding:2px 9px;color:' + tg.c + ';background:' + tg.bg + ';border:0.5px solid ' + tg.bd + '">' + tg.t + '</span>' +
       '</div>';
     });
@@ -14294,8 +14299,10 @@ Tell me your planned move-out date and I will set the inspection.`
     var _showTeam = (_roleHdr === 'broker') && ((typeof _tcFilter === 'undefined') || _tcFilter === 'all' || _tcFilter == null);
     if(_activeView === 'team' && !_showTeam) _activeView = 'board';
     var _vIcon = function(v, label, glyph){ var on = _activeView === v; return '<span data-active-view="' + v + '" title="' + label + '" style="display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:28px;padding:0 10px;cursor:pointer;border-radius:7px;font-size:13px;font-weight:600;' + (on ? 'background:#0f0f0f;color:#fff' : 'color:#8a857c') + '">' + glyph + '</span>'; };
+    // Team is a chip next to Billing (Marlenyi picked "C" Aug 13 2026), not a segment in the view pill.
+    var _teamChip = _showTeam ? ('<span data-active-view="' + (_activeView === 'team' ? 'board' : 'team') + '" title="Coordinator workload" style="display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 13px;font-size:11px;font-weight:600;cursor:pointer;' + (_activeView === 'team' ? 'background:#0f0f0f;color:#fff;border:0.5px solid #0f0f0f' : 'background:#fff;color:#0f0f0f;border:0.5px solid #e6e1d6') + '">Team</span>') : '';
     var _controls =
-      '<span style="display:inline-flex;gap:2px;background:#f2efe9;border-radius:9px;padding:3px">' + _vIcon('board', 'Board', '&#9638;') + _vIcon('list', 'List', '&#9776;') + (_showTeam ? _vIcon('team', 'Team', 'Team') : '') + '</span>' +
+      '<span style="display:inline-flex;gap:2px;background:#f2efe9;border-radius:9px;padding:3px">' + _vIcon('board', 'Board', '&#9638;') + _vIcon('list', 'List', '&#9776;') + '</span>' + _teamChip +
       (_showInvHdr ? ('<span data-active-view="invoice" style="display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 13px;font-size:11px;font-weight:600;cursor:pointer;' + (_activeView === 'invoice' ? 'background:#0f0f0f;color:#fff;border:0.5px solid #0f0f0f' : 'background:#fff;color:#0f0f0f;border:0.5px solid #e6e1d6') + '">Billing' + (_invNHdr ? (' <span style="font-size:9px;font-weight:700;border-radius:999px;padding:1px 6px;' + (_activeView === 'invoice' ? 'background:#fff;color:#0f0f0f' : 'background:#0f0f0f;color:#fff') + '">' + _invNHdr + '</span>') : '') + '</span>') : '') +
       '<span data-earn-toggle style="display:inline-flex;align-items:baseline;gap:6px;background:#fff;border:0.5px solid #e6e1d6;border-radius:999px;padding:5px 12px;cursor:pointer">' +
         '<span style="font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#a39e93">Net</span>' +
