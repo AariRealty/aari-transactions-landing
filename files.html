@@ -14309,11 +14309,13 @@ Tell me your planned move-out date and I will set the inspection.`
         '<b data-earn-amt style="font-size:13px;color:#0f0f0f;font-variant-numeric:tabular-nums">&mdash;</b>' +
         '<span style="color:#a39e93;font-size:11px">&#9662;</span></span>' +
       '<input id="cal-search" value="' + esc(_calSearch) + '" placeholder="Search…" style="width:120px;font-size:12px;color:#0f0f0f;border:0.5px solid #ece8e0;border-radius:8px;padding:7px 11px;font-family:inherit;background:#fff">';
+    var _nRisk = 0; try { _activeForHdr.forEach(function(f){ if(_atRiskOf(f)) _nRisk++; }); } catch(_){}
     let html = '<div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:16px;flex-wrap:wrap">' +
         '<div style="flex:1;min-width:220px">' +
           '<div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#a39e93">Active files &middot; today</div>' +
           '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:26px;font-weight:700;line-height:1.12;margin-top:4px;color:#0f0f0f">' + esc(_heroTxt) + '</div>' +
           '<div style="font-size:12px;color:#8a857c;margin-top:4px">' + esc(_subTxt) + '</div>' +
+          (_nRisk ? '<div style="margin-top:7px"><span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;color:#993c1d;background:#faece7;border:0.5px solid #f0cdbc;border-radius:20px;padding:3px 10px">&#9650; ' + _nRisk + ' at risk</span></div>' : '') +
         '</div>' +
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' + _controls + '</div>' +
       '</div>';
@@ -18335,17 +18337,38 @@ Tell me your planned move-out date and I will set the inspection.`
   }
 
   // One board card · address + side, action in its tone, agent + urgency chip. No black bar, no rails.
+  // At-risk flag (Marlenyi picked "C · flags on cards" Aug 13 2026). A sale file drifting toward trouble
+  // gets a clay left edge + a one-line reason on its board card, and is counted in the header. Priority:
+  // overdue (auto-rolled) closing, then no contract, then no closing date, then no agent on file.
+  function _atRiskOf(f){
+    try {
+      if(!f || (f.file_type || 'sale') !== 'sale') return '';
+      var st = ''; try { st = deriveStage(f); } catch(_){}
+      if(st === 'closed') return '';
+      var raw = f.raw_form_data || {};
+      var oc = raw.closing_date_original || raw.original_closing_date || raw.closing_date_auto_rolled_from || null;
+      if(oc && !f.actual_closing_date){ var t0 = new Date(); t0.setHours(0,0,0,0); if(new Date(String(oc).slice(0,10) + 'T00:00:00').getTime() < t0.getTime()) return 'Closing overdue · confirm date'; }
+      if(!f.contract_type && !raw.contract_path && !raw.contract_url) return 'No contract · set up file';
+      if(!f.closing_date) return 'No closing date · set up file';
+      var agent = raw.agent_name || raw.listing_agent_name || '';
+      if(!String(agent).trim()) return 'No agent on file';
+    } catch(_){}
+    return '';
+  }
   function _svcColCard(f){
     var l1 = String(f.property_address || 'File').split(',')[0].trim();
     var side = _svcSideLabel(f);
     var isCash = false; try { isCash = isCashFile(f); } catch(_){}
     var p = _svcActionParts(f);
+    var risk = (typeof _atRiskOf === 'function') ? _atRiskOf(f) : '';
     var agent = _svcAgentName(f); var init = _svcInitials(agent);
     var chipStyle = p.tone === 'rose' ? 'color:#a3402f;background:#faece7;border:0.5px solid #f3d9d0' : (p.tone === 'amber' ? 'color:#8a6d1b;background:#faf3e6;border:0.5px solid #ecdfc4' : 'color:#8a857c;background:#f1efe8;border:0.5px solid #e4e0d6');
-    return '<div class="card" data-file-id="' + esc(f.id) + '" style="background:#fff;border:0.5px solid #e8e3d8;border-radius:10px;padding:10px 11px;margin-bottom:8px;cursor:pointer">' +
+    var cardBorder = risk ? 'border:0.5px solid #e8e3d8;border-left:2.5px solid #993c1d;' : 'border:0.5px solid #e8e3d8;';
+    return '<div class="card" data-file-id="' + esc(f.id) + '" style="background:#fff;' + cardBorder + 'border-radius:10px;padding:10px 11px;margin-bottom:8px;cursor:pointer">' +
       '<div style="font-size:12.5px;font-weight:700;line-height:1.15;color:#0f0f0f">' + esc(l1) +
         (side ? '<span style="' + _SIDE_CHIP + '">' + esc(side) + (isCash ? ' &middot; Cash' : '') + '</span>' : '') + '</div>' +
       '<div style="font-size:10.5px;font-weight:700;margin-top:6px;color:' + p.col + '">' + esc(p.line || 'On track') + '</div>' +
+      (risk ? '<div style="font-size:9px;font-weight:700;color:#993c1d;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">&#9650; ' + esc(risk) + '</div>' : '') +
       '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px">' +
         '<span style="display:flex;align-items:center;gap:5px;font-size:9.5px;color:#8a857c;min-width:0">' +
           '<span style="width:14px;height:14px;border-radius:50%;background:#ded8ca;color:#5f5a50;font-size:7px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto">' + esc(init) + '</span>' +
