@@ -17961,93 +17961,178 @@ Tell me your planned move-out date and I will set the inspection.`
     if(st === 'listing_docs' || st === 'listing_coordinator') return { key:'listings', label:'Listings', order:2 };
     if(st.indexOf('offer_prep') === 0) return { key:'offer', label:'Offer Prep', order:5 };
     if(st === 'standalone_review') return { key:'review', label:'Compliance', order:6 };
+    if(st === 'rental' || ft === 'rental' || ft === 'lease') return { key:'rental', label:'Rental', order:7 };
     if(ft === 'listing') return { key:'listings', label:'Listings', order:2 };
     return { key:'other', label:'Other', order:8 };
   }
-  // Service swimlanes (Marlenyi picked "G" Aug 12 2026) · one horizontal lane per service line so every
-  // service is on screen at once. Reuses cardHtml, so click-to-open, drag and badges keep working (the
-  // click delegation already lives on #kanban). Replaces the stage-column grid.
-  // Compact card · only the files that need a decision get one. No black TC bar, no progress line.
-  function _swimCardLight(f){
+  // Service Overview · Marlenyi picked "Q" Aug 13 2026. This screen's job is to show EVERY service
+  // line at once, calm. Overview = a tile grid (one tile per service: count, status, peek at the file
+  // that needs her most, with agent + side). Tap a tile → that service's file list, need-you on top.
+  // Tap a row (or the tile's peek) → openPlaybook. Replaces the swimlane board.
+  var _svcOpen = null; // null = the tile overview · a lane key = that service's drilled-in list
+
+  // Agent + side · surfaced on every card so she always knows who and which side we hold.
+  function _svcAgentName(f){
+    var raw = f.raw_form_data || {};
+    var n = raw.agent_name || raw.listing_agent_name || f.agent_name || '';
+    n = String(n || '').trim();
+    return n || 'Agent TBD';
+  }
+  function _svcInitials(name){
+    var p = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if(!p.length || name === 'Agent TBD') return '?';
+    return ((p[0].charAt(0) || '') + (p.length > 1 ? p[p.length - 1].charAt(0) : '')).toUpperCase();
+  }
+  function _svcSideLabel(f){
+    var ft = f.file_type || ''; var st = String(f.service_type || '').toLowerCase(); var ct = String(f.client_type || '').toLowerCase();
+    if(st === 'mls_setup' || st === 'listing_docs' || st === 'listing_coordinator' || ft === 'listing') return 'Listing';
+    if(st === 'rental' || ft === 'rental' || ft === 'lease' || ct === 'tenant') return 'Tenant';
+    if(ct === 'buyer') return 'Buyer';
+    if(ct === 'seller') return 'Seller';
+    if(st === 'file_organization') return ct ? (ct.charAt(0).toUpperCase() + ct.slice(1)) : 'File';
+    return '';
+  }
+  var _SIDE_CHIP = 'display:inline-block;font-size:8px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;color:#5f5a50;background:#efeade;border-radius:5px;padding:2px 6px;margin-left:7px;vertical-align:middle;white-space:nowrap';
+
+  // One file row · used inside a drilled-in service. Address + side, action in its tone, agent + urgency chip.
+  function _svcFileRow(f){
     var l1 = String(f.property_address || 'File').split(',')[0].trim();
+    var side = _svcSideLabel(f);
+    var isCash = false; try { isCash = isCashFile(f); } catch(_){}
     var act = (typeof cardAction === 'function') ? cardAction(f) : { text:'', tone:'green' };
     var tone = act.tone;
     var toneCol = tone === 'rose' ? '#a3402f' : (tone === 'amber' ? '#8a6d1b' : '#8a857c');
-    var txt = String(act.text || '');
-    var actLine = txt, chip = '';
-    var mi = txt.indexOf(' · ');
-    if(mi !== -1){ actLine = txt.slice(0, mi); chip = txt.slice(mi + 3); }
-    var isCash = false; try { isCash = isCashFile(f); } catch(_){}
-    var tc = f.assigned_tc_id ? _tcsById[f.assigned_tc_id] : null;
-    var tcName = tc ? String(tc.first_name || 'TC') : 'No TC';
-    var tcInit = tc ? (((tc.first_name || '').charAt(0) + ((tc.last_name || '').charAt(0))).toUpperCase()) : '·';
+    var txt = String(act.text || ''); var actLine = txt, chip = '';
+    var mi = txt.indexOf(' · '); if(mi !== -1){ actLine = txt.slice(0, mi); chip = txt.slice(mi + 3); }
+    var agent = _svcAgentName(f); var init = _svcInitials(agent);
     var chipStyle = tone === 'rose' ? 'color:#a3402f;background:#faece7;border:0.5px solid #f3d9d0' : (tone === 'amber' ? 'color:#8a6d1b;background:#faf3e6;border:0.5px solid #ecdfc4' : 'color:#8a857c;background:#f1efe8;border:0.5px solid #e4e0d6');
-    return '<div class="card swl" data-file-id="' + esc(f.id) + '">' +
-      '<div class="swl-addr">' + esc(l1) + (isCash ? '<span class="swl-type">Cash</span>' : '') + '</div>' +
-      '<div class="swl-act" style="color:' + toneCol + '">' + esc(actLine || 'On track') + '</div>' +
-      '<div class="swl-foot"><span class="swl-who"><span class="swl-av">' + esc(tcInit) + '</span>' + esc(tcName) + '</span>' +
-        (chip ? '<span class="swl-chip" style="' + chipStyle + '">' + esc(chip) + '</span>' : '') +
+    return '<div class="card" data-file-id="' + esc(f.id) + '" style="display:flex;align-items:center;gap:13px;padding:12px 6px;border-top:0.5px solid #efeadf;background:none;border-radius:0;box-shadow:none;cursor:pointer">' +
+      '<div style="flex:1;min-width:0">' +
+        '<div style="font-size:14px;font-weight:700;color:#0f0f0f">' + esc(l1) +
+          (side ? '<span style="' + _SIDE_CHIP + '">' + esc(side) + (isCash ? ' &middot; Cash' : '') + '</span>' : '') + '</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#8a857c;margin-top:3px">' +
+          '<span style="width:16px;height:16px;border-radius:50%;background:#ded8ca;color:#5f5a50;font-size:8px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto">' + esc(init) + '</span>' +
+          esc(agent) + (actLine ? ' &middot; ' + esc(actLine) : '') +
+        '</div>' +
       '</div>' +
+      (chip ? '<span style="font-size:10px;font-weight:700;border-radius:20px;padding:3px 11px;white-space:nowrap;flex:0 0 auto;' + chipStyle + '">' + esc(chip) + '</span>'
+            : '<span style="font-size:11px;color:#a39e93;flex:0 0 auto">Open &rsaquo;</span>') +
     '</div>';
   }
-  function renderSwimlanes(){
+
+  // The tile overview · every service on screen at once.
+  function _svcTileHtml(key, meta, arr){
+    var isClosed = key === 'closed';
+    var sorted = arr.slice().sort(function(a, b){ return _cardRank(a) - _cardRank(b); });
+    var need = isClosed ? [] : sorted.filter(function(f){ return _cardRank(f) <= 2; });
+    var status, statusCol;
+    if(isClosed){ status = 'Funded, paid'; statusCol = '#a39e93'; }
+    else if(need.length){ status = need.length + ' need you'; statusCol = '#8a6d1b'; }
+    else { status = 'On track'; statusCol = '#1f7a4d'; }
+    // Peek · the file pulling on this service most (or latest closed).
+    var peek = '';
+    if(isClosed){
+      var latest = sorted.slice().sort(function(a, b){ return String(b.closing_date || '').localeCompare(String(a.closing_date || '')); })[0];
+      peek = '<div style="margin-top:auto;padding-top:9px;border-top:0.5px solid #efeadf;font-size:10px;color:#a39e93">' +
+        (latest && latest.closing_date ? 'Latest &middot; ' + esc(fmtDate(latest.closing_date)) : 'Funded, paid') + '</div>';
+    } else if(need.length){
+      var top = need[0]; var tl1 = String(top.property_address || 'File').split(',')[0].trim();
+      var tside = _svcSideLabel(top); var tagent = _svcAgentName(top); var tinit = _svcInitials(tagent);
+      var ta = (typeof cardAction === 'function') ? cardAction(top) : { text:'', tone:'amber' };
+      var tcol = ta.tone === 'rose' ? '#a3402f' : (ta.tone === 'amber' ? '#8a6d1b' : '#8a857c');
+      var ttxt = String(ta.text || ''); var tact = ttxt; var tmi = ttxt.indexOf(' · '); if(tmi !== -1) tact = ttxt.slice(0, tmi);
+      peek = '<div class="card" data-file-id="' + esc(top.id) + '" style="margin-top:auto;padding-top:9px;border-top:0.5px solid #efeadf;background:none;border-radius:0;box-shadow:none;cursor:pointer">' +
+        '<div style="display:flex;align-items:center;gap:6px;font-size:10px;color:#8a857c">' +
+          '<span style="width:15px;height:15px;border-radius:50%;background:#ded8ca;color:#5f5a50;font-size:7.5px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto">' + esc(tinit) + '</span>' +
+          '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b style="color:#0f0f0f">' + esc(tl1) + '</b>' + (tside ? ' &middot; ' + esc(tside) : '') + ' &middot; <span style="color:' + tcol + ';font-weight:700">' + esc(tact) + '</span></span>' +
+        '</div></div>';
+    } else {
+      peek = '<div style="margin-top:auto;padding-top:9px;border-top:0.5px solid #efeadf;font-size:10px;color:#a39e93">Nothing needs you</div>';
+    }
+    var dim = arr.length ? '' : 'opacity:.55;';
+    return '<div class="svc-tile" data-svc-open="' + esc(key) + '" style="' + dim + 'background:#fff;border:0.5px solid #e8e3d8;border-radius:14px;padding:15px 16px;display:flex;flex-direction:column;min-height:128px;cursor:pointer">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start">' +
+        '<span style="font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#a39e93">' + esc(meta.label) + '</span>' +
+        '<span style="font-family:\'Playfair Display\',Georgia,serif;font-size:29px;font-weight:700;line-height:1">' + arr.length + '</span>' +
+      '</div>' +
+      '<div style="font-size:11px;font-weight:700;margin-top:7px;color:' + statusCol + '">' + esc(status) + '</div>' +
+      peek +
+    '</div>';
+  }
+
+  function renderServiceTiles(){
     const k = document.getElementById('kanban');
     if(!k) return;
-    const active = (_files || []).filter(function(f){ return f && f.status !== 'archived' && !((f.raw_form_data || {}).test_pool); }).filter(matchesSearch);
+    const active = (_files || []).filter(function(f){ return f && f.status !== 'archived' && !((f.raw_form_data || {}).test_pool); });
+    k.classList.remove('swim'); k.style.gridTemplateColumns = '';
     if(!active.length){
-      k.classList.remove('swim'); k.style.gridTemplateColumns = '1fr';
-      k.innerHTML = '<div class="kanban-zero"><p class="kz-title">' + (_searchQuery ? 'No files match &ldquo;' + esc(_searchQuery) + '&rdquo;.' : 'No files assigned to you yet.') + '</p>' +
-        (_searchQuery ? '' : '<p class="kz-sub" style="margin-top:8px"><a href="/index.html#apply" class="kz-link">Send the intake link to an agent &rarr;</a></p>') + '</div>';
-      return;
+      _svcOpen = null;
+      k.innerHTML = '<div class="kanban-zero"><p class="kz-title">No files assigned to you yet.</p>' +
+        '<p class="kz-sub" style="margin-top:8px"><a href="/index.html#apply" class="kz-link">Send the intake link to an agent &rarr;</a></p></div>';
+      _wireSvcTiles(); return;
     }
-    const lanes = {}, meta = {};
+    // Search cuts across services · show a flat result list instead of tiles.
+    if(_searchQuery){
+      var hits = active.filter(matchesSearch).sort(function(a, b){ return _cardRank(a) - _cardRank(b); });
+      k.innerHTML = '<div style="background:#fcfaf5;border-radius:16px;padding:14px 18px">' +
+        '<div style="font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#a39e93;margin:2px 2px 8px">' + hits.length + ' result' + (hits.length === 1 ? '' : 's') + '</div>' +
+        (hits.length ? hits.map(_svcFileRow).join('') : '<div style="font-size:12px;color:#8a857c;padding:6px 4px">No files match &ldquo;' + esc(_searchQuery) + '&rdquo;.</div>') +
+      '</div>';
+      _wireSvcTiles(); return;
+    }
+    // Group into service lanes.
+    var lanes = {}, meta = {};
     active.forEach(function(f){ var L = _svcLaneOf(f); if(!lanes[L.key]){ lanes[L.key] = []; meta[L.key] = L; } lanes[L.key].push(f); });
-    const keys = Object.keys(lanes).sort(function(a, b){ return meta[a].order - meta[b].order; });
-    var html = '';
-    keys.forEach(function(key){
-      var isClosed = key === 'closed';
-      var arr = lanes[key].slice().sort(function(a, b){ return _cardRank(a) - _cardRank(b); });
-      // Show only the files that need a decision · the calm ones (on track) fold into a pill.
+    var keys = Object.keys(lanes).sort(function(a, b){ return meta[a].order - meta[b].order; });
+
+    // Drilled into one service · show its file list.
+    if(_svcOpen && lanes[_svcOpen]){
+      var arr = lanes[_svcOpen].slice().sort(function(a, b){ return _cardRank(a) - _cardRank(b); });
+      var isClosed = _svcOpen === 'closed';
       var need = isClosed ? [] : arr.filter(function(f){ return _cardRank(f) <= 2; });
       var calm = isClosed ? arr : arr.filter(function(f){ return _cardRank(f) > 2; });
-      var note = isClosed ? '<span style="color:#a09a8f">funded, paid</span>'
-        : (need.length ? '<span style="color:#a3402f;font-weight:700">' + need.length + ' need you</span>' : '<span style="color:#8a857c">on track</span>');
-      var cardsHtml = need.map(_swimCardLight).join('');
-      if(calm.length){
-        var foldLbl = (isClosed ? calm.length + ' closed' : calm.length + ' on track') + ' ›';
-        if(!need.length && !isClosed) cardsHtml += '<span class="swim-clear">Nothing needs you &middot;&nbsp;</span>';
-        cardsHtml += '<button type="button" class="swim-fold" data-swim-fold="' + esc(key) + '" data-swim-lbl="' + esc(foldLbl) + '">' + foldLbl + '</button>' +
-          '<span data-swim-hidden="' + esc(key) + '" style="display:none">' + calm.map(_swimCardLight).join('') + '</span>';
+      var body = '';
+      if(need.length){
+        body += '<div style="font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#a3402f;margin:6px 2px 6px">Needs you now</div>' + need.map(_svcFileRow).join('');
       }
-      html += '<div class="swim-lane">' +
-          '<div class="swim-head">' +
-            '<div class="svc-lane-name lane-name">' + esc(meta[key].label) + '</div>' +
-            '<div class="svc-lane-count lane-count">' + arr.length + '</div>' +
-            '<div class="swim-note">' + note + '</div>' +
-          '</div>' +
-          '<div class="swim-cards">' + cardsHtml + '</div>' +
-        '</div>';
-    });
-    k.style.gridTemplateColumns = '';
-    k.classList.add('swim');
-    k.innerHTML = html;
-    // Fold toggles · reveal the calm / closed cards on tap.
-    k.querySelectorAll('[data-swim-fold]').forEach(function(btn){
-      btn.addEventListener('click', function(e){
-        e.stopPropagation();
-        var key = btn.getAttribute('data-swim-fold');
-        var hid = k.querySelector('[data-swim-hidden="' + key + '"]');
-        if(!hid) return;
-        var showing = hid.style.display !== 'none';
-        hid.style.display = showing ? 'none' : 'inline';
-        btn.textContent = showing ? btn.getAttribute('data-swim-lbl') : 'Hide';
-      });
-    });
+      if(calm.length){
+        body += '<div style="font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#a39e93;margin:' + (need.length ? '18px' : '6px') + ' 2px 6px">' + (isClosed ? 'Closed &middot; ' + calm.length : 'On track &middot; ' + calm.length) + '</div>' + calm.map(_svcFileRow).join('');
+      }
+      if(!need.length && !calm.length) body = '<div style="font-size:12px;color:#8a857c;padding:8px 4px">No files in this service.</div>';
+      k.innerHTML = '<div style="background:#fcfaf5;border-radius:16px;padding:16px 18px">' +
+        '<button type="button" data-svc-back="1" style="background:none;border:0;font-size:12px;color:#8a857c;cursor:pointer;padding:0;margin-bottom:10px">&lsaquo; All services</button>' +
+        '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:22px;font-weight:700;line-height:1">' + esc(meta[_svcOpen].label) + '</div>' +
+        '<div style="font-size:11px;color:#a39e93;margin:2px 0 12px">' + arr.length + ' file' + (arr.length === 1 ? '' : 's') + (need.length ? ' &middot; ' + need.length + ' need you' : '') + '</div>' +
+        body +
+      '</div>';
+      _wireSvcTiles(); return;
+    }
+
+    // Overview · the tile grid.
+    _svcOpen = null;
+    var tiles = keys.map(function(key){ return _svcTileHtml(key, meta[key], lanes[key]); }).join('');
+    k.innerHTML = '<div class="svc-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">' + tiles + '</div>';
+    _wireSvcTiles();
+  }
+
+  // Delegated once on #kanban · tile-open and back. File-open is handled by the existing
+  // wireKanbanDelegation click listener (any .card[data-file-id] opens the playbook).
+  function _wireSvcTiles(){
     wireKanbanDelegation();
+    const k = document.getElementById('kanban');
+    if(!k || k._svcWired) return;
+    k._svcWired = true;
+    k.addEventListener('click', function(e){
+      if(e.target.closest('.card[data-file-id]')) return; // file rows / peeks open the file
+      var back = e.target.closest('[data-svc-back]');
+      if(back){ e.stopPropagation(); _svcOpen = null; renderServiceTiles(); return; }
+      var tile = e.target.closest('[data-svc-open]');
+      if(tile){ _svcOpen = tile.getAttribute('data-svc-open'); renderServiceTiles(); }
+    });
   }
   function renderKanban(){
     if(_serviceFilter && TC_SVC_TRACKS[_serviceFilter]){ return renderServiceKanban(TC_SVC_TRACKS[_serviceFilter]); }
-    renderSwimlanes();
+    renderServiceTiles();
     // List view mirrors every kanban refresh · honors the saved toggle.
     try { applyView(); } catch(_){}
     try { _renderKanbanChips(); } catch(_){}
