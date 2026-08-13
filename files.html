@@ -14421,43 +14421,41 @@ Tell me your planned move-out date and I will set the inspection.`
       const fmtFrom = function(iso){
         try { const d = new Date(String(iso).slice(0,10) + 'T12:00:00'); return d.toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){ return ''; }
       };
+      // Tile (Marlenyi picked "capsule pill" Aug 13 2026): date leads, the days-until rides in a
+      // subtle capsule pill top-right, property + who below. Tapping the tile JUMPS the week calendar
+      // to that closing's week (data-nc-jump) instead of opening the file. Rolled tile shows the REAL
+      // overdue count from the original date (business days), so the roll can't mask how late it is.
       const unit = function(x){
-        // Marlenyi 2026-08-07 · rolled tile shows the REAL overdue count computed
-        // from the original scheduled date, not "today" from the rolled date. Keeps
-        // the pipeline slot but tells the truth about how late the closing is.
-        let cd, col, dateLine;
+        let dateLine, pillTxt, pillOver = false, pillClosed = false, jumpIso = '';
         if(x.closed){
-          cd = 'closed'; col = '#1f7a4d'; dateLine = fmt(x.date);
+          pillTxt = 'closed'; pillClosed = true; dateLine = fmt(x.date); jumpIso = String(x.f.closing_date || '').slice(0,10);
         } else if(x.rolledFrom){
+          let lateBy;
           try {
             const orig = new Date(String(x.rolledFrom).slice(0,10) + 'T12:00:00'); orig.setHours(0,0,0,0);
-            // Marlenyi 2026-08-09 · use BUSINESS days so this pill agrees with
-            // the drawer + calendar day-count (both use _bizDaysTo). Calendar
-            // days had this reading 4d late on a Sunday when the calendar +
-            // drawer said 3d late · same closing, different math.
-            let lateBy;
-            if(typeof _bizDaysTo === 'function'){
-              const _d = _bizDaysTo(orig);
-              lateBy = _d != null ? Math.abs(_d) : Math.round((today - orig) / 86400000);
-            } else {
-              lateBy = Math.round((today - orig) / 86400000);
-            }
-            cd = lateBy + ' day' + (lateBy === 1 ? '' : 's') + ' overdue';
-          } catch(_){ cd = 'overdue'; }
-          col = '#993c1d';
+            if(typeof _bizDaysTo === 'function'){ const _d = _bizDaysTo(orig); lateBy = _d != null ? Math.abs(_d) : Math.round((today - orig) / 86400000); }
+            else { lateBy = Math.round((today - orig) / 86400000); }
+          } catch(_){ lateBy = 0; }
+          pillTxt = (lateBy || 0) + 'd late'; pillOver = true;
           dateLine = fmt(new Date(String(x.rolledFrom).slice(0,10) + 'T12:00:00'));
+          jumpIso = String(x.rolledFrom).slice(0,10);
         } else {
-          cd = x.days === 0 ? 'today' : (x.days === 1 ? 'tomorrow' : x.days + ' days');
-          col = x.days <= 3 ? '#a3402f' : '#7a756c';
-          dateLine = fmt(x.date);
+          pillTxt = x.days === 0 ? 'today' : (x.days === 1 ? '1 day' : x.days + ' days');
+          dateLine = fmt(x.date); jumpIso = String(x.f.closing_date || '').slice(0,10);
         }
-        const rolledStyle = x.closed ? ';opacity:.72' : (x.rolledFrom ? ';border-left:2.5px solid #993c1d;background:#fdf6f4' : '');
-        const rolledNote  = (x.rolledFrom && !x.closed) ? '<div style="font-size:9px;color:#993c1d;font-weight:600;margin-top:2px;letter-spacing:0.15px">tap to confirm</div>' : '';
-        return '<div data-cal-open="' + esc(x.f.id) + '" style="flex:0 0 auto;cursor:pointer;background:transparent;border:0.5px solid rgba(15,15,15,0.10);border-radius:7px;padding:6px 9px' + rolledStyle + '">' +
-          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:#0f0f0f;line-height:1">' + dateLine + '</div>' +
-          '<div style="font-size:11px;color:#3d3a34;margin-top:2px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.addr) + '</div>' +
-          '<div style="font-size:9.5px;color:' + col + ';font-weight:600;margin-top:1px;letter-spacing:0.2px">' + cd + '</div>' +
-          rolledNote +
+        const agent = (typeof _svcAgentName === 'function') ? _svcAgentName(x.f) : '';
+        const agentFirst = (agent && agent !== 'Agent TBD') ? String(agent).split(/\s+/)[0] : '';
+        const side = (typeof _svcSideLabel === 'function') ? _svcSideLabel(x.f) : '';
+        const whoTxt = [side, agentFirst].filter(Boolean).join(' · ');
+        const tileBg = x.closed ? ';opacity:.72' : (x.rolledFrom ? ';border-left:2.5px solid #993c1d;background:#fdf6f4' : '');
+        const pillCol = pillOver ? '#993c1d' : (pillClosed ? '#8a938a' : '#7a756c');
+        const pillBorder = pillOver ? 'rgba(153,60,29,0.4)' : 'rgba(15,15,15,0.14)';
+        const dateCol = pillOver ? '#993c1d' : '#0f0f0f';
+        return '<div data-nc-jump="' + esc(jumpIso) + '" style="position:relative;flex:0 0 auto;min-width:140px;cursor:pointer;background:transparent;border:0.5px solid rgba(15,15,15,0.10);border-radius:7px;padding:6px 9px' + tileBg + '">' +
+          '<span style="position:absolute;top:6px;right:8px;font-size:9px;font-weight:700;letter-spacing:0.02em;color:' + pillCol + ';border:0.75px solid ' + pillBorder + ';border-radius:50px;padding:3px 8px;line-height:1;white-space:nowrap">' + esc(pillTxt) + '</span>' +
+          '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:13px;font-weight:600;letter-spacing:-0.1px;color:' + dateCol + ';line-height:1;padding-right:52px">' + dateLine + '</div>' +
+          '<div style="font-size:11px;color:#3d3a34;margin-top:4px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.addr) + '</div>' +
+          (whoTxt ? '<div style="font-size:9px;color:#8a857c;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(whoTxt) + '</div>' : '') +
         '</div>';
       };
       const arw = function(dir, lbl, on){ return '<button type="button"' + (on ? (' data-nc-step="' + dir + '"') : ' disabled') + ' aria-label="' + lbl + '" style="flex:none;border:0;background:none;color:' + (on ? '#5f5e5a' : '#e2ddd3') + ';font-size:18px;line-height:1;cursor:' + (on ? 'pointer' : 'default') + ';padding:2px 4px">' + (dir < 0 ? '&#8249;' : '&#8250;') + '</button>'; };
@@ -15921,6 +15919,18 @@ Tell me your planned move-out date and I will set the inspection.`
     }); });
     host.querySelectorAll('[data-cal-open]').forEach(function(r){ r.addEventListener('click', function(){ const id = this.getAttribute('data-cal-open'); const f = (_files || []).find(function(x){ return x.id === id; }); if(f){ openPlaybook(f); } }); });
     host.querySelectorAll('[data-nc-step]').forEach(function(b){ b.addEventListener('click', function(){ _ncUserMoved = true; _ncStep += (parseInt(b.getAttribute('data-nc-step'), 10) || 0); try { renderCalHeatmap(); } catch(_){} }); });
+    // Tap a Next-closings tile · jump the WEEK calendar to that closing's week so she can see it in
+    // context (Marlenyi Aug 13 2026). Switches to Week view, points the week at the closing date,
+    // selects the day, and scrolls the calendar into view. The week card itself still opens the file.
+    host.querySelectorAll('[data-nc-jump]').forEach(function(b){ b.addEventListener('click', function(){
+      var iso = this.getAttribute('data-nc-jump'); if(!iso) return;
+      var d = new Date(iso + 'T00:00:00'); if(isNaN(d.getTime())) return; d.setHours(0, 0, 0, 0);
+      var ws = new Date(d); ws.setDate(ws.getDate() - ws.getDay());
+      _calWeekStart = ws; _calView = 'week'; _calSelDay = d.getTime(); window._calSelDayTapped = true;
+      try { localStorage.setItem('aari_cal_view_' + ((_profile && _profile.id) ? _profile.id : 'anon'), 'week'); } catch(_){}
+      try { renderCalHeatmap(); } catch(_){}
+      try { var _h = document.getElementById('calHeatmap'); if(_h && _h.scrollIntoView) _h.scrollIntoView({ behavior:'smooth', block:'start' }); } catch(_){}
+    }); });
     // Mobile Option C · week strip. A day chip only SELECTS the day (loads its agenda below);
     // it never opens a file, so tapping around the week stays cheap.
     host.querySelectorAll('[data-cal-selday]').forEach(function(b){ b.addEventListener('click', function(){ _calSelDay = parseInt(this.getAttribute('data-cal-selday'), 10); window._calSelDayTapped = true; renderCalHeatmap(); try { renderTodayAggregated(); } catch(_){} }); });
