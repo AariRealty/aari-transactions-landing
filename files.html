@@ -14750,7 +14750,7 @@ Tell me your planned move-out date and I will set the inspection.`
         const sub=[side, (agent&&agent!=='Agent TBD'?agent:'')].filter(Boolean).join(' · ');
         // Moved closing · if the file kept an original closing date that differs, surface it.
         let movedTxt='';
-        try{ if(isClose&&f){ const oc=(f.raw_form_data&&(f.raw_form_data.closing_date_original||f.raw_form_data.original_closing_date))||null; if(oc&&String(oc).slice(0,10)!==String(f.closing_date||'').slice(0,10)){ const od=new Date(String(oc).slice(0,10)+'T00:00:00'); movedTxt=(sub?' · ':'')+'moved from '+od.toLocaleDateString('en-US',{month:'short',day:'numeric'}); } } }catch(_){}
+        try{ if(isClose&&f){ const _r=f.raw_form_data||{}; const oc=_r.closing_date_original||_r.original_closing_date||_r.closing_date_auto_rolled_from||null; if(oc&&String(oc).slice(0,10)!==String(f.closing_date||'').slice(0,10)){ const od=new Date(String(oc).slice(0,10)+'T00:00:00'); movedTxt=(sub?' · ':'')+'moved from '+od.toLocaleDateString('en-US',{month:'short',day:'numeric'}); } } }catch(_){}
         // Chip is clickable · opens the file. Day-cell handler ignores clicks routed through [data-cal-chip].
         return '<div data-cal-chip data-cal-open="'+esc(it.fileId)+'" title="'+esc((it.label||'')+' · '+(it.address||''))+'" style="cursor:pointer;line-height:1.15">'+
             '<div style="display:flex;align-items:center;gap:4px">'+
@@ -19099,6 +19099,19 @@ Tell me your planned move-out date and I will set the inspection.`
     try {
       const upd = Object.assign({}, colPatch || {});
       if(lgPatch){ const lg = Object.assign({}, file.logistics || {}, lgPatch); upd.logistics = lg; file.logistics = lg; }
+      // Moved-closing capture · if the closing date is changing to a different date and the file
+      // already had one, remember the ORIGINAL (first) scheduled date so the calendar can show
+      // "moved from X" and a slipped closing is never invisible. Set once, so the TRUE original
+      // survives repeated reschedules; if it's moved back onto the original date, clear the marker.
+      if(colPatch && ('closing_date' in colPatch)){
+        const _newCd = colPatch.closing_date ? String(colPatch.closing_date).slice(0,10) : null;
+        const _oldCd = file.closing_date ? String(file.closing_date).slice(0,10) : null;
+        const _raw = Object.assign({}, file.raw_form_data || {});
+        let _rawChanged = false;
+        if(_oldCd && _newCd && _oldCd !== _newCd && !_raw.closing_date_original){ _raw.closing_date_original = _oldCd; _rawChanged = true; }
+        if(_raw.closing_date_original && _newCd && String(_raw.closing_date_original).slice(0,10) === _newCd){ delete _raw.closing_date_original; _rawChanged = true; }
+        if(_rawChanged){ upd.raw_form_data = _raw; file.raw_form_data = _raw; }
+      }
       // Confirming a contract term just SAVES the term. It no longer auto-advances the
       // file's stage — that silent New → Under contract jump reshuffled the task list and
       // lost the TC's place. The stage moves only on the deliberate "Move to Under
@@ -26780,7 +26793,14 @@ Tell me your planned move-out date and I will set the inspection.`
           // marker and the drawer prompt both stop appearing. Also clears the "still working"
           // dismiss stamp since we now have a real answer, not a delay.
           var _prevRaw = file.raw_form_data || {};
+          // Moved-closing capture · this is a real reschedule of a past-due closing, so remember the
+          // ORIGINAL date (the earliest we know: an explicit original already stored, else the date it
+          // auto-rolled from, else the current date being replaced). The calendar shows "moved from X".
+          var _origClose = _prevRaw.closing_date_original
+            || (_prevRaw.closing_date_auto_rolled_from ? String(_prevRaw.closing_date_auto_rolled_from).slice(0,10) : null)
+            || (file.closing_date ? String(file.closing_date).slice(0,10) : null);
           var _nextRaw = Object.assign({}, _prevRaw, {
+            closing_date_original: (_origClose && String(_origClose).slice(0,10) !== String(val).slice(0,10)) ? String(_origClose).slice(0,10) : (_prevRaw.closing_date_original || null),
             closing_date_auto_rolled_from: null,
             closing_date_last_rolled: null,
             closing_reschedule_dismissed_on: null
