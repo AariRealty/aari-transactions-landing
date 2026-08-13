@@ -443,18 +443,24 @@
   function wireSignOut() {
     var a = document.getElementById('aari-signout');
     if (!a) return;
+    // Host-scoped sign-out destination · Marlenyi Aug 13 2026. aaritransactions.com users go back
+    // to the Aari Transactions site, not hub.joinaari.com (the Join Aari login). Shared header, so
+    // guard by hostname to keep every other Aari property on hub.joinaari.com.
+    var signOutDest = (String(location.hostname || '').indexOf('aaritransactions.com') !== -1)
+      ? 'https://aaritransactions.com/'
+      : 'https://hub.joinaari.com/';
     a.addEventListener('click', function (e) {
       e.preventDefault();
       confirmSignOut(function () {
         try {
           if (window.AariAuth && typeof window.AariAuth.signOut === 'function') {
             Promise.resolve(window.AariAuth.signOut()).finally(function () {
-              window.location.href = 'https://hub.joinaari.com/';
+              window.location.href = signOutDest;
             });
             return;
           }
         } catch (_) {}
-        window.location.href = 'https://hub.joinaari.com/';
+        window.location.href = signOutDest;
       });
     });
   }

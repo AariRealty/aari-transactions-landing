@@ -582,15 +582,23 @@
 
     var so = menu.querySelector('[data-awb-signout]');
     if (so){
+      // Sign-out destination is host-scoped · Marlenyi Aug 13 2026. On the Aari Transactions
+      // site, logging out of the TC portal was dumping her at hub.joinaari.com (the Join Aari
+      // login) — wrong product. Send aaritransactions.com users back to the Aari Transactions
+      // site; every other Aari property keeps hub.joinaari.com. Guard by hostname so this shared
+      // banner stays correct everywhere it's used.
+      var _signOutDest = (String(location.hostname || '').indexOf('aaritransactions.com') !== -1)
+        ? 'https://aaritransactions.com/'
+        : 'https://hub.joinaari.com/';
       so.addEventListener('click', function(e){
         e.preventDefault();
         try {
           if (window.AariAuth && typeof window.AariAuth.signOut === 'function'){
-            Promise.resolve(window.AariAuth.signOut()).then(function(){ window.location.href = 'https://hub.joinaari.com/'; });
+            Promise.resolve(window.AariAuth.signOut()).then(function(){ window.location.href = _signOutDest; });
             return;
           }
         } catch(_){}
-        window.location.href = 'https://hub.joinaari.com/';
+        window.location.href = _signOutDest;
       });
     }
   }
