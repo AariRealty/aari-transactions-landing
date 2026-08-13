@@ -2080,8 +2080,6 @@
     <div class="metrics-item metric-tile" id="m-closing" data-kpi="closing" role="button" tabindex="0"><span class="metric-n" id="kpi-closing">0</span><span class="metric-l">Closing this week</span></div>
     <div class="metrics-item metric-tile metrics-item-quiet" id="m-ytd" data-kpi="ytd" role="button" tabindex="0"><span class="metric-n" id="kpi-ytd">0</span><span class="metric-l">Closed YTD</span></div>
   </div>
-  <!-- Coordinator workload · broker-only, "Viewing: All TCs" only. Rendered by renderTcWorkload(). -->
-  <div id="tcWorkload"></div>
 
   <!-- ============ AGENT MESSAGES PANEL (TC + broker view) ============ -->
   <div class="agent-msg-panel" id="agent-msg-panel" style="display:none">
@@ -2161,6 +2159,8 @@
        file by what it needs from you (Needs you / Closing this week / On track), searchable, with
        On track collapsed. Own container, sibling of the board. renderListScreen() fills it. -->
   <div id="listScreen" style="display:none;margin-top:2px"></div>
+  <!-- Team · coordinator workload as a board view (broker + All TCs only). Rendered by renderTcWorkload(). -->
+  <div id="teamScreen" style="display:none;margin-top:2px"></div>
 
 </main>
 
@@ -12761,7 +12761,7 @@ Tell me your planned move-out date and I will set the inspection.`
   // count, a load bar against a soft full plate (CAP), the file mix, and a Heavy/Busy/Room tag, with a
   // one-line routing suggestion. Lives under the stat tiles. Recomputes from _files with renderKpis.
   function renderTcWorkload(){
-    const host = document.getElementById('tcWorkload'); if(!host) return;
+    const host = document.getElementById('teamScreen'); if(!host) return;
     const role = (_profile && String(_profile.role || '').toLowerCase()) || '';
     const allView = (typeof _tcFilter === 'undefined') || _tcFilter === 'all' || _tcFilter == null;
     if(role !== 'broker' || !allView){ host.innerHTML = ''; return; }
@@ -13858,9 +13858,11 @@ Tell me your planned move-out date and I will set the inspection.`
       if(inv) inv.style.display = (_activeView === 'invoice') ? '' : 'none';
       const lst = document.getElementById('listScreen');
       if(lst) lst.style.display = (_activeView === 'list') ? '' : 'none';
+      const team = document.getElementById('teamScreen');
+      if(team) team.style.display = (_activeView === 'team') ? '' : 'none';
       const heat = document.getElementById('calHeatmap');
-      // The heatmap rides under the board. List and Invoice both replace that whole area, so it hides for both.
-      if(heat) heat.style.display = (_activeView === 'invoice' || _activeView === 'list') ? 'none' : '';
+      // The heatmap rides under the board. List, Invoice and Team all replace that whole area, so it hides.
+      if(heat) heat.style.display = (_activeView === 'invoice' || _activeView === 'list' || _activeView === 'team') ? 'none' : '';
       // Expose the current mnav view on body so mobile CSS can scope hides
       // (Today hides the Active files section; Board / Calendar / Invoices
       // do not). See body[data-mnav-view="today"] rule above.
@@ -13882,6 +13884,7 @@ Tell me your planned move-out date and I will set the inspection.`
       if(earn) earn.style.display = 'none';
       if(_activeView === 'invoice') renderInvoiceScreen();
       if(_activeView === 'list') { try { renderListScreen(); } catch(_){} }
+      if(_activeView === 'team') { try { renderTcWorkload(); } catch(_){} }
     } catch(_){}
     try { ensureMobileNav(); } catch(_){}
     try { ensureFAB(); } catch(_){}
@@ -14286,9 +14289,13 @@ Tell me your planned move-out date and I will set the inspection.`
     var _roleHdr = (_profile && String(_profile.role || '').toLowerCase()) || '';
     var _showInvHdr = (_roleHdr === 'tc') || (_roleHdr === 'broker');
     var _invNHdr = _showInvHdr ? _invoiceBadgeCount() : 0;
-    var _vIcon = function(v, label, glyph){ var on = _activeView === v; return '<span data-active-view="' + v + '" title="' + label + '" style="display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:28px;padding:0 9px;cursor:pointer;border-radius:7px;font-size:13px;' + (on ? 'background:#0f0f0f;color:#fff' : 'color:#8a857c') + '">' + glyph + '</span>'; };
+    // Team view · coordinator workload, offered only to the broker viewing All TCs (a coordinator
+    // doesn't route work). If that view was left active and no longer applies, fall back to Board.
+    var _showTeam = (_roleHdr === 'broker') && ((typeof _tcFilter === 'undefined') || _tcFilter === 'all' || _tcFilter == null);
+    if(_activeView === 'team' && !_showTeam) _activeView = 'board';
+    var _vIcon = function(v, label, glyph){ var on = _activeView === v; return '<span data-active-view="' + v + '" title="' + label + '" style="display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:28px;padding:0 10px;cursor:pointer;border-radius:7px;font-size:13px;font-weight:600;' + (on ? 'background:#0f0f0f;color:#fff' : 'color:#8a857c') + '">' + glyph + '</span>'; };
     var _controls =
-      '<span style="display:inline-flex;gap:2px;background:#f2efe9;border-radius:9px;padding:3px">' + _vIcon('board', 'Board', '&#9638;') + _vIcon('list', 'List', '&#9776;') + '</span>' +
+      '<span style="display:inline-flex;gap:2px;background:#f2efe9;border-radius:9px;padding:3px">' + _vIcon('board', 'Board', '&#9638;') + _vIcon('list', 'List', '&#9776;') + (_showTeam ? _vIcon('team', 'Team', 'Team') : '') + '</span>' +
       (_showInvHdr ? ('<span data-active-view="invoice" style="display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 13px;font-size:11px;font-weight:600;cursor:pointer;' + (_activeView === 'invoice' ? 'background:#0f0f0f;color:#fff;border:0.5px solid #0f0f0f' : 'background:#fff;color:#0f0f0f;border:0.5px solid #e6e1d6') + '">Billing' + (_invNHdr ? (' <span style="font-size:9px;font-weight:700;border-radius:999px;padding:1px 6px;' + (_activeView === 'invoice' ? 'background:#fff;color:#0f0f0f' : 'background:#0f0f0f;color:#fff') + '">' + _invNHdr + '</span>') : '') + '</span>') : '') +
       '<span data-earn-toggle style="display:inline-flex;align-items:baseline;gap:6px;background:#fff;border:0.5px solid #e6e1d6;border-radius:999px;padding:5px 12px;cursor:pointer">' +
         '<span style="font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#a39e93">Net</span>' +
