@@ -2080,6 +2080,8 @@
     <div class="metrics-item metric-tile" id="m-closing" data-kpi="closing" role="button" tabindex="0"><span class="metric-n" id="kpi-closing">0</span><span class="metric-l">Closing this week</span></div>
     <div class="metrics-item metric-tile metrics-item-quiet" id="m-ytd" data-kpi="ytd" role="button" tabindex="0"><span class="metric-n" id="kpi-ytd">0</span><span class="metric-l">Closed YTD</span></div>
   </div>
+  <!-- Coordinator workload · broker-only, "Viewing: All TCs" only. Rendered by renderTcWorkload(). -->
+  <div id="tcWorkload"></div>
 
   <!-- ============ AGENT MESSAGES PANEL (TC + broker view) ============ -->
   <div class="agent-msg-panel" id="agent-msg-panel" style="display:none">
@@ -12751,6 +12753,62 @@ Tell me your planned move-out date and I will set the inspection.`
     // Mute the two stats while they read zero, so dead zeros stop competing for the eye.
     const mClose = document.getElementById('m-closing'); if(mClose) mClose.classList.toggle('metrics-item-quiet', closingWk === 0);
     const mYtd = document.getElementById('m-ytd'); if(mYtd) mYtd.classList.toggle('metrics-item-quiet', ytd === 0);
+    try { renderTcWorkload(); } catch(_){}
+  }
+
+  // Coordinator workload (Marlenyi picked "A · roster with load bars" Aug 13 2026). Broker-only, and
+  // only when Viewing = All TCs — a coordinator doesn't route work. One row per coordinator: active
+  // count, a load bar against a soft full plate (CAP), the file mix, and a Heavy/Busy/Room tag, with a
+  // one-line routing suggestion. Lives under the stat tiles. Recomputes from _files with renderKpis.
+  function renderTcWorkload(){
+    const host = document.getElementById('tcWorkload'); if(!host) return;
+    const role = (_profile && String(_profile.role || '').toLowerCase()) || '';
+    const allView = (typeof _tcFilter === 'undefined') || _tcFilter === 'all' || _tcFilter == null;
+    if(role !== 'broker' || !allView){ host.innerHTML = ''; return; }
+    const CAP = 20; // a "full plate" of active files · adjustable
+    const by = {}; let totalActive = 0;
+    (_files || []).forEach(function(f){
+      if(!f || (f.raw_form_data || {}).test_pool || f.status === 'archived') return;
+      let closed = false; try { closed = (deriveStage(f) === 'closed') || f.status === 'closed'; } catch(_){ closed = f.status === 'closed'; }
+      if(closed) return;
+      const tc = f.assigned_tc_id || 'unassigned';
+      if(!by[tc]) by[tc] = { active:0, sales:0, listings:0, other:0, closingWk:0 };
+      by[tc].active++; totalActive++;
+      const ft = f.file_type || 'sale';
+      if(ft === 'sale') by[tc].sales++; else if(ft === 'listing') by[tc].listings++; else by[tc].other++;
+      const d = (typeof daysToClose === 'function') ? daysToClose(f) : null;
+      if(d != null && d >= 0 && d <= 7) by[tc].closingWk++;
+    });
+    const rows = Object.keys(by).filter(function(k){ return k !== 'unassigned'; }).map(function(id){
+      const tc = (_tcsById && _tcsById[id]) || {};
+      const nm = ((tc.first_name || '') + ' ' + (tc.last_name || '')).trim() || 'Coordinator';
+      const init = (((tc.first_name || '?').charAt(0)) + ((tc.last_name || '').charAt(0))).toUpperCase();
+      return { id:id, nm:nm, init:init, active:by[id].active, sales:by[id].sales, listings:by[id].listings, other:by[id].other, closingWk:by[id].closingWk };
+    }).sort(function(a, b){ return b.active - a.active; });
+    if(rows.length < 2){ host.innerHTML = ''; return; } // only useful with multiple coordinators
+    const top = rows[0];
+    const roomNames = rows.slice(1).filter(function(r){ return r.active < 8; }).map(function(r){ return r.nm.split(' ')[0]; });
+    const insight = '<b style="color:#a3402f">' + esc(top.nm.split(' ')[0]) + ' is carrying ' + top.active + ' of ' + totalActive + '</b>' + (roomNames.length ? ' &mdash; route new files to ' + esc(roomNames.join(', ')) + '.' : '.');
+    const tagOf = function(a){ return a >= 15 ? { t:'Heavy', c:'#a3402f', bg:'#faece7', bd:'#f3d9d0', bar:'#a3402f' } : (a >= 8 ? { t:'Busy', c:'#8a6d1b', bg:'#faf3e6', bd:'#ecdfc4', bar:'#c99a3e' } : { t:'Room', c:'#1f7a4d', bg:'#e9f3ec', bd:'#cfe6d7', bar:'#1f7a4d' }); };
+    const mixOf = function(r){ const p = []; if(r.sales) p.push(r.sales + ' sale' + (r.sales > 1 ? 's' : '')); if(r.listings) p.push(r.listings + ' listing' + (r.listings > 1 ? 's' : '')); if(r.other) p.push(r.other + ' other'); if(r.closingWk) p.push(r.closingWk + ' closing this week'); return p.join(' · '); };
+    let h = '<div style="background:#fff;border:1px solid #ece8e0;border-radius:14px;padding:16px 18px;margin-top:12px;max-width:720px">' +
+      '<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:3px"><span style="font-family:Georgia,\'Times New Roman\',serif;font-weight:700;font-size:15px">Coordinator workload</span><span style="font-size:9.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:#a09a8f">' + totalActive + ' active</span></div>' +
+      '<div style="font-size:11.5px;color:#5f5e5a;margin-bottom:12px">' + insight + '</div>';
+    rows.forEach(function(r, i){
+      const tg = tagOf(r.active); const pct = Math.min(100, Math.round(r.active / CAP * 100));
+      h += '<div style="display:flex;align-items:center;gap:13px;padding:12px 2px;' + (i ? 'border-top:0.5px solid #f0ece2' : '') + '">' +
+        '<span style="width:31px;height:31px;border-radius:50%;background:#ded8ca;color:#5f5a50;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto">' + esc(r.init) + '</span>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:13px;font-weight:700">' + esc(r.nm) + '</div>' +
+          '<div style="height:7px;border-radius:5px;background:#eee7d8;overflow:hidden;margin-top:6px"><span style="display:block;height:100%;border-radius:5px;width:' + pct + '%;background:' + tg.bar + '"></span></div>' +
+          '<div style="font-size:10px;color:#8a857c;margin-top:5px">' + esc(mixOf(r) || '—') + '</div>' +
+        '</div>' +
+        '<div style="text-align:right;flex:0 0 auto"><div style="font-family:Georgia,\'Times New Roman\',serif;font-weight:700;font-size:21px;line-height:1">' + r.active + '</div><div style="font-size:8px;color:#a09a8f;text-transform:uppercase;letter-spacing:.06em">active</div></div>' +
+        '<span style="flex:0 0 auto;font-size:9px;font-weight:700;border-radius:20px;padding:2px 9px;color:' + tg.c + ';background:' + tg.bg + ';border:0.5px solid ' + tg.bd + '">' + tg.t + '</span>' +
+      '</div>';
+    });
+    h += '</div>';
+    host.innerHTML = h;
   }
 
   // Marlenyi 2026-08-07 · click a KPI (need you / active / closing this week / closed YTD)
