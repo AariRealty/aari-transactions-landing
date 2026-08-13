@@ -2036,6 +2036,13 @@
 
 <main class="page" id="page-main" style="display:none">
 
+  <!-- Needs-attention bar · Marlenyi picked "B" Aug 13 2026. A bold clay bar pinned to the very top
+       of the page (above the title, sticky on scroll) whenever any file has a gap the TC must close
+       — overdue closing, no agent, missing signed document, no closing date. TCs were missing the
+       quiet card flags every login, so this sits in their eyeline until the gaps are cleared.
+       Filled by renderAttentionBar(); hidden when there are no gaps. -->
+  <div id="attention-bar" style="position:sticky;top:0;z-index:30;display:none"></div>
+
   <div class="page-head">
     <h1 class="page-title">Files</h1>
     <div class="page-head-right">
@@ -12764,6 +12771,7 @@ Tell me your planned move-out date and I will set the inspection.`
     const mClose = document.getElementById('m-closing'); if(mClose) mClose.classList.toggle('metrics-item-quiet', closingWk === 0);
     const mYtd = document.getElementById('m-ytd'); if(mYtd) mYtd.classList.toggle('metrics-item-quiet', ytd === 0);
     try { renderTcWorkload(); } catch(_){}
+    try { renderAttentionBar(); } catch(_){}
   }
 
   // Coordinator workload (Marlenyi picked "A · roster with load bars" Aug 13 2026). Broker-only, and
@@ -18389,6 +18397,69 @@ Tell me your planned move-out date and I will set the inspection.`
     } catch(_){}
     return '';
   }
+  // ===== Needs-attention bar (Item B) · one reason per file, reusing the at-risk engine =====
+  // _atRiskOf covers sales (overdue closing, no contract, no closing date, no agent). Listings add
+  // one reliable gap: the broker-review "needs_docs" signal = missing signed listing agreement.
+  let _attnOpen = false;
+  function _attentionReason(f){
+    try {
+      var base = (typeof _atRiskOf === 'function') ? _atRiskOf(f) : '';
+      if(base) return base;
+      var st = ''; try { st = deriveStage(f); } catch(_){}
+      if(st === 'closed') return '';
+      var lg = f.logistics || {};
+      var needsDocs = lg.reply_review || (lg.broker_review && lg.broker_review.status === 'needs_docs') || f.status === 'awaiting_broker_review';
+      if(needsDocs){ return String(f.file_type || 'sale').toLowerCase() === 'listing' ? 'Missing signed listing agreement' : 'Missing required document'; }
+    } catch(_){}
+    return '';
+  }
+  function _attentionFiles(){
+    var arr = (_files || []).filter(function(f){ return f && f.status !== 'archived' && !((f.raw_form_data || {}).test_pool); });
+    try { if(typeof _tcFilter !== 'undefined' && _tcFilter && _tcFilter !== 'all'){ arr = arr.filter(function(f){ return f.assigned_tc_id === _tcFilter; }); } } catch(_){}
+    return arr;
+  }
+  function _attentionItems(){
+    return _attentionFiles().map(function(f){ return { f: f, reason: _attentionReason(f) }; }).filter(function(x){ return x.reason; });
+  }
+  function _attnCategory(r){
+    if(/overdue/i.test(r)) return 'overdue';
+    if(/^Missing/i.test(r)) return 'missing document';
+    if(/no closing date/i.test(r)) return 'no closing date';
+    if(/no contract/i.test(r)) return 'no contract';
+    if(/no agent/i.test(r)) return 'no agent';
+    return 'to complete';
+  }
+  function renderAttentionBar(){
+    var host = document.getElementById('attention-bar'); if(!host) return;
+    var items; try { items = _attentionItems(); } catch(_){ items = []; }
+    if(!items.length){ host.innerHTML = ''; host.style.display = 'none'; _attnOpen = false; return; }
+    host.style.display = '';
+    var cats = {}; items.forEach(function(x){ var c = _attnCategory(x.reason); cats[c] = (cats[c] || 0) + 1; });
+    var order = ['overdue', 'no agent', 'missing document', 'no closing date', 'no contract', 'to complete'];
+    var pieces = [];
+    order.forEach(function(c){ if(cats[c]){ var n = cats[c]; var w = (c === 'missing document') ? ('missing document' + (n === 1 ? '' : 's')) : c; pieces.push(n + ' ' + w); } });
+    var N = items.length;
+    var list = _attnOpen ? ('<div style="background:#fff;border:0.5px solid #ece8e0;border-top:0;border-radius:0 0 12px 12px;padding:4px 14px 8px">' +
+      items.map(function(x){
+        return '<div data-att-open="' + esc(x.f.id) + '" style="display:flex;align-items:center;gap:11px;padding:10px 2px;border-top:0.5px solid #f0ece2;cursor:pointer">' +
+          '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:#0f0f0f">' + esc(String(x.f.property_address || 'File').split(',')[0].trim()) + '</div>' +
+          '<div style="font-size:10.5px;color:#993c1d;margin-top:2px">' + esc(x.reason) + '</div></div>' +
+          '<span style="font-size:9.5px;font-weight:700;color:#fff;background:#0f0f0f;border-radius:20px;padding:5px 12px;white-space:nowrap">Fix</span>' +
+        '</div>';
+      }).join('') + '</div>') : '';
+    host.innerHTML =
+      '<div style="background:#7c2f18;color:#fff;padding:11px 18px;display:flex;align-items:center;gap:12px;border-radius:' + (_attnOpen ? '12px 12px 0 0' : '12px') + ';box-shadow:0 2px 10px rgba(0,0,0,.10)">' +
+        '<span style="font-size:15px;flex:0 0 auto">&#9650;</span>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-size:13px;font-weight:700">' + N + ' file' + (N === 1 ? '' : 's') + ' need you to complete ' + (N === 1 ? 'it' : 'them') + '</div>' +
+          '<div style="font-size:10.5px;color:#f0d3c8;margin-top:1px">' + esc(pieces.join(' · ')) + '</div>' +
+        '</div>' +
+        '<span data-att-review style="font-size:11px;font-weight:700;color:#7c2f18;background:#fff;border-radius:8px;padding:7px 13px;cursor:pointer;flex:0 0 auto">' + (_attnOpen ? 'Hide' : 'Review') + '</span>' +
+      '</div>' + list;
+    var rv = host.querySelector('[data-att-review]'); if(rv) rv.addEventListener('click', function(){ _attnOpen = !_attnOpen; renderAttentionBar(); });
+    host.querySelectorAll('[data-att-open]').forEach(function(r){ r.addEventListener('click', function(){ var id = this.getAttribute('data-att-open'); var f = (_files || []).find(function(x){ return x.id === id; }); if(f){ try { openPlaybook(f); } catch(_){} } }); });
+  }
+
   function _svcColCard(f){
     var l1 = String(f.property_address || 'File').split(',')[0].trim();
     var side = _svcSideLabel(f);
