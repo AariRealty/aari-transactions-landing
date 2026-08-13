@@ -14745,22 +14745,26 @@ Tell me your planned move-out date and I will set the inspection.`
       const live=items.filter(function(x){ return x.isChase || !_done(x); });
       const liveOrdered=live.filter(function(x){return !x.isChase;}).concat(live.filter(function(x){return x.isChase;}));
       let chips=liveOrdered.map(function(it){
-        const over=!it.isChase&&(ts<t0);
-        // Closing chips get a distinct green fill so the highest-signal event jumps off the grid.
         const isClose = /clos/i.test(String(it.key||''));
+        const f=(_files||[]).find(function(x){ return x.id===it.fileId; });
+        // A closing that was auto-rolled forward from a PAST date and still isn't closed is OVERDUE,
+        // not a fresh "due today" — the roll must not mask it. Flag it overdue on the calendar.
+        let rolledOverdue=false, origCloseIso=null;
+        if(isClose&&f&&!f.actual_closing_date){ const _r=f.raw_form_data||{}; const oc=_r.closing_date_original||_r.original_closing_date||_r.closing_date_auto_rolled_from||null; if(oc){ origCloseIso=String(oc).slice(0,10); try{ if(new Date(origCloseIso+'T00:00:00').getTime()<t0) rolledOverdue=true; }catch(_){} } }
+        const over=(!it.isChase&&(ts<t0))||rolledOverdue;
         let cs;
         if(over) cs='background:#f3ddd6;color:#8a4b2f;';
         else if(it.isChase) cs=(isClose?'background:#d9ecdf;color:#1f5a3a;':'background:#f6edd9;color:#8a6a1f;');
         else cs=(isClose?'background:#085041;color:#fff;':'background:#0f0f0f;color:#fff;');
-        const f=(_files||[]).find(function(x){ return x.id===it.fileId; });
         const propShort=String(it.address||(f&&f.property_address)||'').split(',')[0];
         const agent=(f&&typeof _svcAgentName==='function')?_svcAgentName(f):'';
         const agentFirst=(agent&&agent!=='Agent TBD')?String(agent).split(/\s+/)[0]:'';
         const side=(f&&typeof _svcSideLabel==='function')?_svcSideLabel(f):'';
         const sub=[side, agentFirst].filter(Boolean).join(' · ');
-        // Moved closing · original date on its OWN soft clay line so it reads as a flag, not a red run-on.
-        let movedFrom='';
-        try{ if(isClose&&f){ const _r=f.raw_form_data||{}; const oc=_r.closing_date_original||_r.original_closing_date||_r.closing_date_auto_rolled_from||null; if(oc&&String(oc).slice(0,10)!==String(f.closing_date||'').slice(0,10)){ const od=new Date(String(oc).slice(0,10)+'T00:00:00'); movedFrom='moved from '+od.toLocaleDateString('en-US',{month:'short',day:'numeric'}); } } }catch(_){}
+        // Original closing date on its own line · "overdue · was due X" when the roll masked an overdue
+        // closing, else "moved from X" for a normal reschedule.
+        let movedFrom='', movedColor='#8a4b2f';
+        try{ if(isClose&&origCloseIso&&origCloseIso!==String((f&&f.closing_date)||'').slice(0,10)){ const od=new Date(origCloseIso+'T00:00:00'); movedFrom=(rolledOverdue?'overdue · was due ':'moved from ')+od.toLocaleDateString('en-US',{month:'short',day:'numeric'}); movedColor=rolledOverdue?'#a3402f':'#8a4b2f'; } }catch(_){}
         // Colored header + white body (Marlenyi picked Aug 13 2026): the tag rides a small colored bar,
         // property + who sit on a clean white body, the "moved from" flag on its own line. Clickable.
         return '<div data-cal-chip data-cal-open="'+esc(it.fileId)+'" title="'+esc((it.label||'')+' · '+(it.address||''))+'" style="cursor:pointer;border:0.5px solid #f0ece4;border-radius:7px;overflow:hidden">'+
@@ -14768,7 +14772,7 @@ Tell me your planned move-out date and I will set the inspection.`
             '<div style="background:#fff;padding:5px 7px 6px">'+
               '<div style="font-size:10.5px;font-weight:700;color:#0f0f0f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(propShort)+'</div>'+
               (sub?'<div style="font-size:9px;color:#8a857c;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(sub)+'</div>':'')+
-              (movedFrom?'<div style="font-size:8.5px;color:#8a4b2f;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(movedFrom)+'</div>':'')+
+              (movedFrom?'<div style="font-size:8.5px;font-weight:700;color:'+movedColor+';margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(movedFrom)+'</div>':'')+
             '</div>'+
           '</div>';
       }).join('');
@@ -14777,8 +14781,15 @@ Tell me your planned move-out date and I will set the inspection.`
       const hdr='<div style="text-align:center;font-size:11px;font-weight:'+(isToday?'700':'600')+';color:'+(isToday?'#0f0f0f':'#9a958c')+'"><small style="display:block;font-size:8.5px;text-transform:uppercase;color:#9a958c;font-weight:700">'+dn[i]+'</small>'+d.getDate()+'</div>';
       cols+='<div data-cal-day="'+ts+'" style="flex:1;min-width:0;min-height:150px;display:flex;flex-direction:column;gap:6px;padding:10px 8px;border-radius:9px;cursor:pointer;'+(isToday?'box-shadow:inset 0 0 0 2px #0f0f0f;':(isSel?'box-shadow:inset 0 0 0 1.5px #0f0f0f;':''))+'">'+hdr+chips+'</div>';
     });
+    // Back/forward week nav · the header lost its arrows in a past pass, so the week view was stuck on
+    // the current week with no way to review past weeks (Marlenyi Aug 13 2026). data-cal-wknav is
+    // already wired in _wireCal to step _calWeekStart by ±7 days and re-render.
     return '<div style="background:#fff;border:0.5px solid #ece8e0;border-radius:12px;padding:15px 16px">'+
-      '<div style="font-family:Georgia,\'Times New Roman\',serif;font-size:15px;font-weight:600;color:#0f0f0f;margin-bottom:11px">'+esc(rangeLab)+'</div>'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:11px">'+
+        '<button type="button" data-cal-wknav="-1" aria-label="Previous week" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:28px;height:28px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8249;</button>'+
+        '<span style="flex:1;text-align:center;font-family:Georgia,\'Times New Roman\',serif;font-size:15px;font-weight:600;color:#0f0f0f">'+esc(rangeLab)+'</span>'+
+        '<button type="button" data-cal-wknav="1" aria-label="Next week" style="flex:none;border:0.5px solid #ece8e0;border-radius:8px;background:#fff;width:28px;height:28px;font-size:15px;color:#0f0f0f;cursor:pointer;font-family:inherit">&#8250;</button>'+
+      '</div>'+
       '<div style="display:flex;gap:5px;align-items:stretch">'+cols+'</div></div>';
   }
   // Possible-duplicates banner (Option A). Active files that share a normalized address are
