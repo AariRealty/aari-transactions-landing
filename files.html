@@ -18230,7 +18230,34 @@ Tell me your planned move-out date and I will set the inspection.`
     var act = (typeof cardAction === 'function') ? cardAction(f) : { text:'', tone:'green' };
     var tone = act.tone; var txt = String(act.text || ''); var line = txt, chip = '';
     var mi = txt.indexOf(' · '); if(mi !== -1){ line = txt.slice(0, mi); chip = txt.slice(mi + 3); }
-    if(docs && (!line || line.indexOf('On track') === 0)){ line = 'Waiting on docs'; if(!chip) chip = 'Docs'; if(tone === 'green') tone = 'amber'; }
+    var _onTrack = (!line || line.indexOf('On track') === 0);
+    // (1) Auto-rolled / rescheduled closing whose ORIGINAL date has passed and isn't closed = OVERDUE.
+    //     cardAction can read "On track" because the roll moved the date to today — don't let the board
+    //     repeat that lie. Say what to do + flag the original date (Marlenyi picked "A" Aug 13 2026).
+    var _rolledOverdue = false;
+    try {
+      if((f.file_type || 'sale') === 'sale' && !f.actual_closing_date){
+        var _r0 = f.raw_form_data || {};
+        var _oc = _r0.closing_date_original || _r0.original_closing_date || _r0.closing_date_auto_rolled_from || null;
+        if(_oc){
+          var _origIso = String(_oc).slice(0,10);
+          var _t0 = new Date(); _t0.setHours(0,0,0,0);
+          if(new Date(_origIso + 'T00:00:00').getTime() < _t0.getTime()){
+            _rolledOverdue = true;
+            line = 'Confirm closing · overdue';
+            try { chip = 'Was ' + fmtDate(new Date(_origIso + 'T00:00:00')); } catch(_){ chip = 'Overdue'; }
+            tone = 'rose';
+          }
+        }
+      }
+    } catch(_){}
+    // (2) Docs / broker review pending.
+    if(!_rolledOverdue && docs && _onTrack){ line = 'Waiting on docs'; if(!chip) chip = 'Docs'; if(tone === 'green') tone = 'amber'; }
+    // (3) Brand-new file with no confirmed stage = needs setup (not "On track").
+    if(!_rolledOverdue && !docs && _onTrack){
+      var _st = ''; try { _st = deriveStage(f); } catch(_){}
+      if(_st === 'new' || _st === 'waiting_for_tc'){ line = 'Needs setup'; chip = 'New'; if(tone === 'green') tone = 'amber'; }
+    }
     var col = tone === 'rose' ? '#a3402f' : (tone === 'amber' ? '#8a6d1b' : '#8a857c');
     return { line: line, chip: chip, tone: tone, col: col };
   }
