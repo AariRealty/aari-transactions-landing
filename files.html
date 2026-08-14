@@ -19830,8 +19830,22 @@ Tell me your planned move-out date and I will set the inspection.`
         file.raw_form_data = raw; file.contract_filename = f.name; file._resolvedContract = undefined;
         if(_currentFile && _currentFile.id === file.id){ _currentFile.raw_form_data = raw; _currentFile.contract_filename = f.name; _currentFile._resolvedContract = undefined; }
         const ff = (_files || []).find(function(x){ return x.id === file.id; }); if(ff){ ff.raw_form_data = raw; ff.contract_filename = f.name; }
-        // Doc is now on file — clear the required-document gate wall if it was up.
-        try { file._gateHasDoc = true; if(typeof _enforceDocGate === 'function') _enforceDocGate(file); } catch(_){}
+        // Doc is now on file — clear the gate wall AND the broker "needs docs" flag so the wall
+        // releases and the "Waiting on docs" card flips to on-track (Marlenyi Aug 13 2026).
+        try {
+          file._gateHasDoc = true; file._gateDocsProvided = true;
+          var _lg2 = file.logistics || {};
+          if(_lg2.reply_review || (_lg2.broker_review && _lg2.broker_review.status === 'needs_docs') || file.status === 'awaiting_broker_review'){
+            var _newLg = Object.assign({}, _lg2);
+            if(_newLg.broker_review) _newLg.broker_review = Object.assign({}, _newLg.broker_review, { status: 'provided', provided_at: new Date().toISOString() });
+            delete _newLg.reply_review;
+            await _client.from('files').update({ logistics: _newLg }).eq('id', file.id);
+            file.logistics = _newLg;
+            if(_currentFile && _currentFile.id === file.id) _currentFile.logistics = _newLg;
+            var _ff = (_files || []).find(function(x){ return x.id === file.id; }); if(_ff) _ff.logistics = _newLg;
+          }
+          if(typeof _enforceDocGate === 'function') _enforceDocGate(file);
+        } catch(_){}
         renderPlaybook(file);
         // FREE contract extraction · drop a draft the terms + parties steppers
         // pre-fill from. Non-blocking: the attach already shows; this enriches it.
@@ -22462,6 +22476,16 @@ Tell me your planned move-out date and I will set the inspection.`
       var docName = _requiredDocName(file);
       var wall = document.getElementById(wallId);
       if(!docName){ if(wall) wall.remove(); return; }
+      // Broker review flagged the required docs missing → block until uploaded, even if some other
+      // file exists. This is the reliable signal for listings (MLS sheet + signed listing agreement),
+      // and it's what was letting 15301 open and claim "you're ahead" (Marlenyi Aug 13 2026).
+      var _lg = file.logistics || {};
+      var _needsDocsFlag = !!(_lg.reply_review || (_lg.broker_review && _lg.broker_review.status === 'needs_docs') || file.status === 'awaiting_broker_review');
+      if(_needsDocsFlag && !file._gateDocsProvided){
+        if(!_currentFile || _currentFile.id !== file.id){ if(wall) wall.remove(); return; }
+        _renderDocGateWall(file, docName);
+        return;
+      }
       if(_fileHasContractDoc(file)){ if(wall) wall.remove(); return; }
       // No doc in the saved fields — resolve once from storage before deciding to block.
       if(file._gateHasDoc === undefined){
