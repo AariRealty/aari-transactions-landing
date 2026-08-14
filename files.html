@@ -22776,6 +22776,11 @@ Tell me your planned move-out date and I will set the inspection.`
       } else { z.hidden = true; z.innerHTML = ''; }
     }
     if(!head) return;
+    // Reclassify · a file inputted (or email-imported) as the wrong type can be switched in one tap
+    // (Marlenyi Aug 14 2026 · 6044 came in as a sale but was a listing). Shown to broker + TC.
+    var _oppType = (file.file_type === 'listing') ? 'sale' : 'listing';
+    var _switchItem = '<a href="#" data-switch-type="' + _oppType + '" style="display:block;font-size:12.5px;color:#0f0f0f;padding:8px 11px;border-radius:6px;text-decoration:none">This is actually a ' + _oppType + '</a>' +
+      '<div style="height:1px;background:#f1ede6;margin:4px 6px"></div>';
     if(_profile && _profile.role === 'broker'){
       // Broker-only: assign this file to a TC (or back to the claim pool), plus delete.
       var _cur = (file.assigned_tc_id && _tcsById) ? _tcsById[file.assigned_tc_id] : null;
@@ -22789,7 +22794,7 @@ Tell me your planned move-out date and I will set the inspection.`
       if(file.assigned_tc_id) _items += '<a href="#" data-assign-tc="__none__" style="display:block;font-size:12.5px;color:#5f5e5a;padding:7px 11px;border-radius:6px;text-decoration:none;white-space:nowrap">Move to claim pool</a>';
       _items += '<div style="height:1px;background:#f1ede6;margin:4px 6px"></div>';
       _items += '<a href="#" data-del-link style="display:block;font-size:12.5px;color:#a3402f;padding:7px 11px;border-radius:6px;text-decoration:none">Delete file</a>';
-      head.innerHTML = delMenu(_items);
+      head.innerHTML = delMenu(_switchItem + _items);
     } else if(_profile && _profile.role === 'tc'){
       // Self-serve archive (reversible · for a file added by mistake) is the easy
       // path; it moves the file off the active board and emails the broker. Actual
@@ -22799,7 +22804,7 @@ Tell me your planned move-out date and I will set the inspection.`
         (req
           ? '<span style="display:block;font-size:11px;color:#9a7c3a;padding:8px 11px">Deletion requested</span>'
           : '<a href="#" data-del-request style="display:block;font-size:12.5px;color:#7a756c;padding:8px 11px;border-radius:6px;text-decoration:none">Request deletion</a>');
-      head.innerHTML = delMenu(_tcItems);
+      head.innerHTML = delMenu(_switchItem + _tcItems);
     } else { head.innerHTML = ''; }
   }
   document.addEventListener('click', async (e) => {
@@ -22809,6 +22814,28 @@ Tell me your planned move-out date and I will set the inspection.`
       const wasHidden = m && m.hidden;
       document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; });
       if(m) m.hidden = !wasHidden; return; }
+    // Reclassify file type · sale <-> listing (Marlenyi Aug 14 2026).
+    const stype = e.target.closest && e.target.closest('[data-switch-type]');
+    if(stype){
+      e.preventDefault();
+      document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; });
+      const newType = stype.getAttribute('data-switch-type');
+      const f = _currentFile; if(!f) return;
+      if(!confirm('Change this file to a ' + newType + '?\n\nIt moves to the ' + (newType === 'listing' ? 'MLS Setup' : 'Sales') + ' column and loads the ' + newType + ' checklist.')) return;
+      try {
+        const upd = (newType === 'listing')
+          ? { file_type:'listing', service_type:'mls_setup', transaction_stage:'active' }
+          : { file_type:'sale', service_type:'tc_one_side' };
+        const { error } = await _client.from('files').update(upd).eq('id', f.id);
+        if(error){ alert('Could not switch the file type: ' + error.message); return; }
+        Object.assign(f, upd);
+        const ff = (_files || []).find(function(x){ return x.id === f.id; }); if(ff) Object.assign(ff, upd);
+        delete f._gateHasDoc; delete f._gateDocsProvided;
+        try { renderKpis(); renderKanban(); } catch(_){}
+        try { openPlaybook(f); } catch(_){}
+      } catch(err){ alert('Could not switch the file type.'); }
+      return;
+    }
     if(!(e.target.closest && e.target.closest('[data-del-menu]'))){ document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; }); }
     // Stage pill dropdown · open + close, and set the file's stage.
     const stog = e.target.closest && e.target.closest('[data-stage-toggle]');

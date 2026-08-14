@@ -202,6 +202,7 @@ Deno.serve(async (req) => {
   // Run extraction (fills extracted_contract; the DB trigger fills property_address).
   let extracted = false;
   let extractedFields = 0;
+  let extractedContractType = "";
   try {
     const ex = await fetch(`${SUPABASE_URL}/functions/v1/extract-contract-fields`, {
       method: "POST", headers: { "Authorization": `Bearer ${SERVICE_ROLE}`, "Content-Type": "application/json" },
@@ -213,9 +214,25 @@ Deno.serve(async (req) => {
         const exBody = await ex.json();
         const fields = (exBody && (exBody as any).fields) || {};
         extractedFields = Object.keys(fields).length;
+        extractedContractType = String((fields as any).contract_type || "");
       } catch (_) { /* body shape may vary · ignore */ }
     }
   } catch (_) { /* best-effort; the cockpit can re-extract / OCR */ }
+
+  // Listing detection · the importer defaults every file to "sale", but an emailed LISTING agreement or
+  // MLS input sheet should be a listing (Marlenyi Aug 14 2026 · 6044 Acorn came in as a sale because it
+  // was an emailed listing agreement named "…ListAgree.pdf"). Flip the type when the document clearly
+  // looks like a listing; anything ambiguous stays a sale and the TC can reclassify in one tap.
+  try {
+    const fn = String(body.filename || "").toLowerCase();
+    const ct = extractedContractType.toLowerCase();
+    const looksListing =
+      /list\.?\s*agree|listing|exclusive\s*right\s*to\s*sell|\berts?\b|mls[_\s-]*input|mls[_\s-]*incoming/.test(fn) ||
+      /listing|exclusive\s*right\s*to\s*sell/.test(ct);
+    if (looksListing) {
+      await admin.from("files").update({ file_type: "listing", service_type: "mls_setup" }).eq("id", fileId);
+    }
+  } catch (_) { /* detection is best-effort; the TC can reclassify in one tap */ }
 
   // Guard · extracted address dedup. If the extracted address matches an
   // existing active file, archive this copy so the same deal doesn't render
