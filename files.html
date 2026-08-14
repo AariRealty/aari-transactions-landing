@@ -18507,9 +18507,26 @@ Tell me your planned move-out date and I will set the inspection.`
         '<p class="kz-sub" style="margin-top:8px"><a href="/index.html#apply" class="kz-link">Send the intake link to an agent &rarr;</a></p></div>';
       _wireSvcCols(); return;
     }
+    // Urgency sort key · Marlenyi Aug 14 2026. Within a status tier, order cards by their soonest
+    // deadline (overdue first, then tomorrow, then further out) so the most time-sensitive file is on
+    // top. Built once per render from the same deadline feed the calendar uses.
+    var _soonestByFile = {};
+    try {
+      var _calU = (typeof _tcCalDeadlines === 'function') ? _tcCalDeadlines() : [];
+      var _t0u = new Date(); _t0u.setHours(0, 0, 0, 0);
+      _calU.forEach(function(ci){
+        if(!ci || ci.done || !(ci.date instanceof Date)) return;
+        var dd = new Date(ci.date.getTime()); dd.setHours(0, 0, 0, 0);
+        var days = (typeof _bizDaysTo === 'function') ? _bizDaysTo(dd) : Math.round((dd - _t0u) / 86400000);
+        if(days == null) return;
+        if(_soonestByFile[ci.fileId] === undefined || days < _soonestByFile[ci.fileId]) _soonestByFile[ci.fileId] = days;
+      });
+    } catch(_){}
+    var _urgDays = function(f){ var v = _soonestByFile[f && f.id]; return (v === undefined || v === null) ? 9999 : v; };
+    var _cardSort = function(a, b){ return _cardRank(a) - _cardRank(b) || _urgDays(a) - _urgDays(b); };
     // Search cuts across services · flat ranked result list instead of columns.
     if(_searchQuery){
-      var hits = active.filter(matchesSearch).sort(function(a, b){ return _cardRank(a) - _cardRank(b); });
+      var hits = active.filter(matchesSearch).sort(_cardSort);
       k.innerHTML = '<div style="background:#fcfaf5;border-radius:16px;padding:14px 18px;max-width:560px">' +
         '<div style="font-size:9.5px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#a39e93;margin:2px 2px 10px">' + hits.length + ' result' + (hits.length === 1 ? '' : 's') + '</div>' +
         (hits.length ? hits.map(_svcColCard).join('') : '<div style="font-size:12px;color:#8a857c;padding:6px 4px">No files match &ldquo;' + esc(_searchQuery) + '&rdquo;.</div>') +
@@ -18523,7 +18540,7 @@ Tell me your planned move-out date and I will set the inspection.`
 
     var colsHtml = keys.map(function(key){
       var isClosed = key === 'closed';
-      var arr = lanes[key].slice().sort(function(a, b){ return _cardRank(a) - _cardRank(b); });
+      var arr = lanes[key].slice().sort(_cardSort);
       var need = isClosed ? [] : arr.filter(_needsYou);
       var calm = isClosed ? arr : arr.filter(function(f){ return !_needsYou(f); });
       var cards = need.map(_svcColCard).join('');
