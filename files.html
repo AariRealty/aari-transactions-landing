@@ -7814,12 +7814,14 @@ Tell me your planned move-out date and I will set the inspection.`
     // "Allow promotion codes" on, verified in Stripe. Blank when the agent is the coordinator
     // (self-coordinated file · no external agent to offer). Add an agent by dropping their id +
     // pre-applied URL here.
-    const NEXT_FILE_OFFER = {
-      '2635cd0e-45ee-415e-b0d0-91251b5af6bf': 'https://buy.stripe.com/8x23cn8bZ9uzc0H6EGcAo04?prefilled_promo_code=SAMANTHA50'  // Samantha Haringa · TC One Side $399, $50 off
-    };
-    const _nfoUrl = (file && !_agentIsTc && file.agent_id && NEXT_FILE_OFFER[file.agent_id]) || '';
-    const next_file_offer = _nfoUrl
-      ? ('\n\nWhen your next file is ready, your $50 member rate is already applied. Start it here:\n' + _nfoUrl)
+    // The member's rate now rides on their FILE-BOUND pay link (see paymentLinkFor +
+    // MEMBER_PROMO). We no longer hand out a forward, untaggable promo URL here — that
+    // link had no file id, which is exactly how Samantha's four TC prepayments landed in
+    // Stripe with nothing to match (Aug 2026). We just reassure them the rate is locked;
+    // the actual pay link goes out per-file, already discounted, when the next file exists.
+    const _agentIsMember = !!(file && !_agentIsTc && file.agent_id && typeof MEMBER_PROMO !== 'undefined' && MEMBER_PROMO[file.agent_id]);
+    const next_file_offer = _agentIsMember
+      ? '\n\nWhen your next file is ready, your $50 member rate is already locked in. We’ll send your pay link as soon as it’s set up.'
       : '';
     // ===== Structured contacts · pull from raw_form_data first (intake form),
     // then fall back to free-text lender_contact / title_contact columns,
@@ -8191,7 +8193,7 @@ Tell me your planned move-out date and I will set the inspection.`
     }
     wireUi();
     await loadAndRender();
-    try { await loadInvoices(); await loadAtArBills(); renderFileList(); } catch(_){}
+    try { await loadInvoices(); await loadAtArBills(); await loadUnmatchedPayments(); renderFileList(); } catch(_){}
     try { await syncCreditUses(); } catch(_){}
     maybeShowCalendarSetup();
   }
@@ -16320,6 +16322,20 @@ Tell me your planned move-out date and I will set the inspection.`
     try { const { data } = await _client.from('at_ar_bills').select('*').order('bill_date', { ascending:false }); _atArBills = data || []; }
     catch(_){ _atArBills = []; }
   }
+  // Unmatched Stripe payments · real money that landed with no file to tag it to (a payer used a
+  // link that carried no client_reference_id). The webhook records these with file_id = null so
+  // they never silently vanish. The Billing view surfaces them so the broker can attach each one
+  // to the right property in a tap — that write stamps the file paid. Broker-only via RLS; returns
+  // [] for other roles. (Marlenyi Aug 14 2026 · Samantha's four orphaned TC prepayments.)
+  var _unmatchedPayments = [];
+  async function loadUnmatchedPayments(){
+    try {
+      const { data } = await _client.from('payments')
+        .select('id, agent_id, amount_cents, net_cents, status, paid_at, stripe_payment_intent_id, stripe_checkout_session_id')
+        .is('file_id', null).eq('status', 'succeeded').order('paid_at', { ascending:false });
+      _unmatchedPayments = data || [];
+    } catch(_){ _unmatchedPayments = []; }
+  }
   // Keep the member-facing credit meter honest: every file the cockpit computes as
   // credit-covered gets a row in membership_credit_uses (deduped on file_id), so the
   // agent's portal reflects credits used even when a coordinator input the work.
@@ -17582,9 +17598,49 @@ Tell me your planned move-out date and I will set the inspection.`
         '</div>'
       : '';
 
+    // Unmatched payments · real Stripe money that landed with no property tag. Broker attaches each
+    // to its file in a tap; the write stamps the file paid and clears the orphan. (Marlenyi Aug 14 2026)
+    var _unmatchedPanel = '';
+    try {
+      var _upRole = (_profile && String(_profile.role || '').toLowerCase()) || '';
+      var _ups = (_upRole === 'broker') ? (_unmatchedPayments || []) : [];
+      if(_ups.length){
+        var _openFiles = (_files || []).filter(function(f){ return f && String(f.status || '') !== 'archived' && !f.paid_at && !f.amount_paid_cents; })
+          .sort(function(a, b){ return String(a.property_address || '').localeCompare(String(b.property_address || '')); });
+        var _payerName = function(aid){
+          if(!aid) return '';
+          var hit = (_files || []).find(function(f){ return f && String(f.agent_id) === String(aid); });
+          var r = hit && hit.raw_form_data || {};
+          return hit ? String(r.agent_name || r.pa_agent_name || '') : '';
+        };
+        var _optFor = function(f){ return '<option value="' + esc(f.id) + '">' + esc(String(f.property_address || 'File').split(',')[0]) + ' &middot; ' + esc(_svcLabel(f)) + '</option>'; };
+        var _upRows = _ups.map(function(p){
+          var _mine = _openFiles.filter(function(f){ return p.agent_id && String(f.agent_id) === String(p.agent_id); });
+          var _rest = _openFiles.filter(function(f){ return !(p.agent_id && String(f.agent_id) === String(p.agent_id)); });
+          var _opts = ['<option value="">Choose the property&hellip;</option>']
+            .concat(_mine.map(_optFor))
+            .concat((_mine.length && _rest.length) ? ['<option value="" disabled>&#9472;&#9472;&#9472;&#9472;</option>'] : [])
+            .concat(_rest.map(_optFor)).join('');
+          var _dt = p.paid_at ? new Date(p.paid_at).toLocaleDateString('en-US', { month:'short', day:'numeric' }) : '';
+          var _who = _payerName(p.agent_id) || 'Unknown payer';
+          return '<div style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-top:0.5px solid #f0e2cf">' +
+            '<div style="min-width:0"><div style="font-size:12.5px;font-weight:600;color:#0f0f0f;font-variant-numeric:tabular-nums">' + _money(p.amount_cents || 0) + '</div>' +
+            '<div style="font-size:10.5px;color:#a08a5f;margin-top:1px">' + esc(_who) + (_dt ? ' &middot; ' + esc(_dt) : '') + '</div></div>' +
+            '<select data-unmatched-file="' + esc(p.id) + '" style="flex:1;min-width:0;font-size:11.5px;font-family:inherit;color:#0f0f0f;background:#fff;border:0.5px solid #e6d9bd;border-radius:7px;padding:6px 8px">' + _opts + '</select>' +
+            '<button type="button" data-attach-payment="' + esc(p.id) + '" style="font-size:10px;font-weight:700;color:#fff;background:#8a6d1b;border:0;border-radius:6px;padding:6px 11px;cursor:pointer;font-family:inherit;white-space:nowrap">Attach</button>' +
+          '</div>';
+        }).join('');
+        _unmatchedPanel = '<div style="background:#fdf7ea;border:1px solid #ecd9ad;border-radius:12px;padding:12px 14px;margin:0 0 12px">' +
+          '<div style="display:flex;align-items:baseline;gap:8px"><span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a6d1b;font-weight:700">Unmatched payments</span>' +
+          '<span style="font-size:11px;color:#a08a5f">' + _ups.length + ' need a file</span></div>' +
+          '<div style="font-size:11px;color:#a08a5f;margin:2px 0 4px;line-height:1.45">Real Stripe money that landed with no property tag. Attach each to its file to mark it paid.</div>' +
+          _upRows + '</div>';
+      }
+    } catch(_){ _unmatchedPanel = ''; }
+
     return '<div style="display:flex;align-items:center;gap:10px;margin:0 0 12px;position:relative">' +
         '<span style="font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#8a857c;font-weight:700">Where each invoice stands</span>' +
-        '<span style="font-size:11.5px;color:#a39e93">' + esc(_invoicePeriod()) + '</span>' + toggle + '</div>' + moneyStrip + _seg +
+        '<span style="font-size:11.5px;color:#a39e93">' + esc(_invoicePeriod()) + '</span>' + toggle + '</div>' + moneyStrip + _unmatchedPanel + _seg +
       '<div style="background:#fcfaf5;border-radius:12px;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start" data-invoice-board="1" data-inv-active="' + _invMobTab + '">' +
         _invColHtml('Not sent', _cnt(working.length), cards || _invEmptyColHtml('Nothing billable this week<br>across any coordinator.')) +
         _invColHtml('Sent &middot; unpaid', _cnt(subs.length + _arU.length), _sentInner) +
@@ -18109,6 +18165,27 @@ Tell me your planned move-out date and I will set the inspection.`
       try { renderInvoiceScreen(); } catch(_){}
     } catch(_){ alert('Not saved.'); }
   }
+  // Attach an unmatched Stripe payment to the file the broker chose in that row's dropdown. Two writes:
+  // the payment row gets the file_id (clears it from the orphan list), and the file gets paid_at +
+  // amount_paid_cents (so it reads Paid everywhere the label checks a real payment record).
+  async function attachPaymentToFile(paymentId){
+    if(!paymentId) return;
+    var sel = document.querySelector('[data-unmatched-file="' + (window.CSS && CSS.escape ? CSS.escape(paymentId) : paymentId) + '"]');
+    var fileId = sel && sel.value;
+    if(!fileId){ alert('Pick the property this payment is for first.'); return; }
+    var pay = (_unmatchedPayments || []).find(function(p){ return String(p.id) === String(paymentId); }) || {};
+    try {
+      var r1 = await _client.from('payments').update({ file_id: fileId }).eq('id', paymentId);
+      if(r1.error){ alert('Not saved: ' + r1.error.message); return; }
+      var patch = { paid_at: pay.paid_at || new Date().toISOString() };
+      if(pay.amount_cents) patch.amount_paid_cents = pay.amount_cents;
+      var r2 = await _client.from('files').update(patch).eq('id', fileId);
+      if(r2.error){ alert('Payment linked, but the file did not update: ' + r2.error.message); }
+      await loadUnmatchedPayments();
+      try { await loadAndRender(); } catch(_){}
+      try { renderInvoiceScreen(); } catch(_){}
+    } catch(_){ alert('Not saved.'); }
+  }
   // Paid-history search · filters the collapsed Paid history rows by address as you type.
   document.addEventListener('input', function(e){
     var inp = e.target && e.target.closest && e.target.closest('[data-paid-search]');
@@ -18136,6 +18213,9 @@ Tell me your planned move-out date and I will set the inspection.`
     // reloads at_ar_bills in the background so any concurrent broker session sees fresh state.
     var mb = e.target && e.target.closest && e.target.closest('[data-mark-ar-bill-paid]');
     if(mb){ markArBillPaid(mb.getAttribute('data-mark-ar-bill-paid')); return; }
+    // Unmatched payment · attach a Stripe orphan to the file the broker picked in the row's dropdown.
+    var ap = e.target && e.target.closest && e.target.closest('[data-attach-payment]');
+    if(ap){ attachPaymentToFile(ap.getAttribute('data-attach-payment')); return; }
     // Details is a way of reading, not a thing you do. It survives the reload.
     var d = e.target && e.target.closest && e.target.closest('[data-invoice-details]');
     if(d){
@@ -23480,13 +23560,30 @@ Tell me your planned move-out date and I will set the inspection.`
   // if payment had landed, the webhook had nothing to match on.
   // Stripe's hosted Payment Links treat `client_reference_id` as a first-
   // class query parameter and put it on the resulting session.
+  //
+  // MEMBER_PROMO · a member agent's Stripe promo now rides on their FILE-BOUND
+  // link, so the discounted link is ALSO the tagged link. This retires the old
+  // forward-looking NEXT_FILE_OFFER promo URL — that link carried no file id, and
+  // it's exactly how Samantha's four TC prepayments landed in Stripe untagged
+  // (Aug 2026). Keyed by agent_id; `services` scopes the code to the service its
+  // membership actually discounts so it can't misapply at checkout.
+  const MEMBER_PROMO = {
+    '2635cd0e-45ee-415e-b0d0-91251b5af6bf': { code:'SAMANTHA50', services:['tc_one_side'] } // Samantha Haringa · $50 off TC one side
+  };
   function paymentLinkFor(file){
     if(!file || !file.service_type) return '';
     const base = STRIPE_LINKS[file.service_type] || '';
     if(!base) return '';
-    if(!file.id) return base;
-    const sep = base.indexOf('?') === -1 ? '?' : '&';
-    return base + sep + 'client_reference_id=' + encodeURIComponent(file.id);
+    let url = base;
+    if(file.id){
+      const sep = url.indexOf('?') === -1 ? '?' : '&';
+      url += sep + 'client_reference_id=' + encodeURIComponent(file.id);
+    }
+    const mp = file.agent_id && MEMBER_PROMO[file.agent_id];
+    if(mp && mp.services.indexOf(file.service_type) !== -1){
+      url += (url.indexOf('?') === -1 ? '?' : '&') + 'prefilled_promo_code=' + encodeURIComponent(mp.code);
+    }
+    return url;
   }
   // Payment gate (Section 4 · Item 13) — HARD block, mirrors the SA gate. An
   // upfront-service file whose payment has not confirmed is locked: tasks grayed
