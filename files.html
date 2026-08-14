@@ -16373,6 +16373,27 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   function _money(c){ return '$' + (Math.round(c) / 100).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
   function _svcLabel(f){ return (typeof SERVICE_LABEL === 'object' && SERVICE_LABEL[svcKey(f)]) || f.service_type || 'Service'; }
+  // ===== Payment-received gate + label (Marlenyi Aug 14 2026) =====
+  // Upfront-paid services · the agent pays BEFORE the work, so the TC can't invoice until payment is
+  // in. Full-TC coordination (tc_one_side / tc_both_sides) is paid at CLOSING on the DA, so it is
+  // never gated on a Stripe charge.
+  var _UPFRONT_PAID_SVCS = { offer_prep_basic:1, offer_prep_complete:1, listing_docs:1, mls_setup:1, listing_coordinator:1, file_organization:1, standalone_review:1 };
+  function _isUpfrontPaid(f){ try { return !!_UPFRONT_PAID_SVCS[svcKey(f)]; } catch(_){ return false; } }
+  function _filePaymentReceived(f){
+    if(!f) return false;
+    if(f.paid_at) return true;                                  // real Stripe payment (webhook)
+    if(f.amount_paid_cents) return true;
+    if(f.payment_confirmed && !f.payment_pending) return true;  // legacy confirmed-at-intake signal
+    return false;
+  }
+  // Grandfather · the hard gate only applies to files created from Aug 14 2026 on. Everything before
+  // predates payment recording and must stay invoiceable so current work is never blocked.
+  var _PAY_GATE_CUTOFF = Date.UTC(2026, 7, 14);
+  function _payGateApplies(f){
+    if(!_isUpfrontPaid(f)) return false;
+    try { if(new Date(f.created_at).getTime() < _PAY_GATE_CUTOFF) return false; } catch(_){ return false; }
+    return true;
+  }
   // Files I am working that WOULD pay, but have not reached the last rung of their service ladder.
   // These are the near misses the empty panel names. Sale TC files are excluded on purpose: they
   // ride the numbered spine to Closed and have no service track, so "move the dropdown" is not the
@@ -17788,7 +17809,19 @@ Tell me your planned move-out date and I will set the inspection.`
       try { isFlat = !isSplitFile(f); foSvc = isFileOrgFile(f); } catch(_){}
       var rateBit = foSvc ? ' &middot; 50%' : ((muted || isFlat || pct == null) ? '' : (' &middot; ' + pct + '%'));
       var flatBit = (!muted && isFlat && !foSvc) ? ' &middot; flat fee' : '';
-      var sub = esc(_svcLabel(f)) + rateBit + flatBit;
+      // Payment status · upfront-paid services show Paid / Awaiting payment; closing-paid TC shows
+      // it pays at closing (Marlenyi Aug 14 2026).
+      var payBit = '';
+      if(!muted){
+        if(_isUpfrontPaid(f)){
+          payBit = _filePaymentReceived(f)
+            ? ' &middot; <span style="color:#1f7a4d;font-weight:600">Payment received</span>'
+            : ' &middot; <span style="color:#a3402f;font-weight:600">Awaiting payment</span>';
+        } else {
+          payBit = ' &middot; <span style="color:#8a857c">Pays at closing</span>';
+        }
+      }
+      var sub = esc(_svcLabel(f)) + rateBit + flatBit + payBit;
       return '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:' + (muted ? '6px' : '11px') + ' 0;border-top:0.5px solid #f0ebe0">' +
         '<div style="min-width:0"><div style="font-size:' + (muted ? '12.5px' : '13.5px') + ';font-weight:' + (muted ? '400' : '500') + ';color:' + (muted ? '#5f5e5a' : '#0f0f0f') + '">' + esc((f.property_address || 'File').split(',')[0]) + '</div>' +
         (muted ? '' : '<div style="font-size:11px;color:#8a857c">' + sub + '</div>') + '</div>' +
@@ -17856,6 +17889,18 @@ Tell me your planned move-out date and I will set the inspection.`
             '\n\nOpen each file to upload it, then submit again.');
           return;
         }
+      }
+    } catch(_){}
+    // Payment-received gate (Item A · Marlenyi Aug 14 2026). An upfront-paid service can't be billed
+    // until the agent's payment is recorded. Grandfathered to files created Aug 14 on, so existing
+    // work is never blocked; full-TC (paid at closing) is exempt.
+    try {
+      var _unpaid = files.filter(function(f){ return _payGateApplies(f) && !_filePaymentReceived(f); });
+      if(_unpaid.length){
+        alert('Payment not received yet on:\n\n' +
+          _unpaid.map(function(f){ return '• ' + (f.property_address || 'File') + ' — ' + _svcLabel(f); }).join('\n') +
+          '\n\nThese are upfront-paid services. Once the agent pays, the file clears to "Payment received" and you can invoice it.');
+        return;
       }
     } catch(_){}
     var creditNo = {};
