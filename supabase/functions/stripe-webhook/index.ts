@@ -132,6 +132,23 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
   const obj = (event.data?.object ?? {}) as Record<string, unknown>;
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
+  // Record a one-time payment into the `payments` ledger the billing board reads (Marlenyi Aug 14
+  // 2026). The table was designed for this but the webhook never wrote to it, so payments were only
+  // ever reflected as a flag on the file, and payments with no file (the "next file" promo link,
+  // paid before the file exists) vanished entirely. Deduped on the checkout session id so a Stripe
+  // retry can't double-record. Fully best-effort · never rejects the webhook.
+  async function recordPayment(row: Record<string, unknown>, sessionId: string): Promise<void> {
+    try {
+      if (sessionId) {
+        const ex = await supabase.from("payments").select("id").eq("stripe_checkout_session_id", sessionId).maybeSingle();
+        if (ex.data) return; // already recorded
+      }
+      await supabase.from("payments").insert(row);
+    } catch (e) {
+      console.warn("[stripe-webhook] recordPayment failed (payment flow unaffected)", e instanceof Error ? e.message : String(e));
+    }
+  }
+
   // ---- Subscription lifecycle (memberships) --------------------------------
   if (type === "customer.subscription.updated" || type === "customer.subscription.created") {
     const subId = (obj.id as string | undefined) || "";
@@ -216,6 +233,30 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
         console.warn("[stripe-webhook] membership id capture failed", e);
       }
     }
+    // One-time payment with no file reference (e.g. the "next file" promo link, paid before the file
+    // exists). Record it so it is visible — matched to the agent by email — for a broker/TC to attach
+    // to the right file from the billing board. Subscriptions are handled above, not here.
+    if (!subscription) {
+      let agentId: string | null = null;
+      if (email) {
+        try {
+          const ag = await supabase.from("agents").select("id").ilike("email", email).maybeSingle();
+          agentId = (ag.data?.id as string) ?? null;
+        } catch (_ae) { /* leave null */ }
+      }
+      await recordPayment({
+        file_id: null,
+        agent_id: agentId,
+        stripe_checkout_session_id: (session.id as string) || null,
+        stripe_payment_intent_id: (session.payment_intent as string) || null,
+        service_type: null,
+        amount_cents: (typeof session.amount_total === "number" ? session.amount_total : 0),
+        currency: (session.currency as string) || "usd",
+        status: "unattached",
+        paid_at: new Date().toISOString(),
+        raw_event: { customer_email: email, session_id: session.id },
+      }, (session.id as string) || "");
+    }
     return json({ received: true, matched: false, membership: !!subscription });
   }
 
@@ -238,6 +279,23 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
   if (upd.error) {
     console.error("[stripe-webhook] update failed", upd.error.message);
     return json({ received: true, updated: false });
+  }
+
+  // Record the payment against its file in the payments ledger the billing board reads.
+  {
+    const f2 = (upd.data ?? {}) as Record<string, unknown>;
+    await recordPayment({
+      file_id: fileId,
+      agent_id: (f2.agent_id as string) || null,
+      stripe_checkout_session_id: (session.id as string) || null,
+      stripe_payment_intent_id: (session.payment_intent as string) || null,
+      service_type: (f2.service_type as string) || null,
+      amount_cents: amountTotal ?? 0,
+      currency: (session.currency as string) || "usd",
+      status: "paid",
+      paid_at: paidAtIso,
+      raw_event: { session_id: session.id },
+    }, (session.id as string) || "");
   }
 
   // Owner ping · fire the email to the owner so she doesn't have to log in
