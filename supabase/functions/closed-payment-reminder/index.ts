@@ -36,35 +36,48 @@ const FROM_ADDR = (FROM.match(/<([^>]+)>/) || [])[1] ?? "hello@aaritransactions.
 const TC_SERVICES = ["tc_one_side", "tc_both_sides"];
 const HOUR = 60 * 60 * 1000;
 
-// Eastern time-of-day greeting — mirrors getTimeOfDayGreeting in files.html
-// (night fallback is "Good evening" per the Section 3 ruling).
-function greeting(): string {
-  const h = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(new Date()));
-  if (h >= 5 && h < 12) return "Good morning";
-  if (h >= 12 && h < 17) return "Good afternoon";
-  return "Good evening";
+// Per-agent member promo · mirrors MEMBER_PROMO in files.html so the pay link
+// carries the agent's Stripe discount as well as the file id. Scoped by service
+// so a code never misapplies to the wrong product at checkout.
+const MEMBER_PROMO: Record<string, { code: string; services: string[] }> = {
+  "2635cd0e-45ee-415e-b0d0-91251b5af6bf": { code: "SAMANTHA50", services: ["tc_one_side"] }, // Samantha Haringa · $50 off TC one side
+};
+
+const P = `font-family:Arial,-apple-system,BlinkMacSystemFont,sans-serif;font-size:15px;color:#000000;font-weight:400;line-height:1.55;margin:12px 0`;
+
+// Bulletproof cream pill button — the background sits on a <td> so Gmail can't
+// strip it (a plain <a> background gets dropped on render).
+function payButton(address: string, payLink: string): string {
+  return `<table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin:16px 0"><tbody><tr><td bgcolor="#f1efe8" style="background-color:#f1efe8;border-radius:999px"><a href="${payLink}" target="_blank" style="display:inline-block;font-family:Arial,-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;font-weight:bold;color:#141210;text-decoration:none;padding:12px 24px">Pay for ${address}</a></td></tr></tbody></table>`;
 }
 
-const D1_BODY = (first: string, payLink: string) =>
-`${greeting()} ${first},
-
-Your file just closed and I wanted to touch base on the TC service fee.
-
-*Please use the link below to complete your payment at your earliest convenience.*
-
-${payLink}`;
-
-const D7_BODY = (first: string, payLink: string) =>
-`${greeting()} ${first},
-
-Just a reminder that the TC service fee for your recent closing is still outstanding.
-
-*Please take a moment to complete your payment using the link below.*
-
-${payLink}`;
-
-function htmlWrap(text: string): string {
-  return `<div style="font-family:Inter,Arial,sans-serif;color:#2c2c2a;max-width:520px;margin:0 auto;white-space:pre-line">${text.replace(/\*([^*]+)\*/g, "<strong>$1</strong>")}</div>`;
+// The approved post-closing payment email (Alex-voice branded template, cream
+// pill, company sign-off, dark footer). rung 1 = day after closing, rung 2 =
+// gentle nudge a week out. Short and to the point — the agent is expecting
+// these, so no congratulations or filler.
+function buildEmail(rung: number, first: string, address: string, payLink: string): { subject: string; text: string; html: string } {
+  const lead = rung === 1
+    ? { htmlLine: `<strong style="font-weight:bolder">${address}</strong> is closed and ready to settle up.`, textLine: `${address} is closed and ready to settle up.`, subject: `Your closing is ready to settle · ${address}` }
+    : { htmlLine: `Just a quick nudge, the payment for <strong style="font-weight:bolder">${address}</strong> is still open on our end.`, textLine: `Just a quick nudge, the payment for ${address} is still open on our end.`, subject: `Still open · ${address}` };
+  const text = `Hi ${first},\n\n${lead.textLine}\n\nYour link is tied to this property. Just tap to pay:\n${payLink}\n\nReply here once it is sent, so we can confirm on our end.\n\nThank you!\nThe Aari Transactions Team`;
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;padding:0;background:#ffffff}p{margin:12px 0}</style></head><body>`
+    + `<table role="presentation" cellpadding="0" cellspacing="0" style="background:#ffffff;width:100%" bgcolor="#ffffff"><tbody><tr><td>`
+    + `<div style="padding:0 0 24px 0;margin:0 auto;max-width:100%">`
+    + `<div style="margin:20px auto"><center><table cellpadding="0" cellspacing="0" style="width:100%;margin:0 auto;max-width:100%"><tbody><tr>`
+    + `<td width="100%" style="background-color:#FFFFFF;box-sizing:border-box" bgcolor="#FFFFFF"><div style="padding:26px 40px"><div style="margin-left:auto;margin-right:auto;max-width:600px">`
+    + `<p style="${P}">Hi ${first},</p>`
+    + `<p style="${P}">${lead.htmlLine}</p>`
+    + `<p style="${P}">Your link is tied to this property, so it is already set. Just tap to pay.</p>`
+    + payButton(address, payLink)
+    + `<p style="${P}">Reply here once it is sent, so we can confirm on our end.</p>`
+    + `<p style="font-family:Arial,-apple-system,BlinkMacSystemFont,sans-serif;font-size:15px;color:#000000;font-weight:400;line-height:1.55;margin:16px 0 12px">Thank you!<br>The Aari Transactions Team</p>`
+    + `</div></div></td></tr></tbody></table></center></div>`
+    + `<div style="margin:20px auto"><center><table cellpadding="0" cellspacing="0" style="width:100%;margin:0 auto;max-width:100%"><tbody><tr>`
+    + `<td width="100%" style="background-color:#141210;box-sizing:border-box" bgcolor="#141210"><div style="padding:24px 40px"><div style="margin-left:auto;margin-right:auto;max-width:600px">`
+    + `<p style="font-family:Arial,-apple-system,BlinkMacSystemFont,sans-serif;font-size:13px;color:#ffffff;font-weight:400;line-height:1.7;text-align:center;margin:0"><strong style="font-weight:bolder">Aari Transactions</strong><br>Fort Myers &middot; Cape Coral &middot; Lehigh Acres &middot; Southwest Florida<br><a href="mailto:hello@aaritransactions.com" style="color:#ffffff;text-decoration:underline">hello@aaritransactions.com</a></p>`
+    + `</div></div></td></tr></tbody></table></center></div>`
+    + `</div></td></tr></tbody></table></body></html>`;
+  return { subject: lead.subject, text, html };
 }
 
 Deno.serve(async (req) => {
@@ -130,7 +143,13 @@ Deno.serve(async (req) => {
     // Without ?client_reference_id, the payment lands in Stripe untagged and
     // the file stays "pending" in Aari — the exact bug we're patching.
     const sep = baseLink.indexOf("?") === -1 ? "?" : "&";
-    const payLink = `${baseLink}${sep}client_reference_id=${encodeURIComponent(f.id)}`;
+    let payLink = `${baseLink}${sep}client_reference_id=${encodeURIComponent(f.id)}`;
+    // Pre-apply the agent's member discount so the same link is both tagged and
+    // discounted (mirrors paymentLinkFor in files.html).
+    const mp = f.agent_id ? MEMBER_PROMO[f.agent_id as string] : undefined;
+    if (mp && mp.services.includes(f.service_type as string)) {
+      payLink += `&prefilled_promo_code=${encodeURIComponent(mp.code)}`;
+    }
 
     // Closed timestamp source — prefer actual (title-confirmed), fall back to
     // scheduled closing_date for older rows that predate the actual field.
@@ -162,19 +181,17 @@ Deno.serve(async (req) => {
     }
 
     const first = agent.first_name ?? "there";
-    const text = rung === 1 ? D1_BODY(first, payLink) : D7_BODY(first, payLink);
-    const subject = rung === 1
-      ? `TC service fee · ${f.property_address ?? "your closing"}`
-      : `Reminder · TC service fee · ${f.property_address ?? "your closing"}`;
+    const address = f.property_address ?? "your closing";
+    const { subject, text, html } = buildEmail(rung, first, address, payLink);
 
     try {
       await resend.emails.send({
-        from: `${tcName} <${FROM_ADDR}>`,
+        from: `Aari Transactions <${FROM_ADDR}>`,
         to: agent.email,
         reply_to: tcEmail ?? FROM_ADDR,
         subject,
         text,
-        html: htmlWrap(text),
+        html,
       });
       await supabase.from("files")
         .update({ payment_reminder_last_sent_at: new Date().toISOString() })
