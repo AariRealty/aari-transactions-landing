@@ -346,17 +346,40 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
   // days, generating the "webhook trouble/recovered" email cycle.
   // EdgeRuntime.waitUntil keeps the isolate alive until the background
   // promise settles, so the ping still fires; we just don't make Stripe wait.
-  const notifyPromise = fetch(`${SUPABASE_URL}/functions/v1/send-file-notification`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${SERVICE_KEY}` },
-    body: JSON.stringify({ file_id: fileId, event: "payment_confirmed" }),
-  }).catch((e) => {
-    console.warn("[stripe-webhook] TC ping failed (payment still confirmed)", e);
-  });
+  // TC "clear to invoice" ping · email the assigned TC the moment their file's payment lands, so they
+  // know they can bill it (Marlenyi Aug 14 2026). Background via waitUntil so Stripe still gets a fast
+  // 200. Replaces an older ping that posted an empty body to send-file-notification and sent a blank
+  // "New file" email.
+  const tcNotifyPromise = (async () => {
+    try {
+      if (!RESEND_API_KEY || !upd.data) return;
+      const f = upd.data as Record<string, unknown>;
+      const tcId = f.assigned_tc_id as string | undefined;
+      if (!tcId) return;
+      const tc = await supabase.from("agents").select("first_name, email").eq("id", tcId).maybeSingle();
+      const tcEmail = tc.data?.email as string | undefined;
+      if (!tcEmail) return;
+      const addr = String(f.property_address || "the file");
+      const tcFirst = String(tc.data?.first_name || "").trim();
+      const html =
+        `<div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;color:#0f0f0f;line-height:1.6">` +
+          (tcFirst ? `<p style="margin:0 0 12px">Hi ${escapeHtmlSimple(tcFirst)},</p>` : "") +
+          `<p style="margin:0 0 12px">${escapeHtmlSimple(addr)} is paid.</p>` +
+          `<p style="margin:0 0 12px">You're clear to invoice it whenever you're ready.</p>` +
+        `</div>`;
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${RESEND_API_KEY}` },
+        body: JSON.stringify({ from: FROM_ADDRESS, to: [tcEmail], subject: `${addr} is paid · clear to invoice`, html }),
+      });
+    } catch (e) {
+      console.warn("[stripe-webhook] TC clear-to-invoice email failed (payment still confirmed)", e);
+    }
+  })();
   // deno-lint-ignore no-explicit-any
   const runtime = (globalThis as any).EdgeRuntime;
   if (runtime && typeof runtime.waitUntil === "function") {
-    runtime.waitUntil(notifyPromise);
+    runtime.waitUntil(tcNotifyPromise);
   }
 
   return json({ received: true, updated: !!upd.data });
