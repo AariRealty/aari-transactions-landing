@@ -252,7 +252,7 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
         service_type: null,
         amount_cents: (typeof session.amount_total === "number" ? session.amount_total : 0),
         currency: (session.currency as string) || "usd",
-        status: "unattached",
+        status: "succeeded", // file_id null = not yet attached to a file
         paid_at: new Date().toISOString(),
         raw_event: { customer_email: email, session_id: session.id },
       }, (session.id as string) || "");
@@ -292,7 +292,7 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
       service_type: (f2.service_type as string) || null,
       amount_cents: amountTotal ?? 0,
       currency: (session.currency as string) || "usd",
-      status: "paid",
+      status: "succeeded",
       paid_at: paidAtIso,
       raw_event: { session_id: session.id },
     }, (session.id as string) || "");
