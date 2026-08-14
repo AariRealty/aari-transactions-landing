@@ -13272,6 +13272,38 @@ Tell me your planned move-out date and I will set the inspection.`
     if(!(e.target.closest && e.target.closest('#files-menu'))) mn.style.display = 'none';
   });
 
+  // "Coming in · client fees" card → popup listing the files that add up to that number
+  // (Marlenyi Aug 14 2026). Reads window.__revInRows, cached when the money strip renders.
+  document.addEventListener('click', function(e){
+    var t = e.target.closest && e.target.closest('[data-revin-pop]');
+    if(!t) return;
+    if(document.getElementById('revin-pop-ov')){ document.getElementById('revin-pop-ov').remove(); return; }
+    var rows = (window.__revInRows || []);
+    var _m = function(c){ return '$' + (Math.round(c) / 100).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); };
+    var total = rows.reduce(function(s, r){ return s + (r.fee || 0); }, 0);
+    var rowsHtml = rows.length ? rows.map(function(r){
+      var when = '';
+      try { if(r.when) when = new Date(String(r.when).slice(0,10) + 'T00:00:00').toLocaleDateString('en-US', { month:'short', day:'numeric' }); } catch(_){}
+      return '<div style="display:flex;align-items:center;gap:12px;padding:10px 2px;border-top:0.5px solid #f0ece2">' +
+        '<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:700;color:#0f0f0f">' + esc(r.addr) + '</div>' +
+        '<div style="font-size:10.5px;color:#8a857c;margin-top:2px">' + esc(r.svc || '') + (when ? (' &middot; ' + when) : '') + '</div></div>' +
+        '<span style="font-family:Georgia,serif;font-weight:700;font-size:14px;font-variant-numeric:tabular-nums">' + _m(r.fee) + '</span></div>';
+    }).join('') : '<div style="font-size:12px;color:#8a857c;padding:12px 2px">No client fees in this period.</div>';
+    var ov = document.createElement('div');
+    ov.id = 'revin-pop-ov';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(20,16,12,.34);display:flex;align-items:center;justify-content:center;padding:20px';
+    ov.innerHTML = '<div style="width:100%;max-width:420px;background:#fff;border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.3);padding:18px 20px 16px">' +
+      '<div style="display:flex;align-items:baseline;justify-content:space-between"><div style="font-family:Georgia,serif;font-weight:700;font-size:17px">Coming in &middot; client fees</div>' +
+      '<button type="button" data-revin-close style="border:0;background:none;font-size:20px;color:#8a857c;cursor:pointer;line-height:1">&times;</button></div>' +
+      '<div style="font-size:11px;color:#8a857c;margin:2px 0 8px">' + rows.length + ' file' + (rows.length === 1 ? '' : 's') + ' this period</div>' +
+      '<div style="max-height:52vh;overflow:auto">' + rowsHtml + '</div>' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid #ece8e0;margin-top:8px;padding-top:10px"><span style="font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#a39e93">Total</span><span style="font-family:Georgia,serif;font-weight:700;font-size:16px">' + _m(total) + '</span></div>' +
+    '</div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function(ev){ if(ev.target === ov) ov.remove(); });
+    var cb = ov.querySelector('[data-revin-close]'); if(cb) cb.addEventListener('click', function(){ ov.remove(); });
+  });
+
   // ===== CALENDAR VIEW · every live deadline across active sale files, grouped by
   // urgency, each section its own card (Option A). Leads with Today / Coming up;
   // Overdue only appears when something is actually late. Sync exports all to .ics.
@@ -17418,9 +17450,9 @@ Tell me your planned move-out date and I will set the inspection.`
     };
     var subsTotal = subs.reduce(function(s, i){ return s + _invEffOwedDesk(i); }, 0);
     var paidTotal = paidInv.reduce(function(s, i){ return s + (i.total_cents || 0); }, 0);
-    var _kpi = function(label, amt, hot){
-      return '<div style="background:#fff;border:0.5px solid #eeeae0;' + (hot ? 'border-left:2px solid #14110c;' : '') + 'border-radius:9px;padding:9px 12px">' +
-        '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#a99a78;font-weight:700">' + label + '</div>' +
+    var _kpi = function(label, amt, hot, clickAttr){
+      return '<div ' + (clickAttr || '') + ' style="background:#fff;border:0.5px solid #eeeae0;' + (hot ? 'border-left:2px solid #14110c;' : '') + 'border-radius:9px;padding:9px 12px' + (clickAttr ? ';cursor:pointer' : '') + '">' +
+        '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#a99a78;font-weight:700">' + label + (clickAttr ? ' &#9662;' : '') + '</div>' +
         '<div style="font-family:\'Playfair Display\',Georgia,serif;font-size:19px;font-variant-numeric:tabular-nums;margin-top:2px">' + amt + '</div></div>';
     };
     // Owner money snapshot (Marlenyi Aug 7) · reframed from the coordinator-only Ready/Sent/Paid to
@@ -17432,7 +17464,7 @@ Tell me your planned move-out date and I will set the inspection.`
     var _periodIds = {};
     working.forEach(function(g){ (g.billable || []).forEach(function(f){ if(f && f.id) _periodIds[f.id] = 1; }); });
     subs.concat(paidInv).forEach(function(i){ (i.line_items || []).forEach(function(it){ if(it && it.file_id) _periodIds[it.file_id] = 1; }); });
-    var _revIn = 0, _payOut = 0;
+    var _revIn = 0, _payOut = 0, _revInRows = [];
     Object.keys(_periodIds).forEach(function(id){ var f = _fileById[id]; if(!f) return;
       // Only OUTSIDE, non-credit client work counts toward Transactions' margin. In-house Realty
       // files are an internal wash (Realty reimburses the TC cost, AT keeps $0) and membership-credit
@@ -17442,12 +17474,16 @@ Tell me your planned move-out date and I will set the inspection.`
       try { _inhouse = (typeof isAariRealtyFile === 'function') && isAariRealtyFile(f); } catch(_){}
       try { _covered = (typeof fileIsCovered === 'function') && fileIsCovered(f); } catch(_){}
       if(_inhouse || _covered) return;
-      try { _revIn += Math.round((_svcP(f) || 0) * 100); } catch(_){}
+      var _fc = 0; try { _fc = Math.round((_svcP(f) || 0) * 100); } catch(_){}
+      _revIn += _fc;
       _payOut += fileTcPayCents(f);
+      if(_fc > 0){ try { _revInRows.push({ addr: String(f.property_address || 'File').split(',')[0], svc: _svcLabel(f), fee: _fc, when: f.closing_date || '' }); } catch(_){} }
     });
+    // Cache the breakdown so tapping the "Coming in · client fees" card can list the files behind it.
+    try { window.__revInRows = _revInRows.slice().sort(function(a, b){ return String(a.when || '').localeCompare(String(b.when || '')); }); } catch(_){}
     var _keeps = _revIn - _payOut;
     var moneyStrip = '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:0 0 12px">' +
-        _kpi('Coming in &middot; client fees', _money(_revIn), false) +
+        _kpi('Coming in &middot; client fees', _money(_revIn), false, 'data-revin-pop="1"') +
         _kpi('Paid out &middot; coordinators', _money(_payOut), false) +
         _kpi('Transactions keeps', _money(_keeps), true) +
       '</div>';
