@@ -1,18 +1,20 @@
 // Edge function: closed-payment-reminder
 // ============================================================================
-// POST-CLOSING TC-fee payment email for TC services billed at closing.
-// Kill-switched by org_settings.payment_reminders_enabled (default false).
-// Day 1 (20-28h post-close) = the closing payment email; Day 7 (168-192h) = a
-// gentle nudge if still unpaid. Uses the approved branded template (cream pill,
-// company sign-off, dark footer). Pay link is file-bound (client_reference_id)
-// with the agent's member discount pre-applied. Broker is always CC'd; the
-// assigned TC is CC'd on their own clients, and replies route to both.
-// Safety: the query skips any file with paid_at set, so a paid agent is never
-// emailed even if payment_status lags.
+// POST-CLOSING TC-fee payment cadence. Kill-switched by
+// org_settings.payment_reminders_enabled (default false).
+//   Day 1  (20-28h)   → closing payment email
+//   Day 7  (168-192h) → gentle nudge
+//   Day 14 (336-360h) → follow-up (Option B: reply-aware)
+// Branded template (cream pill, company sign-off, dark footer). Pay link is
+// file-bound with the agent's member discount. Broker always CC'd; assigned TC
+// CC'd on their own clients; replies route to both.
+// Guards: query skips any file with paid_at set; for the Day 7 and Day 14
+// touches, we also skip if the agent has replied on the file since it closed
+// (file_email_flags, matched by the agent's name) — so a reply silences the
+// cadence even before the payment is reconciled.
 //
-// PREVIEW MODE: POST { "preview_to": "<email>" } sends the Day 1 and Day 7
-// samples (subject prefixed "TEST · ") to that address, bypassing the kill
-// switch and DB query. Sample data only — no real file, no agent contacted.
+// PREVIEW MODE: POST { "preview_to": "<email>" } sends all three samples
+// (subject prefixed "TEST · "), bypassing the kill switch and DB. Sample only.
 // ============================================================================
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -32,8 +34,6 @@ const STRIPE_LINKS: Record<string, string> = {
   tc_both_sides: "https://buy.stripe.com/cNi4grdwj9uz3ubfbccAo03",
 };
 
-// Per-agent member promo — mirrors MEMBER_PROMO in files.html so the file-bound
-// link is also discounted. Scoped by service so a code can't misapply.
 const MEMBER_PROMO: Record<string, { code: string; services: string[] }> = {
   "2635cd0e-45ee-415e-b0d0-91251b5af6bf": { code: "SAMANTHA50", services: ["tc_one_side"] },
 };
@@ -56,14 +56,23 @@ function payButton(address: string, payLink: string): string {
   return `<table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin:16px 0"><tbody><tr><td bgcolor="#f1efe8" style="background-color:#f1efe8;border-radius:999px"><a href="${payLink}" target="_blank" style="display:inline-block;font-family:Arial,-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;font-weight:bold;color:#141210;text-decoration:none;padding:12px 24px">Pay for ${address}</a></td></tr></tbody></table>`;
 }
 
+function content(rung: number, address: string): { subject: string; pre: string[]; post: string[] } {
+  if (rung === 1) return { subject: `Your closing is ready to settle · ${address}`, pre: [`<strong style="font-weight:bolder">${address}</strong> is closed and ready to settle up.`, `Your link is tied to this property, so it is already set. Just tap to pay.`], post: [`Reply here once it is sent, so we can confirm on our end.`] };
+  if (rung === 2) return { subject: `Still open · ${address}`, pre: [`Just a quick nudge, the payment for <strong style="font-weight:bolder">${address}</strong> is still open on our end.`, `Your link is tied to this property. Just tap to pay.`], post: [`Reply here once it is sent, so we can confirm on our end.`] };
+  return { subject: `Following up · ${address}`, pre: [`We still don't have the payment for <strong style="font-weight:bolder">${address}</strong> on our end, and we haven't heard back, so I wanted to check in.`, `If you have already sent it, just reply here and we will track it down.`, `If not, here is your link. It is tied to this property, so it is ready to go.`], post: [`Just want to make sure nothing slipped through the cracks.`] };
+}
+
 function buildEmail(rung: number, first: string, address: string, payLink: string, testBanner = false): { subject: string; text: string; html: string } {
-  const lead = rung === 1
-    ? { htmlLine: `<strong style="font-weight:bolder">${address}</strong> is closed and ready to settle up.`, textLine: `${address} is closed and ready to settle up.`, subject: `Your closing is ready to settle · ${address}` }
-    : { htmlLine: `Just a quick nudge, the payment for <strong style="font-weight:bolder">${address}</strong> is still open on our end.`, textLine: `Just a quick nudge, the payment for ${address} is still open on our end.`, subject: `Still open · ${address}` };
-  const subject = (testBanner ? "TEST · " : "") + lead.subject;
+  const c = content(rung, address);
+  const subject = (testBanner ? "TEST · " : "") + c.subject;
+  const strip = (s: string) => s.replace(/<[^>]+>/g, "");
   const banner = testBanner ? `<div style="background:#fbf3e2;border:0.5px solid #ecdfc4;border-left:3px solid #b7791f;border-radius:8px;padding:11px 14px;margin:0 0 10px;font-family:Arial,sans-serif;font-size:12.5px;color:#8a6d1b;line-height:1.5"><b>TEST PREVIEW</b><br>Sample of the automatic post-close email. No agent was contacted.</div>` : "";
   const bannerText = testBanner ? "[TEST PREVIEW — sample only, no agent contacted]\n\n" : "";
-  const text = `${bannerText}Hi ${first},\n\n${lead.textLine}\n\nYour link is tied to this property. Just tap to pay:\n${payLink}\n\nReply here once it is sent, so we can confirm on our end.\n\nThank you!\nThe Aari Transactions Team`;
+  const preText = c.pre.map(strip).join("\n\n");
+  const postText = c.post.map(strip).join("\n\n");
+  const text = `${bannerText}Hi ${first},\n\n${preText}\n\n${payLink}\n\n${postText}\n\nThank you!\nThe Aari Transactions Team`;
+  const preHtml = c.pre.map((p) => `<p style="${P}">${p}</p>`).join("");
+  const postHtml = c.post.map((p) => `<p style="${P}">${p}</p>`).join("");
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;padding:0;background:#ffffff}p{margin:12px 0}</style></head><body>`
     + `<table role="presentation" cellpadding="0" cellspacing="0" style="background:#ffffff;width:100%" bgcolor="#ffffff"><tbody><tr><td>`
     + `<div style="padding:0 0 24px 0;margin:0 auto;max-width:100%">`
@@ -71,10 +80,9 @@ function buildEmail(rung: number, first: string, address: string, payLink: strin
     + `<td width="100%" style="background-color:#FFFFFF;box-sizing:border-box" bgcolor="#FFFFFF"><div style="padding:26px 40px"><div style="margin-left:auto;margin-right:auto;max-width:600px">`
     + banner
     + `<p style="${P}">Hi ${first},</p>`
-    + `<p style="${P}">${lead.htmlLine}</p>`
-    + `<p style="${P}">Your link is tied to this property, so it is already set. Just tap to pay.</p>`
+    + preHtml
     + payButton(address, payLink)
-    + `<p style="${P}">Reply here once it is sent, so we can confirm on our end.</p>`
+    + postHtml
     + `<p style="font-family:Arial,-apple-system,BlinkMacSystemFont,sans-serif;font-size:15px;color:#000000;font-weight:400;line-height:1.55;margin:16px 0 12px">Thank you!<br>The Aari Transactions Team</p>`
     + `</div></div></td></tr></tbody></table></center></div>`
     + `<div style="margin:20px auto"><center><table cellpadding="0" cellspacing="0" style="width:100%;margin:0 auto;max-width:100%"><tbody><tr>`
@@ -87,11 +95,11 @@ function buildEmail(rung: number, first: string, address: string, payLink: strin
 
 async function sendPreview(to: string, first: string, addr: string): Promise<{ ok: boolean; err?: string }> {
   const payLink = payLinkFor("SAMPLE-PREVIEW-NO-REAL-FILE", "tc_one_side", null);
-  const d1 = buildEmail(1, first, addr, payLink, true);
-  const d7 = buildEmail(2, first, addr, payLink, true);
   try {
-    await resend.emails.send({ from: `Aari Transactions <${FROM_ADDR}>`, to, subject: d1.subject, text: d1.text, html: d1.html });
-    await resend.emails.send({ from: `Aari Transactions <${FROM_ADDR}>`, to, subject: d7.subject, text: d7.text, html: d7.html });
+    for (const rung of [1, 2, 3]) {
+      const e = buildEmail(rung, first, addr, payLink, true);
+      await resend.emails.send({ from: `Aari Transactions <${FROM_ADDR}>`, to, subject: e.subject, text: e.text, html: e.html });
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, err: e instanceof Error ? e.message : String(e) };
@@ -142,10 +150,27 @@ Deno.serve(async (req) => {
     let rung = 0, windowStartH = 0;
     if (hrs >= 20 && hrs <= 28) { rung = 1; windowStartH = 20; }
     else if (hrs >= 168 && hrs <= 192) { rung = 2; windowStartH = 168; }
+    else if (hrs >= 336 && hrs <= 360) { rung = 3; windowStartH = 336; }
     if (rung === 0) continue;
     if (f.payment_reminder_last_sent_at && new Date(f.payment_reminder_last_sent_at).getTime() >= closedMs + windowStartH * HOUR) continue;
-    const { data: agent } = await supabase.from("agents").select("first_name, email").eq("id", f.agent_id).maybeSingle();
+    const { data: agent } = await supabase.from("agents").select("first_name, last_name, email").eq("id", f.agent_id).maybeSingle();
     if (!agent?.email) continue;
+    // Reply-aware (Option B): for the nudge and follow-up, stay silent if the
+    // agent has written back on this file since it closed. file_email_flags
+    // stores the sender display name in source_from; match on the agent's name.
+    if (rung >= 2) {
+      const closedIso = new Date(closedMs).toISOString();
+      const { data: flags } = await supabase.from("file_email_flags").select("source_from").eq("file_id", f.id).gt("source_at", closedIso).limit(40);
+      const last = String(agent.last_name ?? "").toLowerCase().trim();
+      const firstN = String(agent.first_name ?? "").toLowerCase().trim();
+      const replied = (flags ?? []).some((fl) => {
+        const sf = String((fl as Record<string, unknown>).source_from ?? "").toLowerCase();
+        if (last && last.length > 1 && sf.includes(last)) return true;
+        if (firstN && firstN.length > 2 && last && sf.includes(firstN)) return true;
+        return false;
+      });
+      if (replied) continue;
+    }
     let tcEmail: string | undefined;
     if (f.assigned_tc_id) {
       const { data: tc } = await supabase.from("agents").select("email").eq("id", f.assigned_tc_id).maybeSingle();
