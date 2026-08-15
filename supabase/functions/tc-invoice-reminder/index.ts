@@ -32,7 +32,7 @@ const INK = "#0f0f0f", LIGHT = "#e2ddd2", MUTED = "#8a857c", GREEN = "#2f6b4f";
 
 // ---- pay · ported from /js/pay-engine.js (keep in sync) --------------------
 const SERVICE_PRICE: Record<string, number> = {
-  tc_one_side:399, tc_both_sides:599, tc:399, listing_coordinator:249,
+  tc_one_side:399, tc_both_sides:599, tc:399, listing_coordinator:179,
   listing_docs:99, mls_setup:99, file_organization:99, standalone_review:149,
   offer_prep_basic:79, offer_prep_complete:149,
 };
