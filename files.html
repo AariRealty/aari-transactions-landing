@@ -8708,6 +8708,14 @@ Tell me your planned move-out date and I will set the inspection.`
       host.innerHTML = '<div class="th-head">Today &middot; ' + new Date().toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' }) + '<span class="sub">No active files</span></div><div class="th-empty">Nothing on you right now. You&rsquo;re ahead.</div>';
       return;
     }
+    // Marlenyi 2026-08-15 · peek at future days. When _todayHeroDayOffset > 0 the
+    // panel renders a simplified "Due on <day>" list grouped by file, with a
+    // back arrow to return to today. Offset 0 keeps every existing behavior
+    // (weekend quiet mode, hero, queue, coming-up section) intact.
+    if(_todayHeroDayOffset > 0){
+      _renderTodayHeroPeek(host);
+      return;
+    }
     // Aggregate open "on you now" tasks across every active file.
     const _t0 = new Date(); _t0.setHours(0, 0, 0, 0);
     const items = [];
@@ -8983,10 +8991,148 @@ Tell me your planned move-out date and I will set the inspection.`
         openTaskSheet(f, { id: tid, dl: dl, days: days, isReminder: isReminder, autoSend: isSend });
       });
     });
+    // Day-peek nav · "Peek at tomorrow →" pill lives at the bottom of the today panel.
+    _wireTodayPeekNav(host);
     // Sweep sheet handlers removed · dedupe-by-file cap is gone, so there
     // are no "same-file overflow" items to sweep. Auto-sweep at load
     // handles the stale-confirmation pattern automatically.
   }
+
+  // Marlenyi 2026-08-15 · mobile day-peek. When _todayHeroDayOffset > 0 this
+  // renders a simplified panel showing what's due on that specific future day,
+  // grouped by property, with a back arrow and a "next day →" arrow. Cap at
+  // 14 days out — anything further you can just open the file for.
+  function _renderTodayHeroPeek(host){
+    const offset = _todayHeroDayOffset;
+    const _t0 = new Date(); _t0.setHours(0, 0, 0, 0);
+    const target = new Date(_t0.getTime() + offset * 86400000);
+    const targetLbl = target.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+    const offsetWord = offset === 1 ? 'Tomorrow' : (offset + ' days out');
+    // Gather items due on the target day, grouped by file.
+    const items = [];
+    (_files || []).forEach(function(f){
+      try {
+        if(f.status === 'archived') return;
+        const stg = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || '');
+        if(['new','intake_received','waiting_for_tc','','closed'].indexOf(stg) !== -1) return;
+        const ft = f.file_type || 'sale';
+        if(ft !== 'sale' && ft !== 'rental') return;
+        const tasks = ((typeof ckTasksFor === 'function') ? (ckTasksFor(f, stg) || []) : ((STAGE_CHECKLISTS[ft] || {})[stg] || []));
+        const done = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
+        const dls = (typeof fileDeadlines === 'function') ? fileDeadlines(f) : {};
+        tasks.forEach(function(t){
+          if(done[t.id]) return;
+          if(t.showIf && !t.showIf(f)) return;
+          try {
+            const _rawDue = (typeof _taskDueDate === 'function') ? _taskDueDate(f, t, dls) : null;
+            if(!(_rawDue instanceof Date) || isNaN(_rawDue)) return;
+            const dd = new Date(_rawDue.getTime()); dd.setHours(0, 0, 0, 0);
+            const days = Math.round((dd - _t0) / 86400000);
+            if(days !== offset) return;
+            items.push({ file: f, task: t, days: days });
+          } catch(_){}
+        });
+      } catch(_){}
+    });
+    // Group by file
+    const _byFile = new Map();
+    const _fileOrder = [];
+    items.forEach(function(it){
+      const fid = it.file.id;
+      if(!_byFile.has(fid)){ _byFile.set(fid, { file: it.file, items: [] }); _fileOrder.push(fid); }
+      _byFile.get(fid).items.push(it);
+    });
+    // Build HTML
+    const nav = _todayPeekNavHtml(offset, targetLbl);
+    let html = nav;
+    if(!items.length){
+      html += '<div class="th-empty" style="margin-top:12px">Nothing due ' + esc(offsetWord.toLowerCase()) + '. You&rsquo;re ahead.</div>';
+      host.innerHTML = html;
+      _wireTodayPeekNav(host);
+      return;
+    }
+    html += '<div class="th-queue-eb" style="margin-top:14px">Due ' + esc(offsetWord.toLowerCase()) + '</div>';
+    _fileOrder.forEach(function(fid){
+      const g = _byFile.get(fid);
+      const addr = String(g.file.property_address || '').split(',')[0];
+      html += '<div class="th-group">' +
+        '<div class="th-group-hd" data-th-file="' + esc(fid) + '">' +
+          '<div class="th-group-addr">' + esc(addr) + '</div>' +
+          '<div class="th-group-n">' + g.items.length + '</div>' +
+        '</div>';
+      g.items.forEach(function(it){
+        const nm = String(it.task.label || 'Task');
+        const _cbox = '<button type="button" data-th-check="1" data-th-file="' + esc(it.file.id) + '" data-th-task="' + esc(it.task.id) + '" aria-label="Mark done" title="Mark done" style="flex:none;width:20px;height:20px;border-radius:5px;border:1.5px solid #cfc9bb;background:#fff;cursor:pointer;padding:0;margin-right:2px"></button>';
+        html += '<div class="th-r th-r-grouped" data-th-file="' + esc(it.file.id) + '" data-th-task="' + esc(it.task.id) + '" data-th-days="' + it.days + '"' + (it.task.dl ? ' data-th-dl="' + esc(it.task.dl) + '"' : '') + '>' +
+          _cbox +
+          '<span class="dot"></span>' +
+          '<div class="body"><div class="nm">' + esc(nm) + '</div></div>' +
+        '</div>';
+      });
+      html += '</div>';
+    });
+    host.innerHTML = html;
+    // Wire task-check + row-click handlers (same as normal render)
+    host.querySelectorAll('[data-th-check="1"]').forEach(function(btn){
+      btn.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        const fid = btn.getAttribute('data-th-file');
+        const tid = btn.getAttribute('data-th-task');
+        const f = _files.find(function(x){ return x.id === fid; });
+        if(!f || !tid) return;
+        try { _tsMarkDone(f, tid, true); } catch(_){}
+      });
+    });
+    host.querySelectorAll('[data-th-file]').forEach(function(el){
+      el.addEventListener('click', function(ev){
+        if(ev.target && ev.target.closest && ev.target.closest('[data-th-check="1"]')) return;
+        const fid = el.getAttribute('data-th-file');
+        const tid = el.getAttribute('data-th-task');
+        const dl  = el.getAttribute('data-th-dl') || '';
+        const daysAttr = el.getAttribute('data-th-days');
+        const days = (daysAttr === '' || daysAttr == null) ? null : parseInt(daysAttr, 10);
+        const f = _files.find(function(x){ return x.id === fid; });
+        if(!f) return;
+        if(!tid){ try { openPlaybook(f); } catch(_){} return; }
+        try { openTaskSheet(f, { id: tid, dl: dl, days: days, isReminder: false, autoSend: false }); } catch(_){}
+      });
+    });
+    _wireTodayPeekNav(host);
+  }
+
+  function _todayPeekNavHtml(offset, targetLbl){
+    // Render always. On offset===0 shows only "Peek at tomorrow →" (right side).
+    // On offset>0 shows "← Today" (left), current date label (center), "Next day →" (right, disabled if at cap).
+    const cap = 14;
+    if(offset === 0){
+      return '<div style="display:flex;justify-content:flex-end;padding:2px 4px 8px"><button type="button" data-today-peek="+1" style="background:none;border:0;color:#7a756c;font:600 12px \'Inter\',sans-serif;cursor:pointer;padding:6px 10px;letter-spacing:0.2px">Peek at tomorrow &rarr;</button></div>';
+    }
+    const nextDisabled = offset >= cap;
+    return '<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 4px 10px;gap:8px">' +
+      '<button type="button" data-today-peek="0" style="background:none;border:0;color:#0f0f0f;font:600 12px \'Inter\',sans-serif;cursor:pointer;padding:6px 10px;letter-spacing:0.2px">&larr; Today</button>' +
+      '<div style="flex:1;text-align:center;font-family:Georgia,\'Times New Roman\',serif;font-size:14px;font-weight:600;color:#0a0a0a;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(targetLbl) + '</div>' +
+      '<button type="button" data-today-peek="+1" ' + (nextDisabled ? 'disabled ' : '') + 'style="background:none;border:0;color:' + (nextDisabled ? '#c9c3b3' : '#7a756c') + ';font:600 12px \'Inter\',sans-serif;cursor:' + (nextDisabled ? 'not-allowed' : 'pointer') + ';padding:6px 10px;letter-spacing:0.2px">Next day &rarr;</button>' +
+    '</div>';
+  }
+
+  function _wireTodayPeekNav(host){
+    // Prepend nav to offset===0 render (if not already present)
+    if(_todayHeroDayOffset === 0){
+      // Add the peek pill under the coming-up section (not above hero, to keep hero clean)
+      if(!host.querySelector('[data-today-peek]')){
+        host.insertAdjacentHTML('beforeend', _todayPeekNavHtml(0, ''));
+      }
+    }
+    host.querySelectorAll('[data-today-peek]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        const v = btn.getAttribute('data-today-peek');
+        if(v === '0') _todayHeroDayOffset = 0;
+        else if(v === '+1') _todayHeroDayOffset = Math.min(14, _todayHeroDayOffset + 1);
+        try { renderTodayHero(); } catch(_){}
+      }, { once: true });
+    });
+  }
+
   // Re-render on every loadAndRender + on tab change + every 5 min tick so
   // "Due in 2 days" ages correctly if she leaves the tab open.
   setInterval(function(){ try { renderTodayHero(); } catch(_){} }, 5 * 60 * 1000);
@@ -14010,6 +14156,9 @@ Tell me your planned move-out date and I will set the inspection.`
   // Today / Board / Calendar all live on the one Overview page, so those tabs set
   // _activeView='board' and scroll to the section; Invoices flips to the invoice view.
   var _mnavDest = 'today';
+  // Marlenyi 2026-08-15 · mobile Today tab day-peek. 0 = today, 1 = tomorrow, etc.
+  // Reset to 0 whenever loadAndRender runs (so tomorrow's peek doesn't stick across data refreshes).
+  var _todayHeroDayOffset = 0;
   // Persist the mobile bottom-nav destination so a reload / PWA relaunch
   // doesn't reset the Calendar tab back to Today. Without this, the
   // closings-only mode (which fires when _mnavDest === 'calendar') was
