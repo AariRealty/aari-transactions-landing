@@ -51,7 +51,7 @@ check('file_org SERVICE = 50% of $99 = $49.50', PAY.tcPayCeiling({ service_type:
 check('file_org via compliance file_type = $49.50', PAY.tcPayCeiling({ service_type:'', file_type:'compliance', raw_form_data:{ submitted_by_tc:'false' } }, 40) === 49.5);
 check('in-house / self-coordinated still = $80 flat', PAY.tcPayCeiling({ service_type:'tc_one_side', file_type:'sale', agent_id:'A', assigned_tc_id:'A', raw_form_data:{ aari_realty:'true' } }, 50) === 80);
 check('fo_override still = $80 flat', PAY.tcPayCeiling({ service_type:'tc_one_side', file_type:'sale', raw_form_data:{ submitted_by_tc:'false', fo_override:'true' } }, 50) === 80);
-check('lc resolves to $249', PAY.svcPrice({ service_type:'lc' }) === 249);
+check('lc resolves to $179', PAY.svcPrice({ service_type:'lc' }) === 179);
 check('op_basic resolves to $79', PAY.svcPrice({ service_type:'op_basic' }) === 79);
 check('unknown service = $0 (no guessing)', PAY.svcPrice({ service_type:'rental' }) === 0);
 check('member $50 comes off AARI, coordinator pay unchanged',
