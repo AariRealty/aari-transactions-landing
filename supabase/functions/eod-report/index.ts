@@ -1,16 +1,16 @@
 // ============================================================================
-// Aari Transactions · eod-report  (Mock J · "Rolled up by coordinator")
+// Aari Transactions · eod-report v3 (2026-08-15)
 // ============================================================================
-// Calm 4 PM ET wrap-up email to broker + coordinators. Rolls the day up per
-// coordinator, names files, shows what missed today's 2 PM window (so Eileen
-// still has half a workday to react), shows what's due tomorrow, links the
-// portal. Done today comes from audit_log (deadline_confirmed timestamp),
-// deduped. Tomorrow comes from deadline_feed_cache minus file_deadlines
-// completions. Missed-today is deadline_feed_cache rows with due_date=today
-// that still aren't marked complete at 4 PM ET.
+// PER-TC daily clock-in email at 4 PM ET. Two states:
+//   1. All done → "You clocked in." · N completed. Nothing left for today.
+//   2. Something left → "Almost there... N to go! ✨" · warm Alex-toned nudge.
 //
-// Moved from 6 PM ET (was etHour===18) to 4 PM ET (etHour===16) so Eileen
-// gets it while she still has time to send outbound comms same-day.
+// Sections (only these two, everything else lives in the portal):
+//   · Still to complete by end of day today (red-outlined empty checkbox ☐)
+//   · Completed today (green ✓)
+//
+// Recipients: TO the TC, CC broker (marlenyi@aarirealty.com) on every one.
+// The broker's own TC-role email doesn't self-CC (avoids the duplicate).
 // ============================================================================
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -19,10 +19,13 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
+const BROKER_EMAIL = Deno.env.get("BROKER_EMAIL") ?? "marlenyi@aarirealty.com";
 const FROM = "Aari Transactions <invoices@aaritransactions.com>";
 const PORTAL = "https://aaritransactions.com/files.html";
 const TZ = "America/New_York";
 const INK = "#14110c";
+const RED = "#a3402f";
+const GREEN = "#2f6b4f";
 
 const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
@@ -43,27 +46,23 @@ function etHour(now: Date): number {
   const h = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", hour12: false }).formatToParts(now).find(p => p.type === "hour")?.value ?? "0";
   return parseInt(h, 10);
 }
-function etLongLabel(now: Date): string {
-  return new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "long", month: "long", day: "numeric" }).format(now);
-}
-function etShortLabel(now: Date): string {
-  return new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric" }).format(now);
-}
+function etLongLabel(now: Date): string { return new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "long", month: "long", day: "numeric" }).format(now); }
+function etShortLabel(now: Date): string { return new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric" }).format(now); }
 const shortAddr = (a: string) => String(a || "").split(",")[0].trim();
 const esc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-async function sendEmail(to: string[], subject: string, html: string, text: string) {
+async function sendEmail(to: string[], cc: string[] | undefined, subject: string, html: string, text: string) {
   if (!RESEND_API_KEY) throw new Error("RESEND_API_KEY not set");
+  const payload: Record<string, unknown> = { from: FROM, to, subject, html, text };
+  if (cc && cc.length) payload.cc = cc;
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: FROM, to, subject, html, text }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`Resend ${res.status}: ${await res.text()}`);
 }
-function json(status: number, body: unknown) {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-}
+function json(status: number, body: unknown) { return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }); }
 
 const ALIAS: Record<string, string[]> = {
   emd_initial: ["init_deposit"], emd_additional: ["additional_deposit"],
@@ -75,83 +74,83 @@ const ALIAS: Record<string, string[]> = {
 };
 function aliasSet(key: string): Set<string> {
   const out = new Set<string>([key]);
-  for (const c of Object.keys(ALIAS)) {
-    if (c === key || ALIAS[c].includes(key)) { out.add(c); ALIAS[c].forEach(v => out.add(v)); }
-  }
+  for (const c of Object.keys(ALIAS)) { if (c === key || ALIAS[c].includes(key)) { out.add(c); ALIAS[c].forEach(v => out.add(v)); } }
   return out;
+}
+
+type Task = { name: string; addr: string };
+type DoneItem = { name: string; addr: string };
+
+function rowStillToDo(t: Task): string {
+  return `<div style="padding:8px 4px;border-top:0.5px solid #f2eee4"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%"><tr><td style="width:24px;vertical-align:top;padding-top:2px"><span style="display:inline-block;width:14px;height:14px;border-radius:3px;border:1.5px solid ${RED}">&nbsp;</span></td><td><div style="font-size:12.5px;color:${INK};line-height:1.4"><strong>${esc(t.name)}</strong></div><div style="font-size:11.5px;color:#8a7a6a;margin-top:2px">${esc(t.addr)}</div></td></tr></table></div>`;
+}
+function rowDone(t: DoneItem): string {
+  return `<div style="padding:8px 4px;border-top:0.5px solid #f2eee4"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%"><tr><td style="width:24px;vertical-align:top"><span style="color:${GREEN};font-weight:700;font-size:14px">&#10003;</span></td><td><div style="font-size:12.5px;color:${INK};line-height:1.4"><strong>${esc(t.name)}</strong></div><div style="font-size:11.5px;color:#8a7a6a;margin-top:2px">${esc(t.addr)}</div></td></tr></table></div>`;
+}
+
+function heroAllDone(doneCount: number): string {
+  return `<div style="padding:22px 18px 8px;text-align:center"><div style="font-family:Georgia,'Times New Roman',serif;font-size:32px;line-height:1.15;color:${INK};letter-spacing:-0.5px">You clocked in.</div><div style="font-size:12.5px;color:#5f5647;margin-top:8px">${doneCount} completed. Nothing left for today.</div></div>`;
+}
+function heroStillToDo(remaining: number, doneCount: number): string {
+  const remLabel = remaining === 1 ? "1 to go" : `${remaining} to go`;
+  const doneLabel = doneCount === 0
+    ? "Let’s wrap them before EOD."
+    : `You&rsquo;ve <em>crushed</em> ${doneCount} today. Let’s wrap the last ${remaining === 1 ? "one" : "two"} before EOD.`;
+  return `<div style="padding:22px 18px 8px;text-align:center"><div style="font-family:Georgia,'Times New Roman',serif;font-size:30px;line-height:1.2;color:${INK};letter-spacing:-0.5px">Almost there... <span style="color:${RED}">${remLabel}</span>! &#10024;</div><div style="font-size:12.5px;color:#5f5647;margin-top:10px;line-height:1.5">${doneLabel}</div></div>`;
 }
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json(405, { ok: false, error: "method_not_allowed" });
-  let force = false, dryRun = false;
-  try { const b = await req.json(); force = !!b?.force; dryRun = !!b?.dry_run; } catch { /* cron {} */ }
+  let force = false, dryRun = false, onlyTc: string | undefined;
+  try { const b = await req.json(); force = !!b?.force; dryRun = !!b?.dry_run; onlyTc = b?.only_tc; } catch { /* cron {} */ }
 
   const now = new Date();
-  // Fires at 4 PM ET (was 6 PM). Cron pings at both 20:00 and 21:00 UTC to cover EDT+EST
-  // and act as a retry; the guard ensures only one fire actually goes out.
   if (!force && !dryRun && etHour(now) !== 16) return json(200, { ok: true, skipped: "outside_window", et_hour: etHour(now) });
 
   try {
     const { startUtc, endUtc } = etTodayBoundsUtc(now);
     const todayYMD = etYMD(now);
-    const tomorrowYMD = etYMD(now, 1);
 
     const { data: people } = await admin.from("agents").select("id, first_name, last_name, email, role").in("role", ["broker", "tc"]);
-    const nameById = new Map<string, string>();
-    const recipients: string[] = [];
-    (people || []).forEach((p: any) => {
-      const nm = ((p.first_name || "") + (p.last_name ? " " + String(p.last_name).charAt(0).toUpperCase() + "." : "")).trim();
-      nameById.set(p.id, nm || "Team");
-      if (p.email) recipients.push(p.email);
+    const tcs: Array<{ id: string; name: string; email: string }> = [];
+    let brokerEmail = BROKER_EMAIL;
+    (people || []).forEach((p: { id: string; first_name?: string; last_name?: string; email?: string; role?: string }) => {
+      const nm = ((p.first_name || "") + (p.last_name ? " " + String(p.last_name).charAt(0).toUpperCase() + "." : "")).trim() || "Team";
+      if (p.role === "tc" && p.email) tcs.push({ id: p.id, name: nm, email: p.email });
+      if (p.role === "broker" && p.email) brokerEmail = p.email;
     });
-    if (!recipients.length) return json(200, { ok: true, sent: 0, note: "no_recipients" });
+    if (!tcs.length) return json(200, { ok: true, sent: 0, note: "no_tcs" });
 
-    // Done today · deadline_confirmed events since midnight ET, deduped per (actor,file,deadline_key).
-    const { data: audits } = await admin
-      .from("audit_log")
-      .select("actor_id, target_id, details, created_at")
-      .eq("action", "deadline_confirmed")
-      .gte("created_at", startUtc).lt("created_at", endUtc);
+    // Done today
+    const { data: audits } = await admin.from("audit_log").select("actor_id, target_id, details, created_at").eq("action", "deadline_confirmed").gte("created_at", startUtc).lt("created_at", endUtc);
     const seen = new Set<string>();
-    const byActor = new Map<string, { count: number; files: Set<string> }>();
-    let doneTotal = 0;
-    (audits || []).forEach((r: any) => {
+    const doneByActor = new Map<string, DoneItem[]>();
+    (audits || []).forEach((r: { actor_id: string; target_id: string; details?: { deadline_key?: string; dkey?: string; property_address?: string; name?: string } }) => {
       const dk = (r.details && (r.details.deadline_key || r.details.dkey)) || "";
       const dedupe = `${r.actor_id}|${r.target_id}|${dk}`;
       if (seen.has(dedupe)) return;
       seen.add(dedupe);
       const addr = shortAddr((r.details && r.details.property_address) || "");
-      const a = byActor.get(r.actor_id) || { count: 0, files: new Set<string>() };
-      a.count += 1; if (addr) a.files.add(addr);
-      byActor.set(r.actor_id, a);
-      doneTotal += 1;
+      const name = String((r.details && r.details.name) || "Task") + " completed";
+      const list = doneByActor.get(r.actor_id) || []; list.push({ name, addr });
+      doneByActor.set(r.actor_id, list);
     });
 
-    // Deadline pulls · today (for missed-2PM), tomorrow, overdue.
-    const { data: dueToday } = await admin
-      .from("deadline_feed_cache").select("file_id, dkey, name, due_date, is_chase")
-      .eq("due_date", todayYMD).eq("is_chase", false);
-    const { data: dueTom } = await admin
-      .from("deadline_feed_cache").select("file_id, dkey, name, due_date, is_chase")
-      .eq("due_date", tomorrowYMD).eq("is_chase", false);
-    const { data: overdueRows } = await admin
-      .from("deadline_feed_cache").select("file_id, dkey, due_date, is_chase")
-      .lt("due_date", todayYMD).eq("is_chase", false);
-
-    const fileIds = Array.from(new Set([...(dueToday || []), ...(dueTom || []), ...(overdueRows || [])].map((r: any) => r.file_id)));
-    const fileById = new Map<string, any>();
-    if (fileIds.length) {
-      const { data: fs } = await admin.from("files")
-        .select("id, property_address, assigned_tc_id, status, transaction_stage, archived_at").in("id", fileIds);
-      (fs || []).forEach((f: any) => fileById.set(f.id, f));
+    // Due today (still to do)
+    const { data: dueToday } = await admin.from("deadline_feed_cache").select("file_id, dkey, name, due_date, is_chase").eq("due_date", todayYMD).eq("is_chase", false);
+    const dueFileIds = Array.from(new Set((dueToday || []).map((r: { file_id: string }) => r.file_id)));
+    const fileById = new Map<string, { id: string; property_address?: string; assigned_tc_id?: string; status?: string; transaction_stage?: string; archived_at?: string }>();
+    if (dueFileIds.length) {
+      const { data: fs } = await admin.from("files").select("id, property_address, assigned_tc_id, status, transaction_stage, archived_at").in("id", dueFileIds);
+      (fs || []).forEach((f: { id: string }) => fileById.set(f.id, f as never));
     }
-    const isActive = (f: any) => f && !f.archived_at && !["closed", "cancelled", "archived"].includes(String(f.status || "")) && f.transaction_stage !== "closed";
+    const isActive = (f: { archived_at?: string; status?: string; transaction_stage?: string } | undefined) =>
+      f && !f.archived_at && !["closed", "cancelled", "archived"].includes(String(f.status || "")) && f.transaction_stage !== "closed";
 
     const completedByFile = new Map<string, Set<string>>();
-    if (fileIds.length) {
-      const { data: comp } = await admin.from("file_deadlines")
-        .select("file_id, deadline_key, completed_at").in("file_id", fileIds).not("completed_at", "is", null);
-      (comp || []).forEach((c: any) => {
+    if (dueFileIds.length) {
+      const { data: comp } = await admin.from("file_deadlines").select("file_id, deadline_key, completed_at").in("file_id", dueFileIds).not("completed_at", "is", null);
+      (comp || []).forEach((c: { file_id: string; deadline_key: string }) => {
         const s = completedByFile.get(c.file_id) || new Set<string>();
         s.add(c.deadline_key); completedByFile.set(c.file_id, s);
       });
@@ -162,103 +161,70 @@ Deno.serve(async (req) => {
       return false;
     };
 
-    // Missed today's 2 PM · anything due today that's not marked done by 4 PM (when this fires).
-    const missedItems: { name: string; addr: string; tc: string }[] = [];
-    (dueToday || []).forEach((r: any) => {
+    const stillToDoByTc = new Map<string, Task[]>();
+    for (const tc of tcs) stillToDoByTc.set(tc.id, []);
+    (dueToday || []).forEach((r: { file_id: string; dkey: string; name?: string; due_date: string }) => {
       const f = fileById.get(r.file_id);
       if (!isActive(f)) return;
       if (isDone(r.file_id, r.dkey)) return;
-      missedItems.push({ name: r.name || "Deadline", addr: shortAddr(f.property_address), tc: nameById.get(f.assigned_tc_id) || "" });
-    });
-    missedItems.sort((a, b) => a.addr.localeCompare(b.addr));
-
-    const tomorrowItems: { name: string; addr: string; tc: string }[] = [];
-    (dueTom || []).forEach((r: any) => {
-      const f = fileById.get(r.file_id);
-      if (!isActive(f)) return;
-      if (isDone(r.file_id, r.dkey)) return;
-      tomorrowItems.push({ name: r.name || "Deadline", addr: shortAddr(f.property_address), tc: nameById.get(f.assigned_tc_id) || "" });
-    });
-    tomorrowItems.sort((a, b) => a.addr.localeCompare(b.addr));
-
-    let overdueCount = 0;
-    (overdueRows || []).forEach((r: any) => {
-      const f = fileById.get(r.file_id);
-      if (!isActive(f)) return;
-      if (isDone(r.file_id, r.dkey)) return;
-      overdueCount += 1;
+      const tcId = f && f.assigned_tc_id; if (!tcId) return;
+      const bkt = stillToDoByTc.get(tcId); if (!bkt) return;
+      bkt.push({ name: r.name || "Deadline", addr: shortAddr((f && f.property_address) || "") });
     });
 
     const dateLabel = etLongLabel(now);
     const shortDate = etShortLabel(now);
-    const subject = `Aari · Day wrap · ${shortDate} · ${doneTotal} done · ${tomorrowItems.length} for tomorrow`;
+    const sent: string[] = [];
+    const previews: Record<string, { subject: string; html: string; text: string }> = {};
 
-    const heroSubParts: string[] = [`${tomorrowItems.length} for tomorrow`];
-    if (overdueCount > 0) heroSubParts.push(`<span style=\"color:#a3402f;font-weight:600\">${overdueCount} overdue</span>`);
+    for (const tc of tcs) {
+      if (onlyTc && tc.id !== onlyTc && tc.email !== onlyTc) continue;
+      const doneList = (doneByActor.get(tc.id) || []).slice().sort((a, b) => a.addr.localeCompare(b.addr));
+      const stillList = (stillToDoByTc.get(tc.id) || []).slice().sort((a, b) => a.addr.localeCompare(b.addr));
 
-    // Missed 2 PM block · red-tinted, only when items exist.
-    const missedBlock = missedItems.length > 0
-      ? `<div style=\"margin-top:20px;background:#fbf3f1;border:0.5px solid #ecd6d0;border-radius:10px;padding:12px 14px\">`
-        + `<div style=\"font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#a3402f;font-weight:700;margin-bottom:8px\">Missed today's 2 PM</div>`
-        + missedItems.slice(0, 6).map(m => `<div style=\"padding:6px 0;margin-bottom:2px\"><div style=\"font-size:12.5px;color:#14110c;line-height:1.4\"><span style=\"width:6px;height:6px;border-radius:50%;background:#a3402f;display:inline-block;vertical-align:middle;margin-right:8px\"></span><strong>${esc(m.name)}</strong></div><div style=\"font-size:11.5px;color:#8a7a6a;line-height:1.4;padding-left:14px;margin-top:2px\">${esc(m.addr)}${m.tc ? " · " + esc(m.tc) : ""}</div></div>`).join("")
-        + `<div style=\"font-size:11.5px;color:#6f6656;margin-top:8px;padding-left:14px\">Push to first thing tomorrow, or send now.</div>`
-        + `</div>`
-      : "";
+      const hero = stillList.length === 0 ? heroAllDone(doneList.length) : heroStillToDo(stillList.length, doneList.length);
 
-    const actorLines = Array.from(byActor.entries())
-      .sort((a, b) => b[1].count - a[1].count)
-      .map(([id, v]) => {
-        const files = Array.from(v.files);
-        const fileCount = files.length;
-        const fileList = files.slice(0, 6).join(", ") + (files.length > 6 ? `, +${files.length - 6} more` : "");
-        return `<div style=\"padding:10px 4px;border-top:0.5px solid #f2eee4\"><div style=\"font-size:13px;font-weight:700;color:${INK}\">${esc(nameById.get(id) || "Team")} <span style=\"color:#9a8c6d;font-weight:600\">· ${v.count} across ${fileCount} file${fileCount === 1 ? "" : "s"}</span></div>${fileList ? `<div style=\"font-size:11.5px;color:#6f6656;margin-top:2px\">${esc(fileList)}</div>` : ""}</div>`;
-      }).join("");
+      const stillBlock = stillList.length > 0
+        ? `<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:${RED};font-weight:700;margin:14px 2px 4px">Still to complete by end of day today</div>${stillList.map(rowStillToDo).join("")}`
+        : "";
 
-    const doneBlock = doneTotal > 0
-      ? `<div style=\"font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#2f6b4f;font-weight:700;margin:20px 2px 2px\">What got done</div>${actorLines}`
-      : `<div style=\"text-align:center;color:#8a8073;font-size:13px;padding:14px 0\">A quiet day. Nothing was checked off.</div>`;
+      const doneBlock = doneList.length > 0
+        ? `<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:${GREEN};font-weight:700;margin:22px 2px 4px">Completed today</div>${doneList.map(rowDone).join("")}`
+        : "";
 
-    const tomorrowRows = tomorrowItems.slice(0, 6).map(t => `<div style=\"padding:10px 4px;border-top:0.5px solid #f2eee4\"><div style=\"font-size:12.5px;font-weight:600;color:${INK};line-height:1.4\"><span style=\"display:inline-block;width:7px;height:7px;border-radius:50%;background:#c9932f;vertical-align:middle;margin-right:10px\"></span>${esc(t.name)}</div><div style=\"font-size:11.5px;color:#9a8c6d;line-height:1.4;padding-left:17px;margin-top:2px\">${esc(t.addr)}${t.tc ? " · " + esc(t.tc) : ""}</div></div>`).join("");
-    const tomorrowBlock = tomorrowItems.length > 0
-      ? `<div style=\"font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#8a6d1b;font-weight:700;margin:20px 2px 2px\">${tomorrowItems.length} for tomorrow</div>${tomorrowRows}`
-      : `<div style=\"font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:#8a6d1b;font-weight:700;margin:20px 2px 6px\">For tomorrow</div><div style=\"font-size:12.5px;color:#6f6656;padding:2px 4px 4px\">Nothing due tomorrow. Nice.</div>`;
+      const preheader = stillList.length > 0
+        ? `${stillList.length} to go... let’s wrap before EOD.`
+        : `Nice — you clocked in. ${doneList.length} completed today.`;
 
-    const preheader = missedItems.length > 0
-      ? `2 PM window closed with ${missedItems.length} still open. Here's what got done and what's teed up for tomorrow.`
-      : `2 PM window closed. Here's what got done today and what's teed up for tomorrow.`;
+      const subject = stillList.length > 0
+        ? `Aari · ${shortDate} · Almost there... ${stillList.length} to go before EOD`
+        : `Aari · ${shortDate} · You clocked in ✓ ${doneList.length} completed`;
 
-    const html = `<!doctype html><html><body style=\"margin:0;background:#f4f1ea;padding:22px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${INK}\">`
-      + `<div style=\"display:none;max-height:0;overflow:hidden;font-size:0;line-height:0;color:transparent\">${esc(preheader)}</div>`
-      + `<div style=\"max-width:520px;margin:0 auto;background:#fff;border:0.5px solid #e6ddca;border-radius:14px;overflow:hidden\">`
-      + `<div style=\"padding:12px 18px;border-bottom:0.5px solid #f2eee4;font-size:11.5px;color:#8a8073\">Aari Transactions · Wrap-up · ${esc(dateLabel)}</div>`
-      + `<div style=\"padding:18px\">`
-      + `<div style=\"text-align:center;padding:10px 0 6px\"><div style=\"font-family:Georgia,'Times New Roman',serif;font-size:32px;line-height:1;color:${INK};letter-spacing:-0.5px\">${doneTotal} done today</div><div style=\"font-size:12.5px;color:#5f5647;margin-top:6px\">${heroSubParts.join(" · ")}</div></div>`
-      + missedBlock
-      + doneBlock
-      + tomorrowBlock
-      + `<div style=\"text-align:center;margin-top:24px\"><a href=\"${PORTAL}\" style=\"display:inline-block;background:${INK};color:#fff;text-decoration:none;font-size:12.5px;font-weight:600;padding:11px 22px;border-radius:8px\">See every task in the portal</a></div>`
-      + `<div style=\"text-align:center;font-size:10.5px;color:#8a8073;margin-top:22px;padding-top:14px;border-top:0.5px solid #f2eee4\">Aari Transactions LLC</div>`
-      + `</div></div></body></html>`;
+      const html = `<!doctype html><html><body style="margin:0;background:#f4f1ea;padding:22px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${INK}"><div style="display:none;max-height:0;overflow:hidden;font-size:0;line-height:0;color:transparent">${esc(preheader)}</div><div style="max-width:520px;margin:0 auto;background:#fff;border:0.5px solid #e6ddca;border-radius:14px;overflow:hidden"><div style="padding:12px 18px;border-bottom:0.5px solid #f2eee4;font-size:11.5px;color:#8a8073">Aari Transactions · Wrap-up for ${esc(tc.name)} · ${esc(dateLabel)}</div>${hero}<div style="padding:18px">${stillBlock}${doneBlock}<div style="text-align:center;margin-top:26px"><a href="${PORTAL}" style="display:inline-block;background:${INK};color:#fff;text-decoration:none;font-size:12.5px;font-weight:600;padding:11px 22px;border-radius:8px">Open the portal</a></div><div style="text-align:center;font-size:10.5px;color:#8a8073;margin-top:22px;padding-top:14px;border-top:0.5px solid #f2eee4">Aari Transactions LLC</div></div></div></body></html>`;
 
-    const textLines = [
-      `Aari Transactions · Wrap-up · ${dateLabel}`, ``,
-      `${doneTotal} done today · ${tomorrowItems.length} for tomorrow${overdueCount > 0 ? " · " + overdueCount + " overdue" : ""}`, ``,
-      ...(missedItems.length ? [`Missed today's 2 PM:`, ...missedItems.slice(0, 6).map(m => `  • ${m.name} · ${m.addr}${m.tc ? " · " + m.tc : ""}`), `Push to first thing tomorrow, or send now.`, ``] : []),
-      ...(doneTotal > 0 ? ["What got done:", ...Array.from(byActor.entries()).sort((a, b) => b[1].count - a[1].count).map(([id, v]) => `  ${nameById.get(id) || "Team"} · ${v.count} across ${v.files.size} files: ${Array.from(v.files).join(", ")}`)] : ["A quiet day. Nothing was checked off."]), ``,
-      ...(tomorrowItems.length ? [`${tomorrowItems.length} for tomorrow:`, ...tomorrowItems.slice(0, 6).map(t => `  ${t.name} · ${t.addr}${t.tc ? " · " + t.tc : ""}`)] : ["Nothing due tomorrow."]), ``,
-      `See every task: ${PORTAL}`,
-    ];
-    const text = textLines.join("\n");
+      const textLines = [
+        `Aari Transactions · Wrap-up for ${tc.name} · ${dateLabel}`, ``,
+        ...(stillList.length > 0
+          ? [`Almost there... ${stillList.length} to go before EOD.`, ``, `Still to complete by end of day today:`, ...stillList.map(t => `  [ ] ${t.name} · ${t.addr}`), ``]
+          : [`You clocked in. ${doneList.length} completed. Nothing left for today.`, ``]),
+        ...(doneList.length > 0 ? [`Completed today:`, ...doneList.map(t => `  [✓] ${t.name} · ${t.addr}`), ``] : []),
+        `Open the portal: ${PORTAL}`,
+      ];
+      const text = textLines.join("\n");
 
-    if (dryRun) return json(200, { ok: true, dry_run: true, doneTotal, overdueCount, missed: missedItems.length, tomorrow: tomorrowItems.length, recipients, actors: Array.from(byActor.entries()).map(([id, v]) => ({ name: nameById.get(id), count: v.count, files: Array.from(v.files) })), missedItems, tomorrowItems, html });
+      if (dryRun) { previews[tc.email] = { subject, html, text }; continue; }
 
-    await sendEmail(recipients, subject, html, text);
-    return json(200, { ok: true, sent: recipients.length, doneTotal, overdueCount, missed: missedItems.length, tomorrow: tomorrowItems.length });
+      const cc = tc.email.toLowerCase() === brokerEmail.toLowerCase() ? undefined : [brokerEmail];
+      try { await sendEmail([tc.email], cc, subject, html, text); sent.push(tc.email); }
+      catch (e) { console.error(`[eod-report] send to ${tc.email} failed`, e instanceof Error ? e.message : String(e)); }
+    }
+
+    if (dryRun) return json(200, { ok: true, dry_run: true, tcs: tcs.length, previews });
+    return json(200, { ok: true, sent, tcs: tcs.length });
   } catch (err) {
     try {
-      const { data: b } = await admin.from("agents").select("email").eq("role", "broker").limit(1).maybeSingle();
-      if (b?.email && RESEND_API_KEY) {
-        await sendEmail([b.email], "Aari day-wrap report did not run", `<p>The day-wrap report hit an error:</p><pre>${esc(String((err as Error).message || err))}</pre>`, `Day-wrap report error: ${(err as Error).message || err}`);
+      if (BROKER_EMAIL && RESEND_API_KEY) {
+        await sendEmail([BROKER_EMAIL], undefined, "Aari day-wrap report did not run", `<p>The per-TC day-wrap report hit an error:</p><pre>${esc(String((err as Error).message || err))}</pre>`, `Day-wrap report error: ${(err as Error).message || err}`);
       }
     } catch { /* ignore */ }
     return json(500, { ok: false, error: String((err as Error).message || err) });
