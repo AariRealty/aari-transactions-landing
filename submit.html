@@ -417,7 +417,36 @@
   var PORTAL=false; try{ PORTAL=new URLSearchParams(location.search).get("via")==="portal"; }catch(_){}
   var PORTAL_AGENTS=[]; if(PORTAL){ try{ PORTAL_AGENTS=JSON.parse(sessionStorage.getItem("aari_portal_agents")||"[]")||[]; }catch(_){ PORTAL_AGENTS=[]; } }
   var SECTIONS=["step-door","step-drop","step-reading","step-review","step-auth","step-offer","step-service","step-listing","step-lwiz","step-done"];
-  function show(id){ SECTIONS.forEach(function(s){ document.getElementById(s).classList.toggle("hide", s!==id); }); window.scrollTo(0,0); }
+  function show(id){ SECTIONS.forEach(function(s){ document.getElementById(s).classList.toggle("hide", s!==id); }); window.scrollTo(0,0); ensureCloseX(id); }
+  // Marlenyi 2026-08-17 · The X close button on the top-right must be present on
+  // EVERY page, not just the ones we hand-authored. Some sections (step-drop,
+  // step-review, and every dynamically-rendered step-service / step-auth /
+  // step-offer variant) originally shipped with only a "< Back" link, which
+  // gets cut off behind the sticky nav on mobile Safari. This runs after every
+  // show() call and any dynamic re-render, injecting a persistent .aari-close-x
+  // into the target section if it doesn't have one, and wiring it to close to /.
+  var _EXEMPT_CLOSEX = { "step-reading":1, "step-done":1 };
+  function ensureCloseX(id){
+    if(!id || _EXEMPT_CLOSEX[id]) return;
+    var sec = document.getElementById(id); if(!sec) return;
+    // If the section already has an X (aari-close-x or lw-close-x), we're done.
+    if(sec.querySelector(".aari-close-x, .lw-close-x")) return;
+    var btn = document.createElement("button");
+    btn.className = "aari-close-x"; btn.type = "button"; btn.setAttribute("aria-label","Close");
+    btn.addEventListener("click", function(){ location.href = "/"; });
+    sec.insertBefore(btn, sec.firstChild);
+  }
+  // Wrap dynamic re-renders · every time we swap innerHTML on a section, the
+  // X gets wiped. MutationObserver lightly guards each section so the X
+  // reappears after any inner mutation.
+  function watchCloseX(id){
+    if(_EXEMPT_CLOSEX[id]) return;
+    var sec = document.getElementById(id); if(!sec) return;
+    var mo = new MutationObserver(function(){
+      if(!sec.classList.contains("hide")) ensureCloseX(id);
+    });
+    mo.observe(sec, { childList:true });
+  }
   function err(id,m){ var e=document.getElementById(id); if(!e)return; e.textContent=m||""; e.className=m?"msg err":"msg"; e.style.display=m?"block":"none"; }
   function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
   function toB64(file,cb){ var r=new FileReader(); r.onload=function(){ cb(String(r.result).split(",")[1]); }; r.readAsDataURL(file); }
@@ -443,6 +472,11 @@
   // whatever site they came from (Marlenyi 2026-08-17 hub.joinaari.com bug).
   var _doorClose = document.getElementById("door-close");
   if(_doorClose) _doorClose.addEventListener("click", function(){ location.href = "/"; });
+  // Guard every section so dynamic re-renders can't strip the close-X.
+  SECTIONS.forEach(watchCloseX);
+  // Also ensure the currently-visible section has the X right now, in case
+  // one loaded without it (deep-link etc.).
+  SECTIONS.forEach(function(s){ var el=document.getElementById(s); if(el && !el.classList.contains("hide")) ensureCloseX(s); });
   document.getElementById("go-contract").addEventListener("click",function(){ show("step-drop"); });
   document.getElementById("go-offer").addEventListener("click",function(){ offerStep(1); });
   document.getElementById("go-listing").addEventListener("click",function(){ listingStart(); });
