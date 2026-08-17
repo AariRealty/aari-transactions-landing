@@ -133,6 +133,11 @@
      to aaritransactions.com root (not history.back()). */
   .aari-close-x{ position:fixed; top:70px; right:16px; width:36px; height:36px; border-radius:50%; background:#0f0f0f; color:#fff; display:flex; align-items:center; justify-content:center; line-height:1; z-index:200; box-shadow:0 2px 10px rgba(15,15,15,.20); border:none; cursor:pointer; font-size:22px; padding:0; font-family:inherit; }
   .aari-close-x::before{ content:"\00d7"; display:block; margin-top:-1px; font-size:24px; line-height:1; }
+  /* Back bubble · mirror of the close-X, top-left, arrow instead of ×. Same
+     size, same offset, same drop shadow so they read as a pair. Every page
+     except the front door gets one, wired to the section's own back handler. */
+  .aari-back-x{ position:fixed; top:70px; left:16px; width:36px; height:36px; border-radius:50%; background:#0f0f0f; color:#fff; display:flex; align-items:center; justify-content:center; line-height:1; z-index:200; box-shadow:0 2px 10px rgba(15,15,15,.20); border:none; cursor:pointer; font-size:20px; padding:0; font-family:inherit; }
+  .aari-back-x::before{ content:"\2190"; display:block; margin-top:-1px; font-size:20px; line-height:1; font-weight:400; }
   #step-door, #step-listing, #step-lwiz{ position:relative; }
   /* Vertically center the short entry screens ("Where are you?" and the
      listing picker) in the viewport minus the sticky nav. Marlenyi
@@ -419,7 +424,7 @@
   var PORTAL=false; try{ PORTAL=new URLSearchParams(location.search).get("via")==="portal"; }catch(_){}
   var PORTAL_AGENTS=[]; if(PORTAL){ try{ PORTAL_AGENTS=JSON.parse(sessionStorage.getItem("aari_portal_agents")||"[]")||[]; }catch(_){ PORTAL_AGENTS=[]; } }
   var SECTIONS=["step-door","step-drop","step-reading","step-review","step-auth","step-offer","step-service","step-listing","step-lwiz","step-done"];
-  function show(id){ SECTIONS.forEach(function(s){ document.getElementById(s).classList.toggle("hide", s!==id); }); window.scrollTo(0,0); ensureCloseX(id); }
+  function show(id){ SECTIONS.forEach(function(s){ document.getElementById(s).classList.toggle("hide", s!==id); }); window.scrollTo(0,0); ensureCloseX(id); ensureBackX(id); }
   // Marlenyi 2026-08-17 · The X close button on the top-right must be present on
   // EVERY page, not just the ones we hand-authored. Some sections (step-drop,
   // step-review, and every dynamically-rendered step-service / step-auth /
@@ -445,9 +450,57 @@
     if(_EXEMPT_CLOSEX[id]) return;
     var sec = document.getElementById(id); if(!sec) return;
     var mo = new MutationObserver(function(){
-      if(!sec.classList.contains("hide")) ensureCloseX(id);
+      if(!sec.classList.contains("hide")){ ensureCloseX(id); ensureBackX(id); }
     });
     mo.observe(sec, { childList:true });
+  }
+  // Back bubble · matching top-left circle w/ arrow (Marlenyi 2026-08-17).
+  // Front door has no previous state, so it's exempt. Every other section
+  // gets a Back that either fires the section's own back handler (the
+  // existing "< Back" span click) or falls through to the built-in nav map.
+  var _EXEMPT_BACKX = { "step-door":1, "step-reading":1, "step-done":1 };
+  var _BACK_HANDLERS = {
+    // Static-section defaults · match the existing "< Back" span click targets.
+    "step-drop":     function(){ show("step-door"); },
+    "step-review":   function(){ show("step-door"); },
+    "step-listing":  function(){ show("step-door"); },
+    "step-auth":     function(){ show("step-review"); },
+    "step-offer":    function(){ show("step-door"); },
+    "step-service":  function(){ show("step-door"); },
+    "step-lwiz":     function(){ lwGoBack(); },
+  };
+  function ensureBackX(id){
+    if(!id || _EXEMPT_BACKX[id]) return;
+    var sec = document.getElementById(id); if(!sec) return;
+    if(sec.querySelector(".aari-back-x")) return;
+    var btn = document.createElement("button");
+    btn.className = "aari-back-x"; btn.type = "button"; btn.setAttribute("aria-label","Back");
+    btn.addEventListener("click", function(){
+      var h = _BACK_HANDLERS[id]; if(h) h(); else show("step-door");
+    });
+    sec.insertBefore(btn, sec.firstChild);
+  }
+  // Wizard back · walks the slide sequence in reverse. lwState.slide is
+  // set by each lwRender* function so we know where we are. When we hit
+  // the first slide, we exit the wizard back to the front door (or the
+  // listing picker if the visitor came from there, tracked via
+  // lwState.fromPicker).
+  function lwGoBack(){
+    if(!lwState){ show("step-door"); return; }
+    var order = ["tc","prop","contract","mls","sa"];
+    var i = order.indexOf(lwState.slide);
+    if(i <= 0){
+      // First wizard slide · exit back to whichever entry we came from.
+      if(lwState.fromPicker) show("step-listing");
+      else show("step-door");
+      return;
+    }
+    // Skip the MLS slide when the current service doesn't have needsMLS
+    // (Listing Docs Only), so the back button doesn't land on an empty page.
+    var prev = order[i-1];
+    if(prev === "mls" && lwState.svc && LW_SERVICE_META[lwState.svc] && !LW_SERVICE_META[lwState.svc].needsMLS) prev = "contract";
+    var map = { tc:lwRenderTC, prop:lwRenderProp, contract:lwRenderContract, mls:lwRenderMLS, sa:lwRenderSA };
+    if(map[prev]) map[prev]();
   }
   function err(id,m){ var e=document.getElementById(id); if(!e)return; e.textContent=m||""; e.className=m?"msg err":"msg"; e.style.display=m?"block":"none"; }
   function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
@@ -474,11 +527,11 @@
   // whatever site they came from (Marlenyi 2026-08-17 hub.joinaari.com bug).
   var _doorClose = document.getElementById("door-close");
   if(_doorClose) _doorClose.addEventListener("click", function(){ location.href = "/"; });
-  // Guard every section so dynamic re-renders can't strip the close-X.
+  // Guard every section so dynamic re-renders can't strip the close-X + back.
   SECTIONS.forEach(watchCloseX);
-  // Also ensure the currently-visible section has the X right now, in case
-  // one loaded without it (deep-link etc.).
-  SECTIONS.forEach(function(s){ var el=document.getElementById(s); if(el && !el.classList.contains("hide")) ensureCloseX(s); });
+  // Also ensure the currently-visible section has the buttons right now, in
+  // case one loaded without them (deep-link etc.).
+  SECTIONS.forEach(function(s){ var el=document.getElementById(s); if(el && !el.classList.contains("hide")){ ensureCloseX(s); ensureBackX(s); } });
   document.getElementById("go-contract").addEventListener("click",function(){ show("step-drop"); });
   document.getElementById("go-offer").addEventListener("click",function(){ offerStep(1); });
   document.getElementById("go-listing").addEventListener("click",function(){ listingStart(); });
@@ -570,7 +623,7 @@
                '<span class="lp" style="text-align:right;line-height:1.2">'+it[3]+'<span style="display:block;font-size:9.5px;font-weight:500;color:#8a857c;text-transform:uppercase;letter-spacing:.4px;margin-top:2px">'+it[4]+'</span></span></div></button>';
       }).join('')+'</div>';
     document.getElementById("l-close").addEventListener("click",function(){ location.href = "/"; });
-    W.querySelectorAll("[data-svc]").forEach(function(b){ b.addEventListener("click",function(){ lwStart(b.getAttribute("data-svc")); }); });
+    W.querySelectorAll("[data-svc]").forEach(function(b){ b.addEventListener("click",function(){ lwStart(b.getAttribute("data-svc"), { fromPicker:true }); }); });
     show("step-listing");
   }
 
@@ -602,11 +655,18 @@
       // toggles via the price-row checkbox; it flows through lwSubmit to
       // create-listing-checkout, which spends the credit atomically and mints
       // a $0 order via the aari_membership_credit coupon.
-      credits_remaining:0, credits_total:0, credits_reset_at:null, membership_tier:null, use_credit:false };
+      credits_remaining:0, credits_total:0, credits_reset_at:null, membership_tier:null, use_credit:false,
+      // Slide tracker + entry-point tracker for the top-left Back bubble.
+      // slide gets set in each lwRender* function; fromPicker=true means the
+      // visitor picked the service on the listing picker (they came from
+      // step-listing), so Back on the first wizard slide returns there
+      // instead of the front door.
+      slide:null, fromPicker:false };
   }
-  function lwStart(svc){
+  function lwStart(svc, opts){
     if(!LW_SERVICE_META[svc]){ show("step-door"); return; }
     lwReset(svc);
+    if(opts && opts.fromPicker) lwState.fromPicker = true;
     lwRenderTC();
   }
   // Close-X in top-right of every wizard slide. Returns to the front door
@@ -828,6 +888,7 @@
 
   // ---- Slide 3 · Pick your coordinator ----
   function lwRenderTC(){
+    if(lwState) lwState.slide = "tc";
     var W = lwHost();
     W.style.position = "relative";
     W.innerHTML = lwCloseX() +
@@ -860,6 +921,7 @@
   // token gets stitched into the final /public-submit call so the file lands
   // attached to their agent record (critical for tracking Samantha's activity).
   function lwRenderProp(){
+    if(lwState) lwState.slide = "prop";
     var W = lwHost();
     var meta = LW_SERVICE_META[lwState.svc];
     W.innerHTML = lwCloseX() +
@@ -934,6 +996,7 @@
 
   // ---- Slide 5 · Send us the contract ----
   function lwRenderContract(){
+    if(lwState) lwState.slide = "contract";
     var W = lwHost();
     var have = !!lwState.contract_b64;
     W.innerHTML = lwCloseX() +
@@ -970,6 +1033,7 @@
 
   // ---- Slide 6 · Which MLS(s)? (only for LC + MLS Setup) ----
   function lwRenderMLS(){
+    if(lwState) lwState.slide = "mls";
     var W = lwHost();
     var svc = lwState.svc;
     var meta = LW_SERVICE_META[svc];
@@ -1040,6 +1104,7 @@
 
   // ---- Slide 7 · Sign the Service Agreement ----
   function lwRenderSA(){
+    if(lwState) lwState.slide = "sa";
     var W = lwHost();
     var saText = "The Aari Transactions Service Agreement (v4.8) could not load. Please refresh and try again.";
     if(window.AARI_SA_V47_HTML){
