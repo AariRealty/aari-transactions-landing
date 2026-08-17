@@ -172,6 +172,24 @@
   .lw-fld:focus{ border-color:#0f0f0f; }
   .lw-price-row{ max-width:360px; margin:0 auto 14px; background:var(--cream); border-radius:10px; padding:11px 14px; display:flex; align-items:center; justify-content:space-between; font-size:12.5px; color:#5f5b53; }
   .lw-price-row b{ color:#0f0f0f; font-weight:600; }
+  /* Variant B · price row when a signed-in member with credits is looking at
+     an eligible service. The checkbox lives inside the same card as the
+     price so credits feel like a line item on the receipt she's already
+     looking at, not a separate promotional callout. */
+  .lw-price-b{ max-width:360px; margin:0 auto 14px; background:#fff; border:1px solid #e6e2d8; border-radius:12px; padding:12px 14px; font-size:12.5px; color:#5f5b53; }
+  .lw-price-b.on{ border-color:#cfe4d7; background:#f5f9f6; }
+  .lw-price-b .lw-price-top{ display:flex; align-items:baseline; justify-content:space-between; }
+  .lw-price-b .lw-price-top b{ color:#0f0f0f; font-weight:600; font-size:12.5px; }
+  .lw-price-b .lw-strike{ text-decoration:line-through; color:#a8a29a; font-weight:400; margin-right:6px; font-size:11.5px; }
+  .lw-price-b .lw-free{ color:#2f6a44; font-weight:700; font-size:13px; letter-spacing:.02em; }
+  .lw-credit-row{ display:flex; align-items:center; gap:10px; margin-top:10px; padding-top:10px; border-top:1px dashed #efeadc; font-size:12px; color:#5f5b53; cursor:pointer; user-select:none; line-height:1.4; }
+  .lw-credit-row b{ color:#0f0f0f; font-weight:600; }
+  .lw-credit-row .lw-cb{ width:18px; height:18px; border:1.5px solid #0f0f0f; border-radius:5px; flex:0 0 auto; background:#fff; position:relative; }
+  .lw-credit-row .lw-cb.on{ background:#0f0f0f; }
+  .lw-credit-row .lw-cb.on::after{ content:"✓"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#fff; font-size:11px; font-weight:700; }
+  .lw-credit-row .lw-credit-body{ flex:1; }
+  .lw-credit-row .lw-credit-count{ font-size:11px; color:#8a857c; font-variant-numeric:tabular-nums; flex:0 0 auto; }
+  .lw-credit-note{ margin-top:10px; padding-top:10px; border-top:1px dashed #efeadc; font-size:11.5px; color:#8a857c; line-height:1.5; }
   .lw-first-time{ max-width:360px; margin:8px auto 0; background:#f5f9f6; border:1px solid #cfe4d7; border-radius:8px; padding:8px 12px; font-size:11.5px; color:#3a7a4e; text-align:center; line-height:1.5; }
   .lw-first-time b{ color:#0f0f0f; }
 
@@ -510,13 +528,25 @@
   // per-MLS line items + first-time coupon. Redirects to the checkout URL.
   // ============================================================================
   var LW_SERVICE_META = {
-    listing_coordinator: { name:"Listing Coordinator", basePrice:"$199", needsMLS:true },
-    mls_setup:           { name:"MLS Setup Only",       basePrice:"$99 per MLS", needsMLS:true },
-    listing_docs:        { name:"Listing Docs Only",    basePrice:"$99", needsMLS:false }
+    // creditEligible · a Producer-tier membership credit fully covers ONE
+    // order of Offer Prep, MLS Setup, or Listing Docs. Coordinator bundles
+    // all three, so credits don't apply there (per Marlenyi 2026-08-17).
+    listing_coordinator: { name:"Listing Coordinator", basePrice:"$199", needsMLS:true, creditEligible:false },
+    mls_setup:           { name:"MLS Setup Only",       basePrice:"$99 per MLS", needsMLS:true, creditEligible:true },
+    listing_docs:        { name:"Listing Docs Only",    basePrice:"$99", needsMLS:false, creditEligible:true }
   };
   var LW_MLS_LIST = ["Miami Realtors®","Beaches MLS","Stellar MLS","FGCMLS","Space Coast MLS","NEFMLS","Sunshine MLS (Naples)","Emerald Coast MLS"];
   var lwState = null;
-  function lwReset(svc){ lwState = { svc:svc, tc:"none", prop:"", email:"", contract_b64:null, contract_name:null, mls_names:[], typed_name:"", authToken:null, authAgent:null }; }
+  function lwReset(svc){
+    lwState = { svc:svc, tc:"none", prop:"", email:"", contract_b64:null, contract_name:null, mls_names:[], typed_name:"",
+      authToken:null, authAgent:null,
+      // Credit state (Variant B) · populated after sign-in on slide 4 when
+      // check_email returns credits_remaining. use_credit is what the user
+      // toggles via the price-row checkbox; it flows through lwSubmit to
+      // create-listing-checkout, which spends the credit atomically and mints
+      // a $0 order via the aari_membership_credit coupon.
+      credits_remaining:0, credits_total:0, credits_reset_at:null, membership_tier:null, use_credit:false };
+  }
   function lwStart(svc){
     if(!LW_SERVICE_META[svc]){ show("step-door"); return; }
     lwReset(svc);
@@ -562,14 +592,21 @@
     var slot = document.getElementById("lw-recognize");
     if(!slot) return;
     if(!d || !d.ok || !d.recognized) { slot.innerHTML = ""; return; }
+    // Stash credit posture on lwState so the price row (rendered by
+    // lwPaintCreditPrice) can react to sign-in without another round-trip.
+    if(lwState){
+      lwState.credits_remaining = Number(d.credits_remaining||0);
+      lwState.credits_total = Number(d.credits_total||0);
+      lwState.credits_reset_at = d.credits_reset_at || null;
+      lwState.membership_tier = d.membership_tier || null;
+    }
     var name = d.first_name || d.name || "there";
     var isMember = !!d.has_membership;
-    var msg, cardCls, badge = "", credits = "", skipLabel;
+    var msg, cardCls, badge = "", skipLabel;
     if(isMember){
       var tier = d.membership_tier ? (String(d.membership_tier).charAt(0).toUpperCase()+String(d.membership_tier).slice(1)) : "Member";
       badge = '<div class="badge">Aari Pro &middot; '+esc(tier)+'</div>';
       msg = 'Welcome back, <b>'+esc(name)+'</b>. Sign in to apply your membership credits.';
-      credits = '<div class="credits"><span>Credit toward this order</span><span class="val">Applied at checkout</span></div>';
       cardCls = 'mem';
       skipLabel = 'Continue without credits';
     } else {
@@ -581,7 +618,6 @@
       '<div class="card '+cardCls+'">'+
         badge +
         '<div class="hd">'+msg+'</div>'+
-        credits +
         '<div class="pw-row"><input type="password" id="lw-pw" placeholder="Your password" autocomplete="current-password"><button type="button" id="lw-login">Sign in</button></div>'+
         '<div class="divider">or</div>'+
         '<button class="skip-btn" id="lw-skip" type="button">'+skipLabel+'</button>'+
@@ -591,9 +627,6 @@
     var skip = document.getElementById("lw-skip");
     pw.addEventListener("keydown", function(ev){ if(ev.key==="Enter"){ ev.preventDefault(); btn.click(); } });
     btn.addEventListener("click", lwLogin);
-    // Explicit guest path · captures the user's intent to skip login and
-    // advances the wizard immediately. Without this button the Continue at
-    // the bottom of the slide re-triggers recognition and loops.
     skip.addEventListener("click", function(){
       var em = String(document.getElementById("lw-email").value||"").trim().toLowerCase();
       var entry = _lwEmailCheckCache[em]; if(entry){ entry.skipped = true; }
@@ -601,6 +634,65 @@
       lwState.email = em;
       lwRenderContract();
     });
+  }
+
+  // Variant B · when a signed-in Producer with credits lands on slide 4, the
+  // price row itself becomes the credit affordance. Strike-through price +
+  // FREE label + a checkbox inside the same card that reads "Use 1 credit to
+  // cover this order · N of 4 left". Ineligible services (Coordinator) get a
+  // muted note instead of the checkbox. Out-of-credits members get the reset
+  // date. Called from lwLogin after auth succeeds and from lwRenderProp when
+  // we come back with credits already known.
+  function lwFmtResetDate(iso){
+    if(!iso) return "next renewal";
+    try {
+      var d = new Date(iso);
+      return d.toLocaleDateString("en-US", { month:"long", day:"numeric" });
+    } catch(_){ return "next renewal"; }
+  }
+  function lwPaintCreditPrice(){
+    if(!lwState) return;
+    var slot = document.getElementById("lw-price-slot");
+    if(!slot) return;
+    var meta = LW_SERVICE_META[lwState.svc]; if(!meta) return;
+    var signedIn = !!lwState.authToken;
+    var remaining = Number(lwState.credits_remaining || 0);
+    var tier = lwState.membership_tier ? (String(lwState.membership_tier).charAt(0).toUpperCase()+String(lwState.membership_tier).slice(1)) : "Member";
+    // Not signed in, or not a member → plain price row (unchanged from before).
+    if(!signedIn || !lwState.membership_tier){
+      slot.innerHTML = '<div class="lw-price-row"><span>'+esc(meta.name)+'</span><b>'+meta.basePrice+' &middot; paid upfront</b></div>';
+      return;
+    }
+    // Signed-in member paths ↓
+    var eligible = !!meta.creditEligible;
+    var canSpend = eligible && remaining >= 1;
+    var applied = canSpend && !!lwState.use_credit;
+    var priceHTML = applied
+      ? '<b><span class="lw-strike">'+meta.basePrice+'</span> <span class="lw-free">FREE</span></b>'
+      : '<b>'+meta.basePrice+' &middot; paid upfront</b>';
+    var innerHTML = '<div class="lw-price-b '+(applied?"on":"")+'">'+
+      '<div class="lw-price-top"><span>'+esc(meta.name)+'</span>'+priceHTML+'</div>';
+    if(canSpend){
+      // Checkbox row (Variant B)
+      innerHTML += '<label class="lw-credit-row" id="lw-credit-toggle">'+
+        '<span class="lw-cb '+(applied?"on":"")+'" aria-hidden="true"></span>'+
+        '<span class="lw-credit-body">Use <b>1 credit</b> to cover this order</span>'+
+        '<span class="lw-credit-count">'+remaining+' / '+lwState.credits_total+' left</span>'+
+      '</label>';
+    } else if(!eligible){
+      innerHTML += '<div class="lw-credit-note">Credits don&rsquo;t apply to '+esc(meta.name)+'. Aari Pro '+esc(tier)+' pricing still applies.</div>';
+    } else {
+      innerHTML += '<div class="lw-credit-note">0 of '+lwState.credits_total+' credits left this month &middot; reset '+esc(lwFmtResetDate(lwState.credits_reset_at))+'.</div>';
+    }
+    innerHTML += '</div>';
+    slot.innerHTML = innerHTML;
+    var toggle = document.getElementById("lw-credit-toggle");
+    if(toggle){
+      toggle.addEventListener("click", function(){
+        lwState.use_credit = !lwState.use_credit;
+        lwPaintCreditPrice();
+      });
+    }
   }
   function lwLogin(){
     var em = String(document.getElementById("lw-email").value||"").trim().toLowerCase();
@@ -622,10 +714,20 @@
       lwState.authAgent = { email: em };
       // Confirm briefly, then auto-advance · Marlenyi shouldn't have to tap
       // Continue a second time after signing in.
-      slot.innerHTML = '<div class="card done"><div class="hd">✓ Signed in as <b>'+esc(em)+'</b>. Credits will apply at checkout.</div></div>';
+      slot.innerHTML = '<div class="card done"><div class="hd">✓ Signed in as <b>'+esc(em)+'</b>.</div></div>';
+      // Auto-apply the credit for signed-in members whose picked service is
+      // eligible and who have credits available — Marlenyi wants zero taps
+      // required from members who came here to spend a credit. They can still
+      // untick it via the price-row checkbox before continuing.
+      var meta = LW_SERVICE_META[lwState.svc];
+      if(meta && meta.creditEligible && Number(lwState.credits_remaining||0) >= 1){
+        lwState.use_credit = true;
+      }
+      lwPaintCreditPrice();
       lwState.prop = document.getElementById("lw-prop").value.trim();
       lwState.email = em;
-      setTimeout(function(){ lwRenderContract(); }, 700);
+      // Give the user a beat to see the price change to FREE before advancing.
+      setTimeout(function(){ lwRenderContract(); }, 900);
     }).catch(function(e){
       btn.disabled = false; btn.textContent = "Sign in";
       var errDiv = document.createElement("div"); errDiv.className = "err";
@@ -674,7 +776,7 @@
       '<div class="lw-body">'+
         '<h2 class="lw-h2">'+esc(meta.name)+'</h2>'+
         '<div class="lw-sub">Just the address and where to reach you.</div>'+
-        '<div class="lw-price-row"><span>'+esc(meta.name)+'</span><b>'+meta.basePrice+' &middot; paid upfront</b></div>'+
+        '<div id="lw-price-slot"></div>'+
         '<div class="lw-first-time">🎉 <b>First time using Aari?</b> $10 off your total, applied automatically at checkout.</div>'+
         '<div class="lw-form">'+
           '<div><div class="lw-lbl">Property address</div><input type="text" class="lw-fld" id="lw-prop" placeholder="Address or MLS number" value="'+esc(lwState.prop)+'"></div>'+
@@ -684,6 +786,7 @@
           '<div class="lw-msg" id="lw-prop-err"></div>'+
         '</div>'+
       '</div>';
+    lwPaintCreditPrice();
     wireAddr(document.getElementById("lw-prop"));
     var emailInput = document.getElementById("lw-email");
     // Fire on blur for the desktop path (tab-out shows the banner in real
@@ -899,12 +1002,16 @@
     .then(function(r){ return r.json(); }).then(function(d){
       if(!d || !d.ok || !d.file_id){ throw new Error((d&&d.error) || "Something went wrong."); }
       // 2. Mint a Stripe Checkout Session with dynamic line items + first-time coupon.
-      return fetch(SB_URL+"/functions/v1/create-listing-checkout",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({
+      // Pass the member's session JWT (if signed in on slide 4) so the checkout
+      // function can spend a credit atomically when use_credit is true. Falls
+      // back to the anon key for guest orders (no credit path possible then).
+      return fetch(SB_URL+"/functions/v1/create-listing-checkout",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+(lwState.authToken || SB_KEY) }, body:JSON.stringify({
         file_id: d.file_id,
         service: lwState.svc,
         agent_email: lwState.email,
         mls_names: lwState.mls_names,
-        property_address: lwState.prop
+        property_address: lwState.prop,
+        use_credit: !!(lwState.authToken && lwState.use_credit)
       }) }).then(function(rr){ return rr.json(); }).then(function(cd){
         if(!cd || !cd.ok || !cd.checkout_url){ throw new Error((cd&&cd.error) || "Checkout could not be created."); }
         // 3. Redirect to Stripe. Show a small confirmation while it loads.
