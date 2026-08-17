@@ -30922,7 +30922,12 @@ Tell me your planned move-out date and I will set the inspection.`
     // keys off agent_id, so Samantha's credits could not apply and Eileen would have been billed
     // $80 a piece for work a credit had already paid for. There was no field, so there was no way
     // for her to get it right.
-    var _nfAgentId = null, _nfAddress = null;
+    // _nfAgentId is the agent's UUID from the CRM roster (typeahead pick).
+    // _nfAgentName is a free-typed name for an agent Eileen has never worked with
+    // before (Flavia, Alied). Only one is set at a time. When _nfAgentName is
+    // used, the file inserts with agent_id:null + raw_form_data.agent_name so
+    // Marlenyi can link the new agent from the file drawer.
+    var _nfAgentId = null, _nfAgentName = null, _nfAddress = null;
     // Property address · same Mapbox type-to-select lookup the offer intake uses, so a
     // listing captures a standardized address up front (no more three-dots-later).
     var _NF_MAPBOX = 'pk.eyJ1IjoibWFybGVueWliIiwiYSI6ImNtcHlya3FyZTBhNDkycXB5eHFxYWNuOHAifQ.6iJYZ3ApLhqJi9D2r9shlw';
@@ -30954,7 +30959,7 @@ Tell me your planned move-out date and I will set the inspection.`
       inp.addEventListener('blur', function(){ setTimeout(hide, 180); });
     }
     function nfAgentPickHtml(){
-      var val = (_nfAgentId && _agentNameById && _agentNameById[_nfAgentId]) || '';
+      var val = (_nfAgentId && _agentNameById && _agentNameById[_nfAgentId]) || _nfAgentName || '';
       return '<p class="nf-bigsub" style="text-align:left;margin:0 0 8px;font-weight:600;color:#0f0f0f;font-size:13px">Whose file is this?</p>' +
         '<div style="position:relative">' +
           '<input id="nf-agent-input" type="text" autocomplete="off" placeholder="Start typing the agent’s name" value="' + esc(val) + '" style="width:100%;box-sizing:border-box;font-family:inherit;font-size:14.5px;padding:11px 12px;border:1px solid rgba(15,15,15,0.18);border-radius:8px;background:#fff;color:#0f0f0f">' +
@@ -31020,7 +31025,7 @@ Tell me your planned move-out date and I will set the inspection.`
           // For Coordinator and Docs Only, Aari prepares the docs, so we don't ask for them.
           var needUpload = (_nfLstSvc === 'mls_setup');
           var bottom = '';
-          if(!_nfAgentId){
+          if(!_nfAgentId && !_nfAgentName){
             bottom = '<button type="button" class="nf-go" id="nf-go" disabled>Say whose file this is &rarr;</button>';
           } else if(!_nfAddress){
             bottom = '<button type="button" class="nf-go" id="nf-go" disabled>Add the property address &rarr;</button>';
@@ -31044,7 +31049,7 @@ Tell me your planned move-out date and I will set the inspection.`
           var _foSub = (_nfPath === 'standalone_review')
             ? 'Start the file — attach the executed contract from inside the drawer once it opens.'
             : 'Start the file — upload docs from inside the drawer once it opens.';
-          var canStartFO = !!(_nfAgentId && _nfAddress);
+          var canStartFO = !!((_nfAgentId || _nfAgentName) && _nfAddress);
           html = '<p class="nf-bigq">' + _foBig + '</p><p class="nf-bigsub">' + _foSub + '</p>'
             + nfAgentPickHtml() + nfAddrHtml()
             + '<button type="button" class="nf-go" id="nf-go"' + (canStartFO ? '' : ' disabled') + '>Start the file &rarr;</button>'
@@ -31052,7 +31057,7 @@ Tell me your planned move-out date and I will set the inspection.`
         } else {
           var sides = [['buyer','Buyer side','TC, one side'],['seller','Seller side','TC, one side · listing side'],['both','Both sides','TC, both sides']];
           var rows2 = sides.map(function(s){ return '<div class="nf-row' + (_nfSide === s[0] ? ' sel' : '') + '" data-side="' + s[0] + '"><div class="rt">' + s[1] + '<div class="rp">' + s[2] + '</div></div></div>'; }).join('');
-          var canStart2 = !!(_nfSide && _nfFile && _nfAgentId);
+          var canStart2 = !!(_nfSide && _nfFile && (_nfAgentId || _nfAgentName));
           html = '<p class="nf-bigq">Sale file</p><p class="nf-bigsub">Pick the side, then add the contract.</p>'
             + nfAgentPickHtml() + rows2
             + '<div style="margin-top:16px">' + nfDropHtml(false) + '</div>'
@@ -31073,13 +31078,13 @@ Tell me your planned move-out date and I will set the inspection.`
         // agent+address (docs land inside the drawer after the file opens).
         var _syncGo = function(){
           var g = document.getElementById('nf-go'); if(!g) return;
-          if(_nfPath === 'file_org' || _nfPath === 'standalone_review') g.disabled = !(_nfAgentId && _nfAddress);
-          else g.disabled = !(_nfSide && _nfFile && _nfAgentId);
+          var haveAgent = !!(_nfAgentId || _nfAgentName);
+          if(_nfPath === 'file_org' || _nfPath === 'standalone_review') g.disabled = !(haveAgent && _nfAddress);
+          else g.disabled = !(_nfSide && _nfFile && haveAgent);
         };
         var _renderRes = function(){
-          var q = (_ai.value || '').trim().toLowerCase();
-          // Type-ahead · show nothing until she starts typing, then only the matches
-          // (no dumping the whole roster on focus).
+          var qRaw = (_ai.value || '').trim();
+          var q = qRaw.toLowerCase();
           if(!q){ _ar.innerHTML = ''; _ar.style.display = 'none'; return; }
           var m = _aglist.filter(function(a){ return String(a.name).toLowerCase().indexOf(q) !== -1 || String(a.email).toLowerCase().indexOf(q) !== -1; });
           var rows = m.slice(0, 8).map(function(a){
@@ -31089,13 +31094,43 @@ Tell me your planned move-out date and I will set the inspection.`
               (sub ? '<div style="font-size:11px;color:#8a857c;margin-top:1px">' + esc(sub) + '</div>' : '') +
             '</div>';
           }).join('');
-          if(!m.length) rows = '<div style="padding:9px 11px;font-size:12.5px;color:#9a958c">No match in your agents</div>';
+          // Always offer a "use as new agent" row · the typeahead only sees agents
+          // Eileen has already worked with, so brand-new agents (Flavia, Alied) never
+          // match. Without this the Start-the-file button stayed disabled and she
+          // dead-ended. Show it below the matches (or alone when none matched) so
+          // she can pick an existing agent OR proceed with the new name.
+          if(qRaw.length >= 2){
+            rows += '<div data-nf-new="1" style="padding:10px 11px;cursor:pointer;background:#fafaf5;border-top:0.5px solid #e6e2d8">' +
+              '<div style="font-size:13px;color:#0f0f0f;font-weight:600">+ Use &ldquo;' + esc(qRaw) + '&rdquo; as a new agent</div>' +
+              '<div style="font-size:11px;color:#8a857c;margin-top:1px">Not in your roster yet · Marlenyi will link them from the file</div>' +
+            '</div>';
+          } else if(!m.length){
+            rows = '<div style="padding:9px 11px;font-size:12.5px;color:#9a958c">Keep typing&hellip;</div>';
+          }
           _ar.innerHTML = rows; _ar.style.display = 'block';
         };
-        _ai.addEventListener('input', function(){ _nfAgentId = null; _syncGo(); _renderRes(); });
+        _ai.addEventListener('input', function(){ _nfAgentId = null; _nfAgentName = null; _syncGo(); _renderRes(); });
         _ai.addEventListener('focus', _renderRes);
         _ai.addEventListener('blur', function(){ setTimeout(function(){ if(_ar) _ar.style.display = 'none'; }, 160); });
-        _ar.addEventListener('mousedown', function(e){ var p = e.target.closest && e.target.closest('[data-nf-pick]'); if(!p) return; e.preventDefault(); _nfAgentId = p.getAttribute('data-nf-pick'); _ai.value = _agentNameById[_nfAgentId] || ''; _ar.style.display = 'none'; _syncGo(); });
+        _ar.addEventListener('mousedown', function(e){
+          var newRow = e.target.closest && e.target.closest('[data-nf-new]');
+          if(newRow){
+            e.preventDefault();
+            _nfAgentName = (_ai.value || '').trim();
+            _nfAgentId = null;
+            _ar.style.display = 'none';
+            _syncGo();
+            return;
+          }
+          var p = e.target.closest && e.target.closest('[data-nf-pick]');
+          if(!p) return;
+          e.preventDefault();
+          _nfAgentId = p.getAttribute('data-nf-pick');
+          _nfAgentName = null;
+          _ai.value = _agentNameById[_nfAgentId] || '';
+          _ar.style.display = 'none';
+          _syncGo();
+        });
       }
       var _addrIn = document.getElementById('nf-addr-input');
       if(_addrIn){ nfWireAddr(_addrIn, function(addr){ _nfAddress = (addr || '').trim() || null; nfRenderStep(); }); }
@@ -31253,11 +31288,12 @@ Tell me your planned move-out date and I will set the inspection.`
       // Ready-check per path · sale needs file+side+service, listing (skip path) needs side+
       // service, file organization + standalone review need only agent+address.
       var _isMinimal = (_nfPath === 'file_org' || _nfPath === 'standalone_review');
+      var _haveAgent = !!(_nfAgentId || _nfAgentName);
       if(_isMinimal){
-        if(!(_nfAgentId && _nfAddress)) return;
+        if(!(_haveAgent && _nfAddress)) return;
       } else {
-        if(!_nfSkip && !nfReady()) return;
-        if(_nfSkip && !(_nfSide === 'listing' && _nfLstSvc)) return;
+        if(!_nfSkip && !(_nfFile && _nfSide && (_nfSide !== 'listing' || _nfLstSvc) && _haveAgent)) return;
+        if(_nfSkip && !(_nfSide === 'listing' && _nfLstSvc && _haveAgent)) return;
       }
       _nfBusy = true;
       // No loading screen — the button itself shows it's working, then the list appears.
@@ -31326,9 +31362,15 @@ Tell me your planned move-out date and I will set the inspection.`
         // Auto-fill listing remarks from the agent's saved default, so they generate the moment
         // a TC inputs a listing on the agent's behalf.
         var _lgInit = {};
-        if(_nfSide === 'listing'){ var _pr = (((_agentMetaById || {})[_nfAgentId]) || {}).remarks || ''; if(_pr){ _lgInit.listing_remarks = _pr; _lgInit.remarks_source = 'profile'; } }
+        if(_nfSide === 'listing' && _nfAgentId){ var _pr = (((_agentMetaById || {})[_nfAgentId]) || {}).remarks || ''; if(_pr){ _lgInit.listing_remarks = _pr; _lgInit.remarks_source = 'profile'; } }
+        // Agent identity · either a picked roster agent (_nfAgentId set) OR a
+        // typed-name new agent (_nfAgentName set, agent_id stays null and
+        // needs_agent_link flags it for Marlenyi to resolve from the drawer).
+        var _resolvedName = _nfAgentId ? ((_agentNameById||{})[_nfAgentId]||'') : (_nfAgentName || '');
+        var _rawForm = { submitted_by_tc:true, tc_submitter_id:uid, represents:_nfSide, agent_name:_resolvedName, submitted_for_agent_id:_nfAgentId, contract_url:signed, contract_filename:safe, contract_path:path, submission_id:id };
+        if(!_nfAgentId && _nfAgentName){ _rawForm.needs_agent_link = true; _rawForm.new_agent_name = _nfAgentName; }
         var row = { id:id, agent_id:_nfAgentId, service_type:svcId, file_type:svcFileType, property_address:(_nfAddress || ''), logistics:_lgInit, assigned_tc_id:uid, is_aari_engaged:true, status:'intake_received', transaction_stage:'new', client_type:_clientSide,
-          raw_form_data:{ submitted_by_tc:true, tc_submitter_id:uid, represents:_nfSide, agent_name:((_agentNameById||{})[_nfAgentId]||''), submitted_for_agent_id:_nfAgentId, contract_url:signed, contract_filename:safe, contract_path:path, submission_id:id } };
+          raw_form_data:_rawForm };
         var ins = await _client.from('files').insert(row).select('id').single();
         if(ins && ins.error) throw new Error(ins.error.message);
         var fields=null, docs=null, _noText=false;
