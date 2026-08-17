@@ -632,6 +632,7 @@
       var entry = _lwEmailCheckCache[em]; if(entry){ entry.skipped = true; }
       lwState.prop = document.getElementById("lw-prop").value.trim();
       lwState.email = em;
+      lwPingIntakeStarted();
       lwRenderContract();
     });
   }
@@ -650,6 +651,37 @@
       return d.toLocaleDateString("en-US", { month:"long", day:"numeric" });
     } catch(_){ return "next renewal"; }
   }
+  // Marlenyi 2026-08-17 · Fire a one-shot heads-up email to Marlenyi when the
+  // agent has committed enough info on slide 4 to make a lead worth knowing
+  // about (property + valid email + service). Dedup'd server-side per
+  // agent_email + service so repeated Continue taps or back-navigations don't
+  // spam her inbox. Non-blocking: the wizard advances immediately whether the
+  // ping succeeds or not. Called from the Continue-tap handler, the guest-skip
+  // handler, and after successful sign-in.
+  var _lwIntakePinged = false;
+  function lwPingIntakeStarted(){
+    if(!lwState || _lwIntakePinged) return;
+    var em = String(lwState.email || "").trim().toLowerCase();
+    var pr = String(lwState.prop || "").trim();
+    if(!em || !pr) return;
+    _lwIntakePinged = true;
+    var meta = LW_SERVICE_META[lwState.svc] || {};
+    fetch(SB_URL+"/functions/v1/public-submit",{
+      method:"POST",
+      headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+(lwState.authToken || SB_KEY) },
+      body: JSON.stringify({
+        intent:"intake_started",
+        agent_email: em,
+        property: pr,
+        svc: lwState.svc,
+        svc_label: meta.name || lwState.svc,
+        is_member: !!lwState.membership_tier,
+        membership_tier: lwState.membership_tier || null,
+        credits_remaining: Number(lwState.credits_remaining || 0)
+      })
+    }).catch(function(){ /* best-effort · never blocks the wizard */ });
+  }
+
   function lwPaintCreditPrice(){
     if(!lwState) return;
     var slot = document.getElementById("lw-price-slot");
@@ -726,6 +758,7 @@
       lwPaintCreditPrice();
       lwState.prop = document.getElementById("lw-prop").value.trim();
       lwState.email = em;
+      lwPingIntakeStarted();
       // Give the user a beat to see the price change to FREE before advancing.
       setTimeout(function(){ lwRenderContract(); }, 900);
     }).catch(function(e){
@@ -819,6 +852,7 @@
       // Already checked this email and it's not recognized · just advance.
       var entry = _lwEmailCheckCache[m];
       if(entry && entry.checked && !(entry.data && entry.data.recognized)){
+        lwPingIntakeStarted();
         lwRenderContract();
         return;
       }
@@ -835,6 +869,7 @@
           if(slot2) slot2.scrollIntoView({behavior:"smooth", block:"center"});
           return; // banner is painted · user chooses sign-in or guest
         }
+        lwPingIntakeStarted();
         lwRenderContract();
       });
     });
