@@ -253,8 +253,16 @@
   .lw-recognize .pw-row input:focus{ border-color:#0f0f0f; }
   .lw-recognize .pw-row button{ background:#0f0f0f; color:#fff; border:none; border-radius:8px; padding:10px 16px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; }
   .lw-recognize .pw-row button:disabled{ opacity:.6; cursor:default; }
-  .lw-recognize .skip{ font-size:11.5px; color:#8a857c; text-align:center; margin-top:8px; }
+  .lw-recognize .divider{ display:flex; align-items:center; gap:10px; margin:12px 0 8px; color:#a29d92; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; }
+  .lw-recognize .divider::before, .lw-recognize .divider::after{ content:""; flex:1; height:1px; background:currentColor; opacity:.35; }
+  .lw-recognize .skip-btn{ width:100%; background:transparent; color:#5f5b53; border:1px solid #cfc9bb; border-radius:50px; padding:10px; font-size:12.5px; font-weight:500; font-family:inherit; cursor:pointer; }
+  .lw-recognize .skip-btn:hover{ border-color:#0f0f0f; color:#0f0f0f; }
+  .lw-recognize .credits{ display:flex; justify-content:space-between; align-items:center; background:#fff; border:1px solid #cfe4d7; border-radius:8px; padding:9px 11px; margin-top:10px; font-size:12px; color:#5f5b53; }
+  .lw-recognize .credits .val{ font-weight:600; color:#2f6a44; font-variant-numeric:tabular-nums; }
+  .lw-recognize .badge{ display:inline-flex; align-items:center; gap:5px; background:#0f0f0f; color:#fff; font-size:9.5px; font-weight:600; padding:3px 8px; border-radius:20px; letter-spacing:.1em; text-transform:uppercase; margin-bottom:8px; }
+  .lw-recognize .badge::before{ content:"★"; font-size:9px; }
   .lw-recognize .err{ font-size:11.5px; color:var(--red); margin-top:6px; }
+  .lw-recognize.busy{ opacity:.55; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -528,6 +536,10 @@
   // always works. Successful login stashes the JWT on lwState.authToken so
   // lwSubmit sends it as Authorization: Bearer <token>; public-submit then
   // links the file to the authenticated agent (Samantha tracking, etc).
+  // Cache keyed by normalized email. `checked:true` means the lookup fully
+  // resolved for this email; `data` is the response body. This lets Continue
+  // decide instantly whether to hold the flow (recognized, awaiting a choice)
+  // or just advance (checked and not recognized).
   var _lwEmailCheckCache = {};
   var _lwSbAuth = null;
   function lwGetSbAuth(){
@@ -536,13 +548,15 @@
     try { _lwSbAuth = window.supabase.createClient(SB_URL, SB_KEY, { auth:{ persistSession:false } }); } catch(_){ _lwSbAuth = null; }
     return _lwSbAuth;
   }
-  function lwCheckEmail(){
+  function lwCheckEmail(cb){
     var em = (document.getElementById("lw-email")||{}).value;
     em = String(em||"").trim().toLowerCase();
-    if(!em || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { document.getElementById("lw-recognize").innerHTML=""; return; }
-    if(_lwEmailCheckCache[em]) { lwPaintRecognize(_lwEmailCheckCache[em]); return; }
+    if(!em || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { document.getElementById("lw-recognize").innerHTML=""; if(cb) cb({ok:true,recognized:false}); return; }
+    var entry = _lwEmailCheckCache[em];
+    if(entry && entry.checked) { lwPaintRecognize(entry.data); if(cb) cb(entry.data); return; }
     fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"check_email", agent_email: em }) })
-    .then(function(r){ return r.json(); }).then(function(d){ _lwEmailCheckCache[em]=d||{}; lwPaintRecognize(d||{}); }).catch(function(){});
+    .then(function(r){ return r.json(); }).then(function(d){ _lwEmailCheckCache[em]={checked:true,data:d||{}}; lwPaintRecognize(d||{}); if(cb) cb(d||{}); })
+    .catch(function(){ if(cb) cb({ok:false,recognized:false}); });
   }
   function lwPaintRecognize(d){
     var slot = document.getElementById("lw-recognize");
@@ -550,24 +564,43 @@
     if(!d || !d.ok || !d.recognized) { slot.innerHTML = ""; return; }
     var name = d.first_name || d.name || "there";
     var isMember = !!d.has_membership;
-    var msg, cardCls;
+    var msg, cardCls, badge = "", credits = "", skipLabel;
     if(isMember){
-      msg = '✨ <b>Welcome back, '+esc(name)+'!</b> You&rsquo;re an Aari Pro member. Log in to apply your credits and discounts.';
+      var tier = d.membership_tier ? (String(d.membership_tier).charAt(0).toUpperCase()+String(d.membership_tier).slice(1)) : "Member";
+      badge = '<div class="badge">Aari Pro &middot; '+esc(tier)+'</div>';
+      msg = 'Welcome back, <b>'+esc(name)+'</b>. Sign in to apply your membership credits.';
+      credits = '<div class="credits"><span>Credit toward this order</span><span class="val">Applied at checkout</span></div>';
       cardCls = 'mem';
+      skipLabel = 'Continue without credits';
     } else {
-      msg = '👋 <b>Welcome back, '+esc(name)+'!</b> Log in to save this file to your portal.';
+      msg = '👋 Welcome back, <b>'+esc(name)+'</b>. Sign in to save this file to your portal.';
       cardCls = '';
+      skipLabel = 'Continue as guest';
     }
     slot.innerHTML =
       '<div class="card '+cardCls+'">'+
+        badge +
         '<div class="hd">'+msg+'</div>'+
-        '<div class="pw-row"><input type="password" id="lw-pw" placeholder="Your password" autocomplete="current-password"><button type="button" id="lw-login">Log in</button></div>'+
-        '<div class="skip">Prefer to skip? Continue as guest &mdash; you can always link this file later.</div>'+
+        credits +
+        '<div class="pw-row"><input type="password" id="lw-pw" placeholder="Your password" autocomplete="current-password"><button type="button" id="lw-login">Sign in</button></div>'+
+        '<div class="divider">or</div>'+
+        '<button class="skip-btn" id="lw-skip" type="button">'+skipLabel+'</button>'+
       '</div>';
     var pw = document.getElementById("lw-pw");
     var btn = document.getElementById("lw-login");
+    var skip = document.getElementById("lw-skip");
     pw.addEventListener("keydown", function(ev){ if(ev.key==="Enter"){ ev.preventDefault(); btn.click(); } });
     btn.addEventListener("click", lwLogin);
+    // Explicit guest path · captures the user's intent to skip login and
+    // advances the wizard immediately. Without this button the Continue at
+    // the bottom of the slide re-triggers recognition and loops.
+    skip.addEventListener("click", function(){
+      var em = String(document.getElementById("lw-email").value||"").trim().toLowerCase();
+      var entry = _lwEmailCheckCache[em]; if(entry){ entry.skipped = true; }
+      lwState.prop = document.getElementById("lw-prop").value.trim();
+      lwState.email = em;
+      lwRenderContract();
+    });
   }
   function lwLogin(){
     var em = String(document.getElementById("lw-email").value||"").trim().toLowerCase();
@@ -587,9 +620,14 @@
       if(!token){ throw new Error("No session returned"); }
       lwState.authToken = token;
       lwState.authAgent = { email: em };
-      slot.innerHTML = '<div class="card done"><div class="hd">✓ Logged in as <b>'+esc(em)+'</b>. This file will attach to your profile.</div></div>';
+      // Confirm briefly, then auto-advance · Marlenyi shouldn't have to tap
+      // Continue a second time after signing in.
+      slot.innerHTML = '<div class="card done"><div class="hd">✓ Signed in as <b>'+esc(em)+'</b>. Credits will apply at checkout.</div></div>';
+      lwState.prop = document.getElementById("lw-prop").value.trim();
+      lwState.email = em;
+      setTimeout(function(){ lwRenderContract(); }, 700);
     }).catch(function(e){
-      btn.disabled = false; btn.textContent = "Log in";
+      btn.disabled = false; btn.textContent = "Sign in";
       var errDiv = document.createElement("div"); errDiv.className = "err";
       errDiv.textContent = (e && e.message) ? "Sign-in failed: " + e.message : "Wrong password. Try again or skip.";
       var card = slot.querySelector(".card"); if(card) card.appendChild(errDiv);
@@ -648,18 +686,54 @@
       '</div>';
     wireAddr(document.getElementById("lw-prop"));
     var emailInput = document.getElementById("lw-email");
-    emailInput.addEventListener("blur", lwCheckEmail);
+    // Fire on blur for the desktop path (tab-out shows the banner in real
+    // time). Mobile users usually tap Continue without blurring, so the
+    // Continue handler below also runs the lookup inline — that's what
+    // actually catches Marlenyi's case where blur never fires.
+    emailInput.addEventListener("blur", function(){ lwCheckEmail(); });
     emailInput.addEventListener("input", function(){ lwState.authToken = null; lwState.authAgent = null; document.getElementById("lw-recognize").innerHTML=""; });
-    // If email was pre-filled from state (back-navigation), check it immediately.
     if(emailInput.value.trim()) lwCheckEmail();
     document.getElementById("lw-prop-next").addEventListener("click",function(){
       var e=document.getElementById("lw-prop-err"); e.classList.remove("on"); e.textContent="";
       var p=document.getElementById("lw-prop").value.trim();
-      var m=document.getElementById("lw-email").value.trim();
+      var m=String(document.getElementById("lw-email").value||"").trim().toLowerCase();
       if(!p){ e.textContent="Add the property this is for."; e.classList.add("on"); return; }
       if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m)){ e.textContent="Add a valid email so we can reach you."; e.classList.add("on"); return; }
       lwState.prop = p; lwState.email = m;
-      lwRenderContract();
+
+      // If a recognition banner is already showing, the user has already been
+      // asked to sign in or skip · either they filled in a password (login
+      // handler advances after auth) or they must tap "Continue as guest".
+      // Don't advance until they've made that choice.
+      var slot = document.getElementById("lw-recognize");
+      if(slot && slot.innerHTML.trim()){
+        e.textContent = "Choose a path above · sign in, or tap Continue as guest.";
+        e.classList.add("on");
+        slot.scrollIntoView({behavior:"smooth", block:"center"});
+        return;
+      }
+
+      // Already checked this email and it's not recognized · just advance.
+      var entry = _lwEmailCheckCache[m];
+      if(entry && entry.checked && !(entry.data && entry.data.recognized)){
+        lwRenderContract();
+        return;
+      }
+
+      // Not checked yet (mobile: user typed then tapped Continue without
+      // blurring). Run it inline. If recognized, painting the banner holds
+      // the flow · they'll see two clear paths. If not, just advance.
+      var btn = this;
+      btn.disabled = true; var orig = btn.textContent; btn.textContent = "Checking…";
+      lwCheckEmail(function(d){
+        btn.disabled = false; btn.textContent = orig;
+        if(d && d.recognized){
+          var slot2 = document.getElementById("lw-recognize");
+          if(slot2) slot2.scrollIntoView({behavior:"smooth", block:"center"});
+          return; // banner is painted · user chooses sign-in or guest
+        }
+        lwRenderContract();
+      });
     });
   }
 
