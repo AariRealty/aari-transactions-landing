@@ -123,6 +123,9 @@
 <div class="wrap">
   <!-- FRONT DOOR -->
   <section id="step-door">
+    <!-- Marlenyi 2026-08-16 · escape hatch from the wizard front door. history.back()
+         if there's history; otherwise home. Uses the same .back styling as internal steps. -->
+    <span class="back" id="door-back">&lsaquo; Back</span>
     <h1>Where are you?</h1>
     <p class="sub">Pick one. We take it from there.</p>
     <div class="choice">
@@ -171,6 +174,9 @@
       <div class="lbl">Which side are you on?</div>
       <div class="seg" id="side"><button data-s="buyer" class="on">Buyer</button><button data-s="seller">Seller</button><button data-s="both">Both</button></div>
       <div class="sidenote" id="sidenote"></div>
+      <div class="lbl">Coordinator preference</div>
+      <div class="seg" id="review-tc"><button data-tc="none" class="on" type="button">No preference</button><button data-tc="eileen" type="button">Eileen</button><button data-tc="mile" type="button">Milennys</button></div>
+      <div class="sidenote">No preference &rarr; your broker assigns manually. Nothing pings a coordinator until then.</div>
       <!-- Signed in · identity comes from the verified session, not a form field. -->
       <div class="found" id="submit-as" style="display:none;margin-top:14px"></div>
       <!-- Anonymous · email (and name fallback) only when there is no session. -->
@@ -253,6 +259,10 @@
     { label:"Exit", out:true, on:function(){ try{ window.parent.postMessage("aari-submit-close","*"); }catch(_){} } }
   ];
 
+  document.getElementById("door-back").addEventListener("click",function(){
+    if(history.length > 1) history.back();
+    else location.href = "/";
+  });
   document.getElementById("go-contract").addEventListener("click",function(){ show("step-drop"); });
   document.getElementById("go-offer").addEventListener("click",function(){ offerStep(1); });
   document.getElementById("go-listing").addEventListener("click",function(){ listingStart(); });
@@ -391,10 +401,17 @@
         '<div class="found"><b>'+sv.name+'</b> &middot; '+sv.price+(sv.stripe?" &middot; paid upfront":" &middot; invoice sent")+'</div>'+
         '<div class="lbl">Property address</div><input type="text" id="sv-prop" placeholder="Address or MLS number">'+
         '<div class="lbl">Your email</div><input type="email" id="sv-email" placeholder="you@brokerage.com" autocomplete="email">'+
+        '<div class="lbl">Coordinator preference</div>'+
+        '<div class="seg" id="sv-tc"><button data-tc="none" class="on" type="button">No preference</button><button data-tc="eileen" type="button">Eileen</button><button data-tc="mile" type="button">Milennys</button></div>'+
+        '<div class="sidenote">No preference &rarr; your broker assigns manually. Nothing pings a coordinator until then.</div>'+
         termsRow("terms-s")+'<button class="btn" id="sv-submit">'+(sv.stripe?"Continue to payment":"Submit request")+'</button>'+
         '<div class="msg" id="sv-err"></div>'+
       '</div>';
     document.getElementById("sv-door").addEventListener("click",function(){ show("step-door"); });
+    // TC picker segment behavior · same pattern as the side picker.
+    (function(){ var _tcSeg=document.getElementById("sv-tc"); if(!_tcSeg) return;
+      _tcSeg.querySelectorAll("button").forEach(function(b){ b.addEventListener("click",function(){ _tcSeg.querySelectorAll("button").forEach(function(x){ x.classList.remove("on"); }); b.classList.add("on"); }); });
+    })();
     document.getElementById("sv-submit").addEventListener("click",function(){
       var btn=this; err("sv-err","");
       var prop=document.getElementById("sv-prop").value.trim();
@@ -402,8 +419,12 @@
       var email=document.getElementById("sv-email").value.trim();
       if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err("sv-err","Add a valid email so we can reach you."); return; }
       if(!termsOK("terms-s","sv-err")) return;
+      // Marlenyi 2026-08-16 · TC preference the client picked on this screen.
+      // 'none' → auto_assign_tc leaves assigned_tc_id NULL → no TC email fires
+      // until Marlenyi assigns from the cockpit.
+      var _tcPick="none"; try { var _on=document.querySelector("#sv-tc button.on"); if(_on) _tcPick=_on.getAttribute("data-tc")||"none"; } catch(_){}
       btn.disabled=true; btn.textContent="Sending…";
-      fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"service", svc:svc, property:prop, agent_email:email, terms_version:TERMS_VERSION, terms_accepted:true }) })
+      fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"service", svc:svc, property:prop, agent_email:email, preferred_tc_id:_tcPick, terms_version:TERMS_VERSION, terms_accepted:true }) })
       .then(function(r){return r.json();}).then(function(d){
         if(d&&d.ok){
           if(sv.stripe){ var url=sv.stripe+"?client_reference_id="+encodeURIComponent(d.file_id)+"&prefilled_email="+encodeURIComponent(email);
@@ -507,6 +528,8 @@
     n.textContent = auto ? base+" Same brokerage on both sides, so we set this to Both. Change it if that is not right." : base;
   }
   document.querySelectorAll("#side button").forEach(function(b){ b.addEventListener("click",function(){ setSide(b.getAttribute("data-s"),false); }); });
+  // TC picker segment (Marlenyi 2026-08-16). Toggle-on selection, no side effect until submit.
+  document.querySelectorAll("#review-tc button").forEach(function(b){ b.addEventListener("click",function(){ document.querySelectorAll("#review-tc button").forEach(function(x){ x.classList.remove("on"); }); b.classList.add("on"); }); });
   document.getElementById("back").addEventListener("click",function(){ err("sub-err",""); show("step-drop"); });
   // Email edits invalidate the adaptive gate · the next Submit re-checks who this is.
   document.getElementById("email").addEventListener("input",function(){ resetGate(); err("sub-err",""); });
@@ -566,6 +589,10 @@
         _fields.promo_code = window.__aariPromo.code;
         _fields.promo_amount_cents = window.__aariPromo.amount_cents || 5000;
       }
+      // Marlenyi 2026-08-16 · client-picked coordinator preference. 'none' → the DB's
+      // auto_assign_tc leaves assigned_tc_id NULL → no TC-new-file email fires until
+      // Marlenyi assigns from the broker cockpit.
+      try { var _rtc=document.querySelector("#review-tc button.on"); _fields.preferred_tc_id = _rtc ? (_rtc.getAttribute("data-tc")||"none") : "none"; } catch(_){ _fields.preferred_tc_id="none"; }
       var payload={ intent:"contract", pdf_base64:cState.b64, filename:cState.name, side:cState.side, agent_email:(authState.token?authState.email:email), fields:_fields, terms_version:TERMS_VERSION, terms_accepted:true };
       if(!authState.token){ payload.first_name=first; payload.last_name=last; }
       if(cState.sa && cState.sa.accepted){ payload.sa=cState.sa; }
