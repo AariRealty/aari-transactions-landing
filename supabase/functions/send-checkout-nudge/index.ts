@@ -14,7 +14,7 @@
 //   After email 2: silence (no third reminder, no daily nag).
 //
 // Recipients: TO the client (agent that submitted), CC the broker
-// (marlenyi@aarirealty.com), so Marlenyi sees every unpaid file in her inbox.
+// (marlenyi@aaritransactions.com), so Marlenyi sees every unpaid file in her inbox.
 // Design mirrors the eod-report wrap-up email: cream card, serif hero, black
 // CTA, quiet property + service facts block.
 //
@@ -27,7 +27,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") || "";
-const BROKER_EMAIL = Deno.env.get("OWNER_EMAIL") || "marlenyi@aarirealty.com";
+const BROKER_EMAIL = Deno.env.get("OWNER_EMAIL") || "marlenyi@aaritransactions.com";
 const FROM_ADDRESS = Deno.env.get("FROM_ADDRESS") || "files@aaritransactions.com";
 const PORTAL = "https://aaritransactions.com/files.html";
 
