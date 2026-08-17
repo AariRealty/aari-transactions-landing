@@ -215,6 +215,23 @@
   .lw-sig-row a{ color:#0f0f0f; text-decoration:underline; text-underline-offset:2px; }
   .lw-msg{ font-size:12.5px; color:var(--red); text-align:center; margin-top:10px; display:none; }
   .lw-msg.on{ display:block; }
+  /* Email recognition banner on slide 4 · soft welcome-back with optional login */
+  .lw-recognize{ max-width:360px; margin:0 auto; }
+  .lw-recognize:empty{ display:none; }
+  .lw-recognize .card{ background:#fff; border:0.5px solid var(--line); border-radius:12px; padding:14px 16px; margin-top:8px; }
+  .lw-recognize .card.mem{ background:#f5f9f6; border-color:#cfe4d7; }
+  .lw-recognize .card.done{ background:#f5f9f6; border-color:#cfe4d7; color:#3a7a4e; }
+  .lw-recognize .hd{ font-size:13px; color:#0f0f0f; line-height:1.5; }
+  .lw-recognize .hd b{ font-weight:600; }
+  .lw-recognize .card.mem .hd{ color:#3a7a4e; }
+  .lw-recognize .card.mem .hd b{ color:#0f0f0f; }
+  .lw-recognize .pw-row{ display:flex; gap:8px; margin-top:10px; }
+  .lw-recognize .pw-row input{ flex:1; background:#fff; border:1px solid #d8d2c4; border-radius:8px; padding:10px 12px; font-size:13px; font-family:inherit; outline:none; }
+  .lw-recognize .pw-row input:focus{ border-color:#0f0f0f; }
+  .lw-recognize .pw-row button{ background:#0f0f0f; color:#fff; border:none; border-radius:8px; padding:10px 16px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit; }
+  .lw-recognize .pw-row button:disabled{ opacity:.6; cursor:default; }
+  .lw-recognize .skip{ font-size:11.5px; color:#8a857c; text-align:center; margin-top:8px; }
+  .lw-recognize .err{ font-size:11.5px; color:var(--red); margin-top:6px; }
 </style>
 </head>
 <body>
@@ -468,7 +485,7 @@
   };
   var LW_MLS_LIST = ["Miami Realtors®","Beaches MLS","Stellar MLS","FGCMLS","Space Coast MLS","NEFMLS","Sunshine MLS (Naples)","Emerald Coast MLS"];
   var lwState = null;
-  function lwReset(svc){ lwState = { svc:svc, tc:"none", prop:"", email:"", contract_b64:null, contract_name:null, mls_names:[], typed_name:"" }; }
+  function lwReset(svc){ lwState = { svc:svc, tc:"none", prop:"", email:"", contract_b64:null, contract_name:null, mls_names:[], typed_name:"", authToken:null, authAgent:null }; }
   function lwStart(svc){
     if(!LW_SERVICE_META[svc]){ show("step-door"); return; }
     lwReset(svc);
@@ -479,6 +496,82 @@
   // an external referrer like the old history.back() bug.
   function lwCloseX(){ return '<button class="lw-close-x" type="button" onclick="show(\'step-door\')" aria-label="Close">&times;</button>'; }
   function lwHost(){ var w=document.getElementById("step-lwiz"); show("step-lwiz"); return w; }
+
+  // ---- Email recognition + optional login (slide 4) ----
+  // Marlenyi 2026-08-17 · when an agent types their email on slide 4, ping
+  // check_email. If it matches an existing account, surface a soft banner
+  // with an optional password field. Membership holders get a stronger nudge
+  // to log in so their credits/discounts apply. Never blocks — guest submit
+  // always works. Successful login stashes the JWT on lwState.authToken so
+  // lwSubmit sends it as Authorization: Bearer <token>; public-submit then
+  // links the file to the authenticated agent (Samantha tracking, etc).
+  var _lwEmailCheckCache = {};
+  var _lwSbAuth = null;
+  function lwGetSbAuth(){
+    if(_lwSbAuth) return _lwSbAuth;
+    if(!window.supabase || !window.supabase.createClient) return null;
+    try { _lwSbAuth = window.supabase.createClient(SB_URL, SB_KEY, { auth:{ persistSession:false } }); } catch(_){ _lwSbAuth = null; }
+    return _lwSbAuth;
+  }
+  function lwCheckEmail(){
+    var em = (document.getElementById("lw-email")||{}).value;
+    em = String(em||"").trim().toLowerCase();
+    if(!em || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) { document.getElementById("lw-recognize").innerHTML=""; return; }
+    if(_lwEmailCheckCache[em]) { lwPaintRecognize(_lwEmailCheckCache[em]); return; }
+    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"check_email", agent_email: em }) })
+    .then(function(r){ return r.json(); }).then(function(d){ _lwEmailCheckCache[em]=d||{}; lwPaintRecognize(d||{}); }).catch(function(){});
+  }
+  function lwPaintRecognize(d){
+    var slot = document.getElementById("lw-recognize");
+    if(!slot) return;
+    if(!d || !d.ok || !d.recognized) { slot.innerHTML = ""; return; }
+    var name = d.first_name || d.name || "there";
+    var isMember = !!d.has_membership;
+    var msg, cardCls;
+    if(isMember){
+      msg = '✨ <b>Welcome back, '+esc(name)+'!</b> You&rsquo;re an Aari Pro member. Log in to apply your credits and discounts.';
+      cardCls = 'mem';
+    } else {
+      msg = '👋 <b>Welcome back, '+esc(name)+'!</b> Log in to save this file to your portal.';
+      cardCls = '';
+    }
+    slot.innerHTML =
+      '<div class="card '+cardCls+'">'+
+        '<div class="hd">'+msg+'</div>'+
+        '<div class="pw-row"><input type="password" id="lw-pw" placeholder="Your password" autocomplete="current-password"><button type="button" id="lw-login">Log in</button></div>'+
+        '<div class="skip">Prefer to skip? Continue as guest &mdash; you can always link this file later.</div>'+
+      '</div>';
+    var pw = document.getElementById("lw-pw");
+    var btn = document.getElementById("lw-login");
+    pw.addEventListener("keydown", function(ev){ if(ev.key==="Enter"){ ev.preventDefault(); btn.click(); } });
+    btn.addEventListener("click", lwLogin);
+  }
+  function lwLogin(){
+    var em = String(document.getElementById("lw-email").value||"").trim().toLowerCase();
+    var pw = String((document.getElementById("lw-pw")||{}).value || "");
+    var btn = document.getElementById("lw-login");
+    var slot = document.getElementById("lw-recognize");
+    if(!pw){ return; }
+    var sb = lwGetSbAuth();
+    if(!sb){ // supabase-js not loaded → skip inline login, guest flow still works
+      slot.innerHTML = '<div class="card"><div class="err">Login temporarily unavailable. You can still continue as guest.</div></div>';
+      return;
+    }
+    btn.disabled = true; btn.textContent = "Signing in…";
+    sb.auth.signInWithPassword({ email: em, password: pw }).then(function(res){
+      if(res.error){ throw res.error; }
+      var token = res.data && res.data.session && res.data.session.access_token;
+      if(!token){ throw new Error("No session returned"); }
+      lwState.authToken = token;
+      lwState.authAgent = { email: em };
+      slot.innerHTML = '<div class="card done"><div class="hd">✓ Logged in as <b>'+esc(em)+'</b>. This file will attach to your profile.</div></div>';
+    }).catch(function(e){
+      btn.disabled = false; btn.textContent = "Log in";
+      var errDiv = document.createElement("div"); errDiv.className = "err";
+      errDiv.textContent = (e && e.message) ? "Sign-in failed: " + e.message : "Wrong password. Try again or skip.";
+      var card = slot.querySelector(".card"); if(card) card.appendChild(errDiv);
+    });
+  }
 
   // ---- Slide 3 · Pick your coordinator ----
   function lwRenderTC(){
@@ -505,7 +598,14 @@
     document.getElementById("lw-tc-next").addEventListener("click", lwRenderProp);
   }
 
-  // ---- Slide 4 · Property & email ----
+  // ---- Slide 4 · Property & email · with recognition + optional login ----
+  // On email blur, ping public-submit/check_email. If the email matches an
+  // existing Aari account, surface a soft welcome-back banner offering an
+  // optional password field. If they also hold an active Aari Pro membership,
+  // lean into "log in to apply your credits/discounts." Never blocks the flow;
+  // guest submit path is always live. When they successfully log in, the auth
+  // token gets stitched into the final /public-submit call so the file lands
+  // attached to their agent record (critical for tracking Samantha's activity).
   function lwRenderProp(){
     var W = lwHost();
     var meta = LW_SERVICE_META[lwState.svc];
@@ -518,11 +618,17 @@
         '<div class="lw-form">'+
           '<div><div class="lw-lbl">Property address</div><input type="text" class="lw-fld" id="lw-prop" placeholder="Address or MLS number" value="'+esc(lwState.prop)+'"></div>'+
           '<div><div class="lw-lbl">Your email</div><input type="email" class="lw-fld" id="lw-email" placeholder="you@brokerage.com" autocomplete="email" value="'+esc(lwState.email)+'"></div>'+
+          '<div id="lw-recognize" class="lw-recognize"></div>'+
           '<button class="lw-btn pulse" id="lw-prop-next" type="button">Continue</button>'+
           '<div class="lw-msg" id="lw-prop-err"></div>'+
         '</div>'+
       '</div>';
     wireAddr(document.getElementById("lw-prop"));
+    var emailInput = document.getElementById("lw-email");
+    emailInput.addEventListener("blur", lwCheckEmail);
+    emailInput.addEventListener("input", function(){ lwState.authToken = null; lwState.authAgent = null; document.getElementById("lw-recognize").innerHTML=""; });
+    // If email was pre-filled from state (back-navigation), check it immediately.
+    if(emailInput.value.trim()) lwCheckEmail();
     document.getElementById("lw-prop-next").addEventListener("click",function(){
       var e=document.getElementById("lw-prop-err"); e.classList.remove("on"); e.textContent="";
       var p=document.getElementById("lw-prop").value.trim();
@@ -690,7 +796,9 @@
       contract_filename: lwState.contract_name,
       mls_names: lwState.mls_names            // stored in files.mls_names + raw
     };
-    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify(submitBody) })
+    // Pass the agent's session JWT (if they logged in on slide 4) so public-submit
+    // links the file to their agent record. Falls back to the anon apikey.
+    fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+(lwState.authToken || SB_KEY) }, body:JSON.stringify(submitBody) })
     .then(function(r){ return r.json(); }).then(function(d){
       if(!d || !d.ok || !d.file_id){ throw new Error((d&&d.error) || "Something went wrong."); }
       // 2. Mint a Stripe Checkout Session with dynamic line items + first-time coupon.
