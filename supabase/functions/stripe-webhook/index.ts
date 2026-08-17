@@ -39,7 +39,7 @@ const WEBHOOK_SECRET = Deno.env.get("STRIPE_WEBHOOK_SECRET") || "";
 // Owner ping · every confirmed file payment emails the owner so she doesn't
 // have to log in to see when money lands. Overridable via env in case the
 // owning email changes; hardcoded default keeps deploys idempotent.
-const OWNER_EMAIL = Deno.env.get("OWNER_EMAIL") || "marlenyi@aarirealty.com";
+const OWNER_EMAIL = Deno.env.get("OWNER_EMAIL") || "marlenyi@aaritransactions.com";
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") || "";
 const FROM_ADDRESS = Deno.env.get("FROM_ADDRESS") || "files@aaritransactions.com";
 
@@ -273,7 +273,7 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
       ...(amountTotal != null ? { amount_paid_cents: amountTotal } : {}),
     })
     .eq("id", fileId)
-    .select("id, assigned_tc_id, property_address, service_type, agent_id")
+    .select("id, assigned_tc_id, property_address, service_type, agent_id, mls_names")
     .maybeSingle();
 
   if (upd.error) {
@@ -340,6 +340,138 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
     console.warn("[stripe-webhook] owner ping failed (payment still confirmed)", e);
   }
 
+  // Listing-service post-payment email fan-out (Marlenyi 2026-08-17).
+  // Runs only when service is listing_coordinator / mls_setup / listing_docs
+  // (the 3 services routed through the v2 wizard). Sends up to 3 client-facing
+  // emails as one background promise:
+  //   A · Warm handoff        · every listing paid
+  //   B · Send us the rest    · every listing paid (photos + supplementary docs)
+  //   C · First-time MLS      · first-timers + LC/MLS Setup only
+  // All from files@aaritransactions.com, CC broker + assigned TC (if any).
+  const listingEmailPromise = (async () => {
+    try {
+      if (!RESEND_API_KEY || !upd.data) return;
+      const f = upd.data as Record<string, unknown>;
+      const svc = String(f.service_type || "").toLowerCase();
+      const listingSvcs = ["listing_coordinator", "mls_setup", "listing_docs"];
+      if (!listingSvcs.includes(svc)) return;
+
+      const addr = String(f.property_address || "your property");
+      const mlsRaw = String(f.mls_names || "").trim();
+      const mlsList = mlsRaw ? mlsRaw.split(",").map(s => s.trim()).filter(Boolean) : [];
+      const svcLabel = svc === "listing_coordinator" ? "Listing Coordinator"
+                     : svc === "mls_setup" ? "MLS Setup"
+                     : "Listing Docs";
+      const touchesMLS = svc === "listing_coordinator" || svc === "mls_setup";
+
+      // Resolve client (agent) + TC (if assigned) + first-time flag.
+      const agentId = f.agent_id as string | undefined;
+      let clientEmail = "", clientFirst = "";
+      if (agentId) {
+        const ag = await supabase.from("agents").select("first_name, email").eq("id", agentId).maybeSingle();
+        clientEmail = String(ag.data?.email || "").trim();
+        clientFirst = String(ag.data?.first_name || "").trim();
+      }
+      if (!clientEmail) return; // no client to email
+
+      const tcId = f.assigned_tc_id as string | undefined;
+      let tcEmail = "", tcFirst = "";
+      if (tcId) {
+        const tc = await supabase.from("agents").select("first_name, email").eq("id", tcId).maybeSingle();
+        tcEmail = String(tc.data?.email || "").trim();
+        tcFirst = String(tc.data?.first_name || "").trim();
+      }
+
+      // First-time · zero prior succeeded payments for this agent (excluding THIS one).
+      let firstTime = false;
+      if (agentId) {
+        try {
+          const { count } = await supabase
+            .from("payments").select("id", { count: "exact", head: true })
+            .eq("agent_id", agentId).eq("status", "succeeded")
+            .neq("stripe_checkout_session_id", (session.id as string) || "__none__");
+          firstTime = (count ?? 0) === 0;
+        } catch (_) { /* leave firstTime false */ }
+      }
+
+      const brokerCC = [OWNER_EMAIL];
+      const clientCC = tcEmail ? [OWNER_EMAIL, tcEmail] : brokerCC;
+
+      // Shared email chrome · cream card, Georgia hero, Marlenyi signoff.
+      const cardOpen = `<!doctype html><html><body style="margin:0;padding:0;background:#f4f1ea"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f1ea;padding:32px 16px"><tr><td align="center"><table role="presentation" width="520" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border:0.5px solid #e6ddca;border-radius:16px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">`;
+      const cardClose = `</table></td></tr></table></body></html>`;
+      const kicker = (t: string) => `<tr><td style="padding:20px 26px 6px;border-bottom:0.5px solid #f2eee4;font-size:11.5px;letter-spacing:0.3px;color:#8a8073;text-transform:uppercase">Aari Transactions · ${escapeHtmlSimple(t)}</td></tr>`;
+      const hero = (h: string) => `<tr><td align="center" style="padding:28px 26px 4px"><div style="font-family:Georgia,'Times New Roman',serif;font-size:28px;line-height:1.2;color:#0f0f0f;letter-spacing:-0.5px">${h}</div></td></tr>`;
+      const bodyBlock = (paragraphs: string[]) => `<tr><td style="padding:14px 26px 22px"><div style="font-size:14px;color:#3a3428;line-height:1.65;max-width:440px;margin:0 auto">${paragraphs.map(p => `<p style="margin:0 0 10px">${p}</p>`).join("")}</div></td></tr>`;
+      const sig = () => `<tr><td style="padding:14px 26px 20px;border-top:0.5px solid #f2eee4;text-align:center"><div style="font-size:13px;color:#0f0f0f;font-weight:500;letter-spacing:0.1px;margin-bottom:2px">Marlenyi</div><div style="font-size:11px;color:#8a8073;letter-spacing:0.3px">Aari Transactions LLC</div></td></tr>`;
+
+      async function sendResend(kind: string, to: string[], cc: string[], subject: string, html: string): Promise<void> {
+        try {
+          const r = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: { "content-type": "application/json", authorization: `Bearer ${RESEND_API_KEY}` },
+            body: JSON.stringify({ from: FROM_ADDRESS, to, cc, subject, html }),
+          });
+          if (!r.ok) console.warn(`[stripe-webhook] ${kind} Resend failed status=${r.status}`);
+          else console.log(`[stripe-webhook] ${kind} sent to=${to.join(",")} cc=${cc.join(",")}`);
+        } catch (e) {
+          console.warn(`[stripe-webhook] ${kind} threw`, e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      // ---- EMAIL A · Warm handoff to client (everyone) ----
+      {
+        const tcMention = tcFirst ? tcFirst : "your coordinator";
+        const subjName = clientFirst ? `${escapeHtmlSimple(clientFirst)}, meet ${escapeHtmlSimple(tcMention)}` : `You&rsquo;re in!`;
+        const heroA = `${clientFirst ? escapeHtmlSimple(clientFirst) + ", " : ""}meet ${escapeHtmlSimple(tcMention)} &#10024;`;
+        const helloA = clientFirst ? `Hey ${escapeHtmlSimple(clientFirst)}! ` : `Hey! `;
+        const paraA = tcFirst
+          ? `${helloA}Payment landed and I&rsquo;m SO excited to hand you off to <strong>${escapeHtmlSimple(tcFirst)}</strong>, your coordinator. 🎉`
+          : `${helloA}Payment landed and your file is officially in motion. I&rsquo;ll match you with a coordinator personally within the hour. 🎉`;
+        const paraB = tcFirst
+          ? `${escapeHtmlSimple(tcFirst)} has your file in front of her right now and will reach out shortly. You&rsquo;re in <em>incredible</em> hands. 💫`
+          : `Sit tight for a moment · I&rsquo;ll be in touch personally to introduce your coordinator. You&rsquo;re in <em>incredible</em> hands. 💫`;
+        const html = cardOpen +
+          kicker("A note from Marlenyi") +
+          hero(heroA) +
+          bodyBlock([paraA, paraB]) +
+          sig() + cardClose;
+        await sendResend(`email-A file=${fileId}`, [clientEmail], clientCC, `${subjName} ✨ · ${addr}`, html);
+      }
+
+      // ---- EMAIL B · Send us the rest (everyone) ----
+      {
+        const heroB = `Send us your photos, whenever you&rsquo;re ready`;
+        const paraA = `${clientFirst ? "Hey " + escapeHtmlSimple(clientFirst) + "! " : "Hey! "}Quick one...`;
+        const paraB = `Whenever you have your <b>listing photos</b> + any <b>supplementary docs</b> (HOA, survey, disclosures... you know the drill), just hit reply and send them over.`;
+        const paraC = `<em>No rush at all!</em> 💫`;
+        const html = cardOpen +
+          kicker("A note from Marlenyi") +
+          hero(heroB) +
+          bodyBlock([paraA, paraB, paraC]) +
+          sig() + cardClose;
+        await sendResend(`email-B file=${fileId}`, [clientEmail], clientCC, `Send us your photos + anything else, whenever ✨`, html);
+      }
+
+      // ---- EMAIL C · First-time MLS heads-up (first-timers + MLS services only) ----
+      if (firstTime && touchesMLS && mlsList.length) {
+        const mlsBoldList = mlsList.map(n => `<b>${escapeHtmlSimple(n)}</b>`).join(mlsList.length === 2 ? " and " : ", ");
+        const heroC = `One quick thing before we dive in &#10024;`;
+        const paraA = `${clientFirst ? "Hey " + escapeHtmlSimple(clientFirst) + "! " : "Hey! "}Quick one for your first time with us:`;
+        const paraB = `Every MLS has its own way of granting a coordinator access. Mind giving ${mlsBoldList} a quick call so they can walk you through their steps?`;
+        const paraC = `Any questions, hit reply. <em>Rooting for you!</em> 🎉`;
+        const html = cardOpen +
+          kicker("A note from Marlenyi") +
+          hero(heroC) +
+          bodyBlock([paraA, paraB, paraC]) +
+          sig() + cardClose;
+        await sendResend(`email-C file=${fileId}`, [clientEmail], brokerCC, `One quick heads-up before we get started ✨`, html);
+      }
+    } catch (e) {
+      console.warn("[stripe-webhook] listing email fan-out failed (payment still confirmed)", e);
+    }
+  })();
+
   // Best-effort TC ping · fire-and-forget so Stripe gets a fast 200 even if
   // send-file-notification is slow. Awaiting this used to block the response
   // long enough that Stripe flagged the endpoint as troubled on cold-start
@@ -380,6 +512,7 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
   const runtime = (globalThis as any).EdgeRuntime;
   if (runtime && typeof runtime.waitUntil === "function") {
     runtime.waitUntil(tcNotifyPromise);
+    runtime.waitUntil(listingEmailPromise);
   }
 
   return json({ received: true, updated: !!upd.data });

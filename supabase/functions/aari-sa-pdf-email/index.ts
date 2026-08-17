@@ -594,14 +594,19 @@ async function sendEmail(
     "</div>";
 
   // Sender uses the verified Resend domain (same env as the rest of the email
-  // system). BCC gives Marlenyi a copy of every executed SA (June 2026 fix).
+  // system). BCC gives Marlenyi + the agreements alias a copy of every
+  // executed SA (June 2026 fix + Aug 2026 explicit-owner-BCC fix).
   // FAIL-SOFT: if the domain send is rejected (e.g. domain not yet verified
   // in Resend), retry once with the legacy sandbox sender and no BCC — the
   // send never gets WORSE than the old behavior.
+  const bccList = Array.from(new Set([
+    Deno.env.get("AGREEMENTS_BCC") ?? "agreements@aaritransactions.com",
+    Deno.env.get("OWNER_EMAIL") ?? "marlenyi@aaritransactions.com",
+  ].filter(Boolean)));
   const body = {
     from: Deno.env.get("FROM_EMAIL") ?? "Aari Transactions <hello@aaritransactions.com>",
     to: [p.agent_email],
-    bcc: [Deno.env.get("AGREEMENTS_BCC") ?? "agreements@aaritransactions.com"],
+    bcc: bccList,
     subject,
     html,
     attachments: [
