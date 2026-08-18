@@ -405,15 +405,22 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
       const bodyBlock = (paragraphs: string[]) => `<tr><td style="padding:14px 26px 22px"><div style="font-size:14px;color:#3a3428;line-height:1.65;max-width:440px;margin:0 auto">${paragraphs.map(p => `<p style="margin:0 0 10px">${p}</p>`).join("")}</div></td></tr>`;
       const sig = () => `<tr><td style="padding:14px 26px 20px;border-top:0.5px solid #f2eee4;text-align:center"><div style="font-size:13px;color:#0f0f0f;font-weight:500;letter-spacing:0.1px;margin-bottom:2px">Marlenyi</div><div style="font-size:11px;color:#8a8073;letter-spacing:0.3px">Aari Transactions LLC</div></td></tr>`;
 
-      async function sendResend(kind: string, to: string[], cc: string[], subject: string, html: string): Promise<void> {
+      async function sendResend(kind: string, to: string[], cc: string[], subject: string, html: string, delayMinutes = 0): Promise<void> {
         try {
+          const payload: Record<string, unknown> = { from: FROM_ADDRESS, to, cc, subject, html };
+          // Resend supports scheduled_at (ISO 8601, up to 30 days out).
+          // We stagger post-payment emails so the agent's inbox does not get
+          // a 3-email burst at 12:00:00 · Marlenyi 2026-08-18.
+          if (delayMinutes > 0) {
+            payload.scheduled_at = new Date(Date.now() + delayMinutes * 60_000).toISOString();
+          }
           const r = await fetch("https://api.resend.com/emails", {
             method: "POST",
             headers: { "content-type": "application/json", authorization: `Bearer ${RESEND_API_KEY}` },
-            body: JSON.stringify({ from: FROM_ADDRESS, to, cc, subject, html }),
+            body: JSON.stringify(payload),
           });
           if (!r.ok) console.warn(`[stripe-webhook] ${kind} Resend failed status=${r.status}`);
-          else console.log(`[stripe-webhook] ${kind} sent to=${to.join(",")} cc=${cc.join(",")}`);
+          else console.log(`[stripe-webhook] ${kind} sent to=${to.join(",")} cc=${cc.join(",")} delay=${delayMinutes}min`);
         } catch (e) {
           console.warn(`[stripe-webhook] ${kind} threw`, e instanceof Error ? e.message : String(e));
         }
@@ -450,7 +457,9 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
           hero(heroB) +
           bodyBlock([paraA, paraB, paraC]) +
           sig() + cardClose;
-        await sendResend(`email-B file=${fileId}`, [clientEmail], clientCC, `Send us your photos + anything else, whenever ✨`, html);
+        // Delay 7 min · lets Email A land alone so the client can read it
+        // without a burst · Marlenyi 2026-08-18.
+        await sendResend(`email-B file=${fileId}`, [clientEmail], clientCC, `Send us your photos + anything else, whenever ✨`, html, 7);
       }
 
       // ---- EMAIL C · First-time MLS heads-up (first-timers + MLS services only) ----
@@ -465,7 +474,9 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
           hero(heroC) +
           bodyBlock([paraA, paraB, paraC]) +
           sig() + cardClose;
-        await sendResend(`email-C file=${fileId}`, [clientEmail], brokerCC, `One quick heads-up before we get started ✨`, html);
+        // Delay 15 min · MLS credentials heads-up is important but not urgent
+        // · reads as a genuine follow-up rather than a robot dump · Marlenyi 2026-08-18.
+        await sendResend(`email-C file=${fileId}`, [clientEmail], brokerCC, `One quick heads-up before we get started ✨`, html, 15);
       }
     } catch (e) {
       console.warn("[stripe-webhook] listing email fan-out failed (payment still confirmed)", e);
