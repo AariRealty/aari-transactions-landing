@@ -356,6 +356,24 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
         } catch (_) { /* leave firstTime false */ }
       }
 
+      // Which MLSs on THIS file we do NOT already have credentials for.
+      // Empty list = we have creds for everything on file (skip MLS heads-up
+      // entirely). Non-empty = mention only the missing ones. Guests (no
+      // agentId) always get the full list treated as missing. Marlenyi
+      // 2026-08-18 · stop asking for creds we already have on the profile.
+      let mlsWithoutCreds: string[] = mlsList;
+      if (agentId && mlsList.length) {
+        try {
+          const { data: credRows } = await supabase
+            .from("agent_mls_credentials")
+            .select("mls_name")
+            .eq("agent_id", agentId)
+            .is("revoked_at", null);
+          const have = new Set<string>((credRows || []).map((r: Record<string, unknown>) => String(r.mls_name || "").toLowerCase().trim()));
+          mlsWithoutCreds = mlsList.filter(n => !have.has(n.toLowerCase().trim()));
+        } catch (_) { /* on error, fall back to asking for all */ }
+      }
+
       const brokerCC = [OWNER_EMAIL];
       const clientCC = tcEmail ? [OWNER_EMAIL, tcEmail] : brokerCC;
 
@@ -388,41 +406,67 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
         }
       }
 
-      // ---- EMAIL A · Warm handoff to client (everyone) ----
+      // ---- EMAIL A · Warm handoff (new) OR short receipt (repeat) ----
+      // Onboarding once, transactional later · Marlenyi 2026-08-18.
+      // Repeat clients (any prior succeeded payment) don't need the full
+      // "meet your coordinator" intro every time. They know the drill.
       {
         const tcMention = tcFirst ? tcFirst : "your coordinator";
-        const subjName = clientFirst ? `${escapeHtmlSimple(clientFirst)}, meet ${escapeHtmlSimple(tcMention)}` : `You&rsquo;re in!`;
-        const heroA = `${clientFirst ? escapeHtmlSimple(clientFirst) + ", " : ""}meet ${escapeHtmlSimple(tcMention)} &#10024;`;
-        const helloA = clientFirst ? `Hey ${escapeHtmlSimple(clientFirst)}! ` : `Hey! `;
-        const paraA = tcFirst
-          ? `${helloA}Payment landed and I&rsquo;m SO excited to hand you off to <strong>${escapeHtmlSimple(tcFirst)}</strong>, your coordinator. 🎉`
-          : `${helloA}Payment landed and your file is officially in motion. I&rsquo;ll match you with a coordinator personally within the hour. 🎉`;
-        const paraB = tcFirst
-          ? `${escapeHtmlSimple(tcFirst)} has your file in front of her right now and will reach out shortly. You&rsquo;re in <em>incredible</em> hands. 💫`
-          : `Sit tight for a moment · I&rsquo;ll be in touch personally to introduce your coordinator. You&rsquo;re in <em>incredible</em> hands. 💫`;
+        let subject: string;
+        let heroA: string;
+        let paragraphs: string[];
+
+        if (firstTime) {
+          // Full warm handoff · first paid file for this agent.
+          subject = clientFirst
+            ? `${escapeHtmlSimple(clientFirst)}, meet ${escapeHtmlSimple(tcMention)} ✨ · ${addr}`
+            : `You&rsquo;re in! ✨ · ${addr}`;
+          heroA = `${clientFirst ? escapeHtmlSimple(clientFirst) + ", " : ""}meet ${escapeHtmlSimple(tcMention)} &#10024;`;
+          const hello = clientFirst ? `Hey ${escapeHtmlSimple(clientFirst)}! ` : `Hey! `;
+          paragraphs = tcFirst
+            ? [
+                `${hello}Payment landed and I&rsquo;m SO excited to hand you off to <strong>${escapeHtmlSimple(tcFirst)}</strong>, your coordinator. 🎉`,
+                `${escapeHtmlSimple(tcFirst)} has your file in front of her right now and will reach out shortly. You&rsquo;re in <em>incredible</em> hands. 💫`,
+              ]
+            : [
+                `${hello}Payment landed and your file is officially in motion. I&rsquo;ll match you with a coordinator personally within the hour. 🎉`,
+                `Sit tight for a moment · I&rsquo;ll be in touch personally to introduce your coordinator. You&rsquo;re in <em>incredible</em> hands. 💫`,
+              ];
+        } else {
+          // Repeat client · short "in motion" receipt. No warm intro.
+          subject = `Your ${escapeHtmlSimple(svcLabel)} file is in motion · ${addr}`;
+          heroA = `Your file is in motion &#10024;`;
+          const hello = clientFirst ? `Hey ${escapeHtmlSimple(clientFirst)}! ` : ``;
+          paragraphs = tcFirst
+            ? [
+                `${hello}Payment landed. <strong>${escapeHtmlSimple(tcFirst)}</strong> has your file and will be in touch shortly. 💫`,
+              ]
+            : [
+                `${hello}Payment landed and your file is officially in motion. I&rsquo;ll match you with a coordinator shortly. 💫`,
+              ];
+        }
         const html = cardOpen +
-          kicker("A note from Marlenyi") +
+          kicker(firstTime ? "A note from Marlenyi" : "File confirmation") +
           hero(heroA) +
-          bodyBlock([paraA, paraB]) +
+          bodyBlock(paragraphs) +
           sig() + cardClose;
-        await sendResend(`email-A file=${fileId}`, [clientEmail], clientCC, `${subjName} ✨ · ${addr}`, html);
+        await sendResend(`email-A file=${fileId} repeat=${firstTime ? "0" : "1"}`, [clientEmail], clientCC, subject, html);
       }
 
-      // ---- EMAIL B · Photos + (for first-time MLS clients) MLS creds heads-up ----
-      // Merged 2026-08-18 (Marlenyi): old Email B (photos) and old Email C
-      // (first-time MLS heads-up) both fired as "here's your next step"
-      // nudges 7-8 min apart. Consolidated into one email at +10 min. The
-      // MLS block only renders when the agent is a first-time MLS-service
-      // client; regular repeat clients get just the photos ask.
+      // ---- EMAIL B · Photos + (only for MLSs we don't already have creds for) heads-up ----
+      // Marlenyi 2026-08-18: MLS block now keys off agent_mls_credentials
+      // instead of the "firstTime" proxy. If we already have creds for
+      // every MLS on this file, skip the block entirely — no matter if
+      // this is the agent's first paid file or fiftieth.
       {
         const hello = `${clientFirst ? "Hey " + escapeHtmlSimple(clientFirst) + "! " : "Hey! "}Quick one...`;
         const photosPara = `Whenever you have your <b>listing photos</b> + any <b>supplementary docs</b> (HOA, survey, disclosures... you know the drill), just hit reply and send them over.`;
         const paragraphs = [hello, photosPara];
-        const includeMLS = firstTime && touchesMLS && mlsList.length;
+        const includeMLS = touchesMLS && mlsWithoutCreds.length > 0;
         if (includeMLS) {
-          const mlsBoldList = mlsList.map(n => `<b>${escapeHtmlSimple(n)}</b>`).join(mlsList.length === 2 ? " and " : ", ");
+          const missingBold = mlsWithoutCreds.map(n => `<b>${escapeHtmlSimple(n)}</b>`).join(mlsWithoutCreds.length === 2 ? " and " : ", ");
           paragraphs.push(
-            `One more thing for your first time with us: every MLS has its own way of granting a coordinator access. Mind giving ${mlsBoldList} a quick call so they can walk you through their steps?`
+            `One more thing: we don&rsquo;t have your login for ${missingBold} yet. Mind giving them a quick call so they can walk you through granting a coordinator access? You can save the creds to your Aari profile so we never have to ask again.`
           );
         }
         paragraphs.push(`<em>No rush at all!</em> 💫`);
@@ -439,7 +483,7 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
           sig() + cardClose;
         // Delay 10 min · Email A lands first alone, then this consolidated
         // follow-up. Feels like a human sending a follow-up, not a robot burst.
-        await sendResend(`email-B file=${fileId} mls=${includeMLS ? "1" : "0"}`, [clientEmail], clientCC, subjectB, html, 10);
+        await sendResend(`email-B file=${fileId} mls_missing=${includeMLS ? mlsWithoutCreds.length : 0}`, [clientEmail], clientCC, subjectB, html, 10);
       }
     } catch (e) {
       console.warn("[stripe-webhook] listing email fan-out failed (payment still confirmed)", e);
