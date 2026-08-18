@@ -1,0 +1,579 @@
+<!doctype html>
+<!--
+  ============================================================================
+  AARI TRANSACTIONS · Agent profile / account page
+  ============================================================================
+  Auth-gated. Two saved-preferences sections so the wizard and the
+  post-payment email flow stop re-asking every intake:
+
+    1. Preferred TC · dropdown of active TCs + "No preference" option.
+       Writes agents.preferred_tc_id. Seeds slide 3 default on the wizard.
+
+    2. MLS credentials · one row per MLS the agent lists on. Writes to the
+       agent_mls_credentials table (RLS scoped to auth.uid()). The MLS
+       typeahead uses the same canonical list (LW_MLS_LIST) as the wizard
+       so labels stay consistent. Rows carry a "verified" flag that
+       Marlenyi or the assigned TC toggles from the broker cockpit.
+
+  Sign-out lives in the header. noindex. Non-agents (broker/tc) see the
+  same page but should really use the internal dashboard — we don't hide
+  it for them, we just show the same form scoped to their own row.
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your Aari profile</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/png" href="/images/aari-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/auth.css">
+<style>
+  :root {
+    --ink: #0f0f0f;
+    --ink-2: #444;
+    --muted: #6b6b6b;
+    --line: #e6e2d8;
+    --bg: #fafaf6;
+    --surface: #ffffff;
+    --cream: #f4f1ea;
+    --sage: #5f6e52;
+    --sage-tint: #eaeee1;
+    --brick: #b94430;
+    --amber: #b48a3e;
+    --amber-tint: #f4ecd8;
+    --serif: 'Cormorant Garamond', Georgia, serif;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: var(--bg); }
+  body { font-family: var(--sans); color: var(--ink-2); line-height: 1.55; min-height: 100vh; -webkit-font-smoothing: antialiased; display: flex; flex-direction: column; }
+  a { color: inherit; text-decoration: none; }
+  input, button, select, textarea { font: inherit; }
+
+  .skip-link { position: absolute; top: -44px; left: 8px; background: var(--ink); color: #fff; padding: 12px 18px; z-index: 1000; border-radius: 6px; font-weight: 600; font-size: 14px; }
+  .skip-link:focus { top: 8px; outline: 3px solid #1e7ce8; outline-offset: 2px; }
+
+  header { background: var(--surface); padding: 14px 22px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  .brand { display: inline-flex; align-items: center; gap: 10px; }
+  .brand-mark { font-family: var(--serif); font-weight: 600; font-size: 16px; color: var(--ink); padding: 5px 12px; border: 1.5px solid var(--ink); border-radius: 6px; letter-spacing: 2px; }
+  .brand-name { font-family: var(--sans); font-weight: 600; font-size: 12px; color: var(--ink); line-height: 1.15; }
+  .brand-name small { display: block; font-size: 8px; font-weight: 500; letter-spacing: 1.2px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+  .head-right { display: inline-flex; align-items: center; gap: 14px; font-size: 12px; color: var(--muted); }
+  .head-right a { color: var(--muted); }
+  .head-right a:hover { color: var(--ink); }
+  .head-right .who { display: none; }
+  .head-right.on .who { display: inline; }
+
+  /* Gate · shown until session resolves + user is confirmed */
+  .gate { display: none; min-height: 60vh; align-items: center; justify-content: center; padding: 24px; }
+  .gate.show { display: flex; }
+  .gate-card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 36px 32px; max-width: 440px; width: 100%; text-align: center; }
+  .gate-card h2 { font-family: var(--serif); font-weight: 500; font-size: 24px; color: var(--ink); margin-bottom: 10px; }
+  .gate-card p { font-size: 13px; color: var(--ink-2); margin-bottom: 18px; }
+  .gate-card .btn { display: inline-flex; align-items: center; gap: 8px; background: var(--ink); color: #fff; padding: 12px 22px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; min-height: 44px; box-sizing: border-box; }
+
+  main { flex: 1; max-width: 640px; margin: 0 auto; padding: 32px 22px 56px; width: 100%; display: none; }
+  main.on { display: block; }
+
+  .page-hero { margin-bottom: 24px; }
+  .page-hero h1 { font-family: var(--serif); font-weight: 500; font-size: 32px; color: var(--ink); line-height: 1.1; letter-spacing: -0.01em; }
+  .page-hero p { margin-top: 6px; font-size: 13.5px; color: var(--muted); }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px 24px; margin-bottom: 22px; }
+  .card .kicker { font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--amber); font-weight: 700; }
+  .card h2 { font-family: var(--serif); font-weight: 600; font-size: 22px; color: var(--ink); margin: 4px 0 4px; line-height: 1.1; }
+  .card .desc { font-size: 12.5px; color: var(--muted); margin-bottom: 16px; line-height: 1.5; }
+
+  label { display: block; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+  .fld { display: block; width: 100%; background: var(--cream); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; font-size: 14px; color: var(--ink); outline: none; transition: border-color 0.12s, box-shadow 0.12s; }
+  .fld:focus { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(180,138,62,0.15); background: var(--surface); }
+
+  .row-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; border: 0; cursor: pointer; min-height: 40px; }
+  .btn[disabled] { background: #8a857c; cursor: not-allowed; }
+  .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+  .btn.small { padding: 7px 14px; font-size: 11px; letter-spacing: 0.5px; min-height: 32px; }
+  .btn.danger { background: transparent; color: var(--brick); border: 1px solid rgba(185,68,48,0.35); }
+  .btn.danger:hover { background: var(--brick); color: #fff; border-color: var(--brick); }
+
+  .toast { font-size: 12px; color: var(--sage); margin-left: 6px; opacity: 0; transition: opacity 0.15s; }
+  .toast.on { opacity: 1; }
+  .toast.err { color: var(--brick); }
+
+  /* MLS creds list */
+  .creds-list { display: grid; gap: 10px; margin-bottom: 18px; }
+  .creds-empty { padding: 14px 16px; border: 1px dashed var(--line); border-radius: 12px; color: var(--muted); font-size: 12.5px; font-style: italic; text-align: center; }
+  .cred-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 14px 16px; background: var(--cream); border: 1px solid var(--line); border-radius: 12px; }
+  .cred-row .nm { font-weight: 600; color: var(--ink); font-size: 14px; }
+  .cred-row .meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .cred-row .meta b { color: var(--ink-2); font-weight: 500; }
+  .cred-row .badges { display: inline-flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+  .cred-row .badge { font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; padding: 3px 7px; border-radius: 4px; }
+  .cred-row .badge.verified { background: var(--sage-tint); color: var(--sage); }
+  .cred-row .badge.pending { background: var(--amber-tint); color: var(--amber); }
+  .cred-row .badge.revoked { background: #fde7e3; color: var(--brick); }
+  .cred-row .row-btns { display: inline-flex; gap: 6px; }
+
+  /* Typeahead (mirrors the wizard) */
+  .ta { position: relative; }
+  .ta-wrap { position: relative; background: var(--cream); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px 11px 38px; transition: border-color 0.12s, box-shadow 0.12s; }
+  .ta-wrap:focus-within { background: var(--surface); border-color: var(--ink); box-shadow: 0 0 0 3px rgba(180,138,62,0.15); }
+  .ta-wrap::before { content: "⌕"; position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 14px; line-height: 1; }
+  .ta-input { width: 100%; border: 0; outline: 0; background: transparent; font: 500 14px/1.3 var(--sans); color: var(--ink); }
+  .ta-input::placeholder { color: var(--muted); font-weight: 400; }
+  .ta-list { margin-top: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; max-height: 240px; overflow-y: auto; box-shadow: 0 20px 40px -20px rgba(58,40,20,0.15); }
+  .ta-list.hide { display: none; }
+  .ta-item { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 10px 14px; cursor: pointer; border-top: 0.5px solid #f2eee4; font-size: 13px; }
+  .ta-item:first-child { border-top: 0; }
+  .ta-item:hover, .ta-item.active { background: var(--cream); }
+  .ta-item .nm { color: var(--ink); font-weight: 500; }
+  .ta-item .nm mark { background: transparent; color: var(--brick); font-weight: 700; padding: 0; }
+  .ta-item .rg { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  .ta-item .ad { font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sage); font-weight: 700; }
+  .ta-item.disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* Add-cred inline form */
+  .add-form { display: none; margin-top: 12px; padding: 16px; background: var(--cream); border-radius: 12px; }
+  .add-form.on { display: block; }
+  .add-form .picked { font-size: 13.5px; color: var(--ink); font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+  .add-form .picked .clear { font-size: 11px; color: var(--muted); background: transparent; border: 0; cursor: pointer; }
+  .add-form .grid { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 480px) { .add-form .grid { grid-template-columns: 1fr; } }
+
+  footer { padding: 24px; text-align: center; font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+<a href="#main" class="skip-link">Skip to content</a>
+
+<header>
+  <a class="brand" href="/">
+    <span class="brand-mark">AR</span>
+    <span class="brand-name">Aari Realty <small>Transactions</small></span>
+  </a>
+  <div class="head-right" id="head-right">
+    <span class="who" id="who"></span>
+    <a href="/submit">Start a file</a>
+    <a href="#" id="sign-out" style="display:none">Sign out</a>
+  </div>
+</header>
+
+<div class="gate" id="gate">
+  <div class="gate-card">
+    <h2 id="gate-title">Sign in required</h2>
+    <p id="gate-msg">Sign in to manage your Aari profile.</p>
+    <a href="/submit" class="btn">Sign in</a>
+  </div>
+</div>
+
+<main id="main" role="main">
+  <div class="page-hero">
+    <h1>Your Aari profile</h1>
+    <p>Save your preferences once. We'll stop asking every time you start a file.</p>
+  </div>
+
+  <!-- ============ TC PREFERENCE ============ -->
+  <section class="card">
+    <div class="kicker">Preference</div>
+    <h2>Preferred coordinator</h2>
+    <p class="desc">The wizard will assign this coordinator by default. You can still change it on any given file.</p>
+    <label for="tc-select">Preferred TC</label>
+    <select class="fld" id="tc-select">
+      <option value="">No preference · we'll pick for you</option>
+    </select>
+    <div class="row-actions">
+      <button class="btn" id="tc-save" type="button">Save preference</button>
+      <span class="toast" id="tc-toast"></span>
+    </div>
+  </section>
+
+  <!-- ============ MLS CREDENTIALS ============ -->
+  <section class="card">
+    <div class="kicker">Credentials</div>
+    <h2>MLS logins we can use</h2>
+    <p class="desc">Save your login for each MLS you list on. We'll stop asking after your first file, and your coordinator can grant themselves access without paging you every time.</p>
+
+    <div class="creds-list" id="creds-list">
+      <div class="creds-empty" id="creds-empty">No MLS credentials saved yet.</div>
+    </div>
+
+    <div class="ta" id="ta">
+      <div class="ta-wrap">
+        <input class="ta-input" id="ta-input" type="text" placeholder="Add an MLS · start typing name, county, or city..." autocomplete="off" spellcheck="false">
+      </div>
+      <div class="ta-list hide" id="ta-list"></div>
+    </div>
+
+    <div class="add-form" id="add-form">
+      <div class="picked">
+        <span id="add-picked-name"></span>
+        <button class="clear" id="add-clear" type="button">Clear</button>
+      </div>
+      <div class="grid">
+        <div>
+          <label for="add-user">Username</label>
+          <input class="fld" id="add-user" type="text" autocomplete="off">
+        </div>
+        <div>
+          <label for="add-pass">Password</label>
+          <input class="fld" id="add-pass" type="password" autocomplete="new-password">
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <label for="add-notes">Notes (optional)</label>
+        <input class="fld" id="add-notes" type="text" placeholder="e.g. Reset every 90 days">
+      </div>
+      <div class="row-actions">
+        <button class="btn" id="add-save" type="button">Save credentials</button>
+        <span class="toast" id="add-toast"></span>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>© Aari Realty LLC · Aari Transactions</footer>
+
+<!-- Auth stack: config → auth helpers. Client is cached so downstream
+     queries reuse the same authenticated session. -->
+<script src="js/supabase-config.js?v=30"></script>
+<script src="js/auth.js"></script>
+
+<script>
+// ============================================================
+// FLORIDA MLS DIRECTORY · mirrors LW_MLS_LIST from submit.html.
+// Kept in sync manually — if you add MLSs to the wizard, add
+// them here too so the profile page can save creds for them.
+// ============================================================
+const MLS_LIST = [
+  { n:"Stellar MLS",             r:"Orlando, Tampa, Sarasota, Ocala",       a:["stellar","mfrmls","my florida regional","orlando","tampa","sarasota","ocala","polk","hillsborough","pinellas","orange","seminole","lakeland"] },
+  { n:"Miami Realtors®",         r:"Miami-Dade, Broward, Palm Beach, Martin", a:["miami","dade","hialeah","doral","homestead","kendall","aventura"] },
+  { n:"Beaches MLS",             r:"Fort Lauderdale, Boca Raton, West Palm, Port St. Lucie", a:["beaches","broward","palm beach","st lucie","fort lauderdale","boca","west palm","jupiter","stuart"] },
+  { n:"NEFMLS",                  r:"Jacksonville & Northeast Florida",       a:["nefmls","nefar","real mls","realmls","jacksonville","duval","clay","northeast"] },
+  { n:"FGCMLS",                  r:"Fort Myers, Cape Coral, Lehigh Acres",   a:["fgcmls","gulf coast","fort myers","cape coral","lee county","royal palm","lehigh","estero"] },
+  { n:"Sunshine MLS (Naples)",   r:"Collier County · Naples",                a:["sunshine","nabor","naples","collier"] },
+  { n:"Marco Island MLS",        r:"Marco Island · Collier",                 a:["marco","marco island"] },
+  { n:"Bonita–Estero MLS",       r:"Bonita Springs, Estero · Lee",           a:["bonita","estero","besr","bear"] },
+  { n:"Space Coast MLS",         r:"Brevard County · Melbourne, Cocoa",      a:["space coast","brevard","melbourne","cocoa","titusville","palm bay","viera"] },
+  { n:"Daytona MLS",             r:"Volusia · Daytona, Ormond, Port Orange", a:["daytona","volusia","ormond","new smyrna","deland","port orange"] },
+  { n:"St. Augustine MLS",       r:"St. Johns · St. Augustine, Ponte Vedra", a:["st augustine","saint augustine","st johns","ponte vedra","nocatee"] },
+  { n:"Amelia Island MLS",       r:"Nassau · Amelia Island, Fernandina",     a:["amelia","nassau","fernandina"] },
+  { n:"Flagler MLS",             r:"Flagler · Palm Coast, Bunnell",          a:["flagler","palm coast","bunnell"] },
+  { n:"Ocala/Marion MLS",        r:"Marion County · Ocala",                  a:["ocala","marion"] },
+  { n:"Gainesville MLS",         r:"Alachua County · Gainesville",           a:["gainesville","alachua","gacar"] },
+  { n:"Tallahassee MLS",         r:"Big Bend · Leon, Wakulla, Jefferson",    a:["tallahassee","leon","wakulla","jefferson","gadsden","big bend"] },
+  { n:"Pensacola MLS",           r:"Escambia, Santa Rosa · Pensacola",       a:["pensacola","escambia","santa rosa","gulf breeze","pace"] },
+  { n:"Emerald Coast MLS",       r:"Destin, Fort Walton, Okaloosa, Walton",  a:["emerald","destin","fort walton","okaloosa","walton","30a","niceville","crestview"] },
+  { n:"Panama City MLS",         r:"Bay County · Panama City, PCB",          a:["panama city","panama","bay county","pcb","panama city beach","lynn haven"] },
+  { n:"Forgotten Coast MLS",     r:"Apalachicola, Port St. Joe, Mexico Beach", a:["forgotten","apalachicola","franklin","gulf county","port st joe","mexico beach"] },
+  { n:"Punta Gorda MLS",         r:"Charlotte · Punta Gorda, Port Charlotte, North Port", a:["punta gorda","port charlotte","north port","charlotte county"] },
+  { n:"Sarasota–Manatee MLS",    r:"Sarasota, Manatee · Bradenton",          a:["rasm","sarasota","manatee","bradenton","lakewood ranch","siesta key","venice"] },
+  { n:"Florida Keys MLS",        r:"Monroe County · Key West, Marathon, Islamorada", a:["keys","key west","marathon","islamorada","monroe","key largo"] },
+  { n:"Hernando MLS",            r:"Hernando · Brooksville, Spring Hill",    a:["hernando","brooksville","spring hill"] },
+  { n:"Citrus MLS",              r:"Citrus County · Inverness, Crystal River", a:["citrus","inverness","crystal river"] }
+];
+
+// ============================================================
+// Boot · resolve session, hydrate the profile, render both cards.
+// Everything is scoped to a single async init() so we fail fast
+// (show the gate) on any auth/network hiccup.
+// ============================================================
+(async function init(){
+  const gate = document.getElementById('gate');
+  const main = document.getElementById('main');
+  const gateTitle = document.getElementById('gate-title');
+  const gateMsg = document.getElementById('gate-msg');
+  const headRight = document.getElementById('head-right');
+  const whoEl = document.getElementById('who');
+  const signOutEl = document.getElementById('sign-out');
+
+  if (!window.AariAuth) {
+    gateTitle.textContent = "Sign-in unavailable";
+    gateMsg.textContent = "The sign-in library did not load. Refresh and try again.";
+    gate.classList.add('show');
+    return;
+  }
+
+  let session;
+  try {
+    session = await window.AariAuth.getCurrentSession();
+  } catch (e) {
+    console.error('[account] session lookup failed', e);
+  }
+  if (!session) {
+    gate.classList.add('show');
+    return;
+  }
+
+  const client = await window.AariAuth.ensureClient();
+  const userId = session.user && session.user.id;
+  const userEmail = (session.user && session.user.email) || '';
+  if (!userId) { gate.classList.add('show'); return; }
+
+  whoEl.textContent = 'Signed in as ' + userEmail;
+  headRight.classList.add('on');
+  signOutEl.style.display = '';
+  signOutEl.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try { await window.AariAuth.signOut(); } catch (_) {}
+    window.location.href = '/';
+  });
+
+  gate.classList.remove('show');
+  main.classList.add('on');
+
+  // ------- TC preference card -------
+  const tcSelect = document.getElementById('tc-select');
+  const tcToast = document.getElementById('tc-toast');
+  const tcSave = document.getElementById('tc-save');
+
+  async function loadTcs() {
+    const { data: tcs, error } = await client
+      .from('agents')
+      .select('id, first_name, last_name, email')
+      .eq('role', 'tc')
+      .order('first_name');
+    if (error) { console.warn('[account] TC list failed', error); return; }
+    (tcs || []).forEach(tc => {
+      const label = ((tc.first_name || '') + ' ' + (tc.last_name || '')).trim() || tc.email || 'TC';
+      const opt = document.createElement('option');
+      opt.value = tc.id;
+      opt.textContent = label;
+      tcSelect.appendChild(opt);
+    });
+    // Preselect the saved preference.
+    const { data: me } = await client
+      .from('agents').select('preferred_tc_id').eq('id', userId).maybeSingle();
+    if (me && me.preferred_tc_id) tcSelect.value = me.preferred_tc_id;
+  }
+
+  function toast(el, msg, err) {
+    el.textContent = msg;
+    el.classList.toggle('err', !!err);
+    el.classList.add('on');
+    setTimeout(() => el.classList.remove('on'), 2200);
+  }
+
+  tcSave.addEventListener('click', async () => {
+    tcSave.disabled = true;
+    const val = tcSelect.value || null;
+    const { error } = await client
+      .from('agents').update({ preferred_tc_id: val }).eq('id', userId);
+    tcSave.disabled = false;
+    if (error) { console.error(error); toast(tcToast, "Couldn't save", true); return; }
+    toast(tcToast, val ? "Saved" : "Cleared");
+  });
+
+  // ------- MLS credentials card -------
+  const listEl = document.getElementById('creds-list');
+  const emptyEl = document.getElementById('creds-empty');
+  const taInput = document.getElementById('ta-input');
+  const taList = document.getElementById('ta-list');
+  const addForm = document.getElementById('add-form');
+  const addPickedName = document.getElementById('add-picked-name');
+  const addUser = document.getElementById('add-user');
+  const addPass = document.getElementById('add-pass');
+  const addNotes = document.getElementById('add-notes');
+  const addSave = document.getElementById('add-save');
+  const addClear = document.getElementById('add-clear');
+  const addToast = document.getElementById('add-toast');
+  let pickedMlsName = null;
+  let credsCache = [];
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+  function hi(text, q) {
+    if (!q) return esc(text);
+    const i = text.toLowerCase().indexOf(q.toLowerCase());
+    if (i < 0) return esc(text);
+    return esc(text.slice(0, i)) + '<mark>' + esc(text.slice(i, i + q.length)) + '</mark>' + esc(text.slice(i + q.length));
+  }
+  function fmtDate(iso) {
+    if (!iso) return '';
+    try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); }
+    catch (_) { return ''; }
+  }
+
+  async function loadCreds() {
+    const { data, error } = await client
+      .from('agent_mls_credentials')
+      .select('id, mls_name, username, notes, verified_at, revoked_at, updated_at')
+      .eq('agent_id', userId)
+      .order('mls_name');
+    if (error) { console.warn('[account] creds load failed', error); return; }
+    credsCache = data || [];
+    renderCreds();
+  }
+
+  function renderCreds() {
+    // Clear existing rows (but keep the empty placeholder in the DOM).
+    Array.from(listEl.querySelectorAll('.cred-row')).forEach(n => n.remove());
+    if (!credsCache.length) { emptyEl.style.display = ''; return; }
+    emptyEl.style.display = 'none';
+    credsCache.forEach(c => {
+      const row = document.createElement('div');
+      row.className = 'cred-row';
+      const revoked = !!c.revoked_at;
+      const verified = !!c.verified_at && !revoked;
+      const pending = !verified && !revoked;
+      const userLine = c.username
+        ? `<b>${esc(c.username)}</b> · password saved`
+        : `<b>No username yet</b> · edit to add`;
+      const notesLine = c.notes ? `<div class="meta">${esc(c.notes)}</div>` : '';
+      const badge = revoked
+        ? '<span class="badge revoked">Revoked</span>'
+        : verified
+          ? '<span class="badge verified">✓ Verified</span>'
+          : '<span class="badge pending">Pending verification</span>';
+      row.innerHTML = `
+        <div>
+          <div class="nm">${esc(c.mls_name)}</div>
+          <div class="meta">${userLine}</div>
+          ${notesLine}
+          <div class="badges">${badge}<span class="meta" style="align-self:center;font-size:11px">Updated ${esc(fmtDate(c.updated_at))}</span></div>
+        </div>
+        <div class="row-btns">
+          <button class="btn ghost small" data-edit="${esc(c.id)}" type="button">Edit</button>
+          <button class="btn danger small" data-del="${esc(c.id)}" type="button">Remove</button>
+        </div>
+      `;
+      listEl.appendChild(row);
+    });
+    // Wire buttons
+    listEl.querySelectorAll('[data-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-del');
+        if (!window.confirm('Remove this saved credential? You can re-add it later.')) return;
+        const { error } = await client.from('agent_mls_credentials').delete().eq('id', id);
+        if (error) { console.error(error); alert("Couldn't remove — please try again."); return; }
+        await loadCreds();
+      });
+    });
+    listEl.querySelectorAll('[data-edit]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-edit');
+        const row = credsCache.find(r => r.id === id);
+        if (!row) return;
+        pickedMlsName = row.mls_name;
+        addPickedName.textContent = 'Editing · ' + row.mls_name;
+        addUser.value = row.username || '';
+        addPass.value = ''; // never round-trip existing password
+        addNotes.value = row.notes || '';
+        addForm.classList.add('on');
+        addForm.setAttribute('data-editing-id', id);
+        addUser.focus();
+      });
+    });
+  }
+
+  // ------- Typeahead (add new MLS) -------
+  function searchMLS(q) {
+    q = (q || '').trim().toLowerCase();
+    if (!q) return [];
+    return MLS_LIST.map(m => {
+      const name = m.n.toLowerCase();
+      const region = (m.r || '').toLowerCase();
+      const nameHit = name.indexOf(q);
+      const aliasHit = (m.a || []).some(a => a.toLowerCase().indexOf(q) >= 0);
+      const regionHit = region.indexOf(q);
+      let score = -1;
+      if (nameHit === 0) score = 100;
+      else if (nameHit > 0) score = 80 - nameHit;
+      else if (aliasHit) score = 70;
+      else if (regionHit >= 0) score = 50 - Math.min(30, regionHit);
+      return { m, s: score };
+    }).filter(x => x.s >= 0).sort((a, b) => b.s - a.s).slice(0, 6).map(x => x.m);
+  }
+
+  function renderTA() {
+    const q = taInput.value;
+    if (!q.trim()) { taList.classList.add('hide'); taList.innerHTML = ''; return; }
+    const saved = new Set(credsCache.map(c => (c.mls_name || '').toLowerCase().trim()));
+    const hits = searchMLS(q);
+    taList.classList.remove('hide');
+    let html = '';
+    if (hits.length) {
+      html += hits.map(m => {
+        const dis = saved.has(m.n.toLowerCase().trim());
+        return `<div class="ta-item${dis ? ' disabled' : ''}" data-name="${esc(m.n)}">
+          <div><span class="nm">${hi(m.n, q)}</span><span class="rg">${hi(m.r || '', q)}</span></div>
+          <span class="ad">${dis ? '✓ Saved' : '+ Add'}</span>
+        </div>`;
+      }).join('');
+    }
+    html += `<div class="ta-item" data-custom="${esc(q.trim())}">
+      <div><span class="nm">Add "<mark>${esc(q.trim())}</mark>" as a custom MLS</span><span class="rg">Use this if none of the above matches.</span></div>
+      <span class="ad">+ Custom</span>
+    </div>`;
+    taList.innerHTML = html;
+    taList.querySelectorAll('.ta-item').forEach(item => {
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        if (item.classList.contains('disabled')) return;
+        const name = item.getAttribute('data-name') || item.getAttribute('data-custom');
+        if (!name) return;
+        pickedMlsName = name.trim();
+        addPickedName.textContent = 'Adding · ' + pickedMlsName;
+        addUser.value = '';
+        addPass.value = '';
+        addNotes.value = '';
+        addForm.classList.add('on');
+        addForm.removeAttribute('data-editing-id');
+        taInput.value = '';
+        taList.classList.add('hide');
+        addUser.focus();
+      });
+    });
+  }
+  taInput.addEventListener('input', renderTA);
+  taInput.addEventListener('focus', renderTA);
+  taInput.addEventListener('blur', () => setTimeout(() => taList.classList.add('hide'), 150));
+
+  addClear.addEventListener('click', () => {
+    pickedMlsName = null;
+    addForm.classList.remove('on');
+    addForm.removeAttribute('data-editing-id');
+  });
+
+  addSave.addEventListener('click', async () => {
+    if (!pickedMlsName) return;
+    addSave.disabled = true;
+    const editingId = addForm.getAttribute('data-editing-id');
+    const payload = {
+      agent_id: userId,
+      mls_name: pickedMlsName,
+      username: addUser.value.trim() || null,
+      notes: addNotes.value.trim() || null,
+    };
+    // Only overwrite the password when the field has a value — editing an
+    // existing row with an empty password field leaves the stored password
+    // alone.
+    if (addPass.value) payload.password = addPass.value;
+
+    let error;
+    if (editingId) {
+      ({ error } = await client.from('agent_mls_credentials').update(payload).eq('id', editingId));
+    } else {
+      // Upsert on (agent_id, mls_name) so re-adding a previously-removed
+      // MLS just re-creates the row, no key collision.
+      ({ error } = await client.from('agent_mls_credentials').upsert(payload, { onConflict: 'agent_id,mls_name' }));
+    }
+    addSave.disabled = false;
+    if (error) { console.error(error); toast(addToast, "Couldn't save", true); return; }
+    toast(addToast, 'Saved');
+    // Reset & reload
+    pickedMlsName = null;
+    addForm.classList.remove('on');
+    addForm.removeAttribute('data-editing-id');
+    addUser.value = ''; addPass.value = ''; addNotes.value = '';
+    await loadCreds();
+  });
+
+  // Kick off both loads in parallel.
+  await Promise.all([loadTcs(), loadCreds()]);
+})();
+</script>
+</body>
+</html>
