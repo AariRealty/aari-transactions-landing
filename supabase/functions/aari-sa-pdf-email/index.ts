@@ -283,7 +283,7 @@ function sanitizeForWinAnsi(s: string): string {
     .replace(/[“”„‟]/g, '"')
     .replace(/[–—―]/g, "-")
     .replace(/[…]/g, "...")
-    .replace(/[ ]/g, " ")
+    .replace(/[ ]/g, " ")
     .replace(/[•]/g, "*")
     .replace(/[§]/g, "Section ")
     .replace(/[^\x00-\xFF]/g, "?"); // anything still outside WinAnsi → '?'
@@ -557,7 +557,15 @@ async function sendEmail(
   pdfBytes: Uint8Array,
   filename: string,
   p: SaPayload,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{
+  ok: boolean;
+  error?: string;
+  fallback_used?: boolean;
+  primary_status?: number;
+  primary_body?: string;
+  fallback_status?: number;
+  fallback_body?: string;
+}> {
   const apiKey = Deno.env.get("RESEND_API_KEY");
   if (!apiKey) {
     return { ok: false, error: "RESEND_API_KEY_missing" };
@@ -585,9 +593,9 @@ async function sendEmail(
     escapeHtml(p.agreement_version || "4.7") +
     "</strong></p>" +
     "<p style=\"font-size:12px;color:#5f5e5a;border-left:3px solid #e6e2d8;padding-left:10px\">Agent: " +
-    escapeHtml(p.agent_name || "") + " \u00b7 Brokerage: " + escapeHtml(p.agent_brokerage || "n/a") +
-    " \u00b7 License: " + escapeHtml(p.agent_license || "n/a") +
-    " \u00b7 Signed: " + escapeHtml(p.signed_at_display || p.signed_at_iso || "") + "</p>" +
+    escapeHtml(p.agent_name || "") + " · Brokerage: " + escapeHtml(p.agent_brokerage || "n/a") +
+    " · License: " + escapeHtml(p.agent_license || "n/a") +
+    " · Signed: " + escapeHtml(p.signed_at_display || p.signed_at_iso || "") + "</p>" +
     "<p style=\"margin-top:24px\">Questions? Reply to this email or text 239.688.1770.</p>" +
     "<hr style=\"border:none;border-top:1px solid #e6e2d8;margin:20px 0\"/>" +
     "<p style=\"font-size:11px;color:#5f5e5a\">Aari Transactions LLC - Transaction Coordination - Fort Myers, FL</p>" +
@@ -629,15 +637,37 @@ async function sendEmail(
 
   let resp = await send(body);
   if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    console.warn("[aari-sa-pdf-email] domain send failed (" + resp.status + ") — retrying via sandbox sender:", text.slice(0, 200));
+    const primaryStatus = resp.status;
+    const primaryBody = (await resp.text().catch(() => "")).slice(0, 300);
+    console.warn("[aari-sa-pdf-email] primary send failed status=" + primaryStatus + " body=" + primaryBody);
+    // Fallback: retry via Resend's sandbox sender. Preserve BCC so the broker
+    // still receives the signed copy even when the verified-domain send fails
+    // (Aug 2026 fix — previous behavior silently dropped bcc, so Marlenyi
+    // never got a copy on fallback).
     const fallback = { ...body, from: "Aari Transactions <onboarding@resend.dev>" } as Record<string, unknown>;
-    delete (fallback as { bcc?: unknown }).bcc;
+    fallback.bcc = bccList;
+    console.warn("[aari-sa-pdf-email] fallback send using sandbox sender bcc=" + JSON.stringify(bccList));
     resp = await send(fallback);
     if (!resp.ok) {
-      const t2 = await resp.text().catch(() => "");
-      return { ok: false, error: "resend_failed_" + resp.status + ":" + t2.slice(0, 200) };
+      const fallbackStatus = resp.status;
+      const fallbackBody = (await resp.text().catch(() => "")).slice(0, 300);
+      console.error("[aari-sa-pdf-email] fallback send failed status=" + fallbackStatus + " body=" + fallbackBody);
+      return {
+        ok: false,
+        error: "resend_failed_" + fallbackStatus + ":" + fallbackBody.slice(0, 200),
+        fallback_used: true,
+        primary_status: primaryStatus,
+        primary_body: primaryBody,
+        fallback_status: fallbackStatus,
+        fallback_body: fallbackBody,
+      };
     }
+    return {
+      ok: true,
+      fallback_used: true,
+      primary_status: primaryStatus,
+      primary_body: primaryBody,
+    };
   }
   return { ok: true };
 }
@@ -833,13 +863,45 @@ Deno.serve(async (req) => {
       }
     }
 
-    // 5. Send email with PDF attachment (existing behavior)
+    // 5. Send email with PDF attachment.
+    // Aug 2026 fix: both primary AND fallback failing must surface as a
+    // non-2xx response so the caller (and monitoring) know delivery did not
+    // happen. Previously this was silently swallowed as `{ok:true, email_warning}`.
     const sendResult = await sendEmail(pdfBytes, filename, payload);
     if (!sendResult.ok) {
-      console.error("[aari-sa-pdf-email] send failed:", sendResult.error);
-      // Don't fail the whole request just because email failed —
-      // the agreement_signatures row + storage upload may have succeeded,
-      // and the Documents tab will still show the signed agreement.
+      const bccForLog = [
+        Deno.env.get("AGREEMENTS_BCC") ?? "agreements@aaritransactions.com",
+        Deno.env.get("OWNER_EMAIL") ?? "marlenyi@aaritransactions.com",
+      ].filter(Boolean).join(",");
+      console.error("[aari-sa-pdf-email] send failed to=" + (payload.agent_email || "") + " bcc=" + bccForLog);
+      return jsonResponse({
+        ok: false,
+        error: "SA PDF email delivery failed",
+        detail: {
+          primary_status: sendResult.primary_status ?? null,
+          primary_body: sendResult.primary_body ?? null,
+          fallback_status: sendResult.fallback_status ?? null,
+          fallback_body: sendResult.fallback_body ?? null,
+          resend_error: sendResult.error ?? null,
+        },
+        bytes: pdfBytes.length,
+        filename,
+        recipient: payload.agent_email,
+        storage_path: signedAgreementPdfUrl,
+        agent_id: agentId,
+      }, 502);
+    }
+
+    if (sendResult.fallback_used) {
+      // Primary send failed but the sandbox fallback landed. Return 200 so the
+      // caller keeps the storage/agreement_signatures success, but include a
+      // warning + a log line so the primary-send regression stays visible.
+      console.warn(
+        "[aari-sa-pdf-email] primary send failed but fallback delivered · to=" +
+        (payload.agent_email || "") +
+        " primary_status=" + (sendResult.primary_status ?? "?") +
+        " primary_body=" + (sendResult.primary_body ?? ""),
+      );
       return jsonResponse({
         ok: true,
         bytes: pdfBytes.length,
@@ -847,7 +909,9 @@ Deno.serve(async (req) => {
         recipient: payload.agent_email,
         storage_path: signedAgreementPdfUrl,
         agent_id: agentId,
-        email_warning: sendResult.error || "email_send_failed",
+        email_warning:
+          "primary_send_failed_status_" + (sendResult.primary_status ?? "?") +
+          "_fallback_delivered",
       });
     }
 
