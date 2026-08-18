@@ -298,55 +298,17 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
     }, (session.id as string) || "");
   }
 
-  // Owner ping · fire the email to the owner so she doesn't have to log in
-  // to see money landing. Best-effort, wrapped so a Resend hiccup can't
-  // reject the webhook (Stripe would retry the whole event otherwise, causing
-  // duplicate TC pings and a confusing "webhook trouble" alert email).
-  try {
-    if (RESEND_API_KEY && upd.data) {
-      const f = upd.data as Record<string, unknown>;
-      const addr = String(f.property_address || "unknown property");
-      const svcLabel = String(f.service_type || "").trim() || "Service";
-      const dollars = amountTotal != null ? (amountTotal / 100).toFixed(2) : "?.??";
-      // Resolve agent name/email from the agents row if we have an agent_id.
-      // Best-effort; the email still sends without it.
-      let agentName = "", agentEmail = "";
-      try {
-        const agentId = f.agent_id as string | undefined;
-        if (agentId) {
-          const ag = await supabase.from("agents").select("first_name, last_name, email").eq("id", agentId).maybeSingle();
-          if (ag.data) {
-            agentName = ((ag.data.first_name || "") + " " + (ag.data.last_name || "")).trim();
-            agentEmail = String(ag.data.email || "");
-          }
-        }
-      } catch (_ae) { /* leave agentName / email empty */ }
-      const subject = `$${dollars} · ${addr} · ${svcLabel} paid`;
-      const html =
-        `<div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;font-size:14px;color:#0f0f0f;line-height:1.55">` +
-          `<p style="margin:0 0 12px"><strong>$${dollars}</strong> just landed in Stripe.</p>` +
-          `<p style="margin:0 0 6px"><strong>Property:</strong> ${escapeHtmlSimple(addr)}</p>` +
-          `<p style="margin:0 0 6px"><strong>Service:</strong> ${escapeHtmlSimple(svcLabel)}</p>` +
-          (agentName ? `<p style="margin:0 0 6px"><strong>Agent:</strong> ${escapeHtmlSimple(agentName)}${agentEmail ? ` &lt;${escapeHtmlSimple(agentEmail)}&gt;` : ""}</p>` : "") +
-          `<p style="margin:16px 0 0;color:#6f6a61;font-size:12px">Paid at ${paidAtIso} UTC. Recent payments live on the broker cockpit.</p>` +
-        `</div>`;
-      await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${RESEND_API_KEY}` },
-        body: JSON.stringify({ from: FROM_ADDRESS, to: [OWNER_EMAIL], subject, html }),
-      });
-    }
-  } catch (e) {
-    console.warn("[stripe-webhook] owner ping failed (payment still confirmed)", e);
-  }
+  // Owner ping removed 2026-08-18 (Marlenyi): the broker is already CC'd on
+  // Email A (warm handoff) which lands instantly and carries the same payload
+  // in a cleaner format. The raw "$X.XX · addr · svc paid" text pager was
+  // producing a duplicate the moment Stripe fired.
 
-  // Listing-service post-payment email fan-out (Marlenyi 2026-08-17).
-  // Runs only when service is listing_coordinator / mls_setup / listing_docs
-  // (the 3 services routed through the v2 wizard). Sends up to 3 client-facing
-  // emails as one background promise:
-  //   A · Warm handoff        · every listing paid
-  //   B · Send us the rest    · every listing paid (photos + supplementary docs)
-  //   C · First-time MLS      · first-timers + LC/MLS Setup only
+  // Listing-service post-payment email fan-out (Marlenyi 2026-08-17,
+  // consolidated 2026-08-18). Runs only when service is listing_coordinator
+  // / mls_setup / listing_docs. Sends 2 client-facing emails as one
+  // background promise:
+  //   A · Warm handoff (meet your coordinator)      · immediate
+  //   B · Photos + (first-time only) MLS heads-up   · +10 min
   // All from files@aaritransactions.com, CC broker + assigned TC (if any).
   const listingEmailPromise = (async () => {
     try {
@@ -446,37 +408,38 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
         await sendResend(`email-A file=${fileId}`, [clientEmail], clientCC, `${subjName} ✨ · ${addr}`, html);
       }
 
-      // ---- EMAIL B · Send us the rest (everyone) ----
+      // ---- EMAIL B · Photos + (for first-time MLS clients) MLS creds heads-up ----
+      // Merged 2026-08-18 (Marlenyi): old Email B (photos) and old Email C
+      // (first-time MLS heads-up) both fired as "here's your next step"
+      // nudges 7-8 min apart. Consolidated into one email at +10 min. The
+      // MLS block only renders when the agent is a first-time MLS-service
+      // client; regular repeat clients get just the photos ask.
       {
-        const heroB = `Send us your photos, whenever you&rsquo;re ready`;
-        const paraA = `${clientFirst ? "Hey " + escapeHtmlSimple(clientFirst) + "! " : "Hey! "}Quick one...`;
-        const paraB = `Whenever you have your <b>listing photos</b> + any <b>supplementary docs</b> (HOA, survey, disclosures... you know the drill), just hit reply and send them over.`;
-        const paraC = `<em>No rush at all!</em> 💫`;
+        const hello = `${clientFirst ? "Hey " + escapeHtmlSimple(clientFirst) + "! " : "Hey! "}Quick one...`;
+        const photosPara = `Whenever you have your <b>listing photos</b> + any <b>supplementary docs</b> (HOA, survey, disclosures... you know the drill), just hit reply and send them over.`;
+        const paragraphs = [hello, photosPara];
+        const includeMLS = firstTime && touchesMLS && mlsList.length;
+        if (includeMLS) {
+          const mlsBoldList = mlsList.map(n => `<b>${escapeHtmlSimple(n)}</b>`).join(mlsList.length === 2 ? " and " : ", ");
+          paragraphs.push(
+            `One more thing for your first time with us: every MLS has its own way of granting a coordinator access. Mind giving ${mlsBoldList} a quick call so they can walk you through their steps?`
+          );
+        }
+        paragraphs.push(`<em>No rush at all!</em> 💫`);
+        const heroB = includeMLS
+          ? `A couple of things, whenever you&rsquo;re ready`
+          : `Send us your photos, whenever you&rsquo;re ready`;
+        const subjectB = includeMLS
+          ? `Photos + MLS heads-up when you&rsquo;re ready ✨`
+          : `Send us your photos + anything else, whenever ✨`;
         const html = cardOpen +
           kicker("A note from Marlenyi") +
           hero(heroB) +
-          bodyBlock([paraA, paraB, paraC]) +
+          bodyBlock(paragraphs) +
           sig() + cardClose;
-        // Delay 7 min · lets Email A land alone so the client can read it
-        // without a burst · Marlenyi 2026-08-18.
-        await sendResend(`email-B file=${fileId}`, [clientEmail], clientCC, `Send us your photos + anything else, whenever ✨`, html, 7);
-      }
-
-      // ---- EMAIL C · First-time MLS heads-up (first-timers + MLS services only) ----
-      if (firstTime && touchesMLS && mlsList.length) {
-        const mlsBoldList = mlsList.map(n => `<b>${escapeHtmlSimple(n)}</b>`).join(mlsList.length === 2 ? " and " : ", ");
-        const heroC = `One quick thing before we dive in &#10024;`;
-        const paraA = `${clientFirst ? "Hey " + escapeHtmlSimple(clientFirst) + "! " : "Hey! "}Quick one for your first time with us:`;
-        const paraB = `Every MLS has its own way of granting a coordinator access. Mind giving ${mlsBoldList} a quick call so they can walk you through their steps?`;
-        const paraC = `Any questions, hit reply. <em>Rooting for you!</em> 🎉`;
-        const html = cardOpen +
-          kicker("A note from Marlenyi") +
-          hero(heroC) +
-          bodyBlock([paraA, paraB, paraC]) +
-          sig() + cardClose;
-        // Delay 15 min · MLS credentials heads-up is important but not urgent
-        // · reads as a genuine follow-up rather than a robot dump · Marlenyi 2026-08-18.
-        await sendResend(`email-C file=${fileId}`, [clientEmail], brokerCC, `One quick heads-up before we get started ✨`, html, 15);
+        // Delay 10 min · Email A lands first alone, then this consolidated
+        // follow-up. Feels like a human sending a follow-up, not a robot burst.
+        await sendResend(`email-B file=${fileId} mls=${includeMLS ? "1" : "0"}`, [clientEmail], clientCC, subjectB, html, 10);
       }
     } catch (e) {
       console.warn("[stripe-webhook] listing email fan-out failed (payment still confirmed)", e);
