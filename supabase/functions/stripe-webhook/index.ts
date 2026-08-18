@@ -307,9 +307,10 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
   // consolidated 2026-08-18). Runs only when service is listing_coordinator
   // / mls_setup / listing_docs. Sends 2 client-facing emails as one
   // background promise:
-  //   A · Warm handoff (meet your coordinator)      · immediate
+  //   A · Warm handoff / free-file "you're all set" · immediate
   //   B · Photos + (first-time only) MLS heads-up   · +10 min
-  // All from files@aaritransactions.com, CC broker + assigned TC (if any).
+  // Both from files@aaritransactions.com. CC broker only. TCs no longer
+  // sit on the client CC — they get their own "clear to invoice" ping.
   const listingEmailPromise = (async () => {
     try {
       if (!RESEND_API_KEY || !upd.data) return;
@@ -374,8 +375,49 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
         } catch (_) { /* on error, fall back to asking for all */ }
       }
 
+      // TCs no longer sit on the client-facing CC (Marlenyi 2026-08-18).
+      // They get their own "clear to invoice" ping separately, so keeping
+      // them on A + B just added noise to the client thread. Broker stays
+      // on CC so the broker inbox is still in the loop.
       const brokerCC = [OWNER_EMAIL];
-      const clientCC = tcEmail ? [OWNER_EMAIL, tcEmail] : brokerCC;
+      const clientCC = brokerCC;
+      // Suppress the "tcEmail unused on client emails" lint by keeping the
+      // reference — it's still used inside Email A for the coordinator name.
+      void tcEmail;
+
+      // Did the free file cover this order? amount_total = 0 means the
+      // 100% off credit coupon applied. When true, Email A switches to the
+      // "you're all set" copy (no "payment landed" language) and picks up
+      // a small "1 free file used · N left" receipt line.
+      const creditCovered = amountTotal === 0;
+      let creditPosture: { total: number; remaining: number; resetAt: string | null } | null = null;
+      if (creditCovered && agentId) {
+        try {
+          const { data: mem } = await supabase
+            .from("memberships")
+            .select("credits_total, credits_used, activity_bonus_credits_remaining, current_period_end")
+            .eq("agent_id", agentId)
+            .in("status", ["active", "paused"])
+            .limit(1)
+            .maybeSingle();
+          if (mem) {
+            const total = Number(mem.credits_total || 0);
+            const used = Number(mem.credits_used || 0);
+            const bonus = Number(mem.activity_bonus_credits_remaining || 0);
+            creditPosture = {
+              total,
+              remaining: Math.max(0, total - used) + bonus,
+              resetAt: (mem.current_period_end as string) || null,
+            };
+          }
+        } catch (_) { /* leave creditPosture null */ }
+      }
+      const fmtReset = (iso: string | null): string => {
+        if (!iso) return "";
+        try {
+          return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/New_York" });
+        } catch (_) { return ""; }
+      };
 
       // Shared email chrome · cream card, Georgia hero, Marlenyi signoff.
       const cardOpen = `<!doctype html><html><body style="margin:0;padding:0;background:#f4f1ea"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f1ea;padding:32px 16px"><tr><td align="center"><table role="presentation" width="520" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border:0.5px solid #e6ddca;border-radius:16px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">`;
@@ -406,17 +448,47 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
         }
       }
 
-      // ---- EMAIL A · Warm handoff (new) OR short receipt (repeat) ----
+      // ---- EMAIL A · Three variants ----
+      //   - Free file covered it → "You're all set" (no "payment landed"
+      //     language, receipt line shows credits used + remaining)
+      //   - Real payment + first time → full "Meet your coordinator"
+      //   - Real payment + repeat    → short "Your file is in motion"
       // Onboarding once, transactional later · Marlenyi 2026-08-18.
-      // Repeat clients (any prior succeeded payment) don't need the full
-      // "meet your coordinator" intro every time. They know the drill.
       {
         const tcMention = tcFirst ? tcFirst : "your coordinator";
         let subject: string;
         let heroA: string;
         let paragraphs: string[];
+        let receiptHtml = "";
+        let kickerLabel = "A note from Marlenyi";
 
-        if (firstTime) {
+        if (creditCovered) {
+          // Free-file variant · no payment language. Marlenyi-approved copy
+          // from the 2026-08-18 mockup preview.
+          subject = `Your file for ${addr} is on us ✨`;
+          heroA = `You&rsquo;re all set &#10024;`;
+          const hello = clientFirst ? `Hey ${escapeHtmlSimple(clientFirst)}! ` : ``;
+          paragraphs = tcFirst
+            ? [
+                `${hello}Your free file is on it and we&rsquo;re taking it from here.`,
+                `${escapeHtmlSimple(tcFirst)} has your file in front of her right now and will be in touch shortly. Sit tight!`,
+              ]
+            : [
+                `${hello}Your free file is on it and we&rsquo;re taking it from here.`,
+                `I&rsquo;ll match you with a coordinator personally within the hour. Sit tight!`,
+              ];
+          if (creditPosture) {
+            const used = 1;
+            const remaining = creditPosture.remaining;
+            const resetLabel = fmtReset(creditPosture.resetAt);
+            const filesWord = remaining === 1 ? "file" : "files";
+            const receiptLine = resetLabel
+              ? `<b>${used} free file used</b> &middot; ${remaining} ${filesWord} left this month &middot; resets ${escapeHtmlSimple(resetLabel)}`
+              : `<b>${used} free file used</b> &middot; ${remaining} ${filesWord} left this month`;
+            receiptHtml =
+              `<tr><td style="padding:6px 26px 18px"><div style="max-width:440px;margin:0 auto;background:#faf7ef;border:0.5px solid #ede6d4;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#5f4d20;text-align:center;line-height:1.55">${receiptLine}</div></td></tr>`;
+          }
+        } else if (firstTime) {
           // Full warm handoff · first paid file for this agent.
           subject = clientFirst
             ? `${escapeHtmlSimple(clientFirst)}, meet ${escapeHtmlSimple(tcMention)} ✨ · ${addr}`
@@ -436,6 +508,7 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
           // Repeat client · short "in motion" receipt. No warm intro.
           subject = `Your ${escapeHtmlSimple(svcLabel)} file is in motion · ${addr}`;
           heroA = `Your file is in motion &#10024;`;
+          kickerLabel = "File confirmation";
           const hello = clientFirst ? `Hey ${escapeHtmlSimple(clientFirst)}! ` : ``;
           paragraphs = tcFirst
             ? [
@@ -446,11 +519,13 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
               ];
         }
         const html = cardOpen +
-          kicker(firstTime ? "A note from Marlenyi" : "File confirmation") +
+          kicker(kickerLabel) +
           hero(heroA) +
           bodyBlock(paragraphs) +
+          receiptHtml +
           sig() + cardClose;
-        await sendResend(`email-A file=${fileId} repeat=${firstTime ? "0" : "1"}`, [clientEmail], clientCC, subject, html);
+        const variant = creditCovered ? "free" : (firstTime ? "new" : "repeat");
+        await sendResend(`email-A file=${fileId} variant=${variant}`, [clientEmail], clientCC, subject, html);
       }
 
       // ---- EMAIL B · Photos + (only for MLSs we don't already have creds for) heads-up ----
