@@ -939,8 +939,103 @@
   //   SELECT * FROM tc_goals WHERE tc_id = $1                                                              → goal cards
   //   SELECT * FROM payouts WHERE tc_id = $1 ORDER BY submitted_at DESC LIMIT 12                           → pay-list
   async function loadCockpitData(slug) {
-    // Placeholder until Supabase wiring. All fields stay at default 0/$0/—.
+    // Wired 2026-08-19 (Marlenyi): pull real assigned files from Supabase
+    // and render them via renderFileList. Previously this fn was a stub
+    // and the file list only ever rendered a single hardcoded demo row.
+    const host = document.getElementById('mf-list');
+    if (host && (!host.dataset.rendered || host.dataset.rendered === 'demo')) {
+      host.innerHTML = '<div class="empty"><p class="lbl">Loading your files…</p></div>';
+    }
+    try {
+      const client = await window.AariAuth.ensureClient();
+      const session = await window.AariAuth.getCurrentSession();
+      const meId = session && session.user && session.user.id;
+      if (!client || !meId) return;
+
+      // Broker impersonation: ?tc=<slug> lets Marlenyi view a TC's cockpit.
+      // Resolve slug → user_id when it doesn't match the current user's slug.
+      let targetTcId = meId;
+      const params = new URLSearchParams(window.location.search);
+      const viewSlug = (params.get('tc') || '').trim().toLowerCase();
+      if (viewSlug) {
+        const { data: tcRow } = await client
+          .from('agents')
+          .select('id, tc_slug, first_name')
+          .or(`tc_slug.eq.${viewSlug},first_name.ilike.${viewSlug}`)
+          .eq('role', 'tc')
+          .limit(1)
+          .maybeSingle();
+        if (tcRow && tcRow.id) targetTcId = tcRow.id;
+      }
+
+      // Grab every non-archived file assigned to this TC, newest paid
+      // first so today's action items sit at the top. Join the agent so
+      // we can render "Marlenyi Paredes · Aari Realty" without a second
+      // roundtrip.
+      const { data: rows, error } = await client
+        .from('files')
+        .select(`
+          id, property_address, service_type, status, file_type,
+          contract_type, effective_date, closing_date,
+          tc_accepted_at, paid_at, created_at, archived_at,
+          agent_id, client_name, raw_form_data,
+          agent:agents!files_agent_id_fkey(first_name, last_name, email)
+        `)
+        .eq('assigned_tc_id', targetTcId)
+        .is('archived_at', null)
+        .order('paid_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (error) { console.warn('[TC Cockpit] file load failed', error); return; }
+
+      const files = (rows || []).map(mapDbFileToCardShape);
+      if (host) host.dataset.rendered = 'live';
+      renderFileList(files);
+
+      // Optional: update the top summary counts if that markup exists.
+      try {
+        const active = files.filter(f => f.status !== 'closed' && f.status !== 'cancelled').length;
+        const needsAccept = files.filter(f => !f.tc_accepted_at && (f.status === 'intake_received' || f.status === 'awaiting_tc_acceptance')).length;
+        const sub = document.getElementById('files-sub');
+        if (sub) sub.textContent = active + ' active · ' + needsAccept + ' waiting on you';
+      } catch (_e) {}
+    } catch (err) {
+      console.error('[TC Cockpit] loadCockpitData failed', err);
+    }
   }
+
+  // Map a raw files row into the shape renderFileCard / renderTimeline
+  // expect. Buyer/seller pulled from raw_form_data when the wizard put it
+  // there (mostly sale files); listing files show the seller side.
+  function mapDbFileToCardShape(r) {
+    const raw = r.raw_form_data || {};
+    const agent = r.agent || {};
+    const agentName = ((agent.first_name || '') + ' ' + (agent.last_name || '')).trim() || agent.email || '(unassigned agent)';
+    const isListing = r.file_type === 'listing';
+    return {
+      id: r.id,
+      address: r.property_address || raw.property_address || '(no address)',
+      buyer: !isListing ? (raw.buyer || r.client_name || '') : '',
+      seller: isListing ? (raw.seller || r.client_name || 'Seller (name pending)') : '',
+      agent: agentName,
+      status: r.status || 'active',
+      contract_type: r.contract_type || (raw.contract_type) || 'frbar-asis',
+      effective_date: r.effective_date || (raw.extracted_contract && raw.extracted_contract.fields && raw.extracted_contract.fields.effective_date) || null,
+      closing_date: r.closing_date || (raw.extracted_contract && raw.extracted_contract.fields && raw.extracted_contract.fields.closing_date) || null,
+      tc_accepted_at: r.tc_accepted_at || null,
+      overrides: (raw.deadline_overrides) || null,
+      // Pass through so downstream helpers can differentiate listing vs sale.
+      file_type: r.file_type,
+      service_type: r.service_type,
+    };
+  }
+
+  // Expose reload for the accept-modal + other flows (see line 1320).
+  window.reloadFiles = function () {
+    // slug arg is ignored inside loadCockpitData now — it re-reads ?tc= itself.
+    loadCockpitData();
+  };
 
   // ============== MARK INACTIVE ON IDLE ==============
   // Live sync badge updates if the connection drops or supabase realtime disconnects.
@@ -1877,8 +1972,15 @@
     });
   }
 
-  // Render demo file on load (replace DEMO_FILES with Supabase data once wired)
-  renderFileList(DEMO_FILES);
+  // Real data now loads via loadCockpitData() (called from showApp after
+  // the auth gate resolves). DEMO_FILES is retained above only as a shape
+  // reference for renderFileCard. Show a loading state until the fetch
+  // returns; loadCockpitData replaces it via renderFileList.
+  const _mfHost = document.getElementById('mf-list');
+  if (_mfHost) {
+    _mfHost.innerHTML = '<div class="empty"><p class="lbl">Loading your files…</p></div>';
+    _mfHost.dataset.rendered = 'loading';
+  }
 
 })();
 </script>
