@@ -2011,6 +2011,123 @@
       margin-top: 0 !important;
     }
   }
+  /* Calendar tab · desktop-only compact upcoming-tasks sidebar next to the
+     month grid. Additive · wraps #calHeatmap in a flex row and pins a
+     two-column (Buyer / Seller) card beside it. Mobile falls out via the
+     @media below · the wrapper collapses back to a single column and the
+     side box hides itself. See renderCalUpcomingSide + _ensureCalSideMounted. */
+  .cal-with-side { display: flex; align-items: flex-start; gap: 16px; }
+  .cal-with-side > #calHeatmap { flex: 1 1 0; min-width: 0; }
+  .cal-side-box {
+    flex: 0 0 320px;
+    background: #fff;
+    border: 0.5px solid #ece8e0;
+    border-radius: 14px;
+    padding: 14px 14px 10px;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .cal-side-box .cs-hdr {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: #0f0f0f;
+    margin-bottom: 2px;
+  }
+  .cal-side-box .cs-sub {
+    font: 700 9.5px 'Inter', sans-serif;
+    letter-spacing: 1.4px;
+    text-transform: uppercase;
+    color: #a9a49a;
+    margin-bottom: 8px;
+  }
+  .cal-side-box .cs-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    flex: 1 1 auto;
+  }
+  .cal-side-box .cs-col { min-width: 0; display: flex; flex-direction: column; }
+  .cal-side-box .cs-col-hdr {
+    font: 700 9.5px 'Inter', sans-serif;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #5f5e5a;
+    padding: 4px 6px;
+    border-radius: 6px;
+    background: #f1efe8;
+    margin-bottom: 6px;
+    text-align: center;
+  }
+  .cal-side-box .cs-col-hdr.is-seller { color: #085041; background: #e1f5ee; }
+  .cal-side-box .cs-row {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 7px 6px;
+    border-top: 0.5px solid #f3f0ea;
+    cursor: pointer;
+    min-width: 0;
+  }
+  .cal-side-box .cs-row:first-child { border-top: 0; }
+  .cal-side-box .cs-row.is-today { background: #faf6ea; border-radius: 8px; }
+  .cal-side-box .cs-due {
+    flex: none;
+    font: 700 9px 'Inter', sans-serif;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: #8a6d1b;
+    background: #faf3e6;
+    border: 0.5px solid #ecdfc4;
+    border-radius: 20px;
+    padding: 2px 7px;
+    white-space: nowrap;
+    line-height: 1.35;
+  }
+  .cal-side-box .cs-row.is-today .cs-due {
+    color: #993c1d;
+    background: #faece7;
+    border-color: #f3d9d0;
+  }
+  .cal-side-box .cs-body { flex: 1 1 auto; min-width: 0; }
+  .cal-side-box .cs-task {
+    font-size: 12px;
+    color: #0f0f0f;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .cal-side-box .cs-addr {
+    font-size: 10.5px;
+    color: #8a857c;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cal-side-box .cs-empty {
+    font-size: 11px;
+    color: #a9a49a;
+    padding: 8px 6px 4px;
+    line-height: 1.4;
+  }
+  .cal-side-box .cs-more {
+    text-align: center;
+    font: 600 10.5px 'Inter', sans-serif;
+    color: #7a756c;
+    padding: 6px 0 2px;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: #d9d3c4;
+    text-underline-offset: 3px;
+  }
+  @media (max-width: 899px){
+    .cal-with-side { display: block; }
+    .cal-with-side > #calUpcomingSide { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -9519,6 +9636,177 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   // Re-render on the same cadence as the mobile hero.
   setInterval(function(){ try { renderTodayAggregated(); } catch(_){} }, 5 * 60 * 1000);
+
+  // ============ CALENDAR TAB · Upcoming-tasks sidebar (Marlenyi 2026-08-19) ============
+  // Desktop-only two-column (Buyer / Seller) card that pins to the RIGHT of
+  // the month grid on the Calendar tab. Shows only tasks due today + next 3
+  // days. Additive · does NOT edit renderCalHeatmap, renderTodayAggregated
+  // or any other renderer. Mounts via _ensureCalSideMounted (called from a
+  // MutationObserver on #calHeatmap) and hides itself on mobile via CSS.
+  function _calSideIsDesktop(){
+    try { return !!(window.matchMedia && window.matchMedia('(min-width: 900px)').matches); }
+    catch(_){ return false; }
+  }
+  function _ensureCalSideMounted(){
+    try {
+      const heat = document.getElementById('calHeatmap');
+      if(!heat || !heat.parentNode) return null;
+      let wrap = heat.parentNode.classList && heat.parentNode.classList.contains('cal-with-side') ? heat.parentNode : null;
+      if(!wrap){
+        wrap = document.createElement('div');
+        wrap.className = 'cal-with-side';
+        heat.parentNode.insertBefore(wrap, heat);
+        wrap.appendChild(heat);
+      }
+      let side = document.getElementById('calUpcomingSide');
+      if(!side){
+        side = document.createElement('div');
+        side.id = 'calUpcomingSide';
+        side.className = 'cal-side-box';
+        wrap.appendChild(side);
+      } else if(side.parentNode !== wrap){
+        wrap.appendChild(side);
+      }
+      return side;
+    } catch(_){ return null; }
+  }
+  function renderCalUpcomingSide(){
+    // Desktop + Calendar tab only. Mobile is untouched.
+    if(!_calSideIsDesktop()) return;
+    if(typeof _mnavDest !== 'undefined' && _mnavDest !== 'calendar') return;
+    const side = _ensureCalSideMounted();
+    if(!side) return;
+    if(!_files || !_files.length){ side.innerHTML = ''; return; }
+    const _t0 = new Date(); _t0.setHours(0, 0, 0, 0);
+    const buyer = [];
+    const seller = [];
+    (_files || []).forEach(function(f){
+      try {
+        if(!f || f.status === 'archived') return;
+        // Broker-filter gate · same one every other renderer uses.
+        if(typeof _tcFilter !== 'undefined' && _tcFilter && _tcFilter !== 'all'){
+          if(String(f.assigned_tc_id || '') !== String(_tcFilter) && String(f.fg_tc_id || '') !== String(_tcFilter)) return;
+        }
+        const stg = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || '');
+        if(['new','intake_received','waiting_for_tc','','closed'].indexOf(stg) !== -1) return;
+        const ft = f.file_type || 'sale';
+        if(ft !== 'sale' && ft !== 'rental') return;
+        const tasks = ((typeof ckTasksFor === 'function') ? (ckTasksFor(f, stg) || []) : ((typeof STAGE_CHECKLISTS === 'object' && STAGE_CHECKLISTS[ft]) ? (STAGE_CHECKLISTS[ft][stg] || []) : []));
+        const done = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
+        const dls = (typeof fileDeadlines === 'function') ? fileDeadlines(f) : {};
+        tasks.forEach(function(t){
+          if(done[t.id]) return;
+          if(typeof _sweptTasksThisSession !== 'undefined' && _sweptTasksThisSession && _sweptTasksThisSession.has(f.id + ':' + t.id)) return;
+          if(t.showIf && !t.showIf(f)) return;
+          let days = null;
+          try {
+            const _rawDue = (typeof _taskDueDate === 'function') ? _taskDueDate(f, t, dls) : null;
+            if(_rawDue instanceof Date && !isNaN(_rawDue)){
+              const dd = new Date(_rawDue.getTime()); dd.setHours(0, 0, 0, 0);
+              days = Math.round((dd - _t0) / 86400000);
+            }
+          } catch(_){}
+          if(days == null) return;
+          if(days < 0 || days > 3) return;
+          const _ct = String(f.client_type || '').toLowerCase();
+          const rec = { file: f, task: t, days: days };
+          if(_ct === 'buyer') buyer.push(rec);
+          else if(_ct === 'seller') seller.push(rec);
+          else if(_ct === 'both'){ buyer.push(rec); seller.push(rec); }
+        });
+      } catch(_){}
+    });
+    buyer.sort(function(a, b){ return a.days - b.days; });
+    seller.sort(function(a, b){ return a.days - b.days; });
+    const CAP = 6;
+    function _dueLbl(d){
+      if(d === 0) return 'Today';
+      if(d === 1) return '1 day';
+      return d + ' days';
+    }
+    function _colHtml(rows, label, emptyMsg, isSeller){
+      let h = '<div class="cs-col">' +
+        '<div class="cs-col-hdr' + (isSeller ? ' is-seller' : '') + '">' + esc(label) + '</div>';
+      if(!rows.length){
+        h += '<div class="cs-empty">' + esc(emptyMsg) + '</div>';
+      } else {
+        const shown = rows.slice(0, CAP);
+        shown.forEach(function(it){
+          const addr = String(it.file.property_address || '').split(',')[0];
+          const nm = String(it.task.label || 'Task');
+          const today = it.days === 0;
+          h += '<div class="cs-row' + (today ? ' is-today' : '') + '" data-cs-file="' + esc(it.file.id) + '">' +
+            '<span class="cs-due">' + esc(_dueLbl(it.days)) + '</span>' +
+            '<div class="cs-body">' +
+              '<div class="cs-task">' + esc(nm) + '</div>' +
+              '<div class="cs-addr">' + esc(addr) + '</div>' +
+            '</div>' +
+          '</div>';
+        });
+        if(rows.length > CAP){
+          h += '<div class="cs-more" data-not-wired="1">See all ' + rows.length + '</div>';
+        }
+      }
+      h += '</div>';
+      return h;
+    }
+    side.innerHTML =
+      '<div class="cs-hdr">Upcoming</div>' +
+      '<div class="cs-sub">Today &middot; Next 3 days</div>' +
+      '<div class="cs-cols">' +
+        _colHtml(buyer,  'Buyer',  'Nothing coming up on the buyer side',  false) +
+        _colHtml(seller, 'Seller', 'Nothing coming up on the seller side', true) +
+      '</div>';
+    // Row click · open the file drawer. Same helper the Today panel uses.
+    side.querySelectorAll('[data-cs-file]').forEach(function(el){
+      el.addEventListener('click', function(){
+        const fid = el.getAttribute('data-cs-file');
+        const f = (_files || []).find(function(x){ return x.id === fid; });
+        if(f) try { openPlaybook(f); } catch(_){}
+      });
+    });
+  }
+  // Mount + observe · fires renderCalUpcomingSide whenever the calendar
+  // heatmap repaints (which is every existing re-render path renderCalHeatmap
+  // is already wired into), so we don't have to touch any existing renderer.
+  try {
+    if(!window.__aariCalSideBound){
+      window.__aariCalSideBound = true;
+      function _bindCalSideObserver(){
+        const heat = document.getElementById('calHeatmap');
+        if(!heat){ setTimeout(_bindCalSideObserver, 400); return; }
+        try { _ensureCalSideMounted(); renderCalUpcomingSide(); } catch(_){}
+        let _rT = null;
+        const mo = new MutationObserver(function(){
+          clearTimeout(_rT);
+          _rT = setTimeout(function(){
+            try { _ensureCalSideMounted(); renderCalUpcomingSide(); } catch(_){}
+          }, 60);
+        });
+        mo.observe(heat, { childList: true, subtree: true, characterData: false });
+      }
+      if(document.readyState === 'loading'){
+        document.addEventListener('DOMContentLoaded', _bindCalSideObserver);
+      } else {
+        _bindCalSideObserver();
+      }
+      // Re-render on the same 5-min cadence as the Today card, so day-count
+      // math (today / 1d / 2d / 3d) advances without a calendar repaint.
+      setInterval(function(){ try { renderCalUpcomingSide(); } catch(_){} }, 5 * 60 * 1000);
+      // Rebuild across mobile <-> desktop boundary crossings (CSS hides it
+      // on mobile, but we still want a clean paint on the way back).
+      try {
+        let _wasCsDesk = _calSideIsDesktop(), _rzCs = null;
+        window.addEventListener('resize', function(){
+          clearTimeout(_rzCs);
+          _rzCs = setTimeout(function(){
+            const now = _calSideIsDesktop();
+            if(now !== _wasCsDesk){ _wasCsDesk = now; try { renderCalUpcomingSide(); } catch(_){} }
+          }, 180);
+        });
+      } catch(_){}
+    }
+  } catch(_){}
 
   // ============ TASK SHEET (Marlenyi Jul 27 · Direction 02A) ============
   // Tap a row on the Today tab → focused task sheet slides up. Just this
