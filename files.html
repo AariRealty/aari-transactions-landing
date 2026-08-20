@@ -2016,7 +2016,7 @@
      two-column (Buyer / Seller) card beside it. Mobile falls out via the
      @media below · the wrapper collapses back to a single column and the
      side box hides itself. See renderCalUpcomingSide + _ensureCalSideMounted. */
-  .cal-with-side { display: flex; align-items: flex-start; gap: 16px; }
+  .cal-with-side { display: flex; align-items: stretch; gap: 16px; }
   .cal-with-side > #calHeatmap { flex: 1 1 0; min-width: 0; }
   .cal-side-box {
     flex: 0 0 320px;
@@ -2028,7 +2028,9 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
+    overflow: hidden;
   }
+  .cal-side-box .cs-cols { overflow: auto; }
   .cal-side-box .cs-hdr {
     font-family: Georgia, 'Times New Roman', serif;
     font-size: 13px;
@@ -9724,8 +9726,6 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   function renderCalUpcomingSide(){
     if(!_calSideIsDesktop()) return;
-    // On mobile the bottom nav swaps views · only render when Calendar is active.
-    // On desktop (one-page overview) the calendar is always visible, so no gate.
     try {
       const _isMobileNav = window.matchMedia && window.matchMedia('(max-width: 600px)').matches;
       if(_isMobileNav && typeof _mnavDest !== 'undefined' && _mnavDest !== 'calendar') return;
@@ -9733,43 +9733,48 @@ Tell me your planned move-out date and I will set the inspection.`
     const side = _ensureCalSideMounted();
     if(!side) return;
     if(!_files || !_files.length){ side.innerHTML = ''; return; }
+    // Base day · when the user has tapped a day on the calendar we use that,
+    // otherwise default to today. Show items due within [base, base+3].
     const _t0 = new Date(); _t0.setHours(0, 0, 0, 0);
+    let baseTs = _t0.getTime();
+    try {
+      if(typeof _calSelDay === 'number' && _calSelDay && window._calSelDayTapped){
+        const _sd = new Date(_calSelDay); _sd.setHours(0, 0, 0, 0);
+        baseTs = _sd.getTime();
+      }
+    } catch(_){}
+    const _fileById = {};
+    (_files || []).forEach(function(f){ if(f && f.id) _fileById[f.id] = f; });
+    // Pull the same live deadline set the month grid renders · this includes
+    // real deadlines (Close, Title, Loan, EMD, etc.) AND their "SOON" chase
+    // reminders. That's why CLOSE SOON tomorrow was missing before — the
+    // old sidebar iterated only stage-checklist tasks, not calendar deadlines.
+    let cal = [];
+    try { cal = (typeof _tcCalDeadlines === 'function') ? _tcCalDeadlines() : []; } catch(_){}
+    const _brokerFilter = (typeof _tcFilter !== 'undefined' && _tcFilter && _tcFilter !== 'all') ? _tcFilter : null;
     const buyer = [];
     const seller = [];
-    (_files || []).forEach(function(f){
+    cal.forEach(function(d){
       try {
+        if(!d || d.done) return;
+        if(!(d.date instanceof Date) || isNaN(d.date.getTime())) return;
+        const f = _fileById[d.fileId];
         if(!f || f.status === 'archived') return;
-        // Broker-filter gate · same one every other renderer uses.
-        if(typeof _tcFilter !== 'undefined' && _tcFilter && _tcFilter !== 'all'){
-          if(String(f.assigned_tc_id || '') !== String(_tcFilter) && String(f.fg_tc_id || '') !== String(_tcFilter)) return;
+        if(_brokerFilter){
+          if(String(f.assigned_tc_id || '') !== String(_brokerFilter) && String(f.fg_tc_id || '') !== String(_brokerFilter)) return;
         }
-        const stg = (typeof deriveStage === 'function') ? deriveStage(f) : (f.transaction_stage || '');
-        if(['new','intake_received','waiting_for_tc','','closed'].indexOf(stg) !== -1) return;
-        const ft = f.file_type || 'sale';
-        if(ft !== 'sale' && ft !== 'rental') return;
-        const tasks = ((typeof ckTasksFor === 'function') ? (ckTasksFor(f, stg) || []) : ((typeof STAGE_CHECKLISTS === 'object' && STAGE_CHECKLISTS[ft]) ? (STAGE_CHECKLISTS[ft][stg] || []) : []));
-        const done = (f.stage_tasks && typeof f.stage_tasks === 'object') ? f.stage_tasks : {};
-        const dls = (typeof fileDeadlines === 'function') ? fileDeadlines(f) : {};
-        tasks.forEach(function(t){
-          if(done[t.id]) return;
-          if(typeof _sweptTasksThisSession !== 'undefined' && _sweptTasksThisSession && _sweptTasksThisSession.has(f.id + ':' + t.id)) return;
-          if(t.showIf && !t.showIf(f)) return;
-          let days = null;
-          try {
-            const _rawDue = (typeof _taskDueDate === 'function') ? _taskDueDate(f, t, dls) : null;
-            if(_rawDue instanceof Date && !isNaN(_rawDue)){
-              const dd = new Date(_rawDue.getTime()); dd.setHours(0, 0, 0, 0);
-              days = Math.round((dd - _t0) / 86400000);
-            }
-          } catch(_){}
-          if(days == null) return;
-          if(days < 0 || days > 3) return;
-          const _ct = String(f.client_type || '').toLowerCase();
-          const rec = { file: f, task: t, days: days };
-          if(_ct === 'buyer') buyer.push(rec);
-          else if(_ct === 'seller') seller.push(rec);
-          else if(_ct === 'both'){ buyer.push(rec); seller.push(rec); }
-        });
+        const dd = new Date(d.date.getTime()); dd.setHours(0, 0, 0, 0);
+        const days = Math.round((dd.getTime() - baseTs) / 86400000);
+        if(days < 0 || days > 3) return;
+        const _ct = String(f.client_type || '').toLowerCase();
+        const rec = { file: f, deadline: d, days: days };
+        if(_ct === 'buyer') buyer.push(rec);
+        else if(_ct === 'seller') seller.push(rec);
+        else if(_ct === 'both'){ buyer.push(rec); seller.push(rec); }
+        else {
+          const ft = (f.file_type || '').toLowerCase();
+          if(ft === 'listing') seller.push(rec); else buyer.push(rec);
+        }
       } catch(_){}
     });
     buyer.sort(function(a, b){ return a.days - b.days; });
@@ -9807,7 +9812,11 @@ Tell me your planned move-out date and I will set the inspection.`
         const shown = rows.slice(0, CAP);
         shown.forEach(function(it){
           const addr = String(it.file.property_address || '').split(',')[0];
-          const nm = String(it.task.label || 'Task');
+          const isChase = !!(it.deadline && it.deadline.isChase);
+          let nm = String((it.deadline && it.deadline.label) || 'Deadline');
+          // Chase reminders come through as "Reminder · Closing" · strip the
+          // prefix and append "soon" so it reads like the calendar chip.
+          if(isChase) nm = nm.replace(/^Reminder\s*&middot;\s*/i, '').replace(/^Reminder\s*·\s*/i, '') + ' soon';
           const today = it.days === 0;
           h += '<div class="cs-row' + (today ? ' is-today' : '') + '" data-cs-file="' + esc(it.file.id) + '">' +
             '<span class="cs-due">' + esc(_dueLbl(it.days)) + '</span>' +
@@ -9824,9 +9833,20 @@ Tell me your planned move-out date and I will set the inspection.`
       h += '</div>';
       return h;
     }
+    // Header · reflect the selected calendar day so it's obvious the sidebar
+    // is scoped to that day + next 3.
+    let _hdrTxt = 'Upcoming';
+    let _subTxt = 'Today &middot; Next 3 days';
+    try {
+      const _isToday = (baseTs === _t0.getTime());
+      const _bd = new Date(baseTs);
+      const _lbl = _bd.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+      _hdrTxt = _isToday ? 'Today &middot; ' + _lbl : _lbl;
+      _subTxt = 'This day &middot; next 3 days';
+    } catch(_){}
     side.innerHTML =
-      '<div class="cs-hdr">Upcoming</div>' +
-      '<div class="cs-sub">Today &middot; Next 3 days</div>' +
+      '<div class="cs-hdr">' + _hdrTxt + '</div>' +
+      '<div class="cs-sub">' + _subTxt + '</div>' +
       '<div class="cs-cols">' +
         _colHtml(buyer,  'Buyer side',  'Nothing coming up on the buyer side',  'buyer') +
         _colHtml(seller, 'Seller side', 'Nothing coming up on the seller side', 'seller') +
