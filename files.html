@@ -28181,6 +28181,116 @@ Tell me your planned move-out date and I will set the inspection.`
       chip.remove();
     }
   });
+
+  // Marlenyi 2026-08-20 · week-out note to listing agent.
+  // Buyer-side files only. Appears when closing_date is within 3..14 days out.
+  // One click copies a pre-filled note to the clipboard so the TC can paste it
+  // as a reply into her existing thread with the listing agent (no auto-send,
+  // no fresh email, no message-id guessing). State stored on raw_form_data.
+  function _weekOutNoteBody(file){
+    var raw = (file && file.raw_form_data) || {};
+    var laName = String(raw.listing_agent_name || raw.pa_listing_agent_name || '').trim();
+    var laFirst = laName.split(/\s+/)[0] || 'there';
+    var tcFirst = '';
+    try {
+      var tcName = String((typeof _tcNameFor === 'function' ? _tcNameFor(file) : '') || (_profile && (_profile.first_name || _profile.name)) || '').trim();
+      tcFirst = tcName.split(/\s+/)[0] || 'Your TC';
+    } catch(_){ tcFirst = 'Your TC'; }
+    var tcEmail = '';
+    try { tcEmail = String((_profile && _profile.email) || ''); } catch(_){ tcEmail = ''; }
+    return [
+      'Hi ' + laFirst + ',',
+      '',
+      'Closing is about seven days out. Thankfully we’ve made it this far.',
+      '',
+      'A few things from your side would smooth the ride:',
+      '',
+      '  · Title company contact if we haven’t traded it yet (name, email, phone)',
+      '  · Estoppel status if this is a condo or HOA property',
+      '  · Walk-through window that works for the seller',
+      '',
+      'And if anything on the buyer’s side has been holding you up, just tell me. I’d rather clear it now than at 4:53 PM Thursday.',
+      '',
+      'Grateful to be closing this one with you.',
+      '',
+      tcFirst,
+      'Aari Transactions',
+      tcEmail
+    ].join('\n');
+  }
+  function weekOutNoteChipHtml(file){
+    try {
+      if(!file) return '';
+      var raw = file.raw_form_data || {};
+      var st = raw.week_out_note_state;
+      if(st === 'dismissed') return '';
+      var side = String(file.client_type || raw.client_type || '').toLowerCase();
+      if(side !== 'buyer') return '';
+      var laName = String(raw.listing_agent_name || raw.pa_listing_agent_name || '').trim();
+      if(!laName) return '';
+      var cd = file.closing_date;
+      if(!cd) return '';
+      var d = new Date(cd); if(isNaN(d)) return '';
+      d.setHours(0, 0, 0, 0);
+      var t0 = new Date(); t0.setHours(0, 0, 0, 0);
+      var days = Math.round((d.getTime() - t0.getTime()) / 86400000);
+      if(days < 3 || days > 14) return '';
+      var laFirst = laName.split(/\s+/)[0];
+      var copied = (st === 'copied');
+      return '<div class="won-chip" data-won-file="' + esc(file.id) + '" '
+        + 'style="background:linear-gradient(180deg,#faf7ef 0%,#f2ede3 100%);border:0.5px solid #e6dfcd;border-radius:12px;padding:13px 15px;margin:0 0 14px">'
+        + '<div style="font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#8a6d1b;margin:0 0 6px">Closing in ' + days + ' day' + (days === 1 ? '' : 's') + '</div>'
+        + '<div style="font-size:12.5px;color:#0f0f0f;line-height:1.55;margin:0 0 10px">'
+        + 'Send <strong style="font-weight:600">' + esc(laFirst) + '</strong> a warm week-out note in your existing thread. Nothing fires from here · one click just copies the wording to your clipboard.'
+        + '</div>'
+        + '<div style="display:flex;gap:7px;flex-wrap:wrap">'
+        + '  <button type="button" data-won-copy="1" style="font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;background:' + (copied ? '#2f6b4f' : '#0f0f0f') + ';color:#fff;border:0">' + (copied ? '✓ Copied · copy again' : 'Copy the note') + '</button>'
+        + '  <button type="button" data-won-dismiss="1" style="font-size:11.5px;font-weight:600;border-radius:8px;padding:7px 14px;cursor:pointer;font-family:inherit;background:transparent;color:#7a756c;border:0.5px solid #d9d1bc">Skip on this file</button>'
+        + '</div>'
+        + '<div style="font-size:10.5px;color:#7a756c;margin-top:8px;font-style:italic">Paste it as a reply into the thread you already have with ' + esc(laFirst) + '.</div>'
+        + '</div>';
+    } catch(_){ return ''; }
+  }
+  document.addEventListener('click', async function(e){
+    var btn = e.target && e.target.closest && e.target.closest('[data-won-copy],[data-won-dismiss]');
+    if(!btn) return;
+    var chip = btn.closest('.won-chip'); if(!chip) return;
+    var fileId = chip.getAttribute('data-won-file');
+    var file = (_files || []).find(function(f){ return String(f.id) === String(fileId); }) || _currentFile;
+    if(!file || String(file.id) !== String(fileId)) return;
+    if(btn.hasAttribute('data-won-copy')){
+      var body = _weekOutNoteBody(file);
+      var ok = false;
+      try { await navigator.clipboard.writeText(body); ok = true; }
+      catch(_){
+        try {
+          var ta = document.createElement('textarea');
+          ta.value = body; ta.style.position = 'fixed'; ta.style.top = '-9999px';
+          document.body.appendChild(ta); ta.select();
+          ok = document.execCommand('copy');
+          document.body.removeChild(ta);
+        } catch(__){ ok = false; }
+      }
+      if(!ok){ alert('Could not copy. Long-press to select and copy manually.'); return; }
+      var prev = file.raw_form_data || {};
+      var next = Object.assign({}, prev, { week_out_note_state:'copied', week_out_note_copied_at: new Date().toISOString() });
+      file.raw_form_data = next;
+      try { const _r = await _client.from('files').update({ raw_form_data: next }).eq('id', fileId); if(_r && _r.error) console.warn('[files:' + fileId + '] week_out_note=copied save did not persist', _r.error.message); } catch(e2){ console.warn('[files:' + fileId + '] week_out_note=copied save threw', e2); }
+      chip.querySelector('[data-won-copy]').innerHTML = '✓ Copied · copy again';
+      chip.querySelector('[data-won-copy]').style.background = '#2f6b4f';
+      var msg = document.createElement('div');
+      msg.className = 'undo';
+      msg.innerHTML = '<span class="undo-msg">Note copied · paste it into your thread with the listing agent</span>';
+      document.body.appendChild(msg);
+      setTimeout(function(){ msg.remove(); }, 2400);
+    } else {
+      var prev2 = file.raw_form_data || {};
+      var next2 = Object.assign({}, prev2, { week_out_note_state:'dismissed', week_out_note_dismissed_at: new Date().toISOString() });
+      file.raw_form_data = next2;
+      try { const _r = await _client.from('files').update({ raw_form_data: next2 }).eq('id', fileId); if(_r && _r.error) console.warn('[files:' + fileId + '] week_out_note=dismissed save did not persist', _r.error.message); } catch(e){ console.warn('[files:' + fileId + '] week_out_note=dismissed save threw', e); }
+      chip.remove();
+    }
+  });
   // Marlenyi 2026-08-06 · grouped Previously-done list. Every row same shape
   // (checkbox + category chip + name struck + date on the right), items chunked
   // into Deadlines hit / Tasks handled / Emails sent so the block reads like
@@ -29502,6 +29612,7 @@ Tell me your planned move-out date and I will set the inspection.`
     host.innerHTML = contractGuardBannerHtml(file) + roBanner + saBanner + payBanner + closingBanner + gate + widget +
       inhouseTestBannerHtml(file) +
       otherSideOfferChipHtml(file) +
+      weekOutNoteChipHtml(file) +
       (anyLock ? '<div style="opacity:0.4;pointer-events:none">' + tasksHtml + '</div>' : tasksHtml) +
       // UC / CTC tracks render the deadlines card inline (right under Today) via buildUcTracksHtml,
       // so only add it here for the other views that don't use tracks · avoids a double render.
