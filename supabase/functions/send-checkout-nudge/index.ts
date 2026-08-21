@@ -108,10 +108,12 @@ Deno.serve(async () => {
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
   // Pull unpaid upfront-service files created in the last 14 days.
+  // Also pull raw_form_data + assigned_tc_id so we can pick the TC-started
+  // email variant when a TC opened the file on behalf of the agent.
   const upfrontList = Array.from(UPFRONT_SERVICES);
   const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
   const { data: files, error } = await admin.from("files")
-    .select("id, property_address, service_type, agent_id, created_at, payment_status, paid_at, checkout_reminder_1_sent_at, checkout_reminder_2_sent_at")
+    .select("id, property_address, service_type, agent_id, assigned_tc_id, raw_form_data, created_at, payment_status, paid_at, checkout_reminder_1_sent_at, checkout_reminder_2_sent_at")
     .in("service_type", upfrontList)
     .gte("created_at", cutoff)
     .is("paid_at", null)
@@ -143,16 +145,39 @@ Deno.serve(async () => {
     } catch (_){}
     if (!clientEmail) continue;
 
+    // Marlenyi 2026-08-21 · when a TC opens the file for the agent, the
+    // "complete checkout" copy read cold. Detect submitted_by_tc + resolve the
+    // TC's first name so the email leads with "[TC] got a head start for you".
+    const raw = (f.raw_form_data || {}) as Record<string, unknown>;
+    const submittedByTc = raw.submitted_by_tc === true || raw.submitted_by_tc === "true";
+    let tcFirst = "";
+    if (submittedByTc && f.assigned_tc_id) {
+      try {
+        const t = await admin.from("agents").select("first_name").eq("id", f.assigned_tc_id).maybeSingle();
+        tcFirst = String(t.data?.first_name || "").trim();
+      } catch (_){}
+    }
+    const isTcStarted = submittedByTc && !!tcFirst;
+
     const createdAt = new Date(f.created_at).getTime();
     const hoursSinceCreate = (now - createdAt) / 3600000;
 
     // ---- Email 1: 30 min – 4 h after submit, not yet sent ----
     if (!f.checkout_reminder_1_sent_at && hoursSinceCreate >= 0.5 && hoursSinceCreate <= 24) {
-      const headline = `Almost there... just one step! &#10024;`;
       const hi = clientFirst ? `Hi ${esc(clientFirst)} &mdash; ` : "";
-      const sub = `${hi}we&rsquo;ve got your file. Complete checkout and a coordinator picks it up right away.`;
-      const html = htmlEmail({ headline, sub, addr, svcLabel, ctaUrl, ctaLabel: "Complete checkout", kicker: "Just one step left" });
-      const ok = await sendResend(`email-1 file=${f.id}`, [clientEmail], [BROKER_EMAIL], `Almost there · ${addr} · ${svcLabel}`, html);
+      const headline = isTcStarted
+        ? `${esc(tcFirst)} got a head start for you`
+        : `Almost there... just one step! &#10024;`;
+      const sub = isTcStarted
+        ? `${hi}${esc(tcFirst)} opened a file for you. It&rsquo;s ready to go the moment you approve. One quick checkout and she picks it up.`
+        : `${hi}we&rsquo;ve got your file. Complete checkout and a coordinator picks it up right away.`;
+      const subject = isTcStarted
+        ? `${tcFirst} started a file for ${addr} · approve to release`
+        : `Almost there · ${addr} · ${svcLabel}`;
+      const ctaLabel = isTcStarted ? "Review & approve" : "Complete checkout";
+      const kicker = isTcStarted ? "Your TC started a file" : "Just one step left";
+      const html = htmlEmail({ headline, sub, addr, svcLabel, ctaUrl, ctaLabel, kicker });
+      const ok = await sendResend(`email-1 file=${f.id}${isTcStarted ? " tc-started" : ""}`, [clientEmail], [BROKER_EMAIL], subject, html);
       if (ok) {
         await admin.from("files").update({ checkout_reminder_1_sent_at: new Date().toISOString() }).eq("id", f.id);
         sent1++;
@@ -165,11 +190,19 @@ Deno.serve(async () => {
       const r1Ms = new Date(f.checkout_reminder_1_sent_at).getTime();
       const hoursSinceReminder1 = (now - r1Ms) / 3600000;
       if (hoursSinceReminder1 >= 72) {
-        const headline = `Still holding your spot &#128140;`;
         const hi = clientFirst ? `Hi ${esc(clientFirst)} &mdash; ` : "";
-        const sub = `${hi}your file is ready to go, but checkout hasn&rsquo;t landed yet. If you&rsquo;d still like us on it, tap below &mdash; we&rsquo;re ready.`;
-        const html = htmlEmail({ headline, sub, addr, svcLabel, ctaUrl, ctaLabel: "Complete checkout", kicker: "Still holding your spot" });
-        const ok = await sendResend(`email-2 file=${f.id}`, [clientEmail], [BROKER_EMAIL], `Still holding your spot · ${addr}`, html);
+        const headline = isTcStarted
+          ? `Still holding this one for you`
+          : `Still holding your spot &#128140;`;
+        const sub = isTcStarted
+          ? `${hi}${esc(tcFirst)} has the file open, but checkout hasn&rsquo;t come through. Tap below and she&rsquo;s on it.`
+          : `${hi}your file is ready to go, but checkout hasn&rsquo;t landed yet. If you&rsquo;d still like us on it, tap below &mdash; we&rsquo;re ready.`;
+        const subject = isTcStarted
+          ? `Still holding ${addr} · ${tcFirst} is ready when you are`
+          : `Still holding your spot · ${addr}`;
+        const ctaLabel = isTcStarted ? "Review & approve" : "Complete checkout";
+        const html = htmlEmail({ headline, sub, addr, svcLabel, ctaUrl, ctaLabel, kicker: "Still holding your spot" });
+        const ok = await sendResend(`email-2 file=${f.id}${isTcStarted ? " tc-started" : ""}`, [clientEmail], [BROKER_EMAIL], subject, html);
         if (ok) {
           await admin.from("files").update({ checkout_reminder_2_sent_at: new Date().toISOString() }).eq("id", f.id);
           sent2++;
