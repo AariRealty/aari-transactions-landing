@@ -123,21 +123,24 @@
   }
   // The coordinator's % share. Computed off the FULL price: the member discount
   // comes out of Aari's share, NEVER the coordinator's pay.
+  // Marlenyi 2026-08-21 · always round UP to the next whole dollar so TC payouts
+  // never land on ugly .50 cents ($49.50 -> $50).
   function atTcCut(f, pct){
     var p = svcPrice(f);
     var n = (pct != null && !isNaN(pct)) ? Number(pct) : AT_TC_PCT;
-    return p ? Math.round(p * n / 100) : 0;
+    return p ? Math.ceil(p * n / 100) : 0;
   }
   // What a coordinator earns on a file BEFORE membership-credit coverage is applied.
   // Coverage can only ever pull this to $0, never raise it, so this doubles as the
   // server's trustworthy CEILING when validating a submitted invoice line.
   function tcPayCeiling(f, pct){
-    // File Organization service · flat 50% of its price ($49.50), every TC the same.
-    if(isFileOrgFile(f)) return SERVICE_PRICE.file_organization * FILE_ORG_SVC_PCT / 100;
+    // File Organization service · flat 50% of its price, rounded UP to the next
+    // whole dollar ($99 × 50% = $49.50 → $50). Same for every TC.
+    if(isFileOrgFile(f)) return Math.ceil(SERVICE_PRICE.file_organization * FILE_ORG_SVC_PCT / 100);
     // fo_override is an admin flag that reclassifies a file as file-org work;
     // apply the same 50% file-org rule so overrides don't earn more than a
     // real file-org file would.
-    if(isFoOverride(f)) return SERVICE_PRICE.file_organization * FILE_ORG_SVC_PCT / 100;
+    if(isFoOverride(f)) return Math.ceil(SERVICE_PRICE.file_organization * FILE_ORG_SVC_PCT / 100);
     return atTcCut(f, pct);
   }
   // What the client actually pays. `covered` = a membership credit already paid.
