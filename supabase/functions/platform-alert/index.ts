@@ -41,6 +41,13 @@ const FROM = Deno.env.get("FROM_EMAIL") ?? "Aari Transactions <hello@aaritransac
 const SITE_URL = Deno.env.get("SITE_URL") ?? "https://aaritransactions.com";
 const ALERT_TO = Deno.env.get("ALERT_TO") ?? "marlenyi@aarirealty.com";
 const ACTION_URL = `${SUPABASE_URL}/functions/v1/platform-alert-action`;
+// Reply-to address for one-tap reply-to-action. platform-alert-inbound catches
+// mail to alert+<token>@ and executes the action. co_invoice REVIEW alerts
+// reply-to the approve token (natural default: "yes, both are legit"); every
+// other alert replies-to the mute token (natural default: "quiet please").
+// Requires Resend Inbound (or Cloudflare Email Routing) enabled on the domain
+// with an MX record → the inbound endpoint. See the migration/README for setup.
+const REPLY_DOMAIN = Deno.env.get("ALERT_REPLY_DOMAIN") ?? "aaritransactions.com";
 
 type AlertKind =
   | "duplicate_address" | "co_invoice" | "file_reassigned" | "file_unarchived"
@@ -127,16 +134,28 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Reply-to-action: pick the token that most closely matches Marlenyi's likely
+  // "reply and get on with it" intent. co_invoice REVIEW → approve; else → mute.
+  const replyToken = (approveToken && body.kind === "co_invoice") ? approveToken : muteToken;
+  const replyOp: "approve" | "mute" = (approveToken && body.kind === "co_invoice") ? "approve" : "mute";
+  const replyTo = replyToken ? `alert+${replyToken}@${REPLY_DOMAIN}` : undefined;
+
+  const replyHint = replyToken
+    ? (replyOp === "approve"
+      ? `Or just hit reply — any reply from you approves this pair.`
+      : `Or just hit reply — any reply from you mutes this address.`)
+    : undefined;
+
   const html = renderCard({
     title: built.title, headline: built.headline, rows: built.rows,
     fileUrl, noteBelow: built.noteBelow, severity: built.severity ?? "review",
     muteUrl: muteToken ? `${ACTION_URL}?t=${muteToken}` : undefined,
     approveUrl: approveToken ? `${ACTION_URL}?t=${approveToken}` : undefined,
-    address,
+    address, replyHint,
   });
 
-  const r = await sendEmail(ALERT_TO, built.subject, html);
-  return json({ ok: r.sent, ...r });
+  const r = await sendEmail(ALERT_TO, built.subject, html, replyTo);
+  return json({ ok: r.sent, reply_to: replyTo, ...r });
 });
 
 // ---- template-per-kind ----------------------------------------------------
@@ -208,7 +227,7 @@ function build(body: AlertBody, file: Record<string, unknown> | null, ctx: { add
 function renderCard(a: {
   title: string; headline: string; rows: Row[]; fileUrl?: string;
   noteBelow?: string; severity: "info" | "review";
-  muteUrl?: string; approveUrl?: string; address?: string;
+  muteUrl?: string; approveUrl?: string; address?: string; replyHint?: string;
 }): string {
   const chipBg = a.severity === "info" ? "#dcfce7" : "#ffedd5";
   const chipFg = a.severity === "info" ? "#14532d" : "#7a2f00";
@@ -225,6 +244,9 @@ function renderCard(a: {
     : "";
   const buttons = (btnMain || btnApprove || btnMute)
     ? `<div style="margin:22px 0 6px">${btnMain}${btnApprove}${btnMute}</div>` : "";
+  const replyLine = a.replyHint
+    ? `<div style="font-size:12.5px;line-height:1.5;color:#5f5045;margin:10px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"><em>${esc(a.replyHint)}</em></div>`
+    : "";
   const note = a.noteBelow
     ? `<div style="font-size:12.5px;line-height:1.55;color:#7a6238;margin:22px 0 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">${esc(a.noteBelow)}</div>`
     : "";
@@ -232,7 +254,7 @@ function renderCard(a: {
     ? `<div style="font-size:11.5px;color:#a99a76;margin:28px 0 0;text-align:center;letter-spacing:.4px">Aari Transactions · platform alert · ${esc(a.address)}</div>`
     : `<div style="font-size:11.5px;color:#a99a76;margin:28px 0 0;text-align:center;letter-spacing:.4px">Aari Transactions · platform alert</div>`;
 
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(a.title)}</title></head><body style="margin:0;padding:0;background:#f7f3e9"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7f3e9"><tr><td align="center" style="padding:28px 16px"><table role="presentation" width="560" style="max-width:560px;width:100%;background:#ffffff;border-radius:12px;padding:32px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"><tr><td><div style="display:inline-block;font-size:10.5px;letter-spacing:1.2px;font-weight:700;padding:5px 10px;border-radius:999px;color:${chipFg};background:${chipBg};margin-bottom:14px">${chipTx}</div><h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-weight:500;font-size:26px;line-height:1.2;margin:0 0 14px;color:#0f0f0f">${esc(a.title)}</h1><p style="font-size:15px;line-height:1.6;color:#0f0f0f;margin:0 0 18px">${esc(a.headline)}</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid #e7e2d6;border-radius:6px;overflow:hidden"><tbody>${rowsHtml}</tbody></table>${buttons}${note}${foot}</td></tr></table></td></tr></table></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(a.title)}</title></head><body style="margin:0;padding:0;background:#f7f3e9"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f7f3e9"><tr><td align="center" style="padding:28px 16px"><table role="presentation" width="560" style="max-width:560px;width:100%;background:#ffffff;border-radius:12px;padding:32px 28px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"><tr><td><div style="display:inline-block;font-size:10.5px;letter-spacing:1.2px;font-weight:700;padding:5px 10px;border-radius:999px;color:${chipFg};background:${chipBg};margin-bottom:14px">${chipTx}</div><h1 style="font-family:'Cormorant Garamond',Georgia,serif;font-weight:500;font-size:26px;line-height:1.2;margin:0 0 14px;color:#0f0f0f">${esc(a.title)}</h1><p style="font-size:15px;line-height:1.6;color:#0f0f0f;margin:0 0 18px">${esc(a.headline)}</p><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid #e7e2d6;border-radius:6px;overflow:hidden"><tbody>${rowsHtml}</tbody></table>${buttons}${replyLine}${note}${foot}</td></tr></table></td></tr></table></body></html>`;
 }
 
 // ---- helpers --------------------------------------------------------------
@@ -254,9 +276,11 @@ function prettyName(email: string): string {
   const local = String(email).split("@")[0] || email;
   return local.split(/[._-]+/).map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
 }
-async function sendEmail(to: string, subject: string, html: string): Promise<{ sent: boolean; id?: string; error?: string }> {
+async function sendEmail(to: string, subject: string, html: string, replyTo?: string): Promise<{ sent: boolean; id?: string; error?: string }> {
   try {
-    const { data, error } = await resend.emails.send({ from: FROM, to: [to], subject, html });
+    const args: any = { from: FROM, to: [to], subject, html };
+    if (replyTo) args.reply_to = replyTo;
+    const { data, error } = await resend.emails.send(args);
     if (error) return { sent: false, error: String(error.message ?? error) };
     return { sent: true, id: (data as any)?.id };
   } catch (e) { return { sent: false, error: (e as any)?.message ?? String(e) }; }
