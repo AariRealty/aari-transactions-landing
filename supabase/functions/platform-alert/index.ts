@@ -47,7 +47,7 @@ const ACTION_URL = `${SUPABASE_URL}/functions/v1/platform-alert-action`;
 // other alert replies-to the mute token (natural default: "quiet please").
 // Requires Resend Inbound (or Cloudflare Email Routing) enabled on the domain
 // with an MX record → the inbound endpoint. See the migration/README for setup.
-const REPLY_DOMAIN = Deno.env.get("ALERT_REPLY_DOMAIN") ?? "aaritransactions.com";
+const REPLY_DOMAIN = Deno.env.get("ALERT_REPLY_DOMAIN") ?? "reply.aaritransactions.com";
 
 type AlertKind =
   | "duplicate_address" | "co_invoice" | "file_reassigned" | "file_unarchived"
