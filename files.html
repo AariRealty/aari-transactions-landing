@@ -31945,11 +31945,21 @@ Tell me your planned move-out date and I will set the inspection.`
         // slips in. If one already exists, offer to CLAIM it (assign this TC) instead of keeping
         // the copy: assign the existing file, archive this upload, fire the "TC is on your file"
         // email to the agent, and open the real one.
+        // Broker heads-up · any file created with a typed-agent-name that isn't in the roster.
+        // Fire-and-forget so a failed alert never blocks the intake.
+        try {
+          if(f && f.raw_form_data && f.raw_form_data.needs_agent_link){
+            _client.functions.invoke('platform-alert', { body:{ kind:'needs_agent_link', file_id:f.id, extra:{ tc_id: uid, new_agent_name: (f.raw_form_data.new_agent_name || _resolvedName || '') } } }).catch(function(){});
+          }
+        } catch(_){}
         try {
           if(f && f.property_address){
             var _dc = await _client.functions.invoke('effective-date-confirm', { body:{ op:'dupcheck', address:f.property_address, exclude_id:f.id, file_type:f.file_type } });
             var _dup = _dc && _dc.data && _dc.data.duplicate;
             if(_dup && _dup.id && _dup.id !== f.id){
+              // Broker heads-up on any duplicate address at intake, whether or not the TC claims
+              // the existing file. Best-effort; never blocks the intake.
+              try { _client.functions.invoke('platform-alert', { body:{ kind:'duplicate_address', file_id:f.id, extra:{ other_ids:[_dup.id], other_tc_id: _dup.assigned_tc_id || null } } }).catch(function(){}); } catch(_){}
               var _when = _dup.created_at ? (' on ' + new Date(_dup.created_at).toLocaleDateString('en-US', { month:'short', day:'numeric' })) : '';
               var _claimMsg = 'This transaction already exists. <b>' + esc(_dup.agent_name) + '</b> already has a file for <b>' + esc(String(_dup.property_address || '').split(',')[0]) + '</b>' + _when + '.<br><br>Assign yourself as the TC on that file instead? This upload will be removed as a duplicate.';
               var _doClaim = await appConfirm(_claimMsg, { ok:'Assign me as TC' });
