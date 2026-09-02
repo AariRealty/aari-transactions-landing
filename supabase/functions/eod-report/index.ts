@@ -177,10 +177,20 @@ Deno.serve(async (req) => {
     const sent: string[] = [];
     const previews: Record<string, { subject: string; html: string; text: string }> = {};
 
+    const skipped: string[] = [];
     for (const tc of tcs) {
       if (onlyTc && tc.id !== onlyTc && tc.email !== onlyTc) continue;
       const doneList = (doneByActor.get(tc.id) || []).slice().sort((a, b) => a.addr.localeCompare(b.addr));
       const stillList = (stillToDoByTc.get(tc.id) || []).slice().sort((a, b) => a.addr.localeCompare(b.addr));
+
+      // Marlenyi 2026-09-02 · skip the "0 completed / nothing left" clock-in
+      // email. If a TC had nothing to do AND finished nothing, there is nothing
+      // worth an inbox notification for either the TC or the broker CC. Real
+      // work days (something pending, or something completed) still send.
+      if (stillList.length === 0 && doneList.length === 0) {
+        skipped.push(tc.email);
+        continue;
+      }
 
       const hero = stillList.length === 0 ? heroAllDone(doneList.length) : heroStillToDo(stillList.length, doneList.length);
 
@@ -220,7 +230,7 @@ Deno.serve(async (req) => {
     }
 
     if (dryRun) return json(200, { ok: true, dry_run: true, tcs: tcs.length, previews });
-    return json(200, { ok: true, sent, tcs: tcs.length });
+    return json(200, { ok: true, sent, skipped, tcs: tcs.length });
   } catch (err) {
     try {
       if (BROKER_EMAIL && RESEND_API_KEY) {
