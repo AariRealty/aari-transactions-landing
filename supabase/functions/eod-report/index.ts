@@ -6,7 +6,7 @@
 //   2. Something left → "Almost there... N to go! ✨" · warm Alex-toned nudge.
 //
 // Sections (only these two, everything else lives in the portal):
-//   · Still to complete by end of day today (red-outlined empty checkbox ☐)
+//   · Contract dates today (red-outlined empty checkbox ☐)
 //   · Completed today (green ✓)
 //
 // Recipients: TO the TC, CC broker (marlenyi@aarirealty.com) on every one.
@@ -78,11 +78,42 @@ function aliasSet(key: string): Set<string> {
   return out;
 }
 
-type Task = { name: string; addr: string };
+type Task = { name: string; addr: string; dkey: string };
 type DoneItem = { name: string; addr: string };
 
+// Action hint per deadline key. Answers "what is the TC supposed to actually
+// DO about this today" so the broker (and the TC) doesn't have to guess. Keys
+// mirror the ones dispatched into deadline_feed_cache; unknown keys render the
+// name alone with no hint. Kept deliberately short — an email row, not a
+// checklist. Aliases route through aliasSet() so `finance_cont` maps to the
+// same hint as `loan_approval`.
+function actionHint(dkey: string): string {
+  const canonical = (function () {
+    for (const c of Object.keys(ALIAS)) if (c === dkey || ALIAS[c].includes(dkey)) return c;
+    return dkey;
+  })();
+  const H: Record<string, string> = {
+    loan_approval: "Confirm the loan approval letter is in hand, or file an addendum to extend the period.",
+    inspection_end: "Inspection period ends today. Buyer delivers written objections, requests, or accepts as-is.",
+    appraisal: "Appraisal contingency expires. Confirm the appraised value, or renegotiate under the contract.",
+    closing: "Closing date. Confirm the file is clear to close and the CD has been signed.",
+    title_commitment: "Title commitment is due from the title company. Chase if not received.",
+    estoppel: "Estoppel letter is due from the HOA / Condo association. Chase if not received.",
+    survey: "Survey is due from the seller. Chase if not received.",
+    emd_initial: "Initial EMD is due from the buyer. Confirm receipt with the escrow agent.",
+    emd_additional: "Additional EMD is due from the buyer. Confirm receipt with the escrow agent.",
+    compensation: "Compensation agreement is due. Get it signed if it isn't already.",
+    tenant_lease: "Seller must deliver tenant leases today. Chase if not received.",
+  };
+  return H[canonical] || "";
+}
+
 function rowStillToDo(t: Task): string {
-  return `<div style="padding:8px 4px;border-top:0.5px solid #f2eee4"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%"><tr><td style="width:24px;vertical-align:top;padding-top:2px"><span style="display:inline-block;width:14px;height:14px;border-radius:3px;border:1.5px solid ${RED}">&nbsp;</span></td><td><div style="font-size:12.5px;color:${INK};line-height:1.4"><strong>${esc(t.name)}</strong></div><div style="font-size:11.5px;color:#8a7a6a;margin-top:2px">${esc(t.addr)}</div></td></tr></table></div>`;
+  const hint = actionHint(t.dkey);
+  const hintHtml = hint
+    ? `<div style="font-size:11px;color:#5f5647;margin-top:4px;line-height:1.5"><em>${esc(hint)}</em></div>`
+    : "";
+  return `<div style="padding:8px 4px;border-top:0.5px solid #f2eee4"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%"><tr><td style="width:24px;vertical-align:top;padding-top:2px"><span style="display:inline-block;width:14px;height:14px;border-radius:3px;border:1.5px solid ${RED}">&nbsp;</span></td><td><div style="font-size:12.5px;color:${INK};line-height:1.4"><strong>${esc(t.name)}</strong></div><div style="font-size:11.5px;color:#8a7a6a;margin-top:2px">${esc(t.addr)}</div>${hintHtml}</td></tr></table></div>`;
 }
 function rowDone(t: DoneItem): string {
   return `<div style="padding:8px 4px;border-top:0.5px solid #f2eee4"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%"><tr><td style="width:24px;vertical-align:top"><span style="color:${GREEN};font-weight:700;font-size:14px">&#10003;</span></td><td><div style="font-size:12.5px;color:${INK};line-height:1.4"><strong>${esc(t.name)}</strong></div><div style="font-size:11.5px;color:#8a7a6a;margin-top:2px">${esc(t.addr)}</div></td></tr></table></div>`;
@@ -169,7 +200,7 @@ Deno.serve(async (req) => {
       if (isDone(r.file_id, r.dkey)) return;
       const tcId = f && f.assigned_tc_id; if (!tcId) return;
       const bkt = stillToDoByTc.get(tcId); if (!bkt) return;
-      bkt.push({ name: r.name || "Deadline", addr: shortAddr((f && f.property_address) || "") });
+      bkt.push({ name: r.name || "Deadline", addr: shortAddr((f && f.property_address) || ""), dkey: r.dkey });
     });
 
     const dateLabel = etLongLabel(now);
@@ -195,7 +226,7 @@ Deno.serve(async (req) => {
       const hero = stillList.length === 0 ? heroAllDone(doneList.length) : heroStillToDo(stillList.length, doneList.length);
 
       const stillBlock = stillList.length > 0
-        ? `<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:${RED};font-weight:700;margin:14px 2px 4px">Still to complete by end of day today</div>${stillList.map(rowStillToDo).join("")}`
+        ? `<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:${RED};font-weight:700;margin:14px 2px 4px">Contract dates today</div>${stillList.map(rowStillToDo).join("")}`
         : "";
 
       const doneBlock = doneList.length > 0
@@ -215,7 +246,7 @@ Deno.serve(async (req) => {
       const textLines = [
         `Aari Transactions · Wrap-up for ${tc.name} · ${dateLabel}`, ``,
         ...(stillList.length > 0
-          ? [`Almost there... ${stillList.length} to go before EOD.`, ``, `Still to complete by end of day today:`, ...stillList.map(t => `  [ ] ${t.name} · ${t.addr}`), ``]
+          ? [`Almost there... ${stillList.length} to go before EOD.`, ``, `Contract dates today:`, ...stillList.map(t => `  [ ] ${t.name} · ${t.addr}`), ``]
           : [`You clocked in. ${doneList.length} completed. Nothing left for today.`, ``]),
         ...(doneList.length > 0 ? [`Completed today:`, ...doneList.map(t => `  [✓] ${t.name} · ${t.addr}`), ``] : []),
         `Open the portal: ${PORTAL}`,
