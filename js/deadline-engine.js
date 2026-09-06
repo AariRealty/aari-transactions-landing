@@ -189,7 +189,21 @@
     // file shows no computed deadlines until the TC sets the type (the cockpit already
     // gates on this) rather than confidently-wrong ones.
     if(!file.contract_type) return [];
-    return contractDeadlines(file.contract_type, file.effective_date, file.closing_date, buildFileOverrides(file)) || [];
+    const rows = contractDeadlines(file.contract_type, file.effective_date, file.closing_date, buildFileOverrides(file)) || [];
+    // Absolute per-deadline overrides (deadline_overrides._dates) are applied AFTER
+    // computation, never merged into the config buildFileOverrides returns: those are
+    // day counts, these are the contract's actual dates typed by the TC. Same rule
+    // fileDeadlines() already follows, so both exported APIs agree on a file.
+    const dateOv = (file.deadline_overrides && typeof file.deadline_overrides === 'object'
+      && file.deadline_overrides._dates && typeof file.deadline_overrides._dates === 'object')
+      ? file.deadline_overrides._dates : {};
+    rows.forEach(function(r){
+      if(!r || !r.key) return;
+      if(!Object.prototype.hasOwnProperty.call(dateOv, r.key)) return;
+      const od = parseDate(dateOv[r.key]);
+      if(od){ r.date = od; r.date_overridden = true; }
+    });
+    return rows;
   }
   function fileDeadlines(file){
     // Same rule as fileContractDeadlines: never guess a contract type. Without one,
