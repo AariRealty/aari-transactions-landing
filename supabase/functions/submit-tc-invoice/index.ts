@@ -242,6 +242,39 @@ Deno.serve(async (req) => {
   const upd = await admin.from("files").update({ invoice_id: inv.id }).in("id", fileIds).is("invoice_id", null);
   if (upd.error) { await admin.from("tc_invoices").delete().eq("id", inv.id); return j(500,{ ok:false, error:"file marking failed, invoice rolled back: " + upd.error.message }); }
 
+  // Co-invoice detection · a file on THIS invoice shares its address with an active
+  // file assigned to a DIFFERENT TC. This is Hibiscus's approved case (Milennys and
+  // Eileen both run File Org on 1219 Hibiscus), but usually a signal the broker
+  // should look and archive the dupe. Fires platform-alert (best-effort — a failure
+  // here never blocks the invoice; the alert is a heads-up, not a gate).
+  try {
+    const invoicedIds = new Set(fileIds.map(String));
+    const seen = new Set<string>();
+    for (const it of safeItems) {
+      const f = byId.get(String(it.file_id));
+      const addr = f?.property_address ? normAddr(String(f.property_address)) : "";
+      if (!addr || seen.has(addr)) continue;
+      seen.add(addr);
+      const { data: siblings } = await admin
+        .from("files")
+        .select("id, assigned_tc_id, status, raw_form_data")
+        .ilike("property_address", addressPrefixLike(String(f.property_address)))
+        .neq("assigned_tc_id", tcId)
+        .not("status", "in", "(archived,cancelled)")
+        .limit(5);
+      const otherTc = (siblings || []).find((s: any) => !!s.assigned_tc_id && !invoicedIds.has(String(s.id)));
+      if (!otherTc) continue;
+      const approved = !!(f?.raw_form_data && (f.raw_form_data as any).co_invoice_approved)
+                    || !!(otherTc.raw_form_data && (otherTc.raw_form_data as any).co_invoice_approved);
+      const otherTcName = await lookupTcName(admin, otherTc.assigned_tc_id);
+      const week = (body.period_start && body.period_end) ? `${body.period_start} – ${body.period_end}` : "this week";
+      // Fire and forget — never await the fetch, never let a failure surface.
+      admin.functions.invoke("platform-alert", {
+        body: { kind: "co_invoice", file_id: f.id, extra: { tc_id: tcId, other_tc_name: otherTcName, other_file_id: otherTc.id, week, approved } },
+      }).catch(() => {});
+    }
+  } catch (e) { console.warn("co-invoice alert skipped:", (e as any)?.message || e); }
+
   const tcLabel = tcName || "A coordinator";
   const period = (body.period_start && body.period_end) ? (body.period_start + " – " + body.period_end) : "";
   const { data: broker } = await admin.from("agents").select("email").eq("role","broker").order("created_at",{ ascending:true }).limit(1).maybeSingle();
@@ -279,6 +312,28 @@ Deno.serve(async (req) => {
   if (tc.email) await sendEmail(tc.email, `Invoice ${inv.invoice_number} sent · ${money(total)}`, tcHtml);
   return j(200,{ ok:true, invoice_id:inv.id, invoice_number:inv.invoice_number, total_cents:total, prior_unpaid_cents: priorSum });
 });
+// Address normalization for co-invoice detection. We match on the first token
+// of the address (street + number), lowercased, so "1219 Hibiscus Ave, Lehigh
+// Acres, FL 33972" and "1219 Hibiscus Ave, Lehigh Acres, Florida 33972" collide.
+function normAddr(s: string): string {
+  const first = String(s || "").split(",")[0] || "";
+  return first.toLowerCase().replace(/\s+/g, " ").trim();
+}
+function addressPrefixLike(s: string): string {
+  const first = String(s || "").split(",")[0] || "";
+  return first.replace(/[%_]/g, "\\$&").trim() + "%";
+}
+async function lookupTcName(admin: any, id: string | null): Promise<string> {
+  if (!id) return "another TC";
+  try {
+    const { data } = await admin.auth.admin.getUserById(id);
+    const email = data?.user?.email;
+    if (!email) return id.slice(0, 8);
+    const local = String(email).split("@")[0] || email;
+    return local.split(/[._-]+/).map((s: string) => s.charAt(0).toUpperCase() + s.slice(1)).join(" ");
+  } catch (_) { return id.slice(0, 8); }
+}
+
 async function sendEmail(to: string, subject: string, html: string){
   if (!RESEND) return;
   for (const from of [FROM_PRIMARY, FROM_FALLBACK]) {
