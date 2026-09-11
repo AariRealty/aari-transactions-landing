@@ -12,7 +12,6 @@
 |---|---|---|---|
 | 0.1 | Marlenyi | Read every page on the live site one time and approve copy | You sign off on `index.html`, `about.html`, `contact.html`, `reviews.html`, `book.html`, `blog/*`, `refer.html`, `pre-close-checklist.html`, `portal.html`, `agent-submit.html`, `cancel-membership.html`, `privacy.html`, `terms.html` |
 | 0.2 | Florida attorney | Review Privacy Policy + Terms of Service | Both signed off in writing (email is fine) |
-| 0.3 | Marlenyi | Verify biBERK $1M E&O policy is active and covers TC operations | Certificate of Insurance saved to brokerage compliance binder |
 | 0.4 | Marlenyi | Verify Stripe Producer Annual price line item is correct ($1,289/yr) | Price ID matches Stripe dashboard |
 
 ---
