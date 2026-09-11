@@ -13,8 +13,6 @@
 --   · A class-action liability if the agents row is ever exposed.
 --   · A violation of those platforms' Terms of Service (credential sharing /
 --     storage is prohibited by SkySlope, DocuSign, Dotloop, etc.).
---   · An E&O policy gap · most carriers exclude breaches tied to stored
---     third-party credentials.
 --
 -- The new architecture (Path B v2 signup, May 2026):
 --   · agents.compliance_platform · NAME only (text)
