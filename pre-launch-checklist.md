@@ -16,7 +16,6 @@ These are blockers. Paid traffic cannot start until every box is checked.
 - [ ] **Service Agreement PDF renamed** from `aari-transactions-service-agreement-FOR-REVIEW.pdf` to clean filename (`aari-transactions-service-agreement-v4.6.pdf` or final version)
 - [ ] **Service Agreement link updated** in intake modal step 4 to point to new filename
 - [ ] **Terms of Service drafted, attorney-reviewed, and linked** in homepage footer Legal column
-- [ ] **biBERK $1M E&O policy verified** — confirm carrier name is correct, confirm $1M limit is current, confirm coverage extends to TC team. Pull declarations page.
 - [ ] **Operational claims verified:**
   - "Same business day TC assignment" — true on every file (across hero, trust strip, FAQ, final CTA)
   - "No close, no fee. No exceptions." — zero past files where Aari collected fee on dead deal
@@ -138,7 +137,6 @@ These are reminders. Items here usually depend on something outside Claude's edi
 
 - [ ] Privacy Policy attorney review (item 1 above)
 - [ ] Terms of Service drafted (item 1)
-- [ ] biBERK E&O verification (item 1)
 - [ ] Producer Annual Stripe price (item 2)
 - [ ] Stripe checkout copy applied (item 2)
 - [ ] Real testimonials FTC-permissioned (item 3)
