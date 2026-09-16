@@ -26,7 +26,7 @@
 // TO:       ALERT_TO env var (defaults to marlenyi@aarirealty.com).
 //
 // PREVIEW:  POST { "preview_to": "<email>", "kind": "co_invoice" } sends a
-//           sample without hitting mutes or actions — bypass for template QA.
+//           sample without hitting mutes or actions. Bypass for template QA.
 // ============================================================================
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -97,7 +97,7 @@ Deno.serve(async (req) => {
   const addressKey = normAddress(address);
 
   // ---- MUTE gate. Silently skip if this address (+ optional kind) is muted.
-  //      Kept quiet — response still returns ok so the caller doesn't retry.
+  //      Kept quiet. Response still returns ok so the caller doesn't retry.
   try {
     const { data: muted } = await admin.rpc("platform_alert_is_muted", { p_address_key: addressKey, p_kind: body.kind });
     if (muted === true) return json({ ok: true, muted: true, address_key: addressKey, kind: body.kind });
@@ -142,8 +142,8 @@ Deno.serve(async (req) => {
 
   const replyHint = replyToken
     ? (replyOp === "approve"
-      ? `Or just hit reply — any reply from you approves this pair.`
-      : `Or just hit reply — any reply from you mutes this address.`)
+      ? `Or just hit reply. Any reply from you approves this pair.`
+      : `Or just hit reply. Any reply from you mutes this address.`)
     : undefined;
 
   const html = renderCard({
@@ -171,7 +171,7 @@ function build(body: AlertBody, file: Record<string, unknown> | null, ctx: { add
     const others = (extra?.other_ids as string[]) ?? [];
     return { subject: `Duplicate address on intake · ${ctx.address}`, title: "Duplicate address on intake",
       headline: `A new file was created at ${ctx.address}, but ${others.length} active file${others.length === 1 ? "" : "s"} already exist${others.length === 1 ? "s" : ""} at this address. Look and archive the one that shouldn't be there.`,
-      rows: [{ label: "Address", value: ctx.address }, { label: "New file · TC", value: ctx.tcName }, { label: "New file · service", value: ctx.svcLabel ?? "—" }, { label: "Other active files", value: `${others.length}` }],
+      rows: [{ label: "Address", value: ctx.address }, { label: "New file · TC", value: ctx.tcName }, { label: "New file · service", value: ctx.svcLabel ?? "" }, { label: "Other active files", value: `${others.length}` }],
       severity: "review" };
   }
   if (kind === "co_invoice") {
@@ -182,10 +182,10 @@ function build(body: AlertBody, file: Record<string, unknown> | null, ctx: { add
     return { subject: approved ? `Co-invoice · ${ctx.address} (approved)` : `Two TCs invoicing · ${ctx.address}`,
       title: approved ? "Co-invoice submitted (approved)" : "Two TCs invoicing the same address",
       headline: approved
-        ? `${ctx.tcName} just submitted their invoice line for ${ctx.address}. This address is on the approved co-invoice list — ${otherTc} also invoices it.`
+        ? `${ctx.tcName} just submitted their invoice line for ${ctx.address}. This address is on the approved co-invoice list, and ${otherTc} also invoices it.`
         : `${ctx.tcName} submitted an invoice line for ${ctx.address} in ${week}, but ${otherTc} also invoices this address. Confirm both should be paid, or archive the dupe on your end.`,
-      rows: [{ label: "Address", value: ctx.address }, { label: "This TC", value: ctx.tcName }, { label: "Other TC on address", value: otherTc }, { label: "Service", value: ctx.svcLabel ?? "—" }, { label: "Week", value: week }, { label: "Approved pair", value: approved ? "Yes" : "No — please review" }],
-      noteBelow: approved ? (groupNote ?? "Approved co-invoice pair — no action needed.") : "If this is a mistake, open the file and archive the dupe. If both should get paid, tap Approve so future runs come through as FYI.",
+      rows: [{ label: "Address", value: ctx.address }, { label: "This TC", value: ctx.tcName }, { label: "Other TC on address", value: otherTc }, { label: "Service", value: ctx.svcLabel ?? "" }, { label: "Week", value: week }, { label: "Approved pair", value: approved ? "Yes" : "No, please review" }],
+      noteBelow: approved ? (groupNote ?? "Approved co-invoice pair. No action needed.") : "If this is a mistake, open the file and archive the dupe. If both should get paid, tap Approve so future runs come through as FYI.",
       severity: approved ? "info" : "review" };
   }
   if (kind === "file_reassigned") {
@@ -193,30 +193,30 @@ function build(body: AlertBody, file: Record<string, unknown> | null, ctx: { add
     const to = (extra?.to_tc_name as string | undefined) ?? ctx.tcName;
     return { subject: `File reassigned · ${ctx.address}`, title: "File reassigned",
       headline: `${ctx.address} moved from ${from} to ${to}.`,
-      rows: [{ label: "Address", value: ctx.address }, { label: "From", value: from }, { label: "To", value: to }, { label: "Service", value: ctx.svcLabel ?? "—" }], severity: "info" };
+      rows: [{ label: "Address", value: ctx.address }, { label: "From", value: from }, { label: "To", value: to }, { label: "Service", value: ctx.svcLabel ?? "" }], severity: "info" };
   }
   if (kind === "file_unarchived") {
     return { subject: `File unarchived · ${ctx.address}`, title: "File unarchived",
       headline: `${ctx.tcName} brought ${ctx.address} back to the active board.`,
-      rows: [{ label: "Address", value: ctx.address }, { label: "TC", value: ctx.tcName }, { label: "Service", value: ctx.svcLabel ?? "—" }, { label: "Now status", value: String(file?.status ?? "—") }], severity: "review" };
+      rows: [{ label: "Address", value: ctx.address }, { label: "TC", value: ctx.tcName }, { label: "Service", value: ctx.svcLabel ?? "" }, { label: "Now status", value: String(file?.status ?? "") }], severity: "review" };
   }
   if (kind === "needs_agent_link") {
     const typedName = (rf?.new_agent_name as string | undefined) ?? (extra?.new_agent_name as string | undefined) ?? "(name not captured)";
     return { subject: `New agent needs linking · ${typedName}`, title: "New agent typed on intake",
       headline: `${ctx.tcName} submitted a file for "${typedName}", who isn't on the agent roster. Link them so the file threads under the right agent.`,
-      rows: [{ label: "Typed name", value: typedName }, { label: "Address", value: ctx.address }, { label: "TC", value: ctx.tcName }, { label: "Service", value: ctx.svcLabel ?? "—" }], severity: "review" };
+      rows: [{ label: "Typed name", value: typedName }, { label: "Address", value: ctx.address }, { label: "TC", value: ctx.tcName }, { label: "Service", value: ctx.svcLabel ?? "" }], severity: "review" };
   }
   if (kind === "manual_paid_mark") {
     const amount = extra?.amount_paid as number | null | undefined;
     const method = (extra?.method as string | undefined) ?? "manual";
     return { subject: `File marked paid manually · ${ctx.address}`, title: "File marked paid without a Stripe webhook",
-      headline: `${ctx.tcName} marked ${ctx.address} as paid manually (method: ${method}). Stripe didn't trigger the mark — confirm the money actually landed.`,
-      rows: [{ label: "Address", value: ctx.address }, { label: "TC", value: ctx.tcName }, { label: "Service", value: ctx.svcLabel ?? "—" }, { label: "Amount", value: amount != null ? `$${(Number(amount) / 100).toFixed(2)}` : "—" }, { label: "Method", value: method }], severity: "review" };
+      headline: `${ctx.tcName} marked ${ctx.address} as paid manually (method: ${method}). Stripe didn't trigger the mark. Confirm the money actually landed.`,
+      rows: [{ label: "Address", value: ctx.address }, { label: "TC", value: ctx.tcName }, { label: "Service", value: ctx.svcLabel ?? "" }, { label: "Amount", value: amount != null ? `$${(Number(amount) / 100).toFixed(2)}` : "" }, { label: "Method", value: method }], severity: "review" };
   }
   if (kind === "closed_file_edit") {
     const fields = (extra?.fields as string[] | undefined) ?? [];
     return { subject: `Closed file was edited · ${ctx.address}`, title: "Closed file was edited",
-      headline: `${ctx.tcName} edited ${ctx.address} after it was marked closed. Usually you don't want this — take a look.`,
+      headline: `${ctx.tcName} edited ${ctx.address} after it was marked closed. Usually you don't want this. Take a look.`,
       rows: [{ label: "Address", value: ctx.address }, { label: "TC", value: ctx.tcName }, { label: "Fields changed", value: fields.length ? fields.join(", ") : "(unspecified)" }], severity: "review" };
   }
   return null;
