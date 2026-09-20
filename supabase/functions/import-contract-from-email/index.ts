@@ -44,12 +44,15 @@ function normAddr(a: string): string {
 // Examples we want to catch:
 //   "Re: Survey and title policy for 1611 NW 38th Ave"
 //   "Closing at 4700 32nd Ave SW"
-//   "Contract · 509 NE 25th St, Cape Coral"
-// The regex intentionally accepts NNN + optional directional (N/S/E/W/NE/NW/SE/SW) +
-// street name words + a street suffix (Ave/St/Rd/Blvd/Ln/Dr/Cir/Ct/Ter/Way/Pkwy/Pl/Trl).
+//   "Re: Addendum 4 - 509 NE 25th ST - CAPE CORAL, Florida 33909"
+//   "Contract · 12643 Kinross Ln, Naples 34120"
+// A street-name token is either a letter-starting word (Kinross, Bell, Pine) OR a
+// numeric ordinal (25th, 32nd, 288th) so Cape Coral / Okeechobee grid addresses
+// like "509 NE 25th St" match too — the old regex required a letter-starting first
+// token and quietly dropped every ordinal street into the claim pool.
 function extractAddressHint(subject: string): string {
   const s = String(subject || "");
-  const m = s.match(/\b(\d{1,6})\s+(?:(?:N|S|E|W|NE|NW|SE|SW)\s+)?[A-Za-z][A-Za-z0-9'\-\.]*(?:\s+[A-Za-z][A-Za-z0-9'\-\.]*){0,4}\s+(Ave|Avenue|St|Street|Rd|Road|Blvd|Boulevard|Ln|Lane|Dr|Drive|Cir|Circle|Ct|Court|Ter|Terrace|Way|Pkwy|Parkway|Pl|Place|Trl|Trail|Hwy|Highway)\b/i);
+  const m = s.match(/\b(\d{1,6})\s+(?:(?:N|S|E|W|NE|NW|SE|SW)\s+)?(?:[A-Za-z][A-Za-z0-9'\-\.]*|\d{1,4}(?:st|nd|rd|th))(?:\s+(?:[A-Za-z][A-Za-z0-9'\-\.]*|\d{1,4}(?:st|nd|rd|th))){0,4}\s+(Ave|Avenue|St|Street|Rd|Road|Blvd|Boulevard|Ln|Lane|Dr|Drive|Cir|Circle|Ct|Court|Ter|Terrace|Way|Pkwy|Parkway|Pl|Place|Trl|Trail|Hwy|Highway)\b/i);
   return m ? m[0].trim() : "";
 }
 
