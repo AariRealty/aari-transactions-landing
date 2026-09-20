@@ -2186,9 +2186,23 @@
   @media (max-width: 520px){
     .cal-with-side > #calUpcomingSide { display: none; }
   }
+  /* Broker "View as TC" preview · hide the chrome a TC would never see so the
+     capture matches her actual UI. The banner at the top of body stays visible
+     so the broker knows they're in preview and can exit. */
+  body.preview-as-tc #tc-filter,
+  body.preview-as-tc .files-menu-wrap,
+  body.preview-as-tc [data-del-menu-toggle]{ display:none !important; }
 </style>
 </head>
 <body>
+
+<!-- Broker "View as TC" preview banner. Only rendered when ?as_tc=<uuid> is
+     in the URL; wired in the render script below so it can name the TC and
+     hand back an "Exit" link that strips the query param. -->
+<div id="preview-as-tc-banner" style="display:none;position:sticky;top:0;z-index:9990;background:#14110c;color:#fff;padding:9px 14px;font:600 12.5px/1.35 -apple-system,BlinkMacSystemFont,Inter,sans-serif;text-align:center;letter-spacing:.2px">
+  <span id="preview-as-tc-label">Viewing as TC</span>
+  <a href="#" id="preview-as-tc-exit" style="margin-left:12px;color:#f0e9da;text-decoration:underline;text-underline-offset:2px">Exit preview</a>
+</div>
 
 <!-- AUTH GATE -->
 <div class="gate" id="auth-gate" style="display:none">
@@ -8284,6 +8298,22 @@ Tell me your planned move-out date and I will set the inspection.`
   let _fileTypeFilter = 'sale'; // sale · listing · lease · buyer_rep
   try { _fileTypeFilter = localStorage.getItem('aari_files_type') || 'sale'; } catch(_){}
   try { _tcFilter = localStorage.getItem('aari_files_tc') || 'all'; } catch(_){}
+  // Broker-only "View as TC" mode · lets the broker see any TC's board through
+  // that TC's own lens without impersonating a login. Triggered from a URL
+  // param (?as_tc=<uuid>) so the broker can screenshot the exact view a TC
+  // gets on any device, from her own account. When set:
+  //   * the files query includes the shared claim pool (assigned_tc_id IS NULL)
+  //   * _meId() returns this TC id instead of _profile.id, so the "mine",
+  //     billable, needs-you and pipeline widgets render as if that TC were
+  //     signed in.
+  // The DB is untouched; nothing writes as the previewed TC.
+  let _previewAsTcId = null;
+  try {
+    var _paramTc = new URLSearchParams(window.location.search).get('as_tc');
+    if(_paramTc && /^[0-9a-f-]{20,}$/i.test(_paramTc)) _previewAsTcId = _paramTc;
+  } catch(_){}
+  function _isPreviewingAsTc(){ return !!_previewAsTcId; }
+  function _meId(){ return _previewAsTcId || ((_profile && _profile.id) || null); }
   let _searchQuery = ''; // live search across address / client / agent / lender / title
   let _currentFile = null; // file currently open in the playbook modal
 
@@ -8576,7 +8606,16 @@ Tell me your planned move-out date and I will set the inspection.`
       // open file. RLS must allow TCs to read null-assigned files (see claim-pool migration).
       q = q.or('assigned_tc_id.eq.'+_profile.id+',fg_tc_id.eq.'+_profile.id+',assigned_tc_id.is.null');
     } else if(role === 'broker' && _tcFilter !== 'all'){
-      q = q.or('assigned_tc_id.eq.'+_tcFilter+',fg_tc_id.eq.'+_tcFilter);
+      // In "View as TC" preview, also include the claim pool so the broker
+      // sees the same unassigned files a TC would see on the same login.
+      q = _isPreviewingAsTc()
+        ? q.or('assigned_tc_id.eq.'+_tcFilter+',fg_tc_id.eq.'+_tcFilter+',assigned_tc_id.is.null')
+        : q.or('assigned_tc_id.eq.'+_tcFilter+',fg_tc_id.eq.'+_tcFilter);
+    } else if(role === 'broker' && _isPreviewingAsTc()){
+      // A preview URL that names a TC but arrived before _tcFilter was
+      // synced (e.g. deep link on a fresh session) still scopes correctly
+      // by falling through here with the preview id.
+      q = q.or('assigned_tc_id.eq.'+_previewAsTcId+',fg_tc_id.eq.'+_previewAsTcId+',assigned_tc_id.is.null');
     }
     // Marlenyi 2026-08-07 · wrap the files query itself. A network fail or RLS
     // reject used to throw uncaught and abort the whole loadAndRender chain,
@@ -8636,6 +8675,23 @@ Tell me your planned move-out date and I will set the inspection.`
         (rates || []).forEach(r => { if(_tcsById[r.tc_id]) _tcsById[r.tc_id].tc_pay_pct = r.pct; });
       } catch(e){ console.error('tc_pay_rates load threw · pay % falls back to default', e); }
       if(role === 'broker'){ try { renderTcFilter(); } catch(e){ console.warn('renderTcFilter failed', e); } }
+      // "View as TC" preview banner · rendered after the roster loads so the pill
+      // can name the TC. The banner is broker-only; a stray ?as_tc on a TC login
+      // is ignored (the query already scopes them to their own id, and the pill
+      // stays hidden).
+      try {
+        if(_isPreviewingAsTc() && role === 'broker'){
+          _tcFilter = _previewAsTcId;   // keep other _tcFilter-scoped widgets aligned
+          var _tcRow = _tcsById[_previewAsTcId];
+          var _nm = _tcRow ? ((( _tcRow.first_name || '' ) + ' ' + ( _tcRow.last_name || '' )).trim() || 'this coordinator') : 'this coordinator';
+          var _banner = document.getElementById('preview-as-tc-banner');
+          var _label  = document.getElementById('preview-as-tc-label');
+          var _exit   = document.getElementById('preview-as-tc-exit');
+          if(_banner && _label){ _label.textContent = 'Viewing as ' + _nm + ' — read-only preview'; _banner.style.display = 'block'; }
+          document.body.classList.add('preview-as-tc');
+          if(_exit){ _exit.addEventListener('click', function(e){ e.preventDefault(); var u = new URL(window.location.href); u.searchParams.delete('as_tc'); window.location.replace(u.toString()); }); }
+        }
+      } catch(e){ console.warn('preview-as-tc banner render failed', e); }
 
       // ===== THE PEOPLE FILES BELONG TO =====
       // _agentNameById was declared "for SA briefing rows" and then NEVER ASSIGNED. Dead since it
@@ -16964,9 +17020,14 @@ Tell me your planned move-out date and I will set the inspection.`
     // because a TC's login email is typically the work address (mile@aaritransactions.com) while
     // the contract carries the personal one (milennys.re@gmail.com).
     if(_profile){
-      if(f.agent_id && _profile.id && String(f.agent_id) === String(_profile.id)) return false;
-      var _fn = String((_profile.first_name || '')).trim().toLowerCase();
-      var _ln = String((_profile.last_name  || '')).trim().toLowerCase();
+      // Use _meId() so "View as TC" preview evaluates self-transactions against
+      // the previewed TC, not the broker doing the previewing. The name match
+      // still uses the previewed TC's row from _tcsById when in preview mode.
+      var _mine = _meId();
+      var _meRow = (_previewAsTcId && _tcsById) ? _tcsById[_previewAsTcId] : _profile;
+      if(f.agent_id && _mine && String(f.agent_id) === String(_mine)) return false;
+      var _fn = String(((_meRow && _meRow.first_name) || '')).trim().toLowerCase();
+      var _ln = String(((_meRow && _meRow.last_name)  || '')).trim().toLowerCase();
       if(_fn && _ln){
         var _tcFull = (_fn + ' ' + _ln).replace(/\s+/g,' ');
         var _agentName = String(((f.raw_form_data || {}).agent_name) || f.agent_name || '')
@@ -16983,7 +17044,8 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   function myBillableFiles(){
     if(!_profile) return [];
-    return (_files || []).filter(function(f){ return f.assigned_tc_id === _profile.id && fileIsBillable(f); });
+    var mid = _meId();
+    return (_files || []).filter(function(f){ return f.assigned_tc_id === mid && fileIsBillable(f); });
   }
   function _money(c){ return '$' + (Math.round(c) / 100).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
   function _svcLabel(f){ return (typeof SERVICE_LABEL === 'object' && SERVICE_LABEL[svcKey(f)]) || f.service_type || 'Service'; }
@@ -17038,9 +17100,10 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   function myNearlyBillableFiles(){
     if(!_profile) return [];
+    var mid = _meId();
     return (_files || []).filter(function(f){
       if(!f || f.invoice_id) return false;
-      if(f.assigned_tc_id !== _profile.id) return false;
+      if(f.assigned_tc_id !== mid) return false;
       if(fileCompleted(f)) return false;
       if(svcRidesSpine(f)) return false;
       var tr = svcTrack(f);
@@ -17050,8 +17113,9 @@ Tell me your planned move-out date and I will set the inspection.`
   }
   function emptyInvoicePanelHtml(card){
     var near = myNearlyBillableFiles();
+    var _mid = _meId();
     var waiting = (_files || []).filter(function(f){
-      return f && !f.invoice_id && f.assigned_tc_id === (_profile && _profile.id) &&
+      return f && !f.invoice_id && f.assigned_tc_id === _mid &&
              !fileCompleted(f) && (tcSvcIsTc(f) || svcRidesSpine(f));
     }).length;
     var head = '<div style="' + card + '"><div style="display:flex;align-items:baseline;justify-content:space-between">' +
@@ -17082,7 +17146,8 @@ Tell me your planned move-out date and I will set the inspection.`
   // broker who never coordinates is not shown an empty panel they will never use.
   function iCoordinateFiles(){
     if(!_profile) return false;
-    return (_files || []).some(function(f){ return f && f.assigned_tc_id === _profile.id; });
+    var mid = _meId();
+    return (_files || []).some(function(f){ return f && f.assigned_tc_id === mid; });
   }
   // My pay rate, or null when nobody has ever set one. Kept separate from tcPctFor() on purpose:
   // tcPctFor() answers "what percent do I compute with" and correctly falls back to the
@@ -17130,8 +17195,9 @@ Tell me your planned move-out date and I will set the inspection.`
     try {
       if(!_profile) return [];
       var today = new Date(); today.setHours(0,0,0,0);
+      var mid = _meId();
       return (_files || []).filter(function(f){
-        if(!f || f.invoice_id || f.assigned_tc_id !== _profile.id) return false;
+        if(!f || f.invoice_id || f.assigned_tc_id !== mid) return false;
         if(f.status === 'archived' || f.archived_at || (f.raw_form_data || {}).test_pool) return false;
         if((f.file_type || 'sale') !== 'sale' || !f.closing_date) return false;
         if(deriveStage(f) === 'closed') return false;          // already closed = this invoice
