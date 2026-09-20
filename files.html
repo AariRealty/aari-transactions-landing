@@ -23559,10 +23559,19 @@ Tell me your planned move-out date and I will set the inspection.`
       } else { z.hidden = true; z.innerHTML = ''; }
     }
     if(!head) return;
-    // Reclassify · a file inputted (or email-imported) as the wrong type can be switched in one tap
-    // (Marlenyi Aug 14 2026 · 6044 came in as a sale but was a listing). Shown to broker + TC.
+    // Reclassify / convert · one action, two intents:
+    //  * On a LISTING · the file usually starts here for Milennys's own MLS input, and once
+    //    the listing gets an accepted offer she wants to push it into the full TC workflow
+    //    without recreating anything. Same DB op as reclassify, but the copy names the real
+    //    use case (Marlenyi Sep 20 2026 · "after she input the listing can she then convert it
+    //    to full tc work?").
+    //  * On a SALE · covers actual miscategorization the other direction (Marlenyi Aug 14
+    //    2026 · 6044 came in as a sale but was a listing).
     var _oppType = (file.file_type === 'listing') ? 'sale' : 'listing';
-    var _switchItem = '<a href="#" data-switch-type="' + _oppType + '" style="display:block;font-size:12.5px;color:#0f0f0f;padding:8px 11px;border-radius:6px;text-decoration:none">This is actually a ' + _oppType + '</a>' +
+    var _switchLabel = (file.file_type === 'listing')
+      ? 'Convert to full TC work &middot; this listing accepted an offer'
+      : 'This is actually a listing';
+    var _switchItem = '<a href="#" data-switch-type="' + _oppType + '" style="display:block;font-size:12.5px;color:#0f0f0f;padding:8px 11px;border-radius:6px;text-decoration:none">' + _switchLabel + '</a>' +
       '<div style="height:1px;background:#f1ede6;margin:4px 6px"></div>';
     if(_profile && _profile.role === 'broker'){
       // Broker-only: assign this file to a TC (or back to the claim pool), plus delete.
@@ -23604,16 +23613,32 @@ Tell me your planned move-out date and I will set the inspection.`
       document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; });
       const newType = stype.getAttribute('data-switch-type');
       const f = _currentFile; if(!f) return;
-      if(!confirm('Change this file to a ' + newType + '?\n\nIt moves to the ' + (newType === 'listing' ? 'MLS Setup' : 'Sales') + ' column and loads the ' + newType + ' checklist.')) return;
+      const wasListing = (f.file_type === 'listing');
+      const isConvert = wasListing && newType === 'sale';
+      const confirmMsg = isConvert
+        ? 'Convert this listing to full TC work?\n\nThe file keeps its address, agent, and documents. It moves into the Sales column and loads the full contract-to-close checklist. The MLS input work you already logged is preserved.'
+        : 'Change this file to a ' + newType + '?\n\nIt moves to the ' + (newType === 'listing' ? 'MLS Setup' : 'Sales') + ' column and loads the ' + newType + ' checklist.';
+      if(!confirm(confirmMsg)) return;
       try {
         const upd = (newType === 'listing')
           ? { file_type:'listing', service_type:'mls_setup', transaction_stage:'active' }
-          : { file_type:'sale', service_type:'tc_one_side' };
+          : { file_type:'sale', service_type:'tc_one_side', transaction_stage:'new' };
+        // On a listing → sale conversion, stamp a breadcrumb so we can audit later
+        // whether the listing input work actually rolled forward to a full TC engagement.
+        if(isConvert){
+          try {
+            const rw = Object.assign({}, f.raw_form_data || {});
+            rw.converted_from_listing_at = new Date().toISOString();
+            rw.converted_by = (_profile && _profile.id) || null;
+            upd.raw_form_data = rw;
+          } catch(_){}
+        }
         const { error } = await _client.from('files').update(upd).eq('id', f.id);
         if(error){ alert('Could not switch the file type: ' + error.message); return; }
         Object.assign(f, upd);
         const ff = (_files || []).find(function(x){ return x.id === f.id; }); if(ff) Object.assign(ff, upd);
         delete f._gateHasDoc; delete f._gateDocsProvided;
+        try { writeAuditLog(isConvert ? 'listing_converted_to_tc' : 'file_reclassified', f.id, { from: wasListing ? 'listing' : 'sale', to: newType }); } catch(_){}
         try { renderKpis(); renderKanban(); } catch(_){}
         try { openPlaybook(f); } catch(_){}
       } catch(err){ alert('Could not switch the file type.'); }
