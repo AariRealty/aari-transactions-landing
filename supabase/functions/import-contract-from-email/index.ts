@@ -266,9 +266,36 @@ Deno.serve(async (req) => {
         status: "triage_needed",
         raw_form_data: { ...raw, triage_reason: "email_import_no_address", extracted_fields: 0 },
       }).eq("id", fileId);
+      await fireOrphanAlert(fileId, body, "email_import_no_address");
       return j(200, { ok: true, file_id: fileId, triage: true, reason: "no_address_from_extraction" });
     }
   } catch (_) { /* triage flag is best-effort */ }
 
+  // A file with a real address that still landed unassigned is also visible to
+  // every TC on the claim pool — same leak class as the triage_needed case,
+  // just less obvious because it looks "normal." Fire the alert immediately
+  // so the broker can reassign before another TC sees it.
+  await fireOrphanAlert(fileId, body, "unassigned_after_import");
   return j(200, { ok: true, file_id: fileId, extracted, agent_id, extractedFields });
 });
+
+// Fire-and-forget notification when an email import lands in the claim pool.
+// Uses the existing platform-alert edge function so the templating stays in
+// one place (see platform-alert · kind "email_import_orphan").
+async function fireOrphanAlert(fileId: string, body: { subject?: string; filename?: string }, reason: string): Promise<void> {
+  try {
+    await fetch(`${SUPABASE_URL}/functions/v1/platform-alert`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${SERVICE_ROLE}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "email_import_orphan",
+        file_id: fileId,
+        extra: {
+          import_subject: body.subject || "",
+          contract_filename: body.filename || "",
+          triage_reason: reason,
+        },
+      }),
+    });
+  } catch (_) { /* best-effort · orphan alert should never break the import */ }
+}
