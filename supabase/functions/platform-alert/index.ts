@@ -51,7 +51,8 @@ const REPLY_DOMAIN = Deno.env.get("ALERT_REPLY_DOMAIN") ?? "reply.aaritransactio
 
 type AlertKind =
   | "duplicate_address" | "co_invoice" | "file_reassigned" | "file_unarchived"
-  | "needs_agent_link" | "manual_paid_mark" | "closed_file_edit";
+  | "needs_agent_link" | "manual_paid_mark" | "closed_file_edit"
+  | "email_import_orphan";
 
 interface AlertBody {
   kind?: AlertKind;
@@ -218,6 +219,25 @@ function build(body: AlertBody, file: Record<string, unknown> | null, ctx: { add
     return { subject: `Closed file was edited · ${ctx.address}`, title: "Closed file was edited",
       headline: `${ctx.tcName} edited ${ctx.address} after it was marked closed. Usually you don't want this. Take a look.`,
       rows: [{ label: "Address", value: ctx.address }, { label: "TC", value: ctx.tcName }, { label: "Fields changed", value: fields.length ? fields.join(", ") : "(unspecified)" }], severity: "review" };
+  }
+  if (kind === "email_import_orphan") {
+    // An inbound email import just landed in the claim pool. Every TC on the
+    // roster can see it until someone claims or reassigns it, which is how a
+    // reply for Eileen's client Samantha ended up on Milennys's board on
+    // Sep 20 2026. This alert fires immediately so the leak lasts minutes,
+    // not weeks.
+    const subj = String(extra?.import_subject ?? "");
+    const reason = String(extra?.triage_reason ?? "unassigned in claim pool");
+    const filename = String(extra?.contract_filename ?? "");
+    return { subject: `Email import in claim pool · ${(subj || ctx.address || "no address").slice(0, 60)}`,
+      title: "Email import dropped into the claim pool",
+      headline: `An email just imported without a matching file, so it landed unassigned. Every TC can see it now. Reassign to the right TC before it leaks to the wrong board.`,
+      rows: [
+        { label: "Subject", value: subj.slice(0, 140) },
+        { label: "Attachment", value: filename },
+        { label: "Reason", value: reason },
+        { label: "Extracted address", value: ctx.address || "(none)" },
+      ], severity: "review" };
   }
   return null;
 }
