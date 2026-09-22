@@ -227,8 +227,15 @@ Deno.serve(async (req) => {
   });
 
   // ------ 6. Signed without contract attached ------
+  // Marlenyi Sep 21 · the 15 historical files with signatures verified but no
+  // PDF were already closed/moved on before the check existed. Don't nag her
+  // about the past; only flag files created on or after this cutoff so the
+  // check applies to every TC's future uploads. TCs are expected to upload the
+  // executed listing agreement to the file going forward.
+  const SIG_CHECK_CUTOFF = "2026-09-21T00:00:00Z";
   const signedNoContract = (files || []).filter((f: any) => {
     if(["archived","cancelled"].includes(String(f.status||"").toLowerCase())) return false;
+    if(!f.created_at || f.created_at < SIG_CHECK_CUTOFF) return false;
     const t = (f.stage_tasks && typeof f.stage_tasks === "object") ? f.stage_tasks : {};
     const sv = t.new_signatures_verified;
     if(!(sv && (sv.done || sv.at))) return false;
