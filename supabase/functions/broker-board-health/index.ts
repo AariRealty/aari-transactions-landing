@@ -183,12 +183,28 @@ Deno.serve(async (req) => {
   });
 
   // ------ 4. Closed uninvoiced > 3 days (per TC) ------
+  // Two filters added Sep 24 after Marlenyi's own 11162 Sunset Preserve (she is
+  // TC and broker, so she does not invoice herself) and Milennys's 844 Bell
+  // (self-listing, already shown in section 5) both cluttered the list:
+  //   * skip role='broker' TCs entirely (broker never invoices herself)
+  //   * skip self-transactions (same helper as fileIsBillable on the portal),
+  //     so a self-listing appears exactly once in the digest — in section 5.
   const readyByTc: Record<string, any[]> = {};
   (files || []).forEach((f: any) => {
     if(!f.assigned_tc_id) return;
     if(f.invoice_id) return;
     if(String(f.status||"").toLowerCase() !== "closed") return;
     if((f.raw_form_data||{}).test_pool || f.archived_at) return;
+    const tc = tcById[f.assigned_tc_id];
+    if(!tc) return;
+    if(String(tc.role||"").toLowerCase() === "broker") return;
+    // Self-transaction: TC's own listing/sale. Same check as fileIsBillable on
+    // the portal — either agent_id matches the TC or agent_name matches TC's
+    // first + last name (case- and whitespace-normalized).
+    if(f.agent_id && String(f.agent_id) === String(tc.id)) return;
+    const nm = String((f.raw_form_data||{}).agent_name || "").trim().toLowerCase().replace(/\s+/g," ");
+    const tcNm = ((tc.first_name || "") + " " + (tc.last_name || "")).trim().toLowerCase().replace(/\s+/g," ");
+    if(nm && tcNm && nm === tcNm) return;
     const closedAt = f.actual_closing_date || f.closing_date || f.updated_at || f.created_at;
     const d = daysSince(closedAt);
     if(d == null || d < 3) return;
