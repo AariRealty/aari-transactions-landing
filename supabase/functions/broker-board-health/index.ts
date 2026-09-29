@@ -82,6 +82,13 @@ function isSelfTx(f: any, tc: any){
 
 const DUP_ADDRESS_ALLOWLIST = ["1219 HIBISCUS AVE"];
 
+// TCs who submit their own invoices — Marlenyi does not want to be nudged when they
+// have closed uninvoiced files, because they handle it themselves. Add an email here
+// as new TCs sign on with the same arrangement.
+const SELF_INVOICING_TC_EMAILS = new Set<string>([
+  "eileen@aaritransactions.com",
+]);
+
 // ---- rendering helpers -------------------------------------------------
 
 type RedItem = { h: string; s?: string; href: string };
@@ -230,6 +237,9 @@ Deno.serve(async (req) => {
     if(!tc) return;
     if(String(tc.role||"").toLowerCase() === "broker") return;
     if(isSelfTx(f, tc)) return;
+    // Skip TCs who invoice themselves (Eileen) — the broker does not need to be
+    // told they have work to submit, they'll submit it.
+    if(SELF_INVOICING_TC_EMAILS.has(String(tc.email||"").toLowerCase())) return;
     const closedAt = f.actual_closing_date || f.closing_date || f.updated_at || f.created_at;
     const d = daysSince(closedAt);
     if(d == null || d < 3) return;
@@ -243,19 +253,11 @@ Deno.serve(async (req) => {
     yellow.push(`${esc(nm)} has ${rows.length} file${rows.length===1?"":"s"} ready to invoice (${money(total)})`);
   });
 
-  // Self-transactions currently billable
-  const selfLeak = (files || []).filter((f: any) => {
-    if(!f.assigned_tc_id) return false;
-    if(f.invoice_id) return false;
-    if(String(f.status||"").toLowerCase() !== "closed") return false;
-    const tc = tcById[f.assigned_tc_id]; if(!tc) return false;
-    return isSelfTx(f, tc);
-  });
-  selfLeak.slice(0, 3).forEach((f: any) => {
-    const tc = tcById[f.assigned_tc_id];
-    const nm = tc ? ((tc.first_name || "") + " " + (tc.last_name || "")).trim() : "TC";
-    yellow.push(`${esc(nm)}'s own listing on her billable queue (${esc(shortAddr(f))})`);
-  });
+  // Self-transactions currently sitting in the closed-uninvoiced pile.
+  // Marlenyi Sep 29 · fileIsBillable now hides these on both the TC portal and
+  // the broker Billing view (PR #339), so a self-tx CAN'T be invoiced — the
+  // daily nudge was just noise. Removed from the digest. If the underlying data
+  // ever needs cleanup we'll surface it as a triage task, not a daily whisper.
 
   // Signatures verified but no contract PDF (post Sep 21 cutoff)
   const signedNoContract = (files || []).filter((f: any) => {
@@ -342,7 +344,7 @@ Deno.serve(async (req) => {
     </table>
   </div>`;
 
-  const digest = { redCount, yellowCount, greenCount, payments_due: payDue.length, orphans: orphans.length, triage: triage.length, duplicates: red.filter(r => r.h.startsWith("Duplicate")).length, ready_to_invoice: Object.keys(readyByTc).length, self_tx: selfLeak.length, sig_no_pdf: signedNoContract.length, manual_paid: recentManual.length };
+  const digest = { redCount, yellowCount, greenCount, payments_due: payDue.length, orphans: orphans.length, triage: triage.length, duplicates: red.filter(r => r.h.startsWith("Duplicate")).length, ready_to_invoice: Object.keys(readyByTc).length, sig_no_pdf: signedNoContract.length, manual_paid: recentManual.length };
   if(dryRun) return j(200, { ok:true, dry_run:true, digest, html_length: body_html.length });
   if(!RESEND) return j(500, { ok:false, error:"RESEND_API_KEY missing" });
 
