@@ -17469,7 +17469,14 @@ Tell me your planned move-out date and I will set the inspection.`
         // and label per TC payment method so the memo matches what Marlenyi is actually
         // writing in BofA.
         var _mobIts = (i.line_items || []);
-        var _mobUnpaid = _mobIts.filter(function(it){ return it && !it.paid_at && !it.covered; });
+        var _isDeadLineMob = function(it){
+          if(!it || !it.file_id) return false;
+          var lf = (typeof _files !== 'undefined' && _files) ? _files.find(function(x){ return x.id === it.file_id; }) : null;
+          if(!lf) return false;
+          var st = String(lf.status || '').toLowerCase();
+          return st === 'cancelled' || st === 'archived';
+        };
+        var _mobUnpaid = _mobIts.filter(function(it){ return it && !it.paid_at && !it.covered && !_isDeadLineMob(it); });
         var _memoTxt = String(i.invoice_number || 'Invoice');
         if(_mobUnpaid.length === 1){
           var _mobOne = _mobUnpaid[0] || {};
@@ -17481,7 +17488,7 @@ Tell me your planned move-out date and I will set the inspection.`
         } else if(_mobUnpaid.length > 1) {
           _memoTxt += ' · ' + _mobUnpaid.length + ' files · Aari TC';
         }
-        var _CHECK_TC_EMAILS_MOB = { 'eileen@aaritransactions.com': 1 };
+        var _CHECK_TC_EMAILS_MOB = { 'eileenrefl@gmail.com': 1 };
         var _tcRowMob = (typeof _tcsById !== 'undefined' && _tcsById) ? _tcsById[i.tc_id] : null;
         var _tcEmailMob = String(((_tcRowMob && _tcRowMob.email) || '')).toLowerCase();
         var _memoLabelMob = _CHECK_TC_EMAILS_MOB[_tcEmailMob] ? 'Check memo' : 'Zelle memo';
@@ -18045,7 +18052,16 @@ Tell me your planned move-out date and I will set the inspection.`
     // Line state stored inside line_items[]: paid_at / held_at / held_note / snooze_until.
     var invCardHtml = function(i, payable){
       var _its = (i.line_items || []).slice();
-      var _totalUnpaid = _its.reduce(function(s, it){ return (it && !it.paid_at && !it.covered) ? s + (it.amount_cents || 0) : s; }, 0);
+      // Dead-file lines (fell-through / archived) drop from the amount, the breakdown,
+      // and the memo — the work is cancelled, there is nothing to invoice on them.
+      var _isDeadLine = function(it){
+        if(!it || !it.file_id) return false;
+        var lf = (typeof _files !== 'undefined' && _files) ? _files.find(function(x){ return x.id === it.file_id; }) : null;
+        if(!lf) return false;
+        var st = String(lf.status || '').toLowerCase();
+        return st === 'cancelled' || st === 'archived';
+      };
+      var _totalUnpaid = _its.reduce(function(s, it){ return (it && !it.paid_at && !it.covered && !_isDeadLine(it)) ? s + (it.amount_cents || 0) : s; }, 0);
       var _totalPaidLines = _its.filter(function(it){ return it && it.paid_at; }).reduce(function(s, it){ return s + (it.amount_cents || 0); }, 0);
       var _lineRow = function(it, idx){
         var isPaid = !!(it && it.paid_at);
@@ -18102,12 +18118,17 @@ Tell me your planned move-out date and I will set the inspection.`
       // paid but still cluttering the breakdown next to the unpaid 509 NE 25th St).
       // The green "$200 paid" chip in _summary keeps the paid portion visible without
       // taking a whole row. Fully-paid invoices (payable=false) still show every line.
-      var _hasUnpaid = _its.some(function(it){ return it && !it.paid_at && !it.covered; });
+      // Also drop line_items whose file was cancelled or archived (fell-through button
+      // flipped status to cancelled) — those lines are no longer owed because the
+      // underlying work is dead, and they shouldn't inflate the amount or clutter the
+      // breakdown. _isDeadLine is defined above so _totalUnpaid matches the rows shown.
+      var _hasUnpaid = _its.some(function(it){ return it && !it.paid_at && !it.covered && !_isDeadLine(it); });
       var _visible = _its.map(function(it, idx){ return { it: it, idx: idx }; })
         .filter(function(pair){
           if(!payable) return _invDetails || (pair.it && pair.it.covered);
-          // On payable + still-has-unpaid cards, suppress the paid rows.
+          // On payable + still-has-unpaid cards, suppress the paid rows and dead-file rows.
           if(_hasUnpaid && pair.it && pair.it.paid_at) return false;
+          if(_isDeadLine(pair.it)) return false;
           return true;
         });
       var _rows = _visible.map(function(pair){ return _lineRow(pair.it, pair.idx); }).join('');
@@ -18135,7 +18156,7 @@ Tell me your planned move-out date and I will set the inspection.`
           if(t.indexOf('tc')   >= 0 || t.indexOf('coord') >= 0) return 'TC';
           return t.slice(0, 12);
         };
-        var _unpaidIts = _its.filter(function(it){ return it && !it.paid_at && !it.covered; });
+        var _unpaidIts = _its.filter(function(it){ return it && !it.paid_at && !it.covered && !_isDeadLine(it); });
         var _memo = String(i.invoice_number || 'Invoice');
         if(_unpaidIts.length === 1){
           var _one = _unpaidIts[0] || {};
@@ -18148,8 +18169,9 @@ Tell me your planned move-out date and I will set the inspection.`
         }
         // TCs paid by check (Eileen) vs Zelle (everyone else). Keep the list in sync
         // with the SELF_INVOICING_TC_EMAILS set in broker-board-health if the roster
-        // changes. Lookup is case-insensitive on the TC profile email.
-        var _CHECK_TC_EMAILS = { 'eileen@aaritransactions.com': 1 };
+        // changes. Lookup is case-insensitive on the TC profile email. Oct 7 · Eileen's
+        // real email is eileenrefl@gmail.com, not her aaritransactions.com alias.
+        var _CHECK_TC_EMAILS = { 'eileenrefl@gmail.com': 1 };
         var _tcRow = (typeof _tcsById !== 'undefined' && _tcsById) ? _tcsById[i.tc_id] : null;
         var _tcEmail = String(((_tcRow && _tcRow.email) || '')).toLowerCase();
         var _memoLabel = _CHECK_TC_EMAILS[_tcEmail] ? 'Check memo' : 'Zelle memo';

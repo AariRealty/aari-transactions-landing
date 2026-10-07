@@ -86,7 +86,7 @@ const DUP_ADDRESS_ALLOWLIST = ["1219 HIBISCUS AVE"];
 // have closed uninvoiced files, because they handle it themselves. Add an email here
 // as new TCs sign on with the same arrangement.
 const SELF_INVOICING_TC_EMAILS = new Set<string>([
-  "eileen@aaritransactions.com",
+  "eileenrefl@gmail.com",  // Oct 7 · Eileen's real email, not her aaritransactions alias.
 ]);
 
 // ---- rendering helpers -------------------------------------------------
