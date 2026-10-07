@@ -23850,7 +23850,8 @@ Tell me your planned move-out date and I will set the inspection.`
       // Self-serve archive (reversible · for a file added by mistake) is the easy
       // path; it moves the file off the active board and emails the broker. Actual
       // deletion (permanent) stays a broker-approved request.
-      var _tcItems = '<a href="#" data-archive-file style="display:block;font-size:12.5px;color:#0f0f0f;padding:8px 11px;border-radius:6px;text-decoration:none">Archive file &middot; added by mistake</a>' +
+      var _tcItems = '<a href="#" data-fell-through style="display:block;font-size:12.5px;color:#0f0f0f;padding:8px 11px;border-radius:6px;text-decoration:none">Transaction fell through</a>' +
+        '<a href="#" data-archive-file style="display:block;font-size:12.5px;color:#0f0f0f;padding:8px 11px;border-radius:6px;text-decoration:none">Archive file &middot; added by mistake</a>' +
         '<div style="height:1px;background:#f1ede6;margin:4px 6px"></div>' +
         (req
           ? '<span style="display:block;font-size:11px;color:#9a7c3a;padding:8px 11px">Deletion requested</span>'
@@ -23996,6 +23997,35 @@ Tell me your planned move-out date and I will set the inspection.`
         } catch(_){}
       }
       else alert('Could not send the request \u2014 try again.');
+      return;
+    }
+    // Transaction fell through · reversible status flip (Marlenyi Oct 7).
+    // Flips the file to status='cancelled' so (a) it drops off billable / Coming-in /
+    // AR views immediately and (b) the automated client-invoice email from
+    // closed-payment-reminder stops firing (that function queries status='closed'
+    // only). If the deal comes back, the TC flips status back to active/closed and
+    // the client email resumes automatically — no extra plumbing needed.
+    const ft = e.target.closest && e.target.closest('[data-fell-through]');
+    if(ft && _currentFile){
+      e.preventDefault();
+      try { document.querySelectorAll('[data-del-menu]').forEach(function(x){ x.hidden = true; }); } catch(_){}
+      if(!confirm('Mark this transaction as fallen through?\n\nThis will:\n  • Stop the automatic invoice email to the client\n  • Remove the file from your billable queue + broker Coming-in\n  • Move it off the active board\n\nIf the deal comes back and closes, you can flip it active again and the client email resumes.')) return;
+      const fid = _currentFile.id;
+      const lg = _currentFile.logistics || (_currentFile.logistics = {});
+      lg.fell_through = {
+        by: _profile.id,
+        by_name: ((_profile.first_name || '') + ' ' + (_profile.last_name || '')).trim(),
+        prev_status: _currentFile.status || null,
+        at: new Date().toISOString(),
+      };
+      const r = await _client.from('files').update({ status: 'cancelled', logistics: lg }).eq('id', fid);
+      if(r && r.error){ alert('Could not mark fallen through — the database rejected the change. You may not have edit permission on this file.'); return; }
+      _currentFile.status = 'cancelled';
+      const f2 = (_files || []).find(function(x){ return x.id === fid; }); if(f2){ f2.status = 'cancelled'; f2.logistics = lg; }
+      try { writeAuditLog('file_fell_through', fid, { property_address: _currentFile.property_address || null, prev_status: lg.fell_through.prev_status }); } catch(_){}
+      try { closePlaybook(); } catch(_){}
+      try { renderKanban(); } catch(_){}
+      try { renderInvoiceScreen(); } catch(_){}
       return;
     }
     const arch = e.target.closest && e.target.closest('[data-archive-file]');
