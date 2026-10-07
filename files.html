@@ -17465,23 +17465,29 @@ Tell me your planned move-out date and I will set the inspection.`
           }
           heldNote = 'Held &middot; ' + esc(_hl.held_note || 'no note') + _sn;
         }
-        // Zelle memo · Marlenyi Sep 28. One-tap copy for BofA. Sits between the amount
-        // and the Pay button so it's right where the payment flow starts.
+        // Zelle / check memo · Marlenyi Sep 28, Oct 7 fixes. Build from UNPAID lines only
+        // and label per TC payment method so the memo matches what Marlenyi is actually
+        // writing in BofA.
         var _mobIts = (i.line_items || []);
+        var _mobUnpaid = _mobIts.filter(function(it){ return it && !it.paid_at && !it.covered; });
         var _memoTxt = String(i.invoice_number || 'Invoice');
-        if(_mobIts.length === 1){
-          var _mobOne = _mobIts[0] || {};
+        if(_mobUnpaid.length === 1){
+          var _mobOne = _mobUnpaid[0] || {};
           var _mobAddr = String(_mobOne.address || '').split(',')[0].trim();
           if(_mobAddr) _memoTxt += ' · ' + _mobAddr;
           var _mobSv = String(_mobOne.service || '').toLowerCase();
           var _mobSvShort = (_mobSv.indexOf('file') >= 0) ? 'file org' : (_mobSv.indexOf('mls') >= 0) ? 'MLS' : (_mobSv.indexOf('list') >= 0) ? 'listing' : (_mobSv.indexOf('tc') >= 0 || _mobSv.indexOf('coord') >= 0) ? 'TC' : _mobSv.slice(0, 12);
           if(_mobSvShort) _memoTxt += ' · ' + _mobSvShort;
-        } else if(_mobIts.length) {
-          _memoTxt += ' · ' + _mobIts.length + ' files · Aari TC';
+        } else if(_mobUnpaid.length > 1) {
+          _memoTxt += ' · ' + _mobUnpaid.length + ' files · Aari TC';
         }
+        var _CHECK_TC_EMAILS_MOB = { 'eileen@aaritransactions.com': 1 };
+        var _tcRowMob = (typeof _tcsById !== 'undefined' && _tcsById) ? _tcsById[i.tc_id] : null;
+        var _tcEmailMob = String(((_tcRowMob && _tcRowMob.email) || '')).toLowerCase();
+        var _memoLabelMob = _CHECK_TC_EMAILS_MOB[_tcEmailMob] ? 'Check memo' : 'Zelle memo';
         var _memoEncMob = esc(_memoTxt);
         var _memoRow = '<div style="flex:1 1 100%;display:flex;align-items:center;gap:8px;margin-top:2px;padding:7px 10px;background:#f6f2e6;border:0.5px solid #efe9dc;border-radius:8px">' +
-          '<span style="font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8a857c;flex:none">Zelle memo</span>' +
+          '<span style="font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8a857c;flex:none">' + _memoLabelMob + '</span>' +
           '<span style="flex:1;min-width:0;font-size:11px;color:#0f0f0f;font-family:ui-monospace,Menlo,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + _memoEncMob + '">' + _memoEncMob + '</span>' +
           '<button type="button" data-copy-memo="' + _memoEncMob + '" style="flex:none;background:#fff;color:#0f0f0f;border:0.5px solid #ddd7cb;border-radius:6px;padding:4px 9px;font-size:10.5px;font-weight:600;cursor:pointer;font-family:inherit" title="Copy memo to clipboard">Copy</button>' +
         '</div>';
@@ -18091,19 +18097,34 @@ Tell me your planned move-out date and I will set the inspection.`
         }
         return '<div style="' + rowStyle + '">' + cb + body + pill + amt + '</div>';
       };
-      // Show every line (not just details toggle) when payable so the broker can pick.
+      // Partial-paid invoices · hide the already-paid lines from the breakdown so the
+      // card reads as "what still needs paying" (Marlenyi Oct 7 · A-1050's 1611 was
+      // paid but still cluttering the breakdown next to the unpaid 509 NE 25th St).
+      // The green "$200 paid" chip in _summary keeps the paid portion visible without
+      // taking a whole row. Fully-paid invoices (payable=false) still show every line.
+      var _hasUnpaid = _its.some(function(it){ return it && !it.paid_at && !it.covered; });
       var _visible = _its.map(function(it, idx){ return { it: it, idx: idx }; })
-        .filter(function(pair){ return payable || _invDetails || (pair.it && pair.it.covered); });
+        .filter(function(pair){
+          if(!payable) return _invDetails || (pair.it && pair.it.covered);
+          // On payable + still-has-unpaid cards, suppress the paid rows.
+          if(_hasUnpaid && pair.it && pair.it.paid_at) return false;
+          return true;
+        });
       var _rows = _visible.map(function(pair){ return _lineRow(pair.it, pair.idx); }).join('');
       var _rowsBlock = _rows ? '<div style="margin-top:10px;padding-top:4px;border-top:0.5px solid #f0ebe0">' + _rows + '</div>' : '';
       var _summary = '<div style="font-size:10.5px;color:#8a857c;margin-top:4px">' + esc(i.invoice_number || '') + ' &middot; ' + _its.length + ' file' + (_its.length === 1 ? '' : 's');
       if(payable && _totalPaidLines > 0) _summary += ' &middot; <span style="color:#2f6b4f;font-weight:600">' + _money(_totalPaidLines) + ' paid</span>';
       _summary += '</div>';
       // Payment memo (Marlenyi Sep 28 · one-tap copy for BofA Zelle / check register).
-      // Short form so it fits BofA's Zelle memo cap (~40 chars). Single-file invoice gets
-      // address + short service; multi-file gets file count. Rendered as a copyable pill
-      // beside "Zelle memo" so Marlenyi can tap-copy → paste into BofA without hunting
-      // for what to write. Only appears on payable (unpaid) invoices.
+      // Short form so it fits BofA's Zelle memo cap (~40 chars). Rendered as a copyable
+      // pill so Marlenyi can tap-copy → paste into BofA without hunting for what to
+      // write. Only appears on payable (unpaid) invoices.
+      // Oct 7 fixes:
+      //   * Build the memo from UNPAID lines only (so a partial-paid A-1050 whose only
+      //     unpaid line is 509 NE 25th St writes "509 NE 25th St · TC" instead of the
+      //     old misleading "2 files · Aari TC").
+      //   * Label the strip "Check memo" when the TC gets paid by check (Eileen) rather
+      //     than Zelle, so Marlenyi copies the right thing for the right register.
       var _memoBlock = '';
       if(payable){
         var _svcShort = function(s){
@@ -18114,19 +18135,27 @@ Tell me your planned move-out date and I will set the inspection.`
           if(t.indexOf('tc')   >= 0 || t.indexOf('coord') >= 0) return 'TC';
           return t.slice(0, 12);
         };
+        var _unpaidIts = _its.filter(function(it){ return it && !it.paid_at && !it.covered; });
         var _memo = String(i.invoice_number || 'Invoice');
-        if(_its.length === 1){
-          var _one = _its[0] || {};
+        if(_unpaidIts.length === 1){
+          var _one = _unpaidIts[0] || {};
           var _addr = String(_one.address || '').split(',')[0].trim();
           if(_addr) _memo += ' · ' + _addr;
           var _sv = _svcShort(_one.service);
           if(_sv) _memo += ' · ' + _sv;
-        } else {
-          _memo += ' · ' + _its.length + ' files · Aari TC';
+        } else if(_unpaidIts.length > 1){
+          _memo += ' · ' + _unpaidIts.length + ' files · Aari TC';
         }
+        // TCs paid by check (Eileen) vs Zelle (everyone else). Keep the list in sync
+        // with the SELF_INVOICING_TC_EMAILS set in broker-board-health if the roster
+        // changes. Lookup is case-insensitive on the TC profile email.
+        var _CHECK_TC_EMAILS = { 'eileen@aaritransactions.com': 1 };
+        var _tcRow = (typeof _tcsById !== 'undefined' && _tcsById) ? _tcsById[i.tc_id] : null;
+        var _tcEmail = String(((_tcRow && _tcRow.email) || '')).toLowerCase();
+        var _memoLabel = _CHECK_TC_EMAILS[_tcEmail] ? 'Check memo' : 'Zelle memo';
         var _memoEnc = esc(_memo);
         _memoBlock = '<div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px 10px;background:#faf7f0;border:0.5px solid #efe9dc;border-radius:8px">' +
-          '<span style="font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8a857c;flex:none">Zelle memo</span>' +
+          '<span style="font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8a857c;flex:none">' + _memoLabel + '</span>' +
           '<span style="flex:1;min-width:0;font-size:11.5px;color:#0f0f0f;font-family:ui-monospace,Menlo,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + _memoEnc + '">' + _memoEnc + '</span>' +
           '<button type="button" data-copy-memo="' + _memoEnc + '" style="flex:none;background:#fff;color:#0f0f0f;border:0.5px solid #ddd7cb;border-radius:6px;padding:4px 9px;font-size:10.5px;font-weight:600;cursor:pointer;font-family:inherit" title="Copy memo to clipboard">Copy</button>' +
           '</div>';
