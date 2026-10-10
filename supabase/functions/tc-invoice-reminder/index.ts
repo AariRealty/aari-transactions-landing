@@ -163,8 +163,19 @@ async function computeTeam(admin:any, pctById:Record<string,number>){
     const r = await roll(b.id, "You", null);
     if(r.files>0){ perTc.push({name:"You", files:r.files, pipe:r.pipe, ready:r.ready}); teamCents+=r.pipe; readyCents+=r.ready; }
   }
-  const { data: invs } = await admin.from("tc_invoices").select("total_cents,status").eq("status","submitted");
-  const payablesCents = (invs||[]).reduce((s:number,i:any)=> s+(i.total_cents||0), 0);
+  // Payables = still-owed on submitted invoices, line-item accurate. Partial-pay
+  // leaves total_cents at the original submitted amount, so summing total_cents
+  // was overstating what Marlenyi still owes (A-1050 showed $400 when $200 had
+  // already landed). Mirror the broker Billing view's _invEffectiveOwedCents.
+  const { data: invs } = await admin.from("tc_invoices").select("total_cents,status,line_items").eq("status","submitted");
+  const invEffectiveOwedCents = (i:any)=>{
+    const lines = (i && i.line_items) || [];
+    if(!Array.isArray(lines) || !lines.length) return (i && i.total_cents) || 0;
+    let sum = 0, had = false;
+    for(const l of lines){ if(!l) continue; had = true; if(l.covered) continue; if(l.paid_at) continue; sum += Number(l.amount_cents) || 0; }
+    return had ? sum : (i.total_cents || 0);
+  };
+  const payablesCents = (invs||[]).reduce((s:number,i:any)=> s + invEffectiveOwedCents(i), 0);
   const { data: act } = await admin.from("files")
     .select("property_address, closing_date, transaction_stage, status")
     .not("status","in",'("archived","cancelled")').not("closing_date","is",null);
@@ -261,9 +272,19 @@ Deno.serve(async (req) => {
   }
   const team = await computeTeam(admin, pctById);
   const { data: brokers } = await admin.from("agents").select("first_name, email").eq("role","broker");
-  let ownerSent = 0;
-  for (const b of (brokers||[])) { if(!b.email) continue; const ok = await sendEmail(b.email, OWNER_SUBJECT, ownerReportHtml(b.first_name||"there", team)); if(ok) ownerSent++; }
-  return j(200, { ok:true, coordinators:list.length, sent, owner_reports:ownerSent });
+  // Only send the owner pipeline email when the broker actually has something to act on.
+  // Marlenyi Oct 10: "stop sending this if everything was already paid." Trigger is
+  // payables (invoices she still owes a TC) or files past their closing date. Pure
+  // "ready to invoice" is on the TCs to submit, not on her, so it alone is not a
+  // reason to interrupt her Thursday inbox.
+  const ownerHasActionable = team.payablesCents > 0 || team.flagged.length > 0;
+  let ownerSent = 0, ownerSkipped = 0;
+  if(ownerHasActionable){
+    for (const b of (brokers||[])) { if(!b.email) continue; const ok = await sendEmail(b.email, OWNER_SUBJECT, ownerReportHtml(b.first_name||"there", team)); if(ok) ownerSent++; }
+  } else {
+    ownerSkipped = (brokers||[]).filter((b:any)=> !!b.email).length;
+  }
+  return j(200, { ok:true, coordinators:list.length, sent, owner_reports:ownerSent, owner_skipped:ownerSkipped, owner_payables_cents:team.payablesCents, owner_flagged:team.flagged.length });
 });
 
 async function sendEmail(to:string, subject:string, html:string): Promise<boolean>{
