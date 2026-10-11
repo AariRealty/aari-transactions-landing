@@ -223,7 +223,7 @@ async function sendEmail(pdfBytes: Uint8Array, filename: string, p: RaaPayload):
     '<p style="font-size:12px;color:#5f5e5a;border-left:3px solid #e6e2d8;padding-left:10px">Associate: ' + escapeHtml(p.associate_name || "") + " &middot; License: " + escapeHtml(p.associate_license || "n/a") + " &middot; Signed: " + escapeHtml(p.signed_at_display || p.signed_at_iso || "") + "</p>" +
     '<p style="margin-top:24px">Next step is your membership. Questions? Reply to this email or text 239.688.1770.</p>' +
     '<hr style="border:none;border-top:1px solid #e6e2d8;margin:20px 0"/>' +
-    '<p style="font-size:11px;color:#5f5e5a">Aari Referrals LLC &middot; Florida referral-only brokerage &middot; License CQ1073724 &middot; Fort Myers, FL</p>' +
+    '<p style="font-size:11px;color:#5f5e5a">Aari Referrals LLC &middot; Florida referral-only brokerage &middot; License CQ1073724 &middot; 9160 Forum Corporate Pkwy, Suite 350, Fort Myers, FL 33905</p>' +
     "</div>";
 
   const body: Record<string, unknown> = {
@@ -267,8 +267,11 @@ Deno.serve(async (req) => {
   if (!payload.associate_email || !payload.associate_name) return jsonResponse({ ok: false, error: "associate_name_and_email_required" }, 400);
 
   try {
-    const version = payload.agreement_version || "RAA-2026-01";
+    const version = payload.agreement_version || "";
+    if (!version) return jsonResponse({ ok: false, error: "agreement_version_required" }, 400);
     const raaText = await loadRaaText(version);
+    // Never issue a signed copy without the agreement text (decision #73).
+    if (!raaText) return jsonResponse({ ok: false, error: "agreement_template_missing:" + version }, 500);
     const pdfBytes = await buildPdf(payload, raaText);
     const slug = slugForFilename(payload.associate_name || "", payload.associate_email || "");
     const filename = "Aari-Referral-Associate-Agreement-" + version + "-" + slug + "-signed.pdf";
@@ -315,6 +318,8 @@ Deno.serve(async (req) => {
           signer_license: payload.associate_license || null,
           signer_phone: payload.associate_phone || null,
           signer_initials: payload.jury_initials || null,
+          sms_consent: !!payload.sms_consent,
+          sms_consent_text: payload.sms_consent ? (payload.sms_consent_text || null) : null,
         });
         if (insErr) console.warn("[aari-raa-pdf-email] agreement_signatures insert failed:", insErr);
       } catch (e) { console.warn("[aari-raa-pdf-email] agreement_signatures insert threw:", e); }
