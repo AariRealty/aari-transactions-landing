@@ -43,6 +43,8 @@ interface RaaPayload {
   agreement_version?: string;
   user_agent?: string;
   locale?: string;
+  sms_consent?: boolean;
+  sms_consent_text?: string;
 }
 
 function jsonResponse(payload: Record<string, unknown>, status = 200): Response {
@@ -54,13 +56,13 @@ function jsonResponse(payload: Record<string, unknown>, status = 200): Response 
 
 function sanitizeForWinAnsi(s: string): string {
   return s
-    .replace(/[‘’‚‛]/g, "'")
-    .replace(/[“”„‟]/g, '"')
-    .replace(/[–—―]/g, "-")
-    .replace(/[…]/g, "...")
-    .replace(/[ ]/g, " ")
-    .replace(/[•]/g, "*")
-    .replace(/[§]/g, "Section ")
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+    .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+    .replace(/[\u2013\u2014\u2015]/g, "-")
+    .replace(/[\u2026]/g, "...")
+    .replace(/[\u00A0]/g, " ")
+    .replace(/[\u2022]/g, "*")
+    .replace(/[\u00A7]/g, "Section ")
     .replace(/[^\x00-\xFF]/g, "?");
 }
 
@@ -158,6 +160,7 @@ async function buildPdf(p: RaaPayload, raaText: string): Promise<Uint8Array> {
   drawBody("Name: " + (p.associate_name || ""));
   drawBody("Email: " + (p.associate_email || ""));
   drawBody("Phone: " + (p.associate_phone || ""));
+  drawBody("Text message consent: " + (p.sms_consent ? "Yes, box checked: " + (p.sms_consent_text || "") : "No (box not checked)"));
   drawBody("Florida License: " + (p.associate_license || ""));
   drawSpacer(10);
 
