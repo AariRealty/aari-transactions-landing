@@ -139,28 +139,32 @@ function bodyHtml(first:string, files:any[], pct:number){
 // deno-lint-ignore no-explicit-any
 async function computeTeam(admin:any, pctById:Record<string,number>){
   // deno-lint-ignore no-explicit-any
-  const roll = async (id:string, name:string, sendTo:string|null) => {
-    const files = await filesForTc(admin, id);
+  // We need id + first_name + last_name to drive the self-tx filter in filesForTc.
+  // The caller passes those in via `tcRow` so the roll function stays reusable
+  // for both coordinator rows and the broker's "You" row.
+  // deno-lint-ignore no-explicit-any
+  const roll = async (id:string, name:string, sendTo:string|null, tcRow?:any) => {
+    const files = await filesForTc(admin, id, tcRow || { id });
     const pct = pctById[id] ?? 40;
     const shown = files.filter((f:any)=> payCents(f,pct)>0 || isBillable(f));
     const pipe = shown.reduce((s:number,f:any)=> s+payCents(f,pct), 0);
     const ready = shown.filter(isBillable).reduce((s:number,f:any)=> s+payCents(f,pct), 0);
     return { name, files:shown.length, pipe, ready, sendTo, allFiles:files, pct };
   };
-  const { data: tcs } = await admin.from("agents").select("id, first_name, email").eq("role","tc");
+  const { data: tcs } = await admin.from("agents").select("id, first_name, last_name, email").eq("role","tc");
   const perTc:{name:string;files:number;pipe:number;ready:number}[] = [];
   const tcRuns:{email:string;first:string;allFiles:any[];pct:number}[] = [];
   let teamCents=0, readyCents=0;
   for (const t of (tcs||[])) {
     if(!t.email) continue;
-    const r = await roll(t.id, t.first_name||"TC", t.email);
+    const r = await roll(t.id, t.first_name||"TC", t.email, t);
     if(r.files>0){ perTc.push({name:r.name, files:r.files, pipe:r.pipe, ready:r.ready}); teamCents+=r.pipe; readyCents+=r.ready; }
     tcRuns.push({ email:t.email, first:t.first_name||"there", allFiles:r.allFiles, pct:r.pct });
   }
   // Broker's own coordinated files show as a "You" line (never a TC email).
-  const { data: brokers } = await admin.from("agents").select("id, first_name").eq("role","broker");
+  const { data: brokers } = await admin.from("agents").select("id, first_name, last_name").eq("role","broker");
   for (const b of (brokers||[])) {
-    const r = await roll(b.id, "You", null);
+    const r = await roll(b.id, "You", null, b);
     if(r.files>0){ perTc.push({name:"You", files:r.files, pipe:r.pipe, ready:r.ready}); teamCents+=r.pipe; readyCents+=r.ready; }
   }
   // Payables = still-owed on submitted invoices, line-item accurate. Partial-pay
@@ -228,11 +232,29 @@ function ownerReportHtml(first:string, team:any){
 function j(status:number, obj:unknown){ return new Response(JSON.stringify(obj), { status, headers:{...CORS,"Content-Type":"application/json"} }); }
 
 // deno-lint-ignore no-explicit-any
-async function filesForTc(admin:any, tcId:string){
+function isSelfTx(f:any, tc:any){
+  if(!tc) return false;
+  if(f.agent_id && String(f.agent_id) === String(tc.id)) return true;
+  const nm = String((f.raw_form_data||{}).agent_name || "").trim().toLowerCase().replace(/\s+/g," ");
+  const tcNm = ((tc.first_name || "") + " " + (tc.last_name || "")).trim().toLowerCase().replace(/\s+/g," ");
+  return !!(nm && tcNm && nm === tcNm);
+}
+
+// deno-lint-ignore no-explicit-any
+async function filesForTc(admin:any, tcId:string, tc?:any){
   const { data } = await admin.from("files")
-    .select("property_address, service_type, file_type, transaction_stage, service_stage, status, invoice_id, archived_at, raw_form_data")
+    .select("id, agent_id, property_address, service_type, file_type, transaction_stage, service_stage, status, invoice_id, archived_at, raw_form_data")
     .eq("assigned_tc_id", tcId).not("status","in",'("archived","cancelled")').is("invoice_id", null);
-  return data || [];
+  const rows = data || [];
+  // Drop self-transactions · a TC does not invoice herself for her own listing or
+  // sale (Marlenyi Oct 11 · Milennys got a Thursday status email saying 844 Bell
+  // Blvd was ready to invoice; it is her own listing, so there is nothing for her
+  // to submit). Mirrors the fileIsBillable guard in files.html + the digest helper.
+  if(tc){
+    // deno-lint-ignore no-explicit-any
+    return rows.filter((f:any)=> !isSelfTx(f, tc));
+  }
+  return rows;
 }
 
 Deno.serve(async (req) => {
@@ -255,18 +277,23 @@ Deno.serve(async (req) => {
       const ok = await sendEmail(t.email, OWNER_SUBJECT, ownerReportHtml(t.first_name||"there", team));
       return j(ok?200:502, { ok, test:true, owner:true, sent_to:t.email, coordinators:team.perTc.length });
     }
-    const files = await filesForTc(admin, t.id);
+    const files = await filesForTc(admin, t.id, t);
     const ok = await sendEmail(t.email, SUBJECT, bodyHtml(t.first_name||"there", files, pctById[t.id] ?? 40));
     return j(ok?200:502, { ok, test:true, sent_to:t.email, files:files.length });
   }
 
-  // REAL weekly run · every coordinator gets a status, every broker gets the owner report.
-  const { data: tcs } = await admin.from("agents").select("id, first_name, email").eq("role","tc");
+  // REAL weekly run · every coordinator gets a status if they have real files to
+  // show, every broker gets the owner report if there's something to act on.
+  const { data: tcs } = await admin.from("agents").select("id, first_name, last_name, email").eq("role","tc");
   // deno-lint-ignore no-explicit-any
   const list = (tcs||[]).filter((t:any)=> t.email);
-  let sent = 0;
+  let sent = 0, skipped = 0;
   for (const t of list) {
-    const files = await filesForTc(admin, t.id);
+    const files = await filesForTc(admin, t.id, t);
+    // Skip the TC status email entirely when the coordinator has nothing worth
+    // showing after self-tx filtering (Marlenyi Oct 11 · Milennys got a "$50 ready
+    // to invoice" for 844 Bell which is her OWN listing, not a real billable).
+    if(!files.length){ skipped++; continue; }
     const ok = await sendEmail(t.email, SUBJECT, bodyHtml(t.first_name||"there", files, pctById[t.id] ?? 40));
     if (ok) sent++;
   }
@@ -284,7 +311,7 @@ Deno.serve(async (req) => {
   } else {
     ownerSkipped = (brokers||[]).filter((b:any)=> !!b.email).length;
   }
-  return j(200, { ok:true, coordinators:list.length, sent, owner_reports:ownerSent, owner_skipped:ownerSkipped, owner_payables_cents:team.payablesCents, owner_flagged:team.flagged.length });
+  return j(200, { ok:true, coordinators:list.length, sent, skipped, owner_reports:ownerSent, owner_skipped:ownerSkipped, owner_payables_cents:team.payablesCents, owner_flagged:team.flagged.length });
 });
 
 async function sendEmail(to:string, subject:string, html:string): Promise<boolean>{
