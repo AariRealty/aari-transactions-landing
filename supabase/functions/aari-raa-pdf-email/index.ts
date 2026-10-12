@@ -351,6 +351,8 @@ Deno.serve(async (req) => {
     }
 
     const sendResult = await sendEmail(pdfBytes, filename, payload);
+    // No stored copy and no emailed copy means no signed PDF exists anywhere: report failure (rescan 4).
+    if (!signedPdfUrl && !sendResult.ok) return jsonResponse({ ok: false, error: "signed_copy_not_saved_or_sent" }, 500);
     return jsonResponse({
       ok: true,
       bytes: pdfBytes.length,
