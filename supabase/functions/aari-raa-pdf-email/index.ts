@@ -265,6 +265,7 @@ Deno.serve(async (req) => {
   let payload: RaaPayload;
   try { payload = (await req.json()) as RaaPayload; } catch { return jsonResponse({ ok: false, error: "invalid_json" }, 400); }
   if (!payload.associate_email || !payload.associate_name) return jsonResponse({ ok: false, error: "associate_name_and_email_required" }, 400);
+  if (!String(payload.associate_license || "").trim() || !String(payload.associate_phone || "").trim()) return jsonResponse({ ok: false, error: "license_and_phone_required" }, 400);
 
   try {
     const version = payload.agreement_version || "";
