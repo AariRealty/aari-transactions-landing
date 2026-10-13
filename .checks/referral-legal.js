@@ -58,3 +58,14 @@ console.log('text consent check passed');
   if (saBad.length) { console.error('Service Agreement check failed (decision 169a):'); saBad.forEach(b => console.error('  ' + b)); process.exit(1); }
   console.log('service agreement check passed');
 }
+
+// Decision 173b: broker review is described as a checklist review, never an outcome promise.
+{
+  const outBad = [];
+  for (const f of ['index.html', 'about.html', 'contact.html', 'what-we-track.html']) {
+    const t = fs.readFileSync(path.join(root, f), 'utf8');
+    if (/license stays clean|anything (off|we find) gets (fixed|flagged)|so you can fix it|every file\. reviewed by a broker/i.test(t)) outBad.push(f + ': broker review outcome promise');
+  }
+  if (outBad.length) { console.error('Broker review wording check failed (decision 173b):'); outBad.forEach(b => console.error('  ' + b)); process.exit(1); }
+  console.log('broker review wording check passed');
+}
