@@ -35,7 +35,7 @@
 (function (global) {
   'use strict';
 
-  const SERVICE_AGREEMENT_VERSION = 'v4.7';
+  const SERVICE_AGREEMENT_VERSION = '2026-10-13';
   const SERVICE_TYPE_TO_PAYMENT = {
     tc_one_side:         { timing: 'at_closing', billed_via: 'pay_at_closing_da' },
     tc_both_sides:       { timing: 'at_closing', billed_via: 'pay_at_closing_da' },

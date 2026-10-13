@@ -45,3 +45,16 @@ for (const f of walk(root).filter(f => /\.html$/.test(f) && !/(pipeline|aari-crm
 }
 if (smsBad.length) { console.error('Text consent check failed (decision 158):'); smsBad.forEach(b => console.error('  ' + b)); process.exit(1); }
 console.log('text consent check passed');
+
+// Decision 169a: one TC Service Agreement, labeled by date, same text everywhere; no "Version 4.x" label or 30 day purge promise.
+{
+  const pages = ['index.html', 'register.html', 'public/register.html', 'submit.html', 'js/aari-sa-text.js'].map(f => [f, fs.readFileSync(path.join(root, f), 'utf8')]);
+  const saBad = [];
+  for (const [f, t] of pages) {
+    if (/Service Agreement[^<]{0,20}Version 4\.\d|Version 4\.\d &middot; Effective|Post-Closing File Purge|retains no copies of client files/.test(t)) saBad.push(f + ': old Service Agreement label or purge promise');
+  }
+  const dates = new Set(pages.flatMap(([f, t]) => [...t.matchAll(/(?:Agreement|SERVICES AGREEMENT\\n|SERVICES AGREEMENT\n)\s*[Dd]ated ([A-Z][a-z]+ \d{1,2}, \d{4})/g)].map(m => m[1])));
+  if (dates.size > 1) saBad.push('Service Agreement dates differ: ' + [...dates].join(' / '));
+  if (saBad.length) { console.error('Service Agreement check failed (decision 169a):'); saBad.forEach(b => console.error('  ' + b)); process.exit(1); }
+  console.log('service agreement check passed');
+}
