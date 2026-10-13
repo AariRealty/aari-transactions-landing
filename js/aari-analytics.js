@@ -1,4 +1,4 @@
-/* Aari Transactions event hooks. No analytics provider is connected (decision 168). */
+/* Aari Transactions event hooks. No analytics provider is connected. */
 (function() {
   'use strict';
 
