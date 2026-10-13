@@ -80,3 +80,16 @@ console.log('text consent check passed');
   if (tBad.length) { console.error('Testimonial check failed (decision 175):'); tBad.forEach(b => console.error('  ' + b)); process.exit(1); }
   console.log('testimonial check passed');
 }
+
+// Decisions 181 to 185: no promise words that came back out in the liability sweep.
+{
+  const pBad = [];
+  const re = /confirmation of receipt|staffed by licensed|We(&rsquo;|')re licensed agents|tax hit|fat-finger|logged for FREC|Performed by licensed broker Marlenyi|Marlenyi matches you personally|personally (oversees|selects)/i;
+  for (const f of walk(root).filter(f => /\.(html|js|ts)$/.test(f) && !/(pipeline|files\.html|archive|node_modules|\.checks)/.test(f))) {
+    const t = fs.readFileSync(f, 'utf8');
+    const m = t.match(re);
+    if (m) pBad.push(path.relative(root, f) + ': ' + m[0]);
+  }
+  if (pBad.length) { console.error('Promise words check failed (decisions 181 to 185):'); pBad.forEach(b => console.error('  ' + b)); process.exit(1); }
+  console.log('promise words check passed');
+}
