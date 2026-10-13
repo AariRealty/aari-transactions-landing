@@ -152,6 +152,8 @@
           // they reference {{ .UserMetaData.first_name }} etc.)
           first_name: profile.firstName,
           last_name: profile.lastName,
+          // Decision 158: each text consent choice is kept with its time and wording version.
+          sms_consent: profile.smsConsent || null,
           // The full profile payload consumed by the handle_new_agent trigger.
           // Keys are snake_case to match the agents table columns.
           agent_profile: {

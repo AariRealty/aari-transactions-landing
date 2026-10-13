@@ -35,3 +35,13 @@ for (const f of walk(root).filter(f => /\.html$/.test(f) && !/(pipeline|aari-crm
 }
 if (refBad.length) { console.error('Referrals wording check failed:'); refBad.forEach(b => console.error('  ' + b)); process.exit(1); }
 console.log('referrals wording check passed');
+
+// Decision 158: text consent is optional, split (file texts vs marketing) and never implied by giving a phone number.
+const smsBad = [];
+for (const f of walk(root).filter(f => /\.html$/.test(f) && !/(pipeline|aari-crm|mock|tc-portal|broker-cockpit|files)/.test(f))) {
+  const t = fs.readFileSync(f, 'utf8'), rel = path.relative(root, f);
+  if (/by providing your (phone|number)[^<]{0,60}agree/i.test(t)) smsBad.push(rel + ': consent implied by giving a phone number');
+  for (const m of t.matchAll(/<input[^>]*name="(sms[^"]*|tcpa[^"]*)"[^>]*>/gi)) if (/\brequired\b|\bchecked\b/i.test(m[0])) smsBad.push(rel + ': text consent box is required or pre checked');
+}
+if (smsBad.length) { console.error('Text consent check failed (decision 158):'); smsBad.forEach(b => console.error('  ' + b)); process.exit(1); }
+console.log('text consent check passed');
