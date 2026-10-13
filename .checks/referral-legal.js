@@ -69,3 +69,14 @@ console.log('text consent check passed');
   if (outBad.length) { console.error('Broker review wording check failed (decision 173b):'); outBad.forEach(b => console.error('  ' + b)); process.exit(1); }
   console.log('broker review wording check passed');
 }
+
+// Decision 175: no testimonial outside the reviews system (named, permissioned, tied to a file).
+{
+  const tBad = [];
+  for (const f of walk(root).filter(f => /\.html$/.test(f) && !/(pipeline|aari-crm|mock|tc-portal|broker-cockpit|files|tc-cockpit|reviews|review\.html|aari-reviews)/.test(f))) {
+    const t = fs.readFileSync(f, 'utf8');
+    if (/written permission on file|class="pull-quote"/i.test(t)) tBad.push(path.relative(root, f) + ': testimonial outside the reviews system');
+  }
+  if (tBad.length) { console.error('Testimonial check failed (decision 175):'); tBad.forEach(b => console.error('  ' + b)); process.exit(1); }
+  console.log('testimonial check passed');
+}
