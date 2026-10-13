@@ -84,7 +84,7 @@ console.log('text consent check passed');
 // Decisions 181 to 185: no promise words that came back out in the liability sweep.
 {
   const pBad = [];
-  const re = /confirmation of receipt|staffed by licensed|We(&rsquo;|')re licensed agents|tax hit|fat-finger|logged for FREC|Performed by licensed broker Marlenyi|Marlenyi matches you personally|personally (oversees|selects)|My TC team are licensed|broker personally|watching every file|on every referral file|Audit-ready folder delivered|make the file audit-ready/i;
+  const re = /confirmation of receipt|staffed by licensed|We(&rsquo;|')re licensed agents|tax hit|fat-finger|logged for FREC|Performed by licensed broker Marlenyi|Marlenyi matches you personally|personally (oversees|selects)|My TC team are licensed|broker personally|watching every file|on every referral file|Audit-ready folder delivered|make the file audit-ready|Username · Password|name="(compliance|signing)_login"|Intro rate through Aug|public testimonial with my name|includes loss of license, willful misconduct|twelve months preceding the claim/i;
   for (const f of walk(root).filter(f => /\.(html|js|ts)$/.test(f) && !/(pipeline|files\.html|archive|node_modules|\.checks)/.test(f))) {
     const t = fs.readFileSync(f, 'utf8');
     const m = t.match(re);
