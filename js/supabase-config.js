@@ -1,22 +1,12 @@
 /* ============================================================================
    Aari Transactions — Supabase Configuration
    ============================================================================
-   PRE-LAUNCH TODO (BLOCKING):
-     1. Create the Supabase project at https://supabase.com → Aari Transactions
-     2. Replace SUPABASE_URL and SUPABASE_ANON_KEY below with the real values
-        (Project Settings → API → URL + anon public key)
-     3. Run the SQL migrations in /Migration/supabase-schema.sql (to be created)
-     4. Configure Auth → Email Templates (signup confirm, password reset)
-     5. Configure Auth → URL Configuration (redirect URLs for password reset)
-     6. Verify email send (SMTP) — Supabase default is rate-limited; configure
-        a real SMTP (Postmark / Resend / SendGrid) before any agent registers.
-
    The anon key is safe to expose in browser code — it only grants what RLS
    policies allow. The service_role key MUST NEVER appear in this file.
    ============================================================================ */
 
 /* ---------------------------------------------------------------------------
- * SSO handoff receiver · Marlenyi Jul 28.
+ * SSO handoff receiver.
  *
  * Two paths so this survives every load ordering:
  *   Path A — URL hash: hub.joinaari.com puts the session in the iframe URL
