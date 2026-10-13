@@ -78,8 +78,8 @@ Deno.serve(async (req) => {
 
   // Agent reassurance (best-effort). Also property-first, no id prefix.
   if(agent?.email){
-    const aText = `Hi ${agent?.first_name || "there"},\n\nYour file at ${propertyShort} is going straight to Marlenyi. No further action needed from you.\n\nAari Transactions`;
-    const aHtml = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111;line-height:1.6;font-size:15px;"><p>Hi ${esc(agent?.first_name||"there")},</p><p>Your file at <strong>${esc(propertyShort)}</strong> is going straight to Marlenyi. No further action needed from you.</p><p style="color:#555;">Aari Transactions</p></div>`;
+    const aText = `Hi ${agent?.first_name || "there"},\n\nYour file at ${propertyShort} is going to the broker for review. No further action needed from you.\n\nAari Transactions`;
+    const aHtml = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#111;line-height:1.6;font-size:15px;"><p>Hi ${esc(agent?.first_name||"there")},</p><p>Your file at <strong>${esc(propertyShort)}</strong> is going to the broker for review. No further action needed from you.</p><p style="color:#555;">Aari Transactions</p></div>`;
     try { await sendEmail(agent.email, `Your file is with the broker · ${propertyShort}`, aText, aHtml); } catch(_){}
   }
 

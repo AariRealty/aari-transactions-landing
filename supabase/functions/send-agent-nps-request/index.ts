@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
         <p style="font-size:14px;margin:0 0 16px;color:#0f0f0f;line-height:1.55">${firstName ? `Hi ${esc(firstName)},` : "Hi,"}</p>
         <p style="font-size:14px;margin:0 0 16px;color:#0f0f0f;line-height:1.55">Quick favor — 30 seconds. How was working with ${esc(tcName)} on this file?</p>
         <a href="${link}" style="display:inline-block;background:#0f0f0f;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:500">Leave 30-second feedback →</a>
-        <p style="font-size:12px;color:#5f5e5a;margin:20px 0 0;line-height:1.5">Your answer goes straight to Marlenyi. We use it to keep the bar high.</p>
+        <p style="font-size:12px;color:#5f5e5a;margin:20px 0 0;line-height:1.5">Your answer goes to the Aari team. We use it to keep the bar high.</p>
         <hr style="border:0;border-top:0.5px solid #e6e2d8;margin:28px 0 14px">
         <p style="font-size:10.5px;color:#888;line-height:1.5;margin:0">Closed ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })} · Aari Transactions</p>
       </div>
