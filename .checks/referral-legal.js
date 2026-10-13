@@ -19,3 +19,19 @@ const walk = d => fs.readdirSync(d, { withFileTypes: true }).flatMap(e => e.name
 const phoneBad = walk(root).filter(f => /\.(html|js|txt)$/.test(f) && /789[. -]?4701/.test(fs.readFileSync(f, 'utf8')));
 if (phoneBad.length) { console.error('Aari Realty line 239.789.4701 found on the Aari Transactions site (decision 156):'); phoneBad.forEach(f => console.error('  ' + path.relative(root, f))); process.exit(1); }
 console.log('phone line check passed');
+
+// Rescan Oct 13: Referrals price, split and payment wording must match the RAA (decisions 143, 144, 152).
+const refBad = [];
+for (const f of walk(root).filter(f => /\.html$/.test(f) && !/(pipeline|aari-crm|mock|tc-portal|broker-cockpit|files)/.test(f))) {
+  const t = fs.readFileSync(f, 'utf8');
+  const rel = path.relative(root, f);
+  if (/RESPA[ -]clean/i.test(t)) refBad.push(rel + ': "RESPA clean" claim');
+  if (/^(aari-referrals|referral-.*)\.html$/.test(rel)) {
+    for (const m of t.matchAll(/retains (\d+) ?(percent|%)/gi)) if (m[1] !== '15') refBad.push(rel + ': retains ' + m[1] + ' percent');
+    if (/dollar a day|\$1 a day/i.test(t)) refBad.push(rel + ': dollar a day');
+    if (/(pay|paid|payment)[^.<]{0,40}through Stripe/i.test(t)) refBad.push(rel + ': Stripe payment while online payment is not open');
+    if (/safe harbor/i.test(t)) refBad.push(rel + ': safe harbor');
+  }
+}
+if (refBad.length) { console.error('Referrals wording check failed:'); refBad.forEach(b => console.error('  ' + b)); process.exit(1); }
+console.log('referrals wording check passed');
