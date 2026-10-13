@@ -85,6 +85,8 @@ console.log('text consent check passed');
 {
   const pBad = [];
   const re = /confirmation of receipt|staffed by licensed|We(&rsquo;|')re licensed agents|tax hit|fat-finger|logged for FREC|Performed by licensed broker Marlenyi|Marlenyi matches you personally|personally (oversees|selects)|My TC team are licensed|broker personally|watching every file|on every referral file|Audit-ready folder delivered|make the file audit-ready|Username · Password|name="(compliance|signing)_login"|Intro rate through Aug|public testimonial with my name|includes loss of license, willful misconduct|twelve months preceding the claim|70% of (Files|Florida)|eliminates the entire category|closing date is safe/i;
+  // Decision 201: Listing Coordinator is $199 on every page.
+  for (const f of ['services.html','index.html','submit.html']) { const t = fs.readFileSync(path.join(root, f), 'utf8'); if (/Listing Coordinator[\s\S]{0,400}\$249/.test(t)) pBad.push(f + ': Listing Coordinator not $199 (decision 201)'); }
   for (const f of walk(root).filter(f => /\.(html|js|ts)$/.test(f) && !/(pipeline|files\.html|archive|node_modules|\.checks)/.test(f))) {
     const t = fs.readFileSync(f, 'utf8');
     const m = t.match(re);
