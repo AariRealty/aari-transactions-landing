@@ -1,6 +1,6 @@
 // Edge function: aari-sa-pdf-email
 // ============================================================================
-// Generates a PDF of the signed Aari Transactions Service Agreement (v4.7),
+// Generates a PDF of the signed Aari Transactions Service Agreement (dated October 13, 2026),
 // embeds the agent's drawn signature image, and emails it as an attachment to
 // the agent + agreements@aaritransactions.com via Resend.
 //
@@ -49,7 +49,7 @@ const corsHeaders = {
 };
 
 // ---------------------------------------------------------------------------
-// SA v4.7 text — verbatim from index.html (sa-doc-intake-text block).
+// Service Agreement dated October 13, 2026, verbatim from js/aari-sa-text.js (single source).
 // HTML entities have been decoded to literal characters because pdf-lib's
 // WinAnsi-encoded StandardFonts cannot render entity references and many
 // Unicode characters. Smart quotes / em-dashes are mapped to their ASCII
@@ -57,12 +57,12 @@ const corsHeaders = {
 // ---------------------------------------------------------------------------
 const SA_TEXT_V4_7 = `AARI TRANSACTIONS LLC
 TRANSACTION COORDINATION SERVICES AGREEMENT
-Version 4.7 - Effective May 26, 2026
+Dated October 13, 2026
 Effective as of the date of electronic acceptance by Agent below
 
 PARTIES. This Transaction Coordination Services Agreement (this "Agreement") is entered into between Aari Transactions, LLC, a Florida limited liability company ("Aari"), and the undersigned licensed real estate professional ("Agent"). Aari and Agent are each a "Party" and collectively the "Parties."
 
-IMPORTANT - STRUCTURE OF THIS AGREEMENT (read first). Aari Transactions, LLC and Aari Realty, LLC (a Florida-licensed real estate brokerage) are under common ownership. Aari's transaction coordinators may include licensed real estate professionals affiliated with Aari Realty, as well as non-licensed administrative service providers and independent contractors. Because of this common ownership and the potential for personnel overlap between the two entities, Aari Realty, LLC is also bound by this Agreement for purposes of Section 7 (Mutual Non-Solicitation and Non-Circumvention) only. Each entity is severally liable for its own conduct under Section 7. The two entities are not jointly liable for each other's breaches.
+IMPORTANT  -  STRUCTURE OF THIS AGREEMENT (read first). Aari Transactions, LLC and Aari Realty, LLC (a Florida-licensed real estate brokerage) are under common ownership. Aari's transaction coordinators may include licensed real estate professionals affiliated with Aari Realty, as well as non-licensed administrative service providers and independent contractors. Because of this common ownership and the potential for personnel overlap between the two entities, Aari Realty, LLC is also bound by this Agreement for purposes of Section 7 (Mutual Non-Solicitation and Non-Circumvention) only. Each entity is severally liable for its own conduct under Section 7. The two entities are not jointly liable for each other's breaches.
 
 What this Agreement is not. This Agreement governs the contractual relationship between Aari and Agent only. Agent's clients (the buyers and sellers represented by Agent in any transaction) are not parties to this Agreement, have no rights or obligations under it, and are not third-party beneficiaries. Agent retains full and direct ownership of, and responsibility for, Agent's client relationships at all times.
 
@@ -75,9 +75,9 @@ The specific scope of services for any engagement is determined by the service t
 
 Excluded Services. Aari does not perform any activity requiring a real estate license under the laws of any state, including (without limitation) negotiation of price or terms on behalf of a party, advising a party as to value, marketing properties, presenting offers, or any other activity reserved by law to a licensed real estate broker or sales associate. Agent retains sole responsibility for all such activities.
 
-Post-Closing File Purge. Aari does not retain client files, transaction documents, or personally identifiable client information following the closing of a transaction or termination of an engagement on a file that does not close. Within thirty (30) days following closing (or termination of the engagement on a non-closing file), Aari shall permanently delete or irreversibly de-identify all Client Data from its active systems, systems backups, and archival storage. Aari retains no copies of client files post-closing.
+File Records. Aari keeps file records for as long as Florida real estate recordkeeping rules require, then deletes them securely. Section 6 governs how Aari handles Client Data.
 
-Agent acknowledges that Agent's sponsoring brokerage, not Aari, is the records custodian for the underlying transaction file under applicable law. This provision clarifies that Aari maintains no post-closing file retention obligation or archive function.
+Agent acknowledges that Agent's sponsoring brokerage, not Aari, is the records custodian for the underlying transaction file under applicable law.
 
 Client Contact Limitation. Aari's primary communication channel is the Agent. Aari shall not contact Agent's client (buyer or seller) directly by telephone or text message without Agent's prior written authorization for that specific file. Agent may authorize Aari to communicate directly with Agent's client on a per-file basis by written instruction. Absent such instruction, all client communications shall route through Agent. This Section does not restrict Aari's communications with title agents, lenders, HOA management, or other third-party service providers in connection with the transaction.
 
@@ -117,6 +117,8 @@ Agent shall:
 (g) Pay all fees in accordance with Section 2.
 (h) Accuracy of Information. Agent represents and warrants that all information, documents, photos, and materials provided to Aari are accurate, complete, and current. Agent agrees to indemnify and hold harmless Aari from any claim, damage, or loss arising from Aari's reliance on inaccurate, incomplete, or outdated information provided by Agent.
 
+(i) MLS Access and Credential Handling. Agent agrees, throughout the term of any engagement involving Multiple Listing Service ("MLS") access, to comply with the credentialing, subscriber, and access rules of every MLS in which Agent participates. Without limiting the foregoing, Agent shall not share Agent's individual MLS login, password, key, session token, or any other access credential with Aari, its coordinators, or any Aari personnel, and Aari shall not accept, store, request, or use any such credential; any credential Agent nonetheless transmits will be deleted without use. Where the engaged service requires MLS access (including Listing Coordinator, MLS Setup Only, or any successor service touching an MLS), Agent shall, at Agent's sole cost and effort, complete the process required by the applicable MLS to grant the Aari coordinator assigned to the file separate, individually issued access under whatever category the MLS provides (authorized subscriber, personal assistant, licensed designee, or otherwise). Aari shall not commence MLS work on a file until such access has been established. Agent acknowledges that Agent may bear responsibility, under the rules of the applicable MLS, for the acts of any coordinator or subscriber authorized under Agent's account, including Aari coordinators authorized under this subsection. If Agent does not complete the required access setup within seven (7) days of payment confirmation on an MLS-involving service, Aari may pause work without penalty, offer a comparable non-MLS deliverable where feasible, or treat the engagement as cancelled by Agent under Section 9. Fees paid for MLS work Aari is unable to perform because of Agent's failure to grant proper access are non-refundable.
+
 4. Aari Responsibilities
 Aari shall:
 (a) Perform the services with reasonable professional skill and diligence consistent with industry standards for transaction coordination.
@@ -125,7 +127,6 @@ Aari shall:
 (d) Communicate professionally with Agent, Agent's clients (when authorized), title agents, lenders, and other transaction parties.
 (e) Identify and notify Agent in writing of material risks or deficiencies discovered in a file (including missing signatures, expired disclosures, or compliance gaps).
 (f) Engage only coordinators trained on Aari's internal compliance standards and the transaction practices applicable to the states in which they coordinate.
-
 (h) Coordinator Error Resolution. If Aari believes its coordination work has materially contributed to a transaction harm (missed deadline, document error, miscommunication on a file), Aari shall (i) acknowledge the error in writing to Agent within forty-eight (48) hours of Aari's discovery of the error; (ii) work in good faith to mitigate or remedy the issue at Aari's expense, including without limitation expedited document filing, fee payment to extend deadlines where commercially reasonable, and direct communication with affected parties; and (iii) document the resolution in the file. The acknowledgment obligation in this Section 4(h) does not constitute admission of liability or waiver of the limitations of liability set forth in Section 12.
 
 5. Confidentiality and Non-Disclosure (Mutual NDA)
@@ -144,7 +145,7 @@ Survival. The obligations in this Section 5 survive termination of this Agreemen
 Compelled Disclosure. If the Receiving Party is required by subpoena, court order, or applicable law to disclose Confidential Information, the Receiving Party shall (where legally permitted) provide the Disclosing Party prompt written notice and reasonable cooperation in seeking a protective order.
 
 6. Client Data Handling, Retention, and Deletion
-Client Data. Aari treats all Agent client information - including names, contact information, financial information, and transaction details (collectively, "Client Data") - as Confidential Information of Agent.
+Client Data. Aari treats all Agent client information  -  including names, contact information, financial information, and transaction details (collectively, "Client Data")  -  as Confidential Information of Agent.
 
 Deletion After Closing. Within thirty (30) days following the closing of a transaction file (or termination of an engagement on a file that does not close), Aari shall delete or irreversibly de-identify Client Data from its active systems, retaining only:
 (a) Final closing documents and records required to be retained by applicable law, brokerage record-retention rules, or Aari's audit obligations.
@@ -229,7 +230,7 @@ Waiver. No waiver of any provision of this Agreement is effective unless in writ
 
 Assignment. Agent may not assign this Agreement without Aari's prior written consent. Aari may assign this Agreement to an affiliate or in connection with a merger, acquisition, or sale of substantially all of its assets.
 
-Counterparts and Electronic Signatures. This Agreement may be executed electronically and in counterparts, each of which is deemed an original. The Parties consent to electronic execution under Fla. Stat. Section 668.50 (Uniform Electronic Transaction Act).
+Counterparts and Electronic Signatures. This Agreement may be executed electronically and in counterparts, each of which is deemed an original. The Parties consent to electronic execution under Fla. Stat. Section  668.50 (Uniform Electronic Transaction Act).
 
 18. Acknowledgment and Acceptance
 By submitting the Aari Transactions agent onboarding form (or, for new files only, by checking the Service Agreement acknowledgment in the New File Intake form), Agent acknowledges that Agent has:
@@ -240,8 +241,7 @@ By submitting the Aari Transactions agent onboarding form (or, for new files onl
 
 19. Signatures
 The Parties have executed this Agreement as of the date(s) set forth below. Electronic signatures are valid and binding under applicable electronic transaction law.
-
--- END OF AGREEMENT --`;
+`;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -446,7 +446,7 @@ async function buildPdf(p: SaPayload): Promise<Uint8Array> {
 
   // ---- Header block ----
   drawHeading("Aari Transactions LLC - Transaction Coordination Services Agreement");
-  drawSub("Version " + (p.agreement_version || "4.7") + " - Effective May 26, 2026");
+  drawSub("Dated October 13, 2026");
   drawSpacer(6);
 
   // ---- Agent info block ----
