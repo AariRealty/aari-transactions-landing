@@ -134,3 +134,15 @@ console.log('text consent check passed');
   if (bad.length) { console.error('Re scan 12 check failed:'); bad.forEach(b => console.error('  ' + b)); process.exit(1); }
   console.log('re scan 12 check passed');
 }
+
+// Decision 328: no client records hardcoded in public files, and internal files stay blocked.
+{
+  const bad = [];
+  const rd = f => fs.readFileSync(path.join(root, f), 'utf8');
+  if (!/const DEFAULT_DATA=\[\]/.test(rd('pipeline.html'))) bad.push('pipeline.html: client records are hardcoded again (decision 328)');
+  if (/Susslay|Matos Empire|2509 12th St SW/.test(rd('tc-cockpit.html'))) bad.push('tc-cockpit.html: real client demo is back (decision 328)');
+  const r = rd('_redirects');
+  for (const rule of ['/sql/*','/supabase/*','/docs/*','/tc-portal/*','/portal.html.bak','/LAUNCH_RUNBOOK.md']) if (r.indexOf(rule + '  /404.html  404!') < 0) bad.push('_redirects: block rule missing for ' + rule + ' (decision 328)');
+  if (bad.length) { console.error('Decision 328 check failed:'); bad.forEach(b => console.error('  ' + b)); process.exit(1); }
+  console.log('decision 328 check passed');
+}
