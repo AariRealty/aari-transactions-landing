@@ -358,21 +358,12 @@
     note: 'MLS will not accept names, phone numbers, gate codes, or URLs. Auto-scrubber strips violations before save.',
   };
 
-  /* ----- Aari's standard Realtor / confidential remarks block.
-     This is the boilerplate Marlenyi runs on every listing — agent response
-     terms, contract format requirements, due-diligence disclaimer. Agents
-     can take it as-is, override with their own (and save it to their
-     profile for future listings), or load their previously-saved template. */
-  const AARI_STANDARD_CONFIDENTIAL_REMARKS = (
-    'Please allow seller a minimum of 2 DAYS to respond to all offers. ' +
-    'Closing date is firm. NO "ON OR BEFORE" language accepted. ' +
-    'Please submit all offers using the Florida Realtors/Florida Bar AS-IS ' +
-    'Residential Contract or Vacant Land Contract for Sale and Purchase, along ' +
-    'with proof of funds or pre-approval letter. Buyer and buyer’s agent to ' +
-    'perform all due diligence and verify all information including lot ' +
-    'dimensions, zoning, utilities, and buildability. Information is deemed ' +
-    'reliable but not guaranteed and subject to errors, omissions, and changes.'
-  );
+  /* ----- Realtor / confidential remarks.
+     No default seller terms (decision 369). The default is blank remarks
+     the agent enters; agents can save their own remarks to their profile
+     and load them on future listings. The constant stays (empty) so
+     existing callers keep working. */
+  const AARI_STANDARD_CONFIDENTIAL_REMARKS = '';
 
   const CONFIDENTIAL_REMARKS_STEP = {
     name: 'confidential_remarks',

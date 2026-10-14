@@ -2256,11 +2256,11 @@ body.rtx-mobile-drawer-open .rtx-tabbar-close{display:block;}
         '</div>' +
         '<label style="' + obLbl + '">Preferred update method</label>' +
         '<div style="display:flex;gap:8px;margin-bottom:14px">' +
-          ['email','text','both'].map(m => '<button type="button" data-ob-method="' + m + '" style="border-radius:999px;padding:7px 18px;font-family:Inter,sans-serif;font-size:12px;cursor:pointer;' + (_ob.data.method === m ? 'background:#0f0f0f;color:#fff;border:0.5px solid #0f0f0f;font-weight:600' : 'background:#fff;color:#888;border:0.5px solid #ddd6c8') + '">' + m.charAt(0).toUpperCase() + m.slice(1) + '</button>').join('') +
+          // Email only for now: text updates return when consent is recorded (decision 381).
+          ['email'].map(m => '<button type="button" data-ob-method="' + m + '" style="border-radius:999px;padding:7px 18px;font-family:Inter,sans-serif;font-size:12px;cursor:pointer;' + (_ob.data.method === m ? 'background:#0f0f0f;color:#fff;border:0.5px solid #0f0f0f;font-weight:600' : 'background:#fff;color:#888;border:0.5px solid #ddd6c8') + '">' + m.charAt(0).toUpperCase() + m.slice(1) + '</button>').join('') +
         '</div>' +
-        '<label style="' + obLbl + '">Phone for text updates' + (_ob.data.phone ? '' : ' (optional)') + '</label>' +
+        '<label style="' + obLbl + '">Phone (optional)</label>' +
         '<input type="tel" data-ob-phone value="' + esc(_ob.data.phone) + '" placeholder="(239) 555-0100" style="' + obField + '">' +
-        '<p style="font-size:11px;color:#8a857c;line-height:1.5;margin:8px 0 0">Text updates are optional. Message and data rates may apply. Reply STOP to opt out, HELP for help. Consent is not a condition of service.</p>' +
         '</div>' +
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px">' +
         '<a href="#" data-ob-back style="font-size:12px;color:#999">\u2039 Back</a>' +
@@ -2282,7 +2282,7 @@ body.rtx-mobile-drawer-open .rtx-tabbar-close{display:block;}
     const upd = {
       avg_transactions_per_month: _ob.data.avg || null,
       preferred_tc_id: _ob.data.tc || null,
-      update_method: _ob.data.method || 'email',
+      update_method: 'email', // text updates return when consent is recorded (decision 381)
       weekly_digest_opt_in: !!_ob.data.digest,
       onboarding_complete: true,
     };
@@ -4640,7 +4640,7 @@ body.rtx-mobile-drawer-open .rtx-tabbar-close{display:block;}
   }
   // Team headshots (brand-card face crops in /images/agents). Matched by first name; used as
   // fallback when an agent has no headshot_url, and for pending (no-account) agents.
-  var AGENT_PHOTOS = { alied:'/images/agents/alied-machuca.jpg', flavia:'/images/agents/flavia-aguilera.jpg', roosevelt:'/images/agents/roosevelt-sanchez.jpg', ana:'/images/agents/ana-puentes.jpg', eileen:'/images/agents/eileen-hernandez.jpg', odalis:'/images/agents/odalis-mora.jpg', milennys:'/images/agents/milennys-vargas.jpg', alejandro:'/images/agents/alejandro-paredes.jpg', marlenyi:'/images/agents/marlenyi-paredes.jpg' };
+  var AGENT_PHOTOS = { alied:'/images/agents/alied-machuca.jpg', flavia:'/images/agents/flavia-aguilera.jpg', roosevelt:'/images/agents/roosevelt-sanchez.jpg', eileen:'/images/agents/eileen-hernandez.jpg', odalis:'/images/agents/odalis-mora.jpg', milennys:'/images/agents/milennys-vargas.jpg', alejandro:'/images/agents/alejandro-paredes.jpg', marlenyi:'/images/agents/marlenyi-paredes.jpg' };
   function photoFor(name){ var f=String(name||'').toLowerCase().trim().split(/\s+/)[0]; return AGENT_PHOTOS[f]||''; }
   function teamPrice(f){
     if(f.purchase_price_cents) return f.purchase_price_cents/100;
@@ -4650,16 +4650,17 @@ body.rtx-mobile-drawer-open .rtx-tabbar-close{display:block;}
     const n = Number(String(cand).replace(/[^0-9.]/g,''));
     return n || 0;
   }
-  const DEFAULT_COMM_PCT = 2.5; // used until an agent's real rate is set
+  const DEFAULT_COMM_PCT = null; // no default rate (decision 382); no estimate until a rate is entered
   function teamComm(f){
     const a = _teamAgents[f.agent_id];
     const bonus = f.commission_bonus_cents ? Number(f.commission_bonus_cents)/100 : 0;
     // Flat commission (buyer-broker / fixed fee) wins and totals even with no sale price.
     if (f.commission_flat_cents != null && f.commission_flat_cents !== '') return Number(f.commission_flat_cents)/100 + bonus;
-    // Else per-deal rate override; else the agent's stored rate; else the 2.5% default.
+    // Else per-deal rate override; else the agent's stored rate; else no estimate (decision 382).
     const rate = (f.commission_pct != null && f.commission_pct !== '') ? Number(f.commission_pct)
                : (a && a.default_commission_pct != null) ? Number(a.default_commission_pct)
                : DEFAULT_COMM_PCT;
+    if (rate == null || isNaN(rate)) return 0;
     return teamPrice(f) * (rate/100) + bonus;  // bonus rides along, then any split is applied by the caller
   }
   // Comp model · brokerage_split_pct = the % the AGENT KEEPS. Company gets the rest.
@@ -5074,8 +5075,11 @@ body.rtx-mobile-drawer-open .rtx-tabbar-close{display:block;}
     const svcMap = {}; files.forEach(function(f){ var s=txSvc(f); var lbl=(s==='tc'||s.indexOf('tc_')===0)?'Contract to Close':(s==='lc'||s==='listing'||s==='listing_docs'||s==='mls_setup')?'Listing':(s.indexOf('op_')===0)?'Offer Prep':(s==='file_org')?'File Organization':(s==='standalone_review')?'Review':(s==='rental')?'Rental':'Other'; svcMap[lbl]=(svcMap[lbl]||0)+1; });
 
     // Pending · ownerless imported files grouped by intended owner
-    const PENDING_NAMES = { 'rooseveltsanchezrealestate@gmail.com':'Roosevelt Sanchez', 'flaviamaguilera@gmail.com':'Flavia Aguilera', 'machuca.alied@gmail.com':'Alied Machuca', 'puentesana99@gmail.com':'Ana Puentes' };
-    // Group ownerless files by the agent NAME on the file (fall back to the pending email map).
+    // No personal email addresses in source (decision 375). Ownerless files group by the agent NAME
+    // on the file; the stored pending_agent_email is only a fallback grouping key, and the
+    // pending_owner_claim trigger moves the file to the agent once that email signs up.
+    const PENDING_NAMES = {};
+    // Group ownerless files by the agent NAME on the file (fall back to the stored pending email).
     const pend = {}; _pendProd.forEach(f => { const r=f.raw_form_data||{}; const k = (r.agent_name && String(r.agent_name).trim()) || PENDING_NAMES[f.pending_agent_email] || f.pending_agent_email || 'Unassigned'; (pend[k] = pend[k] || []).push(f); });
     const pendKeys = Object.keys(pend);
     const pendPipe = _pendProd.reduce((s,f)=>s+teamPrice(f),0);
@@ -5085,7 +5089,7 @@ body.rtx-mobile-drawer-open .rtx-tabbar-close{display:block;}
     const agentMap = {};
     files.forEach(function(f){
       var sps = fileSplits(f);
-      var primRate = (_teamAgents[f.agent_id] && _teamAgents[f.agent_id].default_commission_pct!=null) ? Number(_teamAgents[f.agent_id].default_commission_pct) : DEFAULT_COMM_PCT;
+      var primRate = (_teamAgents[f.agent_id] && _teamAgents[f.agent_id].default_commission_pct!=null) ? Number(_teamAgents[f.agent_id].default_commission_pct) : 0; // no default rate (decision 382)
       var dealGci = teamPrice(f) * (primRate/100);
       sps.forEach(function(s){
         var id=s.agent_id, pct=Number(s.pct)||0;
@@ -5297,7 +5301,7 @@ body.rtx-mobile-drawer-open .rtx-tabbar-close{display:block;}
       '<div class="pv-card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:8px"><span class="pv-eyebrow" style="margin:0">Team standings &middot; agent / Aari / transaction fee</span><button id="pv-monday-btn" class="pv-mbtn" style="margin:0">Monday shout-out &rarr;</button></div>' + agentRows + '</div>' +
       '<div class="pv-card">'+rollup+'</div>' +
       '<div class="pv-card">'+odBlock+'</div>' +
-      '<p class="pv-note">Estimates use each agent&rsquo;s stored rate (2.5% default until you set theirs). View only &middot; Aari Transactions does not pay or process commissions. Aari Realty agents are paid by their broker as their agreement states.</p>';
+      '<p class="pv-note">Estimates use the rate on the file or the agent&rsquo;s stored rate; no estimate shows until a rate is entered. View only &middot; Aari Transactions does not pay or process commissions. Aari Realty agents are paid by their broker as their agreement states.</p>';
     host.querySelectorAll('.pv-text').forEach(b => b.addEventListener('click', function(e){ e.stopPropagation(); teamNudge(this.getAttribute('data-nudge'), this.getAttribute('data-mode')||''); }));
     host.querySelectorAll('.pv-rate').forEach(b => b.addEventListener('click', function(e){ e.stopPropagation(); setAgentRate(this.getAttribute('data-rate')); }));
     host.querySelectorAll('[data-sbtoggle]').forEach(function(h){ h.addEventListener('click', function(e){ if(e.target.closest('.pv-text')||e.target.closest('.pv-rate')||e.target.closest('.pv-invite')) return; this.parentNode.classList.toggle('open'); }); });
@@ -5326,7 +5330,7 @@ body.rtx-mobile-drawer-open .rtx-tabbar-close{display:block;}
   async function setAgentRate(agentId){
     const a = _teamAgents[agentId]; const name = teamAgentName(agentId);
     const cur = (a && a.default_commission_pct != null) ? a.default_commission_pct : '';
-    const v = window.prompt('Commission rate % for '+name+'  (e.g. 3 or 2.5)', cur);
+    const v = window.prompt('Commission rate % for '+name, cur);
     if(v === null) return;
     const n = parseFloat(String(v).replace(/[^0-9.]/g,''));
     if(isNaN(n) || n < 0 || n > 100){ alert('Enter a number between 0 and 100.'); return; }
@@ -5376,7 +5380,7 @@ body.rtx-mobile-drawer-open .rtx-tabbar-close{display:block;}
     var box=document.createElement('div'); box.className='pv-dterms';
     box.innerHTML='<div class="dt-grid">'+
       '<label>Sale price<input type="text" id="dt-price" value="'+(price||'')+'" placeholder="optional"></label>'+
-      '<label>Commission <span class="dt-units" style="float:right;display:inline-flex;gap:4px;"><b id="dt-u-pct" style="'+upBtn(!flatMode)+'">%</b><b id="dt-u-usd" style="'+upBtn(flatMode)+'">$</b></span><input type="text" id="dt-comm" value="'+commVal+'" placeholder="'+(flatMode?'1000':'2.5')+'"></label>'+
+      '<label>Commission <span class="dt-units" style="float:right;display:inline-flex;gap:4px;"><b id="dt-u-pct" style="'+upBtn(!flatMode)+'">%</b><b id="dt-u-usd" style="'+upBtn(flatMode)+'">$</b></span><input type="text" id="dt-comm" value="'+commVal+'" placeholder="'+(flatMode?'1000':'Rate %')+'"></label>'+
       '<label>Bonus $<input type="text" id="dt-bonus" value="'+bonus+'"></label>'+
       '<label id="dt-aspl-wrap"'+(isLead?' style="display:none"':'')+'>Agent split %<input type="text" id="dt-aspl" value="'+aspl+'" placeholder="'+agentSplitOf(f)+'"></label>'+
       '<div id="dt-lead-note"'+(isLead?'':' style="display:none"')+' style="font-size:11.5px;color:var(--muted);align-self:end;padding-bottom:6px;line-height:1.45">Company generated lead: <b style="color:var(--ink)">'+COMPANY_LEAD_AGENT_PCT+'%</b> to the agent, '+(100-COMPANY_LEAD_AGENT_PCT)+'% to Aari Realty; the transaction fee comes out of the agent share.</div>'+
@@ -5392,12 +5396,15 @@ body.rtx-mobile-drawer-open .rtx-tabbar-close{display:block;}
         list.filter(function(a){ return String(a.id)!==cur; }).map(function(a){ return '<option value="'+esc(a.id)+'">'+esc(a.name)+(a.role&&a.role!=='agent'?(' · '+esc(a.role)):'')+'</option>'; }).join(''); }); }
     var mode=flatMode?'usd':'pct';
     function num(id){ return parseFloat(String(document.getElementById(id).value).replace(/[^0-9.]/g,'')); }
-    function setUnit(m){ mode=m; document.getElementById('dt-u-pct').style.cssText=upBtn(m==='pct'); document.getElementById('dt-u-usd').style.cssText=upBtn(m==='usd'); document.getElementById('dt-comm').placeholder=(m==='usd'?'1000':'2.5'); calc(); }
+    function setUnit(m){ mode=m; document.getElementById('dt-u-pct').style.cssText=upBtn(m==='pct'); document.getElementById('dt-u-usd').style.cssText=upBtn(m==='usd'); document.getElementById('dt-comm').placeholder=(m==='usd'?'1000':'Rate %'); calc(); }
     function calc(){ var p=num('dt-price')||0, c=num('dt-comm'), b=num('dt-bonus')||0;
       var leadOn=document.getElementById('dt-lead').checked;
       var asp = leadOn ? COMPANY_LEAD_AGENT_PCT : num('dt-aspl'); if(isNaN(asp)) asp=agentSplitOf(f);
       var fee=num('dt-fee'); if(isNaN(fee)) fee=0;
-      var gross = (mode==='usd') ? ((isNaN(c)?0:c)+b) : (p*((isNaN(c)?DEFAULT_COMM_PCT:c)/100)+b);
+      // No default rate (decision 382): blank % falls back to the agent's stored rate, else no estimate.
+      if(mode!=='usd' && isNaN(c)){ var _ar=_teamAgents[f.agent_id]; if(_ar && _ar.default_commission_pct!=null) c=Number(_ar.default_commission_pct); }
+      if((mode==='usd' && isNaN(c)) || (mode!=='usd' && isNaN(c))){ document.getElementById('dt-cut').innerHTML='<div style="font-size:12px;line-height:1.65;color:var(--muted)">Enter the commission on this file to see an estimate</div>'; return; }
+      var gross = (mode==='usd') ? (c+b) : (p*(c/100)+b);
       // Exhibit A order: the plan split applies to the gross, then the transaction fee comes out of the agent share.
       var agent=Math.max(0, gross*(asp/100)-fee); var company=gross*((100-asp)/100); var you=company+Math.min(fee, gross*(asp/100));
       var fmt=function(n){ return '$'+Math.round(n||0).toLocaleString('en-US'); };

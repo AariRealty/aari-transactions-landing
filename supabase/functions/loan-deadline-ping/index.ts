@@ -151,6 +151,7 @@ Deno.serve(async (req) => {
     // Loan approval deadline · manual override wins, else Effective+30 FL-rolled.
     const ov = (f.deadline_overrides && typeof f.deadline_overrides === "object") ? f.deadline_overrides : {};
     let dl = parseDate(ov.loan_approval ?? null);
+    const est = !dl; // decision 379: no stored date, so the Effective+30 date is only an estimate
     if (!dl) {
       const eff = parseDate(f.effective_date ? String(f.effective_date).slice(0, 10) : null);
       if (!eff) continue;
@@ -178,7 +179,9 @@ Deno.serve(async (req) => {
       ? `passed ${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} ago (${fmtD(dl)})`
       : days === 0 ? `is TODAY (${fmtD(dl)})`
       : `in ${days} day${days === 1 ? "" : "s"} (${fmtD(dl)})`;
-    const body = `Aari · ${street} — loan approval deadline ${when}. ${action} Reply STOP to opt out.`;
+    const body = est
+      ? `Aari · ${street} · estimated loan approval date ${when}. Estimate. Check your contract. ${action} Reply STOP to opt out.`
+      : `Aari · ${street} · loan approval deadline ${when}. ${action} Reply STOP to opt out.`;
 
     // Recipient · assigned TC's phone, else broker (Marlenyi).
     let phones: string[] = [];

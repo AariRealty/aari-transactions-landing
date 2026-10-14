@@ -305,7 +305,7 @@ Deno.serve(async (req) => {
       forwardSaPdf({ agent_name: sa.typed_name, agent_email, signed_at_iso: sa.signed_at, signed_at_display: new Date(sa.signed_at).toLocaleString("en-US", { timeZone: "America/New_York" }), signature_data_url: "", agreement_version: sa.version.replace(/^v/i, ""), user_agent: sa.user_agent, locale: sa.locale }).catch(()=>{});
     }
     if (!isListing) {
-      await confirm(agent_email, "We have your request.", `Your <b>${esc(property)}</b> request is in.`, "Complete checkout and we begin right away. Your coordinator has already been notified.");
+      await confirm(agent_email, "We have your request.", `Your <b>${esc(property)}</b> request is in.`, "Complete checkout and the Aari team assigns a coordinator, same business day when possible.");
     }
     return j(200, { ok: true, file_id: id, mode: "service", service: svc, submitted_as: fullName(authAgent) || undefined });
   }

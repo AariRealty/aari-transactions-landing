@@ -109,7 +109,7 @@ function renderEmail(firstName: string, data: DigestData): string {
   const greet = firstName ? `Hi ${esc(firstName)},` : "Hi,";
   let upcomingBlock = "";
   if (data.upcoming.length === 0) {
-    upcomingBlock = `<p style="margin:0 0 12px;font-size:14px;color:#0f0f0f;line-height:1.5">You’re clear this week — no deadlines tracked in the next 7 days.</p>`;
+    upcomingBlock = `<p style="margin:0 0 12px;font-size:14px;color:#0f0f0f;line-height:1.5">No upcoming deadlines are tracked for the next 7 days. Check your contract for every date that applies.</p>`;
   } else {
     upcomingBlock = `<p style="margin:0 0 8px;font-size:14px;color:#0f0f0f">Your TC is watching <strong>${data.upcoming.length}</strong> deadline${data.upcoming.length === 1 ? "" : "s"} for you this week:</p>` +
       `<ol style="padding-left:20px;margin:0 0 16px;font-size:13px;color:#0f0f0f;line-height:1.6">` +

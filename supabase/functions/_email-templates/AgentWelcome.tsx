@@ -1,5 +1,5 @@
 // Agent welcome · fires once when onboarding completes (never on skip)
-// Sent to: the new agent · introduces their TC by name
+// Sent to: the new agent · TC is assigned per file by the Aari team (no TC name or phone)
 // Category: transactional
 
 import * as React from "react";
@@ -9,25 +9,25 @@ import { Button } from "./_components/Button.tsx";
 
 interface Props {
   firstName: string;
-  tcName: string;
-  tcPhone: string;
+  tcName?: string; // unused, kept so older callers stay harmless
+  tcPhone?: string; // unused, kept so older callers stay harmless
   intakeUrl: string;
 }
 
-export const AgentWelcome: React.FC<Props> = ({ firstName, tcName, tcPhone, intakeUrl }) => (
-  <Layout preview={`Welcome to Aari, ${firstName}. Your TC is ${tcName}.`} category="transactional">
+export const AgentWelcome: React.FC<Props> = ({ firstName, intakeUrl }) => (
+  <Layout preview={`Welcome to Aari, ${firstName}. Your account is active.`} category="transactional">
     <Heading style={h1}>Welcome to Aari, {firstName}.</Heading>
     <Text style={p}>Hi {firstName},</Text>
     <Text style={p}>
-      Welcome to Aari Transactions. Your account is active and your TC is{" "}
-      <strong>{tcName}</strong>. Submit your first file anytime. Files in by 2 PM ET
+      Welcome to Aari Transactions. Your account is active. The Aari team assigns a TC on
+      each file you submit. Submit your first file anytime. Files in by 2 PM ET
       are picked up the same business day when possible.
     </Text>
     <div style={{ marginTop: 22, marginBottom: 6 }}>
       <Button href={intakeUrl}>Submit your first file</Button>
     </div>
     <Text style={sig}>
-      {tcName} · Aari Transactions{tcPhone ? ` · ${tcPhone}` : ""}
+      Aari Transactions
     </Text>
   </Layout>
 );

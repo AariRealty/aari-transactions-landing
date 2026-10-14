@@ -79,10 +79,12 @@
   var CREDIT_SERVICES = {
     mls_setup: 1, listing_docs: 1, offer_prep_basic: 1, file_organization: 1
   };
-  // Billed upfront rather than at closing.
+  // Billed upfront rather than at closing (SA 2(d): add ons, including
+  // Standalone Review, are due upfront at order; decision 366).
   var UPFRONT_SERVICES = [
     'listing_docs', 'listing_coordinator', 'mls_setup', 'offer_prep',
-    'offer_prep_basic', 'offer_prep_complete', 'file_organization'
+    'offer_prep_basic', 'offer_prep_complete', 'file_organization',
+    'standalone_review'
   ];
 
   function svcKey(f){

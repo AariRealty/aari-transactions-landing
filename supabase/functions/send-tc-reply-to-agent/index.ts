@@ -112,7 +112,7 @@ serve(async (req) => {
           },
           body: new URLSearchParams({
             From: TWILIO_FROM, To: agent.phone,
-            Body: `Aari · ${tcName} replied on ${addr}:\n\n"${reply.slice(0, 220)}${reply.length > 220 ? "…" : ""}"\n\nFull thread: ${portalLink}`,
+            Body: `Aari · ${tcName} replied on ${addr}:\n\n"${reply.slice(0, 220)}${reply.length > 220 ? "…" : ""}"\n\nFull thread: ${portalLink} Reply STOP to opt out.`,
           }).toString(),
         });
         smsOk = r.ok;

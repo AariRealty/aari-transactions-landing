@@ -22,7 +22,7 @@ export const MembershipUpgrade: React.FC<Props> = ({ firstName, nextBillingDate,
       <strong> 4 service credits a month</strong>, and priority TC assignment.
     </Text>
     <Text style={p}>
-      Next bill: <strong>{nextBillingDate}</strong>. Cancel or pause anytime from the portal.
+      Next bill: <strong>{nextBillingDate}</strong>. To pause or cancel, email the Aari team at hello@aaritransactions.com. A cancellation takes effect at the end of your billing period, as the Service Agreement states.
     </Text>
     <div style={{ marginTop: 22, marginBottom: 6 }}>
       <Button href={portalUrl}>Open the portal</Button>

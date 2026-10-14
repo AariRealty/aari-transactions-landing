@@ -5,25 +5,19 @@
    intake. The MLS calls this "Confidential Remarks" — visible to other
    agents in the MLS, not to public-facing syndicators.
 
-   Three modes:
+   Modes:
 
-   MODE 1 · USE AARI'S STANDARD  (default for first-time agents)
-     Inserts the boilerplate Marlenyi ships on every Aari listing:
-       - 2-day seller response window
-       - Closing date firm · NO "on or before"
-       - FAR/BAR AS-IS or Vacant Land contract required
-       - POF / pre-approval required
-       - Due diligence disclaimer
+   DEFAULT · BLANK  (no saved remarks)
+     The agent enters their own remarks. No default seller terms are
+     inserted (decision 369). Optional "Save as my new default" pushes
+     the text into the agent profile (`agents.default_confidential_remarks`)
+     so it loads next time.
 
-   MODE 2 · WRITE MY OWN  (custom override)
-     Agent writes their own block. Optional checkbox "Save this as my
-     default for future listings" pushes the text into the agent profile
-     (`agents.default_confidential_remarks`) so it auto-loads next time.
+   USE MY SAVED DEFAULT  (only when the profile has one)
+     Loads the agent's previously saved remarks, with Keep this or Change it.
 
-   MODE 3 · USE MY SAVED DEFAULT  (only shown if profile has one)
-     Loads the agent's previously saved template from their profile.
-
-   Source of truth for the boilerplate: window.AariListingSchema.AARI_STANDARD_CONFIDENTIAL_REMARKS.
+   window.AariListingSchema.AARI_STANDARD_CONFIDENTIAL_REMARKS is now empty
+   and kept only so existing callers keep working.
 
    Usage:
      <div data-listing-confidential-remarks
@@ -144,7 +138,7 @@
        submit contract is unchanged — hidden confidential_remarks /
        _source / _save_to_profile stay in sync. */
     let activeText = STANDARD;
-    let activeSource = 'aari_standard';
+    let activeSource = STANDARD ? 'aari_standard' : 'agent_custom';
 
     rootEl.innerHTML = (
       '<div class="lcr-wrap">' +
@@ -170,7 +164,7 @@
         '</div>' +
         // Hidden inputs the submit handler reads
         '<input type="hidden" name="' + textName + '" data-hidden-text>' +
-        '<input type="hidden" name="' + sourceName + '" data-hidden-source value="aari_standard">' +
+        '<input type="hidden" name="' + sourceName + '" data-hidden-source value="' + activeSource + '">' +
         '<input type="hidden" name="' + saveFlagName + '" data-hidden-save-flag value="0">' +
       '</div>'
     );
@@ -185,6 +179,7 @@
     const hSource    = rootEl.querySelector('[data-hidden-source]');
     const hSaveFlag  = rootEl.querySelector('[data-hidden-save-flag]');
     const keepBtn    = rootEl.querySelector('[data-keep]');
+    const backBtn    = rootEl.querySelector('[data-back]');
 
     function showPane(which){ panes().forEach(p => { p.hidden = (p.dataset.pane !== which); }); }
     function renderActive(){
@@ -194,11 +189,19 @@
         : 'Goes into MLS Confidential Remarks &middot; Aari standard';
     }
     function keepActive(){ hText.value = activeText; hSource.value = activeSource; hSaveFlag.value = '0'; }
+    // No saved remarks · open a blank edit pane for the agent (decision 369).
+    function openBlank(){
+      customInput.value = '';
+      customCount.textContent = '0 / ' + MAX_CHARS;
+      hText.value = ''; hSource.value = 'agent_custom'; hSaveFlag.value = '0';
+      backBtn.hidden = true;
+      showPane('edit');
+    }
 
-    // Default state · review pane, active default loaded and kept.
+    // Default state · saved remarks in the review pane, or blank remarks to enter.
     renderActive();
     keepActive();
-    showPane('review');
+    if(activeText){ showPane('review'); } else { openBlank(); }
 
     keepBtn.addEventListener('click', () => {
       keepActive();
@@ -215,6 +218,7 @@
       hSaveFlag.value = '0';
       rootEl.querySelectorAll('[data-save-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.saveMode === 'once' ? 'true' : 'false'));
       saveStatus.textContent = '';
+      backBtn.hidden = !activeText;
       showPane('edit');
       try { customInput.focus(); } catch(_){}
     });
@@ -237,7 +241,7 @@
             saveStatus.textContent = 'Saving…';
             const ok = await saveAgentTemplate(txt);
             saveStatus.textContent = ok ? 'Saved as default' : 'Will save on submit';
-            if(ok){ activeText = txt; activeSource = 'agent_saved'; renderActive(); }
+            if(ok){ activeText = txt; activeSource = 'agent_saved'; renderActive(); backBtn.hidden = false; }
           }
         } else {
           hSaveFlag.value = '0';
@@ -253,8 +257,10 @@
       activeText = saved;
       activeSource = 'agent_saved';
       renderActive();
+      backBtn.hidden = false;
       const editPane = rootEl.querySelector('[data-pane="edit"]');
       if(!editPane || editPane.hidden){ keepActive(); }  // don't clobber an in-progress edit
+      else if(!customInput.value.trim()){ keepActive(); showPane('review'); }
     }).catch(()=>{});
   }
 

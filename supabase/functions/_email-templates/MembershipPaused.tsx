@@ -29,8 +29,7 @@ export const MembershipPaused: React.FC<Props> = ({ firstName, resumeDate, porta
           Just a heads up. Your Aari Transactions membership is set to resume on <strong>{resumeDate}</strong>.
         </Text>
         <Text style={p}>
-          If you want to extend the pause or cancel before billing restarts, manage it from your portal in
-          under a minute.
+          To pause or cancel, email the Aari team at hello@aaritransactions.com. A cancellation takes effect at the end of your billing period, as the Service Agreement states.
         </Text>
       </>
     ) : (

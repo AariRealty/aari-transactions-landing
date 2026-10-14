@@ -1,9 +1,11 @@
 // ============================================================================
 // Aari Transactions · eod-report v3 (2026-08-15)
 // ============================================================================
-// PER-TC daily clock-in email at 4 PM ET. Two states:
-//   1. All done → "You clocked in." · N completed. Nothing left for today.
-//   2. Something left → "Almost there... N to go! ✨" · warm Alex-toned nudge.
+// PER-TC daily file summary email at 4 PM ET. Two states (decision 383:
+// coordinators are independent contractors per SA 10, so neutral wording,
+// no clock in or hours language):
+//   1. Nothing open → "Here is today's file summary." · N completed.
+//   2. Items open → "Here is today's file summary." · N contract dates open.
 //
 // Sections (only these two, everything else lives in the portal):
 //   · Contract dates today (red-outlined empty checkbox ☐)
@@ -120,14 +122,12 @@ function rowDone(t: DoneItem): string {
 }
 
 function heroAllDone(doneCount: number): string {
-  return `<div style="padding:22px 18px 8px;text-align:center"><div style="font-family:Georgia,'Times New Roman',serif;font-size:32px;line-height:1.15;color:${INK};letter-spacing:-0.5px">You clocked in.</div><div style="font-size:12.5px;color:#5f5647;margin-top:8px">${doneCount} completed. Nothing left for today.</div></div>`;
+  return `<div style="padding:22px 18px 8px;text-align:center"><div style="font-family:Georgia,'Times New Roman',serif;font-size:32px;line-height:1.15;color:${INK};letter-spacing:-0.5px">Here is today's file summary.</div><div style="font-size:12.5px;color:#5f5647;margin-top:8px">${doneCount} completed. No open contract dates listed for today.</div></div>`;
 }
 function heroStillToDo(remaining: number, doneCount: number): string {
-  const remLabel = remaining === 1 ? "1 to go" : `${remaining} to go`;
-  const doneLabel = doneCount === 0
-    ? "Let’s wrap them before EOD."
-    : `You&rsquo;ve <em>crushed</em> ${doneCount} today. Let’s wrap the last ${remaining === 1 ? "one" : "two"} before EOD.`;
-  return `<div style="padding:22px 18px 8px;text-align:center"><div style="font-family:Georgia,'Times New Roman',serif;font-size:30px;line-height:1.2;color:${INK};letter-spacing:-0.5px">Almost there... <span style="color:${RED}">${remLabel}</span>! &#10024;</div><div style="font-size:12.5px;color:#5f5647;margin-top:10px;line-height:1.5">${doneLabel}</div></div>`;
+  const remLabel = remaining === 1 ? "1 contract date open" : `${remaining} contract dates open`;
+  const doneLabel = `${doneCount} completed today. Open items are listed below.`;
+  return `<div style="padding:22px 18px 8px;text-align:center"><div style="font-family:Georgia,'Times New Roman',serif;font-size:30px;line-height:1.2;color:${INK};letter-spacing:-0.5px">Here is today's file summary. <span style="color:${RED}">${remLabel}</span></div><div style="font-size:12.5px;color:#5f5647;margin-top:10px;line-height:1.5">${doneLabel}</div></div>`;
 }
 
 Deno.serve(async (req) => {
@@ -234,20 +234,20 @@ Deno.serve(async (req) => {
         : "";
 
       const preheader = stillList.length > 0
-        ? `${stillList.length} to go... let’s wrap before EOD.`
-        : `Nice — you clocked in. ${doneList.length} completed today.`;
+        ? `Here is today's file summary. ${stillList.length} contract date${stillList.length === 1 ? "" : "s"} open.`
+        : `Here is today's file summary. ${doneList.length} completed today.`;
 
       const subject = stillList.length > 0
-        ? `Aari · ${shortDate} · Almost there... ${stillList.length} to go before EOD`
-        : `Aari · ${shortDate} · You clocked in ✓ ${doneList.length} completed`;
+        ? `Aari · ${shortDate} · File summary · ${stillList.length} open`
+        : `Aari · ${shortDate} · File summary · ${doneList.length} completed`;
 
-      const html = `<!doctype html><html><body style="margin:0;background:#f4f1ea;padding:22px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${INK}"><div style="display:none;max-height:0;overflow:hidden;font-size:0;line-height:0;color:transparent">${esc(preheader)}</div><div style="max-width:520px;margin:0 auto;background:#fff;border:0.5px solid #e6ddca;border-radius:14px;overflow:hidden"><div style="padding:12px 18px;border-bottom:0.5px solid #f2eee4;font-size:11.5px;color:#8a8073">Aari Transactions · Wrap-up for ${esc(tc.name)} · ${esc(dateLabel)}</div>${hero}<div style="padding:18px">${stillBlock}${doneBlock}<div style="text-align:center;margin-top:26px"><a href="${PORTAL}" style="display:inline-block;background:${INK};color:#fff;text-decoration:none;font-size:12.5px;font-weight:600;padding:11px 22px;border-radius:8px">Open the portal</a></div><div style="text-align:center;font-size:10.5px;color:#8a8073;margin-top:22px;padding-top:14px;border-top:0.5px solid #f2eee4">Aari Transactions LLC</div></div></div></body></html>`;
+      const html = `<!doctype html><html><body style="margin:0;background:#f4f1ea;padding:22px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:${INK}"><div style="display:none;max-height:0;overflow:hidden;font-size:0;line-height:0;color:transparent">${esc(preheader)}</div><div style="max-width:520px;margin:0 auto;background:#fff;border:0.5px solid #e6ddca;border-radius:14px;overflow:hidden"><div style="padding:12px 18px;border-bottom:0.5px solid #f2eee4;font-size:11.5px;color:#8a8073">Aari Transactions · File summary for ${esc(tc.name)} · ${esc(dateLabel)}</div>${hero}<div style="padding:18px">${stillBlock}${doneBlock}<div style="text-align:center;margin-top:26px"><a href="${PORTAL}" style="display:inline-block;background:${INK};color:#fff;text-decoration:none;font-size:12.5px;font-weight:600;padding:11px 22px;border-radius:8px">Open the portal</a></div><div style="text-align:center;font-size:10.5px;color:#8a8073;margin-top:22px;padding-top:14px;border-top:0.5px solid #f2eee4">Aari Transactions LLC</div></div></div></body></html>`;
 
       const textLines = [
-        `Aari Transactions · Wrap-up for ${tc.name} · ${dateLabel}`, ``,
+        `Aari Transactions · File summary for ${tc.name} · ${dateLabel}`, ``,
         ...(stillList.length > 0
-          ? [`Almost there... ${stillList.length} to go before EOD.`, ``, `Contract dates today:`, ...stillList.map(t => `  [ ] ${t.name} · ${t.addr}`), ``]
-          : [`You clocked in. ${doneList.length} completed. Nothing left for today.`, ``]),
+          ? [`Here is today's file summary. ${stillList.length} contract date${stillList.length === 1 ? "" : "s"} open.`, ``, `Contract dates today:`, ...stillList.map(t => `  [ ] ${t.name} · ${t.addr}`), ``]
+          : [`Here is today's file summary. ${doneList.length} completed. No open contract dates listed for today.`, ``]),
         ...(doneList.length > 0 ? [`Completed today:`, ...doneList.map(t => `  [✓] ${t.name} · ${t.addr}`), ``] : []),
         `Open the portal: ${PORTAL}`,
       ];

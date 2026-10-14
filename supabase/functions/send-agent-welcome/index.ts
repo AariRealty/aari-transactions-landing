@@ -6,8 +6,9 @@
 // Payload: { skipped: boolean }
 //
 // Always:    notification email to Marlenyi — new agent registered.
-// Completed: welcome email to the agent introducing their TC by name
-//            (preferred TC if picked, otherwise round-robin by open files).
+// Completed: welcome email to the agent (decision 377: no TC name or phone;
+//            the Aari team assigns a TC on each file). The TC lookup below
+//            only feeds the internal broker notification.
 // Skipped:   NO welcome email (her rule) — notification only.
 // Idempotent: a welcome_sent_at stamp on the agent row blocks double-sends.
 
@@ -73,7 +74,6 @@ Deno.serve(async (req) => {
     }
   }
   const tcName = tc ? `${tc.first_name} ${tc.last_name}`.trim() : "your Aari TC";
-  const tcPhone = (tc && tc.phone) || "239.688.1770";
 
   // ---- 1 · Broker notification · always (completion or skip) ----
   const agentName = `${agent.first_name ?? ""} ${agent.last_name ?? ""}`.trim();
@@ -108,8 +108,6 @@ Deno.serve(async (req) => {
       templateName: "agent-welcome",
       reactElement: React.createElement(AgentWelcome, {
         firstName: agent.first_name ?? "there",
-        tcName,
-        tcPhone,
         intakeUrl: `${SITE_URL}/?modal-only=1#apply`,
       }),
       payload: { agent_id: agent.id, tc_id: tc?.id ?? null },

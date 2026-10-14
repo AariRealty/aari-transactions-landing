@@ -116,12 +116,13 @@ function fileDeadlines(file: any){
   // Estoppel is an HOA/condo-only deadline. Never surface it on a file with no
   // association, or a no-HOA agent sees a phantom "Estoppel letter deadline".
   const hasHOA = !!(file.logistics && (file.logistics.assoc_type || file.logistics.hoa || file.logistics.hoa_name));
-  const out: { label: string; date: Date }[] = [];
+  const out: { label: string; date: Date; est: boolean }[] = [];
   for(const def of DEADLINE_DEFS){
     if(def.key === "estoppel" && !hasHOA) continue;
-    if(ov[def.key]){ const od = parseDate(ov[def.key]); if(od){ out.push({ label:def.label, date:od }); continue; } }
+    if(ov[def.key]){ const od = parseDate(ov[def.key]); if(od){ out.push({ label:def.label, date:od, est:false }); continue; } }
     const base = def.from==="effective"?eff:close; if(!base) continue;
-    out.push({ label:def.label, date: flBusinessDay(addDays(base, def.offset)) });
+    // Decision 379: no stored date for this key, so this is a default offset estimate, not the contract deadline.
+    out.push({ label:def.label, date: flBusinessDay(addDays(base, def.offset)), est:true });
   }
   return out;
 }
@@ -167,7 +168,7 @@ Deno.serve(async (req) => {
         const done = Object.keys(dt).filter(k => dt[k]?.at && new Date(dt[k].at) >= weekStart && TASK_LABELS[k]).map(k => TASK_LABELS[k]);
         const doneHtml = done.length ? '<ul style="margin:6px 0 0;padding-left:18px">' + done.map(l => '<li style="margin:4px 0">' + esc(l) + "</li>").join("") + "</ul>" : '<p style="margin:6px 0 0;color:#6b6b6b">Your TC is working behind the scenes on your file.</p>';
         const effConfirmed = !!f.effective_date_confirmed_at;
-        const upcoming = !effConfirmed ? "" : fileDeadlines(f).filter(d => d.date.getTime() >= today.getTime()).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,2).map(d => { const days = Math.round((d.date.getTime()-today.getTime())/86400000); const urgent = days<=3; return '<li style="margin:4px 0;' + (urgent?"color:#9a3a2c;font-weight:600":"") + '">' + esc(d.label) + " " + fmtD(d.date) + (urgent?" · urgent":"") + "</li>"; }).join("");
+        const upcoming = !effConfirmed ? "" : fileDeadlines(f).filter(d => d.date.getTime() >= today.getTime()).sort((a,b)=>a.date.getTime()-b.date.getTime()).slice(0,2).map(d => { const days = Math.round((d.date.getTime()-today.getTime())/86400000); const urgent = days<=3; return '<li style="margin:4px 0;' + (urgent?"color:#9a3a2c;font-weight:600":"") + '">' + esc(d.label) + " " + fmtD(d.date) + (d.est?" · Estimate. Check your contract.":"") + (urgent?" · urgent":"") + "</li>"; }).join("");
         const cap = 'font-size:10px;letter-spacing:0.5px;color:#8a857c;text-transform:uppercase;margin-top:14px';
         const comingUp = upcoming ? '<div style="' + cap + '">Coming up</div><ul style="margin:6px 0 0;padding-left:18px">' + upcoming + "</ul>" : (!effConfirmed ? '<div style="' + cap + '">Coming up</div><p style="margin:6px 0 0;color:#6b6b6b">Confirm your effective date and your full deadline schedule appears here.</p>' : "");
         return '<div style="border:1px solid #e8e4db;border-radius:10px;margin:0 0 18px;padding:16px">' +
