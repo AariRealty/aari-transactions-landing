@@ -311,3 +311,27 @@ console.log('text consent check passed');
   }
   console.log('decision 423 check passed');
 }
+
+// Re scan 16 ripples (decisions 233, 254, 343, 379, 393, 395, R2 to R8). Fails if retired wording returns.
+{
+  const rd = (f) => { try { return fs.readFileSync(path.join(root, f), 'utf8'); } catch (_) { return ''; } };
+  const checks = [
+    ['supabase/functions/_email-templates/TcAssignmentPing.tsx', /tel:\$\{tcPhone\}/, '#233'],
+    ['supabase/functions/_email-templates/TcAcceptanceToAgent.tsx', /tel:\$\{tcPhone\}|every step as it happens/, '#233 R3'],
+    ['supabase/functions/friday-summary/index.ts', /Day 30 from Effective|CFPB 3-day|initiate deposit return process/, '#395 R2'],
+    ['files.html', /The buyer is proceeding as is|nice chunk of change|due no later than \{\{dl_|moves to Monday, per Paragraph 18/, 'R2 R4 #379'],
+    ['files.html', /join\(_dls\[k\]\.date\.toLocaleDateString\('en-US', \{ month:'short', day:'numeric', year:'numeric' \}\)\);/, '#379 est. marker'],
+    ['register.html', /Refund rules depend on how much work has commenced/, 'SA 2'],
+    ['cancel-membership.html', /you lose access to the TC discount, monthly credits, and loyalty bonus/, 'SA 8(c)'],
+    ['client-review.html', /Thanks for trusting Aari Transactions with your real estate transaction/, 'SA preamble'],
+    ['contract-guide.html', /Default periods are pre filled|Day-count rules built in/, '#395'],
+    ['index.html', /are billed to your client\(s\)/, '#228'],
+    ['privacy.html', /501\.171/, 'evergreen'],
+    ['tc-cockpit.html', /or it auto-reassigns|Submit your log before you close out/, '#393'],
+    ['prospecting.html', /TC_PAY_BY_SERVICE|bonus territory|You listed\. We close\.|Send 15 DMs/, '#393 #397 R3 R7'],
+    ['portal.html', /It resumes automatically|It stays live and updates on its own/, '#419 #379'],
+    ['js/listing-description.js', /auto-scrub anything MLS won't allow/, 'R3']
+  ];
+  for (const [f, re, why] of checks) { if (re.test(rd(f))) { console.error('Re scan 16 ripple check failed: ' + f + ' (' + why + ')'); process.exit(1); } }
+  console.log('re scan 16 ripples check passed');
+}
