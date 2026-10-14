@@ -227,3 +227,42 @@ console.log('text consent check passed');
   if (/=== 49\.5\)|=== 80\)|=== 179\)/.test(rd('js/pay-engine.test.js'))) fail(399, 'stale pay engine test figures');
   console.log('decisions 391 to 399 checks passed');
 }
+
+// Re scan 15 ripples (files.html). Fails if any retired wording or hand typed figure comes back.
+{
+  const t = fs.readFileSync(path.join(root, 'files.html'), 'utf8');
+  const banned = [
+    'Aari does not email your client',
+    'starts the moment they are received',
+    'rolls to next business day on weekends',
+    "'$49.50'",
+    'Executed Purchase Contract',
+    'we will arrange to have one pulled',
+    "tagSpan('60d prior')"
+  ];
+  for (const b of banned) {
+    if (t.indexOf(b) !== -1) { console.error('Re scan 15 ripples check failed: files.html contains "' + b + '"'); process.exit(1); }
+  }
+  console.log('re scan 15 ripples check passed');
+}
+
+// Re scan 15 ripples (public pages, desks, function source). Fails if retired wording returns.
+{
+  const rd = (f) => { try { return fs.readFileSync(path.join(root, f), 'utf8'); } catch (_) { return ''; } };
+  const checks = [
+    ['index.html', /You never get an invoice from us before you submit\. Ever|You're representing both buyer and seller/, '#228 and #336'],
+    ['cancel-membership.html', /Nothing changes until the Aari team confirms by email/, '#373'],
+    ['status.html', /&#10003; On track|Aari team are handling the details/, '#228'],
+    ['contract-guide.html', /Deadlines extend to 5:00 PM|id="inspectionDays" value=/, '#395'],
+    ['tc-cockpit.html', /target: 7|Set by you or the Aari team/, '#393'],
+    ['portal.html', /placeholder="3\.0"|placeholder="\$395"/, '#396'],
+    ['pipeline.html', /\*0\.025|Repair Limit 1\.5% of purchase price|3123 8th St SW/, '#382 #395 R10'],
+    ['aari-crm.html', /post-close audit folder|Audit folder due day-of-closing/, '#176'],
+    ['submit.html', /Residential disclosures \(lead paint, energy brochure\) don't apply/, 'R4'],
+    ['supabase/functions/_email-templates/_components/BrandFooter.tsx', />Marlenyi Paredes</, '#152 R6'],
+    ['supabase/functions/eileen-daily-summary/index.ts', /Targets missed today/, '#393'],
+    ['supabase/functions/eod-report/index.ts', /file an addendum to extend the period|or renegotiate under the contract/, 'R2']
+  ];
+  for (const [f, re, why] of checks) { if (re.test(rd(f))) { console.error('Re scan 15 ripple check failed: ' + f + ' (' + why + ')'); process.exit(1); } }
+  console.log('re scan 15 public and desk ripples check passed');
+}
