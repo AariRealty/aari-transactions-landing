@@ -369,3 +369,13 @@ console.log('text consent check passed');
   if (/coupon\]"\]\s*=\s*FIRST_COUPON|ensureFirstTimeCoupon\(\);|totalCents - 1000/.test(co) || /First time using Aari|\$10 off/i.test(sub)) { console.error('Decision 431 check failed: first time discount is back'); process.exit(1); }
   console.log('decision 431 check passed');
 }
+
+// Decision 432: SA 1 allows email authorization for all files through the portal setting; calls and texts stay per file.
+{
+  for (const f of ['js/aari-sa-text.js', 'index.html', 'register.html', 'public/register.html', 'supabase/functions/aari-sa-pdf-email/index.ts']) {
+    const t = fs.readFileSync(path.join(root, f), 'utf8');
+    if (!/For email only, Agent may also give that written authorization for all of Agent(&#x27;|')s files/.test(t) || !/Calls and text messages always require Agent(&#x27;|')s written authorization for that specific file/.test(t)) { console.error('Decision 432 check failed: SA 1 in ' + f); process.exit(1); }
+  }
+  if (/only with your written okay for that file, as the Service Agreement states/.test(fs.readFileSync(path.join(root, 'portal.html'), 'utf8'))) { console.error('Decision 432 check failed: portal email switch note'); process.exit(1); }
+  console.log('decision 432 check passed');
+}
