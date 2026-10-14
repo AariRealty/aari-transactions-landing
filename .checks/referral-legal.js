@@ -361,3 +361,11 @@ console.log('text consent check passed');
   }
   console.log('decision 430 check passed');
 }
+
+// Decision 431: no first time discount; any future promotion needs written terms first.
+{
+  const co = fs.readFileSync(path.join(root, 'supabase/functions/create-listing-checkout/index.ts'), 'utf8');
+  const sub = fs.readFileSync(path.join(root, 'submit.html'), 'utf8');
+  if (/coupon\]"\]\s*=\s*FIRST_COUPON|ensureFirstTimeCoupon\(\);|totalCents - 1000/.test(co) || /First time using Aari|\$10 off/i.test(sub)) { console.error('Decision 431 check failed: first time discount is back'); process.exit(1); }
+  console.log('decision 431 check passed');
+}

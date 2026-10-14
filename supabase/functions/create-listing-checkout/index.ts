@@ -19,9 +19,8 @@
 //   mls_setup_only      · $99 per MLS (flat, any count)
 //   listing_docs        · $99 flat, no MLS input
 //
-// First-time client: $10-off coupon (aari_first_10_off). If use_credit fires
-// AND first_time is true, we skip the first-time coupon because the credit
-// already zeroes the order (can't discount past zero).
+// Decision 431 (Oct 14, 2026): no first order discount. first_time is still
+// recorded in metadata for the welcome email only; no coupon is applied.
 // ============================================================================
 
 import { supabaseAdmin } from "../_shared/supabase.ts";
@@ -268,7 +267,6 @@ Deno.serve(async (req) => {
   const { items, totalCents } = buildLineItems(service, mlsNames);
   if (items.length === 0) return json({ ok: false, error: "empty_line_items" }, 400);
 
-  if (firstTime) await ensureFirstTimeCoupon();
 
   const successUrl = SITE_URL + "/files.html?paid=1&file=" + encodeURIComponent(fileId);
   const cancelUrl = SITE_URL + "/submit?svc=" + encodeURIComponent(service);
@@ -290,8 +288,6 @@ Deno.serve(async (req) => {
   if (creditSpent) {
     // 100% off · order lands at $0 and Stripe skips the card collection step.
     form["discounts[0][coupon]"] = CREDIT_COUPON;
-  } else if (firstTime) {
-    form["discounts[0][coupon]"] = FIRST_COUPON;
   }
 
   let session: any;
@@ -316,7 +312,7 @@ Deno.serve(async (req) => {
     console.warn("[create-listing-checkout] file metadata write failed:", e);
   }
 
-  const chargedCents = creditSpent ? 0 : (firstTime ? Math.max(0, totalCents - 1000) : totalCents);
+  const chargedCents = creditSpent ? 0 : totalCents;
   return json({
     ok: true,
     checkout_url: session.url,
