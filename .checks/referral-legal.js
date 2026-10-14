@@ -292,3 +292,11 @@ console.log('text consent check passed');
   }
   console.log('decisions 420 and 421 check passed');
 }
+
+// Decision 422: review moderation uses only the published reasons, never rating or tone.
+{
+  const rv = fs.readFileSync(path.join(root, 'reviews.html'), 'utf8');
+  const mod = fs.readFileSync(path.join(root, 'aari-reviews.html'), 'utf8');
+  if (/We review every submission/.test(fs.readFileSync(path.join(root, 'review.html'), 'utf8')) || !/We publish every review from a real Aari file, positive or negative/.test(rv) || /prompt\('Reason for rejection \(internal/.test(mod) || !/const REASONS = \[/.test(mod)) { console.error('Decision 422 check failed: review moderation criteria'); process.exit(1); }
+  console.log('decision 422 check passed');
+}
