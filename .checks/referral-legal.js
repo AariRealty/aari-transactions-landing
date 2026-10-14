@@ -300,3 +300,14 @@ console.log('text consent check passed');
   if (/We review every submission/.test(fs.readFileSync(path.join(root, 'review.html'), 'utf8')) || !/We publish every review from a real Aari file, positive or negative/.test(rv) || /prompt\('Reason for rejection \(internal/.test(mod) || !/const REASONS = \[/.test(mod)) { console.error('Decision 422 check failed: review moderation criteria'); process.exit(1); }
   console.log('decision 422 check passed');
 }
+
+// Decision 423: TC outreach never names the MLS as its source.
+{
+  for (const f of ['prospecting.html', 'eileen.html']) {
+    const t = fs.readFileSync(path.join(root, f), 'utf8');
+    const i = t.indexOf('var EB_RAW=[');
+    const arr = i < 0 ? '' : t.slice(i, t.indexOf('];', i));
+    if (/MLS/.test(arr) || /Pull fresh listings from MLS/.test(t)) { console.error('Decision 423 check failed: MLS named as outreach source in ' + f); process.exit(1); }
+  }
+  console.log('decision 423 check passed');
+}
