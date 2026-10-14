@@ -189,3 +189,10 @@ console.log('text consent check passed');
   if (i >= 0 && /buyer_email/.test(head)) { console.error('Decision 389 check failed: welcome home review ask must go to the agent'); process.exit(1); }
   console.log('decision 389 check passed');
 }
+
+// Decision 390: the offer builder makes a draft for the agent to send.
+{
+  const t = fs.readFileSync(path.join(root, 'files.html'), 'utf8');
+  if (!/Aari does not send offers to the other side/.test(t)) { console.error('Decision 390 check failed: offer builder must make an agent draft'); process.exit(1); }
+  console.log('decision 390 check passed');
+}
