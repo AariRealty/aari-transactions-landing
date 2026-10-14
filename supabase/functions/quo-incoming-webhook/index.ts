@@ -83,6 +83,28 @@ Deno.serve(async (req) => {
     metadata: { direction: "incoming", raw_event_id: pickPath<string>(payload, ["id"]) ?? null },
   }).then(() => {}).catch(() => {});
 
+  // Decision 294: STOP and HELP work for every sender, not only TCs.
+  {
+    const firstWord = text.trim().toUpperCase().split(/\s+/)[0] ?? "";
+    if (OPTOUT_REPLIES.has(firstWord)) {
+      await admin.from("agents").update({ sms_opt_in: false }).in("phone", phoneCandidates(fromPhone));
+      await sendQuoSms({
+        to: fromPhone,
+        body: "Aari: you're unsubscribed and will get no more texts from this number. You'll still get email. Call 239.688.1770 to turn texts back on.",
+        sourceContext: { reason: "opt_out_confirm_any" },
+      });
+      return j(200, { ok: true, action: "opted_out" });
+    }
+    if (firstWord === "HELP" || firstWord === "INFO") {
+      await sendQuoSms({
+        to: fromPhone,
+        body: "Aari Transactions: file updates and help. Call 239.688.1770 or email hello@aaritransactions.com. Reply STOP to stop texts. Msg and data rates may apply.",
+        sourceContext: { reason: "help_reply" },
+      });
+      return j(200, { ok: true, action: "help" });
+    }
+  }
+
   // Match phone to a TC in the agents table · use normalized matching
   const tc = await findTcByPhone(admin, fromPhone);
   if (!tc) {
@@ -235,6 +257,16 @@ function pickPath<T>(obj: any, path: string[]): T | undefined {
 
 // Match an incoming phone to an agent (TC). Handles both E.164 (+12395550100)
 // and 11-digit (12395550100) formats since the DB may store either.
+function phoneCandidates(fromPhone: string): string[] {
+  const digits = fromPhone.replace(/\D/g, "");
+  return Array.from(new Set([
+    fromPhone,
+    "+" + digits,
+    digits,
+    digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits,
+  ]));
+}
+
 async function findTcByPhone(
   admin: ReturnType<typeof createClient>,
   fromPhone: string,

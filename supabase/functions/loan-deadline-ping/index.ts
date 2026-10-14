@@ -132,7 +132,7 @@ Deno.serve(async (req) => {
 
   // Broker fallback phones · also the recipient for unassigned files.
   const { data: brokers } = await supabaseAdmin
-    .from("agents").select("phone").eq("role", "broker").not("phone", "is", null);
+    .from("agents").select("phone").eq("role", "broker").eq("sms_opt_in", true).not("phone", "is", null); // decision 318
   const brokerPhones = (brokers ?? []).map(b => b.phone as string).filter(Boolean);
 
   const tcPhones: Record<string, string | null> = {};
@@ -185,8 +185,8 @@ Deno.serve(async (req) => {
     if (f.assigned_tc_id) {
       if (!(f.assigned_tc_id in tcPhones)) {
         const { data: tc } = await supabaseAdmin
-          .from("agents").select("phone").eq("id", f.assigned_tc_id).single();
-        tcPhones[f.assigned_tc_id] = tc?.phone ?? null;
+          .from("agents").select("phone, sms_opt_in").eq("id", f.assigned_tc_id).single();
+        tcPhones[f.assigned_tc_id] = tc && tc.sms_opt_in === true ? (tc.phone ?? null) : null; // decision 318
       }
       const p = tcPhones[f.assigned_tc_id];
       if (p) phones = [p];

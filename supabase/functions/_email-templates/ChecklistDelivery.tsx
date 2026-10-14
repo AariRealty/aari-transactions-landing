@@ -77,7 +77,7 @@ export const ChecklistDelivery: React.FC<Props> = ({ checklistUrl, unsubscribeUr
           </p>
           {unsubscribeUrl ? (
             <p style={footerUnsubStyle}>
-              You're receiving this because you registered with Aari Transactions.{" "}
+              You're receiving this because you asked for the Pre Close Checklist on aaritransactions.com.{" "}
               <a href={unsubscribeUrl} style={unsubLinkStyle}>Unsubscribe</a>.
             </p>
           ) : null}

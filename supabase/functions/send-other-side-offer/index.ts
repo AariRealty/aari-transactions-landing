@@ -104,6 +104,10 @@ function buildEmail(opts: { tcFirst: string; agentFirst: string; street: string;
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return j(405, { ok: false, error: "method_not_allowed" });
+  // Decision 293 (Oct 13 2026): turned off. It emailed a commercial offer to the other side's agent,
+  // using contact details from a client file, with no postal address or opt out. Do not turn back on
+  // without Broker Compliance approval.
+  return j(410, { ok: false, disabled: true, reason: "decision_293" });
 
   const authHeader = req.headers.get("Authorization") || "";
   if (!authHeader) return j(401, { ok: false, error: "auth_required" });

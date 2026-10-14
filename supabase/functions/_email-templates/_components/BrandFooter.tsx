@@ -37,7 +37,9 @@ export const BrandFooter: React.FC<FooterProps> = ({ category = "transactional",
 
     {category !== "transactional" && unsubscribeUrl ? (
       <Text style={unsubStyle}>
-        You're receiving this because you registered with Aari Transactions.
+        {category === "review_requests"
+          ? "You're receiving this because your agent worked with Aari Transactions on your closing."
+          : "You're receiving this because you have an account with Aari Transactions."}
         &nbsp;<Link href={unsubscribeUrl} style={unsubLinkStyle}>Unsubscribe</Link>.
       </Text>
     ) : null}

@@ -103,7 +103,7 @@ console.log('text consent check passed');
 // Decisions 263 to 280 (re scan 11): consent, timing, compliance claims and SA scope wording.
 {
   const bad = [];
-  const re = /Not bypassable|absolute lock|FTC-compliant|CAN-SPAM compliant|per CAN-SPAM|stay compliant|clean, compliant|top priority in queue|PRE-LAUNCH|Aari handles the rest|every file gets the attention|48-hour intake delay|checkpoint that prevents|execution check, broker review|protects the time|TC will start (today|tomorrow)|be in\s+touch the same day|Same-day\s+intake confirmation|picks it up right away|landed in your inbox|Your signed agreement is on file|30-minute window<\/div>|Agent fault \(loss of license|review request to your client after each file|Aari marketing materials including social media|Florida Rule<\/span>|Every deadline rolls forward|within <strong>10 business days|10-business-day rule|NABOR applies "time is of the essence"|© Aari Realty LLC · Aari Transactions|"Realtor"/;
+  const re = /Not bypassable|absolute lock|FTC-compliant|CAN-SPAM compliant|per CAN-SPAM|stay compliant|clean, compliant|top priority in queue|PRE-LAUNCH|Aari handles the rest|every file gets the attention|48-hour intake delay|checkpoint that prevents|execution check, broker review|protects the time|TC will start (today|tomorrow)|be in\s+touch the same day|Same-day\s+intake confirmation|picks it up right away|landed in your inbox|Your signed agreement is on file|30-minute window<\/div>|Agent fault \(loss of license|review request to your client after each file|Aari marketing materials including social media|Florida Rule<\/span>|Every deadline rolls forward|within <strong>10 business days|10-business-day rule|NABOR applies "time is of the essence"|© Aari Realty LLC · Aari Transactions|"Realtor"|Review request goes to your client\.|Sent automatically when a file closes|with or without notice|Modifications must be in writing and signed by both|All fees are non-refundable once charged\.|Fees non-refundable once charged\.|your broker, and tc@aaritransactions|accepts within 4 business hours|the moment they pick up the file|your TC texts|publish without a final okay|We handle everything|M–F 9am–5pm|Aari Realty <small>Transactions|Your broker reviews it and sends|Repairs are negotiated at inspection|Seller has a defined response window|30-item repair list|10-business-day statutory|usually 3 business days|runs this on every file|run on luck|every one of your files automatically|Every Florida form\.|sign, and you are in|The moment you sign, a signed copy|We draft your offer|22 emails\. 6 calls|vacant land \/ rental = \$299|OFF THE TOP|you registered with Aari Transactions/;
   for (const f of walk(root).filter(f => /\.(html|js|ts|tsx|json|md)$/.test(f) && !/(node_modules|\.checks|files\.html|tc-cockpit|seller-checklist-draft)/.test(f))) {
     const t = fs.readFileSync(f, 'utf8');
     const m = t.match(re);
@@ -117,4 +117,20 @@ console.log('text consent check passed');
   { const t = fs.readFileSync(path.join(root, 'index.html'), 'utf8'); if (/yes: 'always'/.test(t)) bad.push("index.html: review Yes saved as 'always' (decision 266)"); }
   if (bad.length) { console.error('Re scan 11 check failed (decisions 263 to 280):'); bad.forEach(b => console.error('  ' + b)); process.exit(1); }
   console.log('re scan 11 check passed');
+}
+
+// Decisions 293 to 321 (re scan 12).
+{
+  const bad = [];
+  const rd = f => fs.readFileSync(path.join(root, f), 'utf8');
+  if (!/disabled: true, reason: "decision_293"/.test(rd('supabase/functions/send-other-side-offer/index.ts'))) bad.push('send-other-side-offer must stay off (decision 293)');
+  const q = rd('supabase/functions/quo-incoming-webhook/index.ts');
+  if (q.indexOf('Decision 294') < 0 || q.indexOf('Decision 294') > q.indexOf('const tc = await findTcByPhone')) bad.push('quo-incoming-webhook: STOP and HELP must run before the TC match (decision 294)');
+  if (!/sms_opt_in === true/.test(rd('supabase/functions/loan-deadline-ping/index.ts'))) bad.push('loan-deadline-ping: opt in check missing (decision 318)');
+  const pt = rd('portal.html');
+  if (!/Math\.min\(499, Math\.max\(100,/.test(pt)) bad.push('portal.html: land and rental fee must be 10%, $100 to $499 (decision 295)');
+  if (!/teamComm\(f\)\*\(agentSplitOf\(f\)\/100\) - fileFee\(f\)/.test(pt)) bad.push('portal.html: fee must come out of the agent share after the split (decision 295)');
+  if (/id="goal-auth-publish-mls"/.test(pt)) bad.push('portal.html: MLS publish without okay toggle is back (decision 305)');
+  if (bad.length) { console.error('Re scan 12 check failed:'); bad.forEach(b => console.error('  ' + b)); process.exit(1); }
+  console.log('re scan 12 check passed');
 }
