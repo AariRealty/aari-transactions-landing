@@ -335,3 +335,14 @@ console.log('text consent check passed');
   for (const [f, re, why] of checks) { if (re.test(rd(f))) { console.error('Re scan 16 ripple check failed: ' + f + ' (' + why + ')'); process.exit(1); } }
   console.log('re scan 16 ripples check passed');
 }
+
+// Decision 424: the CDA comes from the agent's sponsoring broker, or Aari invoices at closing; never an agent signed CDA.
+{
+  for (const f of ['js/aari-sa-text.js', 'index.html', 'register.html', 'public/register.html', 'supabase/functions/aari-sa-pdf-email/index.ts']) {
+    const t = fs.readFileSync(path.join(root, f), 'utf8');
+    if (/CDA \/ Settlement Authorization: As a condition of file acceptance, Agent shall provide written authorization/.test(t) || !/Payment Method for Pay at Closing Services/.test(t)) { console.error('Decision 424 check failed: SA 2(b) in ' + f); process.exit(1); }
+  }
+  const ix = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  if (/via CDA|A signed <strong>Commission Disbursement Authorization \(CDA\)<\/strong> (is|must be) delivered/.test(ix)) { console.error('Decision 424 check failed: index.html CDA copy'); process.exit(1); }
+  console.log('decision 424 check passed');
+}
