@@ -164,3 +164,19 @@ console.log('text consent check passed');
   if (bad.length) { console.error('Deep pass check failed (decisions 329 to 359):'); bad.forEach(b => console.error('  ' + b)); process.exit(1); }
   console.log('deep pass check passed');
 }
+
+// Decision 388: title and lender review requests only at close, honest ask, no incentive, address and opt out.
+{
+  const t = fs.readFileSync(path.join(root, 'files.html'), 'utf8');
+  const bad = [];
+  const i = t.indexOf("id:'closed_title_lender_review'");
+  if (i < 0) bad.push('closed_title_lender_review template missing (decision 388 keeps it)');
+  else {
+    const blk = t.slice(i, t.indexOf("id:'sale_closed_master_done'", i));
+    if ((blk.match(/Suite 350/g) || []).length < 10 || (blk.match(/Reply unsubscribe/g) || []).length < 10) bad.push('review request versions need the Suite 350 address and opt out (decision 388)');
+    if (/\*If |made your job easier|delivered for you|earned your trust/.test(blk)) bad.push('review request must be an honest ask, not selective (decision 388)');
+  }
+  if (/would love a Google review whenever you have a moment/.test(t)) bad.push('no review ask in mid file emails (decision 388)');
+  if (bad.length) { console.error('Decision 388 check failed:'); bad.forEach(b => console.error('  ' + b)); process.exit(1); }
+  console.log('decision 388 check passed');
+}
