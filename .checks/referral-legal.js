@@ -274,3 +274,12 @@ console.log('text consent check passed');
   if (m && /\$\d/.test(m[0])) { console.error('Decision 418 check failed: team plans show a price without written terms'); process.exit(1); }
   console.log('decision 418 check passed');
 }
+
+// Decision 419: the membership pause has written terms in SA 8(d) in every copy of the SA.
+{
+  for (const f of ['js/aari-sa-text.js', 'index.html', 'register.html', 'public/register.html', 'supabase/functions/aari-sa-pdf-email/index.ts']) {
+    const t = fs.readFileSync(path.join(root, f), 'utf8');
+    if (!/may pause a membership for up to three \(3\) months/.test(t)) { console.error('Decision 419 check failed: SA 8(d) pause terms missing in ' + f); process.exit(1); }
+  }
+  console.log('decision 419 check passed');
+}
