@@ -28,9 +28,9 @@ export const WelcomeHome: React.FC<Props> = ({ buyerFirstName, agentFirstName, r
 
     <Text style={p}>A few quick things so nothing slips by.</Text>
 
-    <Text style={p}>Your recorded deed arrives by mail in two to four weeks from the county.</Text>
+    <Text style={p}>Your recorded deed is mailed to you by the county.</Text>
 
-    <Text style={p}>Keep your final settlement statement from closing. You will want it for next year's taxes.</Text>
+    <Text style={p}>Keep your final settlement statement from closing. Ask your tax advisor or the property appraiser about exemptions.</Text>
 
     <Text style={p}>{agentFirstName} is your point of contact for anything property related from here.</Text>
 

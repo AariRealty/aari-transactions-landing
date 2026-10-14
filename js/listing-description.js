@@ -132,7 +132,7 @@
 
         <div class="lsd-gen-result" data-result hidden>
           <div class="lsd-result-head">
-            <span class="lsd-pill lsd-pill-ok">✓ MLS compliant · fair housing safe</span>
+            <span class="lsd-pill lsd-pill-ok">Draft. Review it for accuracy, Fair Housing and MLS rules before you use it.</span>
             <button type="button" class="lsd-link" data-action="regenerate">Regenerate</button>
           </div>
           <textarea class="lsd-textarea" data-output rows="6" maxlength="1200" aria-label="Generated property description"></textarea>

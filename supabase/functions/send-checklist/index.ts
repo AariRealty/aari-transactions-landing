@@ -56,14 +56,12 @@ function buildChecklistHtml(checklistUrl: string): string {
       <h1 style="font-family:Georgia,serif;font-size:28px;font-weight:500;color:#0f0f0f;margin:0 0 18px;line-height:1.15;">Your checklist. Inside.</h1>
 
       <p style="font-size:14px;color:#444;line-height:1.6;margin:0 0 14px;">
-        Thanks for grabbing the Florida Pre-Close Compliance Checklist. 15 items, 5 sections,
-        built from real files we've closed in Lehigh, Cape Coral, and Fort Myers.
+        Thanks for grabbing the Florida Pre-Close Compliance Checklist. 15 items, 5 sections.
       </p>
 
       <p style="font-size:14px;color:#444;line-height:1.6;margin:0 0 14px;">
         Use it the next time you're 72 hours from closing. Run every item. Escalate anything
-        missing by phone, not email. That's the difference between a clean close and a deal
-        that slips three days.
+        missing by phone, not email.
       </p>
 
       <div style="margin:22px 0;">
@@ -110,9 +108,9 @@ function buildChecklistHtml(checklistUrl: string): string {
 function buildChecklistText(checklistUrl: string): string {
   return `Your checklist. Inside.
 
-Thanks for grabbing the Florida Pre-Close Compliance Checklist. 15 items, 5 sections, built from real files we've closed in Lehigh, Cape Coral, and Fort Myers.
+Thanks for grabbing the Florida Pre-Close Compliance Checklist. 15 items, 5 sections.
 
-Use it the next time you're 72 hours from closing. Run every item. Escalate anything missing by phone, not email. That's the difference between a clean close and a deal that slips three days.
+Use it the next time you're 72 hours from closing. Run every item. Escalate anything missing by phone, not email.
 
 Open the checklist: ${checklistUrl}
 

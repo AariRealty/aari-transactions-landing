@@ -173,7 +173,7 @@
     wrap.appendChild(form);
 
     // Privacy footer · matches the Aari sign-in family. No BK license line here.
-    wrap.appendChild(el('p', { style: 'text-align:center;font-size:12px;color:#9a9588;line-height:1.5;margin:18px 0 0', html: 'Your data is private, encrypted, and only accessible by you.' }));
+    wrap.appendChild(el('p', { style: 'text-align:center;font-size:12px;color:#9a9588;line-height:1.5;margin:18px 0 0', html: 'Your files are visible to you, the Aari team working your file, and the broker, as our <a href="/privacy.html" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline">privacy policy</a> describes.' }));
 
     return wrap;
   }

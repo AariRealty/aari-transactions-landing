@@ -3,8 +3,8 @@
 // A single closed file with no invoice lands as $50-$400 in the coordinator's
 // billable queue the moment it closes. The old flow relied on the Thursday
 // weekly digest to nudge her toward the Invoice tab, which meant a Monday
-// closing sat waiting for four days with nothing pinging her. Milennys's
-// 1219 Hibiscus (closed Sep 1) went three weeks uninvoiced for exactly this
+// closing sat waiting for four days with nothing pinging her. One closed
+// file went three weeks uninvoiced for exactly this
 // reason. This function fires daily and pings each coordinator with a
 // short "you have a bill ready" email when at least one of her files is
 // billable but unbilled.

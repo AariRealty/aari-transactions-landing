@@ -16,7 +16,7 @@
 //   · exactly 5 days out  → "Push the lender daily."
 //   · exactly 3 days out  → "Escalate now."
 //   · 1 day out / due today → "Confirm written approval today."
-//   · past deadline       → EVERY day: "Buyer written notice required today."
+//   · past deadline       → EVERY day: "Check the loan approval paragraph of your contract for the notice deadline."
 //
 // SMS → assigned TC's phone (Twilio, same env as aari-sa-pdf-email).
 // No assigned TC (or TC missing phone) → SMS goes to Marlenyi (role=broker).
@@ -164,7 +164,7 @@ Deno.serve(async (req) => {
     if (days === 5) action = "Push the lender daily.";
     else if (days === 3) action = "Escalate now.";
     else if (days === 1 || days === 0) action = "Confirm written approval today.";
-    else if (days < 0) action = "Buyer written notice required today.";
+    else if (days < 0) action = "Check the loan approval paragraph of your contract for the notice deadline.";
     if (!action) continue;
 
     // Dedup · one ping per file per ET day.
@@ -178,7 +178,7 @@ Deno.serve(async (req) => {
       ? `passed ${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} ago (${fmtD(dl)})`
       : days === 0 ? `is TODAY (${fmtD(dl)})`
       : `in ${days} day${days === 1 ? "" : "s"} (${fmtD(dl)})`;
-    const body = `Aari · ${street} — loan approval deadline ${when}. ${action}`;
+    const body = `Aari · ${street} — loan approval deadline ${when}. ${action} Reply STOP to opt out.`;
 
     // Recipient · assigned TC's phone, else broker (Marlenyi).
     let phones: string[] = [];

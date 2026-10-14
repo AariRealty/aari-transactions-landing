@@ -58,10 +58,6 @@ export const TcAcceptanceToAgent: React.FC<Props> = ({
         </Text>
       </div>
     ) : null}
-    <Text style={pSmall}>
-      If something has changed and you need a different TC, open the file in the portal — you can
-      request a swap up to 3 times per file before the timing locks in.
-    </Text>
   </Layout>
 );
 

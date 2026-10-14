@@ -40,13 +40,16 @@
   // The File Organization SERVICE pays the coordinator a flat 50% of its price
   // ($99 -> $49.50), the SAME for every TC (never the per-TC % override).
   var FILE_ORG_SVC_PCT = 50;
-  // Marlenyi (Jul 26): "Forget about the flat $80 anymore we are not doing.
-  // There is no self coordination." The self-coordinated / in-house $80 flat
-  // branch is removed — every file now runs the % split (tc_pay_rates.pct per
-  // TC, falling back to AT_TC_PCT) OR the File Organization service's flat 50%.
-  // Eileen's 50/50 continues to work via her tc_pay_rates row.
-  // A member pays $50 off every TC file. It comes out of AARI's share, never the
+  // Broker decision (Jul 26): the self-coordinated / in-house $80 flat branch is
+  // removed. Every file now runs the % split (tc_pay_rates.pct per TC, falling
+  // back to AT_TC_PCT) OR the File Organization service's flat 50%. A per TC
+  // override continues to work via that TC's tc_pay_rates row.
+  // Member per file TC discount, by tier, as published on the membership table
+  // (index.html) and referenced by SA 8(a) ("per file TC discounts ... as described
+  // in Aari's then current rate schedule"). It comes out of AARI's share, never the
   // coordinator's pay (atTcCut is computed off the FULL price, deliberately).
+  var MEMBER_TC_DISCOUNT_BY_TIER = { starter: 30, producer: 50 };
+  // Legacy export: the largest tier discount. Use memberTcDiscount() for real figures.
   var MEMBER_TC_DISCOUNT = 50;
 
   // Live service prices · must match the public catalog in index.html.
@@ -69,11 +72,12 @@
   };
 
   var TC_SERVICE_TYPES = { tc: 1, tc_one_side: 1, tc_both_sides: 1 };
-  // Services a membership CREDIT can cover. TC files are NOT credit-eligible
-  // (they take the $50 discount instead) per the catalog rule.
+  // Services a membership CREDIT can cover, exactly as Terms (d) and decisions
+  // 234/239 state (index.html MEMBERSHIP_CREDIT_COVERAGE): Offer Prep Basic,
+  // Listing Docs Only, MLS Setup Only, File Organization. TC files, Listing
+  // Coordinator, Offer Prep Complete and standalone reviews are not credit eligible.
   var CREDIT_SERVICES = {
-    mls_setup: 1, listing_docs: 1, offer_prep_basic: 1,
-    offer_prep_complete: 1, file_organization: 1, standalone_review: 1
+    mls_setup: 1, listing_docs: 1, offer_prep_basic: 1, file_organization: 1
   };
   // Billed upfront rather than at closing.
   var UPFRONT_SERVICES = [
@@ -106,7 +110,7 @@
     var v = f && f.raw_form_data && f.raw_form_data.fo_override;
     return v === true || v === 'true';
   }
-  // Self-coordinated concept removed (Marlenyi Jul 26). Kept as a stub that
+  // Self-coordinated concept removed (broker decision Jul 26). Kept as a stub that
   // always returns false so any lingering caller still compiles.
   function isSelfCoordinated(){ return false; }
   function paysFileOrg(f){
@@ -116,14 +120,26 @@
   function isSplitFile(f){
     return !isFileOrgFile(f) && !isFoOverride(f);
   }
-  // $50 off applies only to OUTSIDE TC clients on a membership. In-house Aari
-  // Realty agents who order full TC pay full price, no discount.
-  function memberTcDiscount(f, hasMembership){
-    return (isOutsideFile(f) && hasMembership && isTcService(f)) ? MEMBER_TC_DISCOUNT : 0;
+  // Per file TC discount for a member, by tier (Starter $30, Producer $50). SA 8(a)
+  // has no in house exception, so any member's TC file gets its tier discount.
+  // `membership` may be the membership row ({ tier }), a tier string, or a bare
+  // boolean from an older caller. A bare `true` carries no tier, so it gets the
+  // Starter discount (the amount every member tier includes); pass the row to get
+  // the Producer figure.
+  function memberTier(membership){
+    if(!membership) return null;
+    if(typeof membership === 'string') return membership.toLowerCase();
+    if(typeof membership === 'object' && membership.tier) return String(membership.tier).toLowerCase();
+    return 'starter';
+  }
+  function memberTcDiscount(f, membership){
+    if(!membership || !isTcService(f)) return 0;
+    var t = memberTier(membership);
+    return MEMBER_TC_DISCOUNT_BY_TIER[t] != null ? MEMBER_TC_DISCOUNT_BY_TIER[t] : MEMBER_TC_DISCOUNT_BY_TIER.starter;
   }
   // The coordinator's % share. Computed off the FULL price: the member discount
   // comes out of Aari's share, NEVER the coordinator's pay.
-  // Marlenyi 2026-08-21 · always round UP to the next whole dollar so TC payouts
+  // Broker decision 2026-08-21 · always round UP to the next whole dollar so TC payouts
   // never land on ugly .50 cents ($49.50 -> $50).
   function atTcCut(f, pct){
     var p = svcPrice(f);
@@ -148,11 +164,12 @@
     var o = opts || {};
     if(o.covered) return 0;
     var p = svcPrice(f);
-    return p ? (p - memberTcDiscount(f, o.hasMembership)) : 0;
+    return p ? (p - memberTcDiscount(f, o.membership || o.hasMembership)) : 0;
   }
 
   root.AariPayEngine = {
     AT_TC_PCT: AT_TC_PCT, FILE_ORG_SVC_PCT: FILE_ORG_SVC_PCT, MEMBER_TC_DISCOUNT: MEMBER_TC_DISCOUNT,
+    MEMBER_TC_DISCOUNT_BY_TIER: MEMBER_TC_DISCOUNT_BY_TIER,
     FILE_ORG_PAY: 0, // legacy · kept as 0 so any stale reader gets a no-op, not a crash
     SERVICE_PRICE: SERVICE_PRICE, SERVICE_ALIAS: SERVICE_ALIAS,
     TC_SERVICE_TYPES: TC_SERVICE_TYPES, CREDIT_SERVICES: CREDIT_SERVICES, UPFRONT_SERVICES: UPFRONT_SERVICES,

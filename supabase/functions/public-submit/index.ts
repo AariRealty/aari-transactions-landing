@@ -349,7 +349,7 @@ Deno.serve(async (req) => {
     insertRow.payment_pending = paymentPending;
     const ins = await admin.from("files").insert(insertRow).select("id").maybeSingle();
     if (ins.error) return j(500, { ok: false, error: "Submit failed: " + ins.error.message });
-    await confirm(confirmTo, "We are drafting your offer.", `Your offer on <b>${esc(property)}</b> is in.`, ob && !paymentPending ? "Your coordinator has it and drafting begins right away." : "Once checkout is complete we draft it and send it back for signature today.");
+    await confirm(confirmTo, "We are drafting your offer.", `Your offer on <b>${esc(property)}</b> is in.`, ob && !paymentPending ? "Your coordinator has it and starts drafting, today when possible." : "Once checkout is complete we draft it and send it back for signature, today when possible.");
     return j(200, { ok: true, file_id: id, mode: "offer", property, submitted_as: ob ? (raw.agent_name || undefined) : (fullName(authAgent) || undefined) });
   }
 
@@ -385,6 +385,6 @@ Deno.serve(async (req) => {
 
   if (sa) { await forwardSaPdf({ agent_name: agentName || providedName || sa.typed_name, agent_email, signed_at_iso: sa.signed_at, signed_at_display: new Date(sa.signed_at).toLocaleString("en-US", { timeZone: "America/New_York" }), signature_data_url: "", agreement_version: sa.version.replace(/^v/i, ""), user_agent: sa.user_agent, locale: sa.locale }); }
 
-  await confirm(agent_email, "We have your file.", `Your file on <b>${esc(address)}</b> is in.`, "Your coordinator reviews it and reaches out today. Nothing is billed until you close.");
+  await confirm(agent_email, "We have your file.", `Your file on <b>${esc(address)}</b> is in.`, "Your coordinator reviews it and reaches out, today when possible. Billing follows the Service Agreement.");
   return j(200, { ok: true, file_id: id, mode: "contract", address, submitted_as: agentName || undefined });
 });

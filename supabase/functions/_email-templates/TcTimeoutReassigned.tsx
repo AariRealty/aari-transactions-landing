@@ -26,12 +26,11 @@ export const TcTimeoutReassigned: React.FC<Props> = ({
     <Heading style={h1}>Your file moved to {newTcName}.</Heading>
     <Text style={p}>Hi {firstName},</Text>
     <Text style={p}>
-      {previousTcName} didn't claim File <strong>#{fileId}</strong> ({propertyAddress}) within our
-      30-minute window, so we routed it to <strong>{newTcName}</strong>.
+      File <strong>#{fileId}</strong> ({propertyAddress}) was moved from {previousTcName} to{" "}
+      <strong>{newTcName}</strong>.
     </Text>
     <Text style={p}>
-      No action needed from you — {newTcName} has 30 minutes to confirm a start time. You'll get
-      another note the moment they do.
+      {newTcName} will confirm a start time. You will get another note when they do.
     </Text>
     <div style={{ marginTop: 22, marginBottom: 6 }}>
       <Button href={portalUrl}>Open the file</Button>

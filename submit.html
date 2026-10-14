@@ -741,7 +741,7 @@
   // to log in so their credits/discounts apply. Never blocks — guest submit
   // always works. Successful login stashes the JWT on lwState.authToken so
   // lwSubmit sends it as Authorization: Bearer <token>; public-submit then
-  // links the file to the authenticated agent (Samantha tracking, etc).
+  // links the file to the authenticated agent (activity tracking).
   // Cache keyed by normalized email. `checked:true` means the lookup fully
   // resolved for this email; `data` is the response body. This lets Continue
   // decide instantly whether to hold the flow (recognized, awaiting a choice)
@@ -979,7 +979,7 @@
   // lean into "log in to apply your credits/discounts." Never blocks the flow;
   // guest submit path is always live. When they successfully log in, the auth
   // token gets stitched into the final /public-submit call so the file lands
-  // attached to their agent record (critical for tracking Samantha's activity).
+  // attached to their agent record (needed to track the agent's activity).
   function lwRenderProp(){
     if(lwState) lwState.slide = "prop";
     var W = lwHost();
@@ -1118,7 +1118,7 @@
       && !!(meta && meta.creditEligible)
       && Number((lwState && lwState.credits_remaining) || 0) >= 1;
     var subline;
-    if(svc==="listing_coordinator") subline = "First one's on us... add more if you need!";
+    if(svc==="listing_coordinator") subline = "One MLS is included in the $199 price &middot; $59 for each extra MLS.";
     else if(creditApplied)          subline = "Your free file covers the first one &middot; $99 for each extra.";
     else                            subline = "Every MLS is $99.";
     var creditStrip = creditApplied
@@ -1455,12 +1455,26 @@
       var email=document.getElementById("sv-email").value.trim();
       if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ err("sv-err","Add a valid email so we can reach you."); return; }
       if(!termsOK("terms-s","sv-err")) return;
-      // Marlenyi 2026-08-16 · TC preference the client picked on this screen.
-      // 'none' → auto_assign_tc leaves assigned_tc_id NULL → no TC email fires
-      // until Marlenyi assigns from the cockpit.
+      // Decision 248 applied to service orders: the same Service Agreement acceptance the TC path
+      // uses. A signed in agent on the current SA version goes straight through; everyone else signs
+      // here (anonRenderSA), then the order sends with the typed name acceptance (server stores raw.sa).
+      if(!((cState.sa && cState.sa.accepted) || cState.sa_current)){
+        var _svSign=function(){ anonRenderSA({ back:"step-service", onSigned:function(){ show("step-service"); svSend(); } }); };
+        refreshAuthIdentity().then(function(){
+          if(!authState.token || !window.AariAuth || !window.AariAuth.getAgreementStatus){ _svSign(); return; }
+          window.AariAuth.getAgreementStatus().then(function(sa){
+            if(sa && sa.agreement_signed_at && sa.agreement_version===SA_VERSION){ cState.sa_current=true; svSend(); } else { _svSign(); }
+          }).catch(_svSign);
+        }).catch(_svSign);
+        return;
+      }
+      svSend();
+      function svSend(){
+      // TC preference the client picked on this screen. 'none' → auto_assign_tc leaves
+      // assigned_tc_id NULL → no TC email fires until the Aari team assigns from the cockpit.
       var _tcPick="none"; try { var _on=document.querySelector("#sv-tc button.on"); if(_on) _tcPick=_on.getAttribute("data-tc")||"none"; } catch(_){}
       btn.disabled=true; btn.textContent="Sending…";
-      fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify({ intent:"service", svc:svc, property:prop, agent_email:email, preferred_tc_id:_tcPick, terms_version:TERMS_VERSION, terms_accepted:true }) })
+      fetch(SB_URL+"/functions/v1/public-submit",{ method:"POST", headers:{ "Content-Type":"application/json","apikey":SB_KEY,"Authorization":"Bearer "+SB_KEY }, body:JSON.stringify(Object.assign({ intent:"service", svc:svc, property:prop, agent_email:email, preferred_tc_id:_tcPick, terms_version:TERMS_VERSION, terms_accepted:true }, (cState.sa && cState.sa.accepted) ? { sa:cState.sa } : {})) })
       .then(function(r){return r.json();}).then(function(d){
         if(d&&d.ok){
           if(sv.stripe){ var url=sv.stripe+"?client_reference_id="+encodeURIComponent(d.file_id)+"&prefilled_email="+encodeURIComponent(email);
@@ -1469,6 +1483,7 @@
           else { doneScreen("On it.", "<b>"+sv.name+"</b> for "+esc(prop)+" is in.", "The Aari team reviews it and sends your "+sv.price+" invoice. Nothing else needed."); }
         } else { err("sv-err",(d&&d.error)||"Something went wrong. Try again."); btn.disabled=false; btn.textContent=sv.stripe?"Continue to payment":"Submit request"; }
       }).catch(function(){ err("sv-err","Network error. Please try again."); btn.disabled=false; btn.textContent=sv.stripe?"Continue to payment":"Submit request"; });
+      }
     });
     wireAddr(document.getElementById("sv-prop"));
     show("step-service");
@@ -1696,20 +1711,21 @@
   }
   // Anonymous SA · same agreement, typed-name signature, no account required.
   // Acceptance rides with the submission (raw_form_data.sa) and the signed PDF is emailed server-side.
-  function anonRenderSA(){
+  function anonRenderSA(opts){
+    opts=opts||{};
     var W=document.getElementById("step-auth");
     W.innerHTML='<span class="back" id="au-back">&lsaquo; Back</span>'+
       '<h1 style="font-size:26px;margin-top:8px">TC Service Agreement</h1>'+
-      '<p class="sub">Dated October 13, 2026 &middot; one signature covers this file. No account needed.</p>'+
+      '<p class="sub">Dated October 13, 2026 &middot; one signature covers this '+(opts.onSigned?'request':'file')+'. No account needed.</p>'+
       '<div class="card">'+
         '<div class="au-sa" id="au-sa-text"></div>'+
         '<label class="au-ack"><input type="checkbox" id="au-agree"><span>I agree to the <a href="/terms" target="_blank" rel="noopener">Service Agreement</a> and <a href="/terms" target="_blank" rel="noopener">Terms</a>.</span></label>'+
         '<div class="lbl">Type your full name to sign</div><input type="text" id="au-typed" placeholder="Your full legal name">'+
-        '<button class="btn" id="au-sign">Sign &amp; submit file</button>'+
+        '<button class="btn" id="au-sign">'+(opts.onSigned?'Sign &amp; submit request':'Sign &amp; submit file')+'</button>'+
         '<div class="msg" id="au-err"></div>'+
       '</div>';
     document.getElementById("au-sa-text").innerHTML = window.AARI_SA_V47_HTML || "The full agreement text could not load. Please refresh and try again.";
-    document.getElementById("au-back").addEventListener("click",function(){ show("step-review"); });
+    document.getElementById("au-back").addEventListener("click",function(){ show(opts.back||"step-review"); });
     document.getElementById("au-sign").addEventListener("click",function(){
       var b=this; err("au-err","");
       if(!document.getElementById("au-agree").checked){ err("au-err","Please check the box to agree."); return; }
@@ -1717,6 +1733,7 @@
       if(typed.length<3){ err("au-err","Type your full name to sign."); return; }
       b.disabled=true; b.textContent="Signing…";
       captureSA(typed);
+      if(opts.onSigned){ b.disabled=false; b.textContent="Sign & submit request"; opts.onSigned(); return; }
       W.innerHTML='<div class="center" style="padding:34px 0"><div class="au-spin"></div><h1 style="font-size:24px">Sending your file</h1><p class="sub">One moment</p></div>';
       proceedToSubmit(document.getElementById("submit"));
     });
@@ -1826,13 +1843,13 @@
      text and MUST be swapped for verbatim statutory / form language before launch. */
   // Field defaults kept for the ones the trim removed from the wizard so the payload shape
   // stays stable: buyer_signer / buyer_signer_title / buyer_email / buyer_phone / preapproval /
-  // title_days / assessments_ack all live here as empty defaults; title_payer defaults to
-  // "seller" (SWFL norm; coordinator flips for Miami/Broward custom).
+  // title_days / title_payer / assessments_ack all live here as empty defaults. The wizard does
+  // not ask title_days or title_payer, so nothing is sent for them; the agent's contract terms decide.
   var oState={ ptype:"residential", prop_mode:"address", property:"", mls:"", buyer_type:"person", buyer:"", buyer_entity:"", buyer_signer:"", buyer_signer_title:"", buyer_email:"", buyer_phone:"",
     price:"", emd:"", emd_timing_days:"3", addl_deposit:"",
     financing:"Conventional", loan_days:"30", preapproval:"", pre_b64:null, pre_name:null,
-    inspection_days:"15", appraisal:"yes", survey:"", title_days:"15",
-    close_date:"", title_payer:"seller", assessments_ack:false,
+    inspection_days:"", appraisal:"yes", survey:"", title_days:"",
+    close_date:"", title_payer:"", assessments_ack:false,
     d_radon:false, d_firpta:"", d_lead:"", d_flood:false, d_hoa:"", d_energy:false,
     contingencies:[], addenda:[], additional_terms:"", email:"", plan:"basic", parcel:null,
     billing_model:"", for_agent_name:"", for_agent_email:"" };
@@ -1853,7 +1870,7 @@
       rec:function(v){ return v==="mls" ? "We pull the address and property details from the MLS listing." : ""; } },
     { sec:1, key:"property", q:"What is the property address?", type:"text", ph:"Number and street, it autocompletes", addr:true,
       req:"Add the property address.", skip:function(){ return oState.prop_mode==="mls"; },
-      auto:"Live address autocomplete. County and state fill from the address you pick and the disclosure screens adjust to the property type." },
+      auto:"Live address autocomplete. County and state fill from the address you pick." },
     { sec:1, key:"mls", q:"What is the MLS number?", type:"text", ph:"MLS number",
       req:"Add the MLS number.", skip:function(){ return oState.prop_mode!=="mls"; },
       auto:"We pull the address and county from the listing before drafting." },
@@ -1916,8 +1933,8 @@
     // lender. One screen instead of two, and the upload zone is the answer.
     { sec:3, key:"pre", q:"Drop the preapproval letter", type:"upload", skip:isCash, optional:true,
       note:"If you don't have it yet, skip and your coordinator gets it from the lender." },
-    { sec:4, key:"inspection_days", q:"Inspection period?", type:"days", def:function(){ return "15"; },
-      auto:"Contract standard is 15 days when left blank. Edit if the deal needs different." },
+    { sec:4, key:"inspection_days", q:"Inspection period?", type:"days",
+      auto:"Use the inspection period in your contract." },
     { sec:4, key:"appraisal", q:"Appraisal contingency?", type:"seg",
       // Cash offers have no appraisal contingency by definition; skipping this step for cash
       // stops asking a question that only has one answer.
@@ -1929,14 +1946,11 @@
       // don't. Skip when public records classified the parcel as a condo.
       skip:function(){ return oState.d_hoa==="condo"; },
       opts:[["yes","Yes"],["no","No"],["optional","Optional"]],
-      rec:function(){ return isVacant() ? "Strongly recommended for vacant land. Typical cost runs $400 to $800." : "Typical cost runs $400 to $800. Recommended for land or boundary questions, optional for improved residential."; } },
-    // Title evidence period removed — 15 days is the contract standard and the title agent
-    // drives it, not the buyer's agent at intake. Default in oState carries the 15.
-    { sec:5, key:"close_date", q:"Desired closing date?", type:"date", def:function(){ return plusDays(30); },
-      auto:"Defaults to 30 days out, the contract standard when left blank." },
-    // Title-payer question removed — SWFL default is seller pays and picks; oState default is
-    // "seller" so drafting has the value. Coordinator flips if the deal is Miami/Broward custom
-    // or otherwise atypical. Special-assessments ack was placeholder-language filler; deleted.
+      rec:function(){ return isVacant() ? "Often recommended for vacant land. Ask your title agent or surveyor for a quote." : "Often recommended for land or boundary questions. Ask your title agent or surveyor for a quote."; } },
+    // Title evidence period is not asked at intake; the agent's contract terms decide it.
+    { sec:5, key:"close_date", q:"Desired closing date?", type:"date",
+      auto:"Use the date in your contract." },
+    // Title-payer question removed; nothing is sent for it, so the agent's contract terms decide. Special-assessments ack was placeholder-language filler; deleted.
     // Florida disclosures section removed. Radon, FIRPTA, lead paint, flood, HOA/condo, and
     // energy brochure are all notice/acknowledgment items that either (a) attach to the contract
     // by statute regardless of what the buyer's agent clicks here, (b) come from the seller side,

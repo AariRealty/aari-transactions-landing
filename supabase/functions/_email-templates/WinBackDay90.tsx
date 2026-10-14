@@ -21,7 +21,7 @@ export const WinBackDay90: React.FC<Props> = ({ firstName, intakeUrl, unsubscrib
       inbox stays clean.
     </Text>
     <Text style={p}>
-      The door stays open. The pricing, the process, the people — all the same. When you're ready, the
+      The door stays open. When you're ready, the
       portal is exactly where you left it.
     </Text>
     <div style={{ marginTop: 22, marginBottom: 6 }}>

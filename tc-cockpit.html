@@ -522,7 +522,7 @@
       <div class="check-hdr"><h3>This week</h3><span class="progress" id="weekly-progress">0 / 4</span></div>
       <div id="weekly-tasks">
         <div class="task" data-task-key="w-close"><div class="checker">&check;</div><span class="task-name">Close 3+ files</span><span class="task-tag">3</span></div>
-        <div class="task" data-task-key="w-reviews"><div class="checker">&check;</div><span class="task-name">Request review from every closed file</span><span class="task-tag">All</span></div>
+        <div class="task" data-task-key="w-reviews"><div class="checker">&check;</div><span class="task-name">Request a review only on closed files where the agent opted in</span><span class="task-tag">Opt in</span></div>
         <div class="task" data-task-key="w-pipeline"><div class="checker">&check;</div><span class="task-name">Pipeline review with Marlenyi</span><span class="task-tag">Fri</span></div>
         <div class="task" data-task-key="w-pay"><div class="checker">&check;</div><span class="task-name">Submit weekly pay before Friday 5pm</span><span class="task-tag">Pay</span></div>
       </div>
@@ -671,7 +671,7 @@
     <div class="log-section">
       <div class="log-section-hdr"><h3>Weekly recap</h3><p>Submit before Friday 5pm</p></div>
       <div class="log-row"><span class="log-lbl">Files closed this week</span><span class="log-target">goal: 3+</span><input class="log-input" type="number" id="wl-closed" min="0" value="0"></div>
-      <div class="log-row"><span class="log-lbl">Reviews requested</span><span class="log-target">every closed file</span><input class="log-input" type="number" id="wl-reviews" min="0" value="0"></div>
+      <div class="log-row"><span class="log-lbl">Reviews requested</span><span class="log-target">opted in files only</span><input class="log-input" type="number" id="wl-reviews" min="0" value="0"></div>
       <div class="log-row"><span class="log-lbl">Avg response time (hrs)</span><span class="log-target">target: under 4</span><input class="log-input" type="number" id="wl-response" min="0" value="0" step="0.1"></div>
       <div class="log-footer">
         <button type="button" class="btn-submit" id="weekly-submit">Submit recap &rarr;</button>
@@ -1215,13 +1215,16 @@
   });
 
   // ============== FILE CARDS WITH PER-FILE TIMELINE ==============
-  // Default contract periods · sourced from the SWFL Contract Comparison calculator
+  // Contract names only (decision 355) · no default day counts. Periods come from
+  // the dates in the executed contract, entered per file by the TC.
   const CONTRACT_DEFAULTS = {
-    'frbar-asis':     { name: 'FR/BAR AS-IS',    deposit: 3, loan_app: 5, loan_approval: 30, title: 15, inspection: 15 },
-    'frbar-standard': { name: 'FR/BAR Standard', deposit: 3, loan_app: 5, loan_approval: 30, title: 15, inspection: 15 },
-    'frbar-crsp':     { name: 'FR/BAR CRSP',     deposit: 3, loan_app: 5, loan_approval: 30, title: 15, inspection: 15 },
-    'nabor':          { name: 'NABOR',           deposit: 3, loan_app: 5, loan_approval: 30, title: 15, inspection: 15 }
+    'frbar-asis':     { name: 'FR/BAR AS-IS' },
+    'frbar-standard': { name: 'FR/BAR Standard' },
+    'frbar-crsp':     { name: 'FR/BAR CRSP' },
+    'nabor':          { name: 'NABOR' }
   };
+  const USE_CONTRACT_DATES = 'Use the dates in your contract';
+  function periodSub(n){ return n ? ('Effective + ' + n + ' days, as entered from the contract') : USE_CONTRACT_DATES; }
 
   // Demo file · replace with real Supabase data when tc_files query is wired
   const DEMO_FILES = [{
@@ -1234,7 +1237,7 @@
     contract_type: 'frbar-asis',
     effective_date: '2026-01-05',
     closing_date: '2026-02-05',
-    overrides: { deposit: 3, loan_app: 5, loan_approval: 30, title: 15, inspection: 15 }
+    overrides: null
   }];
 
   function addDays(dateStr, days){
@@ -1277,11 +1280,11 @@
     const closing = file.closing_date;
     const milestones = [
       { key: 'effective', label: 'Effective Date',           sub: 'Signature date',                         date: eff ? new Date(eff + 'T00:00:00') : null },
-      { key: 'deposit',   label: 'Escrow Deposit Due',        sub: 'Effective + ' + periods.deposit + ' days',      date: addDays(eff, periods.deposit) },
-      { key: 'loan_app',  label: 'Loan Application Deadline', sub: 'Effective + ' + periods.loan_app + ' days',     date: addDays(eff, periods.loan_app) },
-      { key: 'loan_appr', label: 'Loan Approval Period',      sub: 'Effective + ' + periods.loan_approval + ' days', date: addDays(eff, periods.loan_approval) },
-      { key: 'inspection',label: 'Inspection Period Ends',    sub: 'Effective + ' + periods.inspection + ' days',   date: addDays(eff, periods.inspection) },
-      { key: 'title',     label: 'Title Evidence Deadline',   sub: 'Effective + ' + periods.title + ' days',        date: addDays(eff, periods.title) },
+      { key: 'deposit',   label: 'Escrow Deposit Due',        sub: periodSub(periods.deposit),      date: addDays(eff, periods.deposit) },
+      { key: 'loan_app',  label: 'Loan Application Deadline', sub: periodSub(periods.loan_app),     date: addDays(eff, periods.loan_app) },
+      { key: 'loan_appr', label: 'Loan Approval Period',      sub: periodSub(periods.loan_approval), date: addDays(eff, periods.loan_approval) },
+      { key: 'inspection',label: 'Inspection Period Ends',    sub: periodSub(periods.inspection),   date: addDays(eff, periods.inspection) },
+      { key: 'title',     label: 'Title Evidence Deadline',   sub: periodSub(periods.title),        date: addDays(eff, periods.title) },
       { key: 'closing',   label: 'Closing Date',               sub: 'Per contract',                           date: closing ? new Date(closing + 'T00:00:00') : null }
     ];
     const rows = milestones.map(m => {
@@ -1296,11 +1299,11 @@
     const ctype = CONTRACT_DEFAULTS[file.contract_type] || CONTRACT_DEFAULTS['frbar-asis'];
     const ctrls = `<div class="timeline-controls">
       <span class="tl-ctrl"><label>Contract</label> <strong>${ctype.name}</strong></span>
-      <span class="tl-ctrl"><label>Deposit</label> <input type="number" min="1" value="${periods.deposit}" data-period="deposit" data-file="${file.id}"></span>
-      <span class="tl-ctrl"><label>Loan app</label> <input type="number" min="1" value="${periods.loan_app}" data-period="loan_app" data-file="${file.id}"></span>
-      <span class="tl-ctrl"><label>Loan appr</label> <input type="number" min="1" value="${periods.loan_approval}" data-period="loan_approval" data-file="${file.id}"></span>
-      <span class="tl-ctrl"><label>Inspection</label> <input type="number" min="1" value="${periods.inspection}" data-period="inspection" data-file="${file.id}"></span>
-      <span class="tl-ctrl"><label>Title</label> <input type="number" min="1" value="${periods.title}" data-period="title" data-file="${file.id}"></span>
+      <span class="tl-ctrl"><label>Deposit</label> <input type="number" min="1" value="${periods.deposit || ''}" placeholder="days" data-period="deposit" data-file="${file.id}"></span>
+      <span class="tl-ctrl"><label>Loan app</label> <input type="number" min="1" value="${periods.loan_app || ''}" placeholder="days" data-period="loan_app" data-file="${file.id}"></span>
+      <span class="tl-ctrl"><label>Loan appr</label> <input type="number" min="1" value="${periods.loan_approval || ''}" placeholder="days" data-period="loan_approval" data-file="${file.id}"></span>
+      <span class="tl-ctrl"><label>Inspection</label> <input type="number" min="1" value="${periods.inspection || ''}" placeholder="days" data-period="inspection" data-file="${file.id}"></span>
+      <span class="tl-ctrl"><label>Title</label> <input type="number" min="1" value="${periods.title || ''}" placeholder="days" data-period="title" data-file="${file.id}"></span>
     </div>`;
     return `<div class="timeline">${rows}</div>${ctrls}`;
   }

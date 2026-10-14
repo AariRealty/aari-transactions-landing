@@ -587,7 +587,7 @@ async function sendEmail(
     ",</p>" +
     "<p>Thanks for signing the Aari Transactions Service Agreement on <strong>" +
     escapeHtml(p.signed_at_display || p.signed_at_iso || "") +
-    "</strong>. Your countersigned PDF is attached for your records.</p>" +
+    "</strong>. Your signed copy is attached for your records.</p>" +
     "<p>Agreement version: <strong>v" +
     escapeHtml(p.agreement_version || "4.7") +
     "</strong></p>" +

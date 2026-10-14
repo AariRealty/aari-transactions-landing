@@ -29,7 +29,7 @@ export const ReviewApprovedAgent: React.FC<Props> = ({ firstName, clientAttribut
       <Text style={attr}>&mdash; {clientAttribution}</Text>
     </div>
     <Text style={p}>
-      Share it. Use it. It's yours.
+      It is live on aaritransactions.com. The client's permission covers our site; ask them before you share it anywhere else.
     </Text>
     <div style={{ marginTop: 22, marginBottom: 6 }}>
       <Button href={reviewsUrl}>See all approved reviews</Button>

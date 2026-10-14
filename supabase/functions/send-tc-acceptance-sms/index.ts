@@ -79,7 +79,8 @@ Deno.serve(async (req) => {
 
   const message =
     `Aari Transactions · ${tcName} accepted your file ${fileShortId} (${propertyShort}) and starts at ${startStr}.\n\n` +
-    `View: ${PORTAL_URL}\n\n`;
+    `View: ${PORTAL_URL}\n\n` +
+    `Reply STOP to opt out.`;
 
   const result = await sendQuoSms({
     to: agent.phone,

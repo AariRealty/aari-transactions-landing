@@ -91,9 +91,8 @@
   function parseDate(s){ if(!s) return null; const d = new Date(s + 'T12:00:00'); return isNaN(d) ? null : d; }
 
   // Deadlines that live in the schedules for legal completeness but never
-  // reach the TC's daily list, calendar sync, or overdue pane. Marlenyi
-  // (July 26): "as a TC I don't need to know when the final walk-through is,
-  // that's irrelevant." Walk-through is an agent/client checkpoint.
+  // reach the TC's daily list, calendar sync, or overdue pane (broker
+  // decision, July 26): the TC does not track the final walk through. Walk-through is an agent/client checkpoint.
   // Filter is applied at contractDeadlines() output and DEADLINE_DEFS below,
   // so every UI consumer inherits it without changes. Downstream data exports
   // that read byKey['walk_through'] just get undefined — no cascading break.
@@ -344,7 +343,7 @@
         compute:(E,C,c)=>addDays(C, -1), bizDay:false,
         note:()=>'Day prior to closing.' },
       // STANDARD F ROLL · read verbatim off an executed FloridaRealtors/FloridaBar ASIS-7x
-      // Rev. 2/26 (1216 NW 32nd Pl, July 2026), Standard F, lines 429 to 436:
+      // Rev. 2/26 (an executed Aari file, July 2026), Standard F, lines 429 to 436:
       //   "Other than time for acceptance and Effective Date as set forth in Paragraph 3, any
       //    time periods provided for OR DATES SPECIFIED in this Contract, whether preprinted,
       //    handwritten, typewritten or inserted herein, which shall end or occur on a Saturday,

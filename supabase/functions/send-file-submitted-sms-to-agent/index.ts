@@ -75,7 +75,8 @@ Deno.serve(async (req) => {
 
   const message =
     `Aari · File ${fileShortId} (${propertyShort}) is in · routing to ${tcName}.\n\n` +
-    `${startCommitment} We'll text you when they accept.\n\n`;
+    `${startCommitment} We'll text you when they accept.\n\n` +
+    `Reply STOP to opt out.`;
 
   const result = await sendQuoSms({
     to: agent.phone,

@@ -45,7 +45,17 @@ const cors = {
 
 const ACCEPT_REPLIES = new Set(["Y", "YES", "ACCEPT", "OK", "ACK", "GO"]);
 const DECLINE_REPLIES = new Set(["N", "NO", "PASS", "DECLINE", "SKIP"]);
-const OPTOUT_REPLIES = new Set(["STOP", "UNSUBSCRIBE", "UNSUB", "QUIT", "END", "CANCEL"]);
+const OPTOUT_REPLIES = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "UNSUB", "QUIT", "END", "CANCEL", "REVOKE", "OPTOUT"]);
+
+// Opt out matching tolerant of punctuation and case: strip everything but letters and
+// spaces, then match the first word, or the first two words joined ("OPT OUT").
+function isOptOut(raw: string): boolean {
+  const words = String(raw || "").toUpperCase().replace(/[^A-Z\s]/g, " ").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return false;
+  if (OPTOUT_REPLIES.has(words[0])) return true;
+  const two = words.slice(0, 2).join(" ");
+  return two === "OPT OUT";
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -86,7 +96,7 @@ Deno.serve(async (req) => {
   // Decision 294: STOP and HELP work for every sender, not only TCs.
   {
     const firstWord = text.trim().toUpperCase().split(/\s+/)[0] ?? "";
-    if (OPTOUT_REPLIES.has(firstWord)) {
+    if (isOptOut(text)) {
       await admin.from("agents").update({ sms_opt_in: false }).in("phone", phoneCandidates(fromPhone));
       await sendQuoSms({
         to: fromPhone,
@@ -116,7 +126,7 @@ Deno.serve(async (req) => {
   const cleaned = text.trim().toUpperCase().split(/\s+/)[0] ?? "";
 
   // Opt-out · regardless of context
-  if (OPTOUT_REPLIES.has(cleaned)) {
+  if (isOptOut(text)) {
     await admin.from("agents").update({ sms_opt_in: false }).eq("id", tc.id);
     await sendQuoSms({
       to: fromPhone,

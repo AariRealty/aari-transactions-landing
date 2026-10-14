@@ -49,7 +49,7 @@ serve(async (req) => {
     if (!file || !file.assigned_tc_id) return json({ error: "No TC assigned" }, 400);
 
     const { data: tc } = await admin.from("agents")
-      .select("first_name, last_name, email, phone").eq("id", file.assigned_tc_id).single();
+      .select("first_name, last_name, email, phone, sms_opt_in").eq("id", file.assigned_tc_id).single();
     if (!tc) return json({ error: "TC not found" }, 404);
 
     const tcName = `${tc.first_name || ""} ${tc.last_name || ""}`.trim() || "TC";
@@ -63,7 +63,8 @@ serve(async (req) => {
 
     // SMS
     let smsOk = false;
-    if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_FROM && tc.phone) {
+    // Text only when sms_opt_in === true; email still goes.
+    if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_FROM && tc.phone && tc.sms_opt_in === true) {
       try {
         const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
           method: "POST",

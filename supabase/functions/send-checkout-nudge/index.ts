@@ -169,12 +169,12 @@ Deno.serve(async () => {
         ? `${esc(tcFirst)} got a head start for you`
         : `Almost there... just one step! &#10024;`;
       const sub = isTcStarted
-        ? `${hi}${esc(tcFirst)} opened a file for you. It&rsquo;s ready to go the moment you approve. One quick checkout and she picks it up.`
+        ? `${hi}${esc(tcFirst)} opened a file for you. Review and pay to release it; the Service Agreement applies.`
         : `${hi}we&rsquo;ve got your file. Complete checkout and the Aari team assigns a coordinator.`;
       const subject = isTcStarted
-        ? `${tcFirst} started a file for ${addr} · approve to release`
+        ? `${tcFirst} started a file for ${addr} · review and pay to release`
         : `Almost there · ${addr} · ${svcLabel}`;
-      const ctaLabel = isTcStarted ? "Review & approve" : "Complete checkout";
+      const ctaLabel = isTcStarted ? "Review and pay" : "Complete checkout";
       const kicker = isTcStarted ? "Your TC started a file" : "Just one step left";
       const html = htmlEmail({ headline, sub, addr, svcLabel, ctaUrl, ctaLabel, kicker });
       const ok = await sendResend(`email-1 file=${f.id}${isTcStarted ? " tc-started" : ""}`, [clientEmail], [BROKER_EMAIL], subject, html);
@@ -200,7 +200,7 @@ Deno.serve(async () => {
         const subject = isTcStarted
           ? `Still holding ${addr} · ${tcFirst} is ready when you are`
           : `Still holding your spot · ${addr}`;
-        const ctaLabel = isTcStarted ? "Review & approve" : "Complete checkout";
+        const ctaLabel = isTcStarted ? "Review and pay" : "Complete checkout";
         const html = htmlEmail({ headline, sub, addr, svcLabel, ctaUrl, ctaLabel, kicker: "Still holding your spot" });
         const ok = await sendResend(`email-2 file=${f.id}${isTcStarted ? " tc-started" : ""}`, [clientEmail], [BROKER_EMAIL], subject, html);
         if (ok) {

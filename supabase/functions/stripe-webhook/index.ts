@@ -471,11 +471,11 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
           paragraphs = tcFirst
             ? [
                 `${hello}Your free file is on it and we&rsquo;re taking it from here.`,
-                `${escapeHtmlSimple(tcFirst)} has your file in front of her right now and will be in touch shortly. Sit tight!`,
+                `${escapeHtmlSimple(tcFirst)} has your file and will be in touch. Sit tight!`,
               ]
             : [
                 `${hello}Your free file is on it and we&rsquo;re taking it from here.`,
-                `I&rsquo;ll match you with a coordinator personally within the hour. Sit tight!`,
+                `The Aari team assigns your coordinator, same business day when possible. Sit tight!`,
               ];
           if (creditPosture) {
             const used = 1;
@@ -498,11 +498,11 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
           paragraphs = tcFirst
             ? [
                 `${hello}Payment landed and I&rsquo;m SO excited to hand you off to <strong>${escapeHtmlSimple(tcFirst)}</strong>, your coordinator. 🎉`,
-                `${escapeHtmlSimple(tcFirst)} has your file in front of her right now and will reach out shortly. You&rsquo;re in <em>incredible</em> hands. 💫`,
+                `${escapeHtmlSimple(tcFirst)} has your file and will reach out. You&rsquo;re in <em>incredible</em> hands. 💫`,
               ]
             : [
-                `${hello}Payment landed and your file is officially in motion. I&rsquo;ll match you with a coordinator personally within the hour. 🎉`,
-                `Sit tight for a moment · I&rsquo;ll be in touch personally to introduce your coordinator. You&rsquo;re in <em>incredible</em> hands. 💫`,
+                `${hello}Payment landed and your file is officially in motion. The Aari team assigns your coordinator, same business day when possible. 🎉`,
+                `Your coordinator will introduce themselves once assigned. You&rsquo;re in <em>incredible</em> hands. 💫`,
               ];
         } else {
           // Repeat client · short "in motion" receipt. No warm intro.
@@ -515,7 +515,7 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
                 `${hello}Payment landed. <strong>${escapeHtmlSimple(tcFirst)}</strong> has your file and will be in touch shortly. 💫`,
               ]
             : [
-                `${hello}Payment landed and your file is officially in motion. I&rsquo;ll match you with a coordinator shortly. 💫`,
+                `${hello}Payment landed and your file is officially in motion. The Aari team assigns your coordinator, same business day when possible. 💫`,
               ];
         }
         const html = cardOpen +
@@ -541,7 +541,7 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
         if (includeMLS) {
           const missingBold = mlsWithoutCreds.map(n => `<b>${escapeHtmlSimple(n)}</b>`).join(mlsWithoutCreds.length === 2 ? " and " : ", ");
           paragraphs.push(
-            `One more thing: we don&rsquo;t have your login for ${missingBold} yet. Mind giving them a quick call so they can walk you through granting a coordinator access? You can save the creds to your Aari profile so we never have to ask again.`
+            `One more thing about ${missingBold}: Your TC will ask you to add them as an assistant or give access through the MLS, the way your MLS allows. Never send us a login.`
           );
         }
         paragraphs.push(`<em>No rush at all!</em> 💫`);

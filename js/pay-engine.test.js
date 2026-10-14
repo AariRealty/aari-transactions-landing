@@ -56,7 +56,8 @@ check('op_basic resolves to $79', PAY.svcPrice({ service_type:'op_basic' }) === 
 check('unknown service = $0 (no guessing)', PAY.svcPrice({ service_type:'rental' }) === 0);
 check('member $50 comes off AARI, coordinator pay unchanged',
       PAY.atTcCut({ service_type:'tc_one_side', raw_form_data:outside }, 50) === 200 &&
-      PAY.chargedPrice({ service_type:'tc_one_side', raw_form_data:outside }, { hasMembership:true }) === 349);
+      PAY.chargedPrice({ service_type:'tc_one_side', raw_form_data:outside }, { membership:{ tier:'producer' } }) === 349);
+check('starter member $30 off a one side TC (decision 342)', PAY.chargedPrice({ service_type:'tc_one_side', raw_form_data:outside }, { membership:{ tier:'starter' } }) === 369);
 check('submitted_by_tc:"false" is not treated as truthy',
       PAY.isAariRealtyFile({ raw_form_data:{ submitted_by_tc:'false', source:'master_import' } }) === true);
 

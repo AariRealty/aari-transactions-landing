@@ -30,6 +30,8 @@ const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const FROM_ADDR = (FROM.match(/<([^>]+)>/) || [])[1] ?? "hello@aaritransactions.com";
 const REVIEW_LINK_ENV = Deno.env.get("GOOGLE_REVIEW_LINK_AARI") ?? "";
 
+const j = (s: number, b: unknown) => new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json" } });
+
 const HOUR = 60 * 60 * 1000;
 // Day 3 window with a Day 10 cap so a backlog of older closed files does not
 // back-blast review requests on first deploy.
@@ -70,6 +72,10 @@ const firstName = (full: string) => (full || "").trim().split(" ")[0] || "";
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("ok", { status: 200 });
+  // Decision 331 (Oct 14 2026): turned off. It emailed Google review asks to agents, title and lender,
+  // using contact details from a client file, with no postal address or opt out. Do not turn back on
+  // without Broker Compliance approval.
+  return j(410, { ok: false, disabled: true, reason: "decision_331" });
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY);
 
   // Aari review link · single global value from org_settings (one source of truth,

@@ -38,7 +38,7 @@ const SERVICE_META: Record<string, { label: string; price: string }> = {
   listing_coordinator: { label: "Listing Coordinator",   price: "$199" },
   listing_docs:        { label: "Listing Docs",          price: "$99"  },
   mls_setup:           { label: "MLS Setup",             price: "$99"  },
-  offer_prep_basic:    { label: "Offer Prep · Basic",    price: "$69"  },
+  offer_prep_basic:    { label: "Offer Prep · Basic",    price: "$79"  },
   offer_prep_complete: { label: "Offer Prep · Complete", price: "$149" },
   file_organization:   { label: "File Organization",     price: "$99"  },
 };

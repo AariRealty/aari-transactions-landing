@@ -123,7 +123,7 @@ function renderEmail(firstName: string, data: DigestData): string {
   }
   const slaBlock = (data.avgReplyMin != null || data.risksCaught > 0) ? `
     <div style="display:flex;gap:14px;padding:14px 18px;background:#fafaf9;border-radius:6px;margin:18px 0">
-      ${data.risksCaught > 0 ? `<div style="flex:1"><div style="font-family:Georgia,serif;font-size:22px;font-weight:500;color:#0f0f0f">${data.risksCaught}</div><div style="font-size:10.5px;color:#5f5e5a;text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-top:4px;line-height:1.3">Compliance checks completed YTD</div></div>` : ""}
+      ${data.risksCaught > 0 ? `<div style="flex:1"><div style="font-family:Georgia,serif;font-size:22px;font-weight:500;color:#0f0f0f">${data.risksCaught}</div><div style="font-size:10.5px;color:#5f5e5a;text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-top:4px;line-height:1.3">Checklist reviews completed this year</div></div>` : ""}
       ${data.avgReplyMin != null ? `<div style="flex:1"><div style="font-family:Georgia,serif;font-size:22px;font-weight:500;color:#0f0f0f">${data.avgReplyMin < 60 ? data.avgReplyMin + "m" : (data.avgReplyMin/60).toFixed(1) + "h"}</div><div style="font-size:10.5px;color:#5f5e5a;text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-top:4px;line-height:1.3">Avg TC reply time · 30d</div></div>` : ""}
       ${data.onTimePct != null ? `<div style="flex:1"><div style="font-family:Georgia,serif;font-size:22px;font-weight:500;color:#0f0f0f">${data.onTimePct}%</div><div style="font-size:10.5px;color:#5f5e5a;text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-top:4px;line-height:1.3">On-time replies · 30d</div></div>` : ""}
     </div>` : "";

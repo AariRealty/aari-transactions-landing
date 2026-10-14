@@ -88,7 +88,7 @@ serve(async (req) => {
 
     // Pull agent contact info
     const { data: agent } = await admin.from("agents")
-      .select("first_name, last_name, email, phone").eq("id", file.agent_id).single();
+      .select("first_name, last_name, email, phone, sms_opt_in").eq("id", file.agent_id).single();
     const tcName = `${actor.first_name || ""} ${actor.last_name || ""}`.trim() || "your TC";
     const agentFirst = agent?.first_name || "";
     const addr = file.property_address || "your file";
@@ -101,7 +101,8 @@ serve(async (req) => {
 
     // SMS
     let smsOk = false;
-    if (!holdRedirect && TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_FROM && agent?.phone) {
+    // Same gate as send-file-submitted-sms-to-agent: sms_opt_in !== true skips the text; email still goes.
+    if (!holdRedirect && TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_FROM && agent?.phone && agent?.sms_opt_in === true) {
       try {
         const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
           method: "POST",

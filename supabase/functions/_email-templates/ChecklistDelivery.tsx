@@ -32,8 +32,7 @@ export const ChecklistDelivery: React.FC<Props> = ({ checklistUrl, unsubscribeUr
           <h1 style={h1Style}>Your checklist. Inside.</h1>
 
           <p style={pStyle}>
-            Thanks for grabbing the Florida Pre-Close Compliance Checklist. 15 items, 5 sections,
-            built from real files we've closed in Lehigh, Cape Coral, and Fort Myers.
+            Thanks for grabbing the Florida Pre-Close Compliance Checklist. 15 items in 5 sections.
           </p>
 
           <p style={pStyle}>
@@ -73,7 +72,7 @@ export const ChecklistDelivery: React.FC<Props> = ({ checklistUrl, unsubscribeUr
             <a href="https://aaritransactions.com" style={linkStyle}>aaritransactions.com</a>
           </p>
           <p style={footerAddressStyle}>
-            Aari Transactions LLC &middot; Lehigh Acres, FL
+            Aari Transactions LLC &middot; 9160 Forum Corporate Pkwy, Ste 350 PMB 17078022, Fort Myers, FL 33905
           </p>
           {unsubscribeUrl ? (
             <p style={footerUnsubStyle}>

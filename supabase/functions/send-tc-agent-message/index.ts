@@ -57,7 +57,7 @@ serve(async (req) => {
     if (file.agent_id !== user.id) return json({ error: "Not your file" }, 403);
 
     const { data: tc } = file.assigned_tc_id
-      ? await admin.from("agents").select("id, first_name, last_name, email, phone").eq("id", file.assigned_tc_id).single()
+      ? await admin.from("agents").select("id, first_name, last_name, email, phone, sms_opt_in").eq("id", file.assigned_tc_id).single()
       : { data: null };
 
     const { data: agent } = await admin.from("agents")
@@ -81,7 +81,8 @@ serve(async (req) => {
     const smsBody = `Aari · ${agentName} sent a message about ${addr}:\n\n"${message.slice(0, 240)}${message.length > 240 ? "…" : ""}"\n\nReply via the file: ${tcLink}`;
 
     let smsOk = false, smsErr = "";
-    if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_FROM && tc?.phone) {
+    // Text only when sms_opt_in === true; email still goes.
+    if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_FROM && tc?.phone && tc?.sms_opt_in === true) {
       try {
         const twilioRes = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
           method: "POST",

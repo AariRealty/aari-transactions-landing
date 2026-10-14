@@ -146,3 +146,21 @@ console.log('text consent check passed');
   if (bad.length) { console.error('Decision 328 check failed:'); bad.forEach(b => console.error('  ' + b)); process.exit(1); }
   console.log('decision 328 check passed');
 }
+
+// Decisions 329 to 359 (deep pass): wording and money rules that must not come back.
+{
+  const bad = [];
+  const re = /YOUR_PROJECT\.supabase\.co|AARI_PUBLIC_ANON_KEY|only when the transaction funds|Activity Bonus|does not restrict your right to engage other transaction coordinators|Real files\. Real names|100% FTC|Compliant with FTC review|Time of essence for Closing Date only|a complete listing run from MLS|aria-label="Most popular"|Your time, your phone, your license|payment link missing — text Marlenyi|DEFAULT_AGENT_KEEP = 80|COMPANY_LEAD_AGENT_PCT = 37\.5|Aari does not pay or process commissions\.|only accessible by you|Only Aari coordinators assigned to your file|fair housing safe|Pick Buyer, Seller, or Dual agency|Insert Aari's standard|Blank defaults to 50%|Recommend offer terms based on comps|I will get a fresh agreement out today|advise the buyer.s side correctly|Offer Prep · Basic \$69|clientPrice: '\$69'|Request review from every closed file|SMS if their number is on file|within 4 hours of every visitor|unenforceable post-NAR settlement|475\.278\(3\)\(c\)|coordinate the 15% withholding|FAR violations carry fines|DBPR retention: 5 years|Nothing is falling through the cracks|No contracts, no retainers|save the creds to your Aari profile|personally within the hour|Share it\. Use it\. It's yours|up to 3 times per file|No further action needed from you|built from real files we've closed|Your countersigned PDF is attached|Buyer written notice required today|price: "\$69"/;
+  for (const f of walk(root).filter(f => /\.(html|js|ts|tsx|json)$/.test(f) && !/(node_modules|\.checks|pay-engine\.test)/.test(f))) {
+    const t = fs.readFileSync(f, 'utf8'); const m = t.match(re);
+    if (m) bad.push(path.relative(root, f) + ': ' + m[0]);
+  }
+  const pe = fs.readFileSync(path.join(root, 'js/pay-engine.js'), 'utf8');
+  if (!/MEMBER_TC_DISCOUNT_BY_TIER/.test(pe)) bad.push('pay-engine.js: member discount must follow the published tier amounts (decision 342)');
+  if (/CREDIT_SERVICES = \{[^}]*(standalone_review|offer_prep_complete)/.test(pe)) bad.push('pay-engine.js: credits cover only the Terms (d) list (decision 341)');
+  if (fs.readFileSync(path.join(root, 'supabase/functions/submit-tc-invoice/pay-engine.js'), 'utf8') !== pe) bad.push('pay-engine.js copies differ');
+  if (!/disabled: true, reason: "decision_331"/.test(fs.readFileSync(path.join(root, 'supabase/functions/send-agent-review/index.ts'), 'utf8'))) bad.push('send-agent-review must stay off (decision 331)');
+  if (/a\.tc_may_email_client !== false/.test(fs.readFileSync(path.join(root, 'files.html'), 'utf8'))) bad.push('files.html: client contact must default off (decision 343)');
+  if (bad.length) { console.error('Deep pass check failed (decisions 329 to 359):'); bad.forEach(b => console.error('  ' + b)); process.exit(1); }
+  console.log('deep pass check passed');
+}
