@@ -34,9 +34,8 @@ const STRIPE_LINKS: Record<string, string> = {
   tc_both_sides: "https://buy.stripe.com/cNi4grdwj9uz3ubfbccAo03",
 };
 
-const MEMBER_PROMO: Record<string, { code: string; services: string[] }> = {
-  "2635cd0e-45ee-415e-b0d0-91251b5af6bf": { code: "SAMANTHA50", services: ["tc_one_side"] },
-};
+// Decision 360 (Oct 14 2026): the per agent promo code is retired; no code is prefilled at checkout.
+const MEMBER_PROMO: Record<string, { code: string; services: string[] }> = {};
 
 const TC_SERVICES = ["tc_one_side", "tc_both_sides"];
 const HOUR = 60 * 60 * 1000;
