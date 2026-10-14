@@ -60,7 +60,7 @@ Deno.serve(async (req) => {
   const result = await sendEmail({
     to: emailTo,
     toUserId: null, // peer is not yet an auth user
-    category: "transactional",
+    category: "marketing",
     subject: emailSubject,
     templateName: "agent_introduction",
     reactElement: React.createElement(AgentIntroduction, {

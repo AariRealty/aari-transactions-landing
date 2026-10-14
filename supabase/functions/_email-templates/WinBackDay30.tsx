@@ -21,8 +21,8 @@ export const WinBackDay30: React.FC<Props> = ({ firstName, intakeUrl, unsubscrib
       It's been about 30 days since your last file with us. No pressure. Just checking in.
     </Text>
     <Text style={p}>
-      If something is queued and you want a TC on it before the weekend, you know where to find us. Same-day
-      intake confirmation. Same coordinator if they're available.
+      If something is queued and you want a TC on it before the weekend, you know where to find us. Files in by 2 PM ET
+      are picked up the same business day when possible. Same coordinator if they're available.
     </Text>
     <div style={{ marginTop: 22, marginBottom: 6 }}>
       <Button href={intakeUrl}>Submit a file</Button>

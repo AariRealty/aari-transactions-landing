@@ -1,6 +1,6 @@
 // #11 Agent introduction · Fires when refer.html form submits
 // Sent to: the peer being introduced (CC: referrer)
-// Category: transactional (warm 1-to-1 introduction, not marketing)
+// Category: marketing (one time introduction to a person who did not sign up; carries an opt out line)
 // RESPA-safe: no mention of payment, rewards, or referral fees anywhere in copy.
 
 import * as React from "react";
@@ -25,7 +25,7 @@ export const AgentIntroduction: React.FC<Props> = ({
   bookCallUrl,
   intakeUrl,
 }) => (
-  <Layout preview={`${referrerFirstName} thought you should know about us.`} category="transactional">
+  <Layout preview={`${referrerFirstName} thought you should know about us.`} category="marketing">
     <Heading style={h1}>{referrerFirstName} thought you should know about us.</Heading>
 
     <Text style={p}>Hi {peerFirstName},</Text>
@@ -48,10 +48,9 @@ export const AgentIntroduction: React.FC<Props> = ({
     ) : null}
 
     <Text style={p}>
-      The short version of what Aari Transactions is: broker-owned TC, statewide Florida coverage,
-      same-business-day intake, compliance built into every file. If you've ever lost a closing to
-      a missed deadline or felt like your TC was operating one step behind, that's the gap we built
-      the business to fix.
+      The short version of what Aari Transactions is: transaction coordination owned by a Florida
+      broker, statewide Florida coverage, and files in by 2 PM ET picked up the same business day
+      when possible.
     </Text>
 
     <Text style={p}>
@@ -69,8 +68,9 @@ export const AgentIntroduction: React.FC<Props> = ({
     </Text>
 
     <Text style={smallNote}>
-      This is a one-time introduction. You'll only hear from us again if you respond or submit a file.
-      No marketing list, no automated follow-up.
+      This is a one time introduction. You'll only hear from us again if you respond or submit a file.
+      No marketing list, no automated follow up. To opt out of any future email from Aari Transactions,
+      reply with the word Unsubscribe or email hello@aaritransactions.com with Unsubscribe in the subject.
     </Text>
   </Layout>
 );

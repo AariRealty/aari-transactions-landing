@@ -6,7 +6,7 @@
 // business number.
 //
 // Skips silently when:
-//   - agent.sms_opt_in is false
+//   - agent.sms_opt_in is not true (texts only after the agent opts in)
 //   - agent.phone is missing
 //   - QUO_API_KEY or QUO_FROM_NUMBER env vars are unset
 //
@@ -58,7 +58,7 @@ Deno.serve(async (req) => {
   if (!agent.phone) {
     return j(200, { ok: false, skipped: true, reason: "agent_no_phone" });
   }
-  if (agent.sms_opt_in === false) {
+  if (agent.sms_opt_in !== true) {
     return j(200, { ok: false, skipped: true, reason: "agent_opted_out" });
   }
 

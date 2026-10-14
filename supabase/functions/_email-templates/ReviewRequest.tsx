@@ -31,7 +31,7 @@ export const ReviewRequest: React.FC<Props> = ({ clientFirstName, agentFirstName
       <Button href={reviewUrl}>Share your review</Button>
     </div>
     <Text style={small}>
-      Reviews are FTC-compliant. You choose your attribution: first name + last initial, full name, or
+      You choose your attribution: first name + last initial, full name, or
       Buyer or Seller in your city. We review every submission before publishing.
     </Text>
   </Layout>

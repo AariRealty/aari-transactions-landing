@@ -290,7 +290,7 @@ Two minutes of your time would help us a lot. One link. No login.
 
 [BUTTON · Share your review]
 
-Reviews are FTC-compliant. You choose your attribution: first name + last initial, full name, or anonymous.
+You choose your attribution: first name + last initial, full name, or anonymous.
 
 Marlenyi Paredes
 Aari Transactions

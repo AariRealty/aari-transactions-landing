@@ -5,7 +5,7 @@
 // SMS so they know the system has the file. Mirrors the inline success card,
 // but lands on their phone for when they leave the portal.
 //
-// Skips silently when agent has no phone, sms_opt_in=false, or required
+// Skips silently when agent has no phone, has not opted in (sms_opt_in is not true), or required
 // secrets aren't set.
 //
 // Body: { file_id: uuid }
@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
     .eq("id", f.agent_id)
     .maybeSingle();
   if (!agent?.phone) return j(200, { ok: false, skipped: true, reason: "agent_no_phone" });
-  if (agent.sms_opt_in === false) return j(200, { ok: false, skipped: true, reason: "agent_opted_out" });
+  if (agent.sms_opt_in !== true) return j(200, { ok: false, skipped: true, reason: "agent_not_opted_in" });
 
   // Resolve assigned TC name if one was already picked (preferred-TC path).
   // If null (fast-path), use generic phrasing.
@@ -70,8 +70,8 @@ Deno.serve(async (req) => {
   // project_tc_acceptance_sla.md.
   const beforeCutoff = isBeforeEasternCutoff(new Date(), 14, 0);
   const startCommitment = beforeCutoff
-    ? "TC will start today (submitted before our 2 PM cutoff)."
-    : "TC will start tomorrow by 10 AM (submitted after our 2 PM cutoff).";
+    ? "Submitted before 2 PM ET, so we aim to start today when possible."
+    : "Submitted after 2 PM ET, so we aim to start next business day when possible.";
 
   const message =
     `Aari · File ${fileShortId} (${propertyShort}) is in · routing to ${tcName}.\n\n` +

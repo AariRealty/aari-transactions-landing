@@ -99,3 +99,22 @@ console.log('text consent check passed');
   if (pBad.length) { console.error('Promise words check failed (decisions 181 to 185):'); pBad.forEach(b => console.error('  ' + b)); process.exit(1); }
   console.log('promise words check passed');
 }
+
+// Decisions 263 to 280 (re scan 11): consent, timing, compliance claims and SA scope wording.
+{
+  const bad = [];
+  const re = /Not bypassable|absolute lock|FTC-compliant|CAN-SPAM compliant|per CAN-SPAM|stay compliant|clean, compliant|top priority in queue|PRE-LAUNCH|Aari handles the rest|every file gets the attention|48-hour intake delay|checkpoint that prevents|execution check, broker review|protects the time|TC will start (today|tomorrow)|be in\s+touch the same day|Same-day\s+intake confirmation|picks it up right away|landed in your inbox|Your signed agreement is on file|30-minute window<\/div>|Agent fault \(loss of license|review request to your client after each file|Aari marketing materials including social media|Florida Rule<\/span>|Every deadline rolls forward|within <strong>10 business days|10-business-day rule|NABOR applies "time is of the essence"|© Aari Realty LLC · Aari Transactions|"Realtor"/;
+  for (const f of walk(root).filter(f => /\.(html|js|ts|tsx|json|md)$/.test(f) && !/(node_modules|\.checks|files\.html|tc-cockpit|seller-checklist-draft)/.test(f))) {
+    const t = fs.readFileSync(f, 'utf8');
+    const m = t.match(re);
+    if (m) bad.push(path.relative(root, f) + ': ' + m[0]);
+  }
+  // 263: the agent introduction email carries an opt out.
+  { const t = fs.readFileSync(path.join(root, 'supabase/functions/_email-templates/AgentIntroduction.tsx'), 'utf8'); if (!/category="marketing"/.test(t) || !/Unsubscribe in the subject/.test(t)) bad.push('AgentIntroduction.tsx: opt out missing (decision 263)'); }
+  // 264: texts only after opt in.
+  for (const f of ['supabase/functions/send-file-submitted-sms-to-agent/index.ts','supabase/functions/send-tc-acceptance-sms/index.ts']) { const t = fs.readFileSync(path.join(root, f), 'utf8'); if (/sms_opt_in === false/.test(t)) bad.push(f + ': texts must require sms_opt_in true (decision 264)'); }
+  // 266: Yes is never saved as 'always'.
+  { const t = fs.readFileSync(path.join(root, 'index.html'), 'utf8'); if (/yes: 'always'/.test(t)) bad.push("index.html: review Yes saved as 'always' (decision 266)"); }
+  if (bad.length) { console.error('Re scan 11 check failed (decisions 263 to 280):'); bad.forEach(b => console.error('  ' + b)); process.exit(1); }
+  console.log('re scan 11 check passed');
+}

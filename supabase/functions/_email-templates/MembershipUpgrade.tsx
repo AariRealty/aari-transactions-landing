@@ -19,7 +19,7 @@ export const MembershipUpgrade: React.FC<Props> = ({ firstName, nextBillingDate,
     <Text style={p}>Hi {firstName},</Text>
     <Text style={p}>
       Your Producer membership is active. From this file forward you'll see <strong>$50 off every TC</strong>,
-      <strong> 4 service credits a month</strong>, and top priority in queue when new files come in.
+      <strong> 4 service credits a month</strong>, and priority TC assignment.
     </Text>
     <Text style={p}>
       Next bill: <strong>{nextBillingDate}</strong>. Cancel or pause anytime from the portal.

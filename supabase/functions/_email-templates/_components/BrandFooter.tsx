@@ -1,5 +1,5 @@
 // Aari Transactions · Email · Brand footer
-// Florida broker stamp · contact · CAN-SPAM compliant unsubscribe (marketing only).
+// Florida broker stamp · contact · unsubscribe link (marketing only).
 
 import * as React from "react";
 import { Hr, Link, Section, Text } from "@react-email/components";

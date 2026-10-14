@@ -20,8 +20,8 @@ export const AgentWelcome: React.FC<Props> = ({ firstName, tcName, tcPhone, inta
     <Text style={p}>Hi {firstName},</Text>
     <Text style={p}>
       Welcome to Aari Transactions. Your account is active and your TC is{" "}
-      <strong>{tcName}</strong>. Submit your first file anytime and we will be in
-      touch the same day.
+      <strong>{tcName}</strong>. Submit your first file anytime. Files in by 2 PM ET
+      are picked up the same business day when possible.
     </Text>
     <div style={{ marginTop: 22, marginBottom: 6 }}>
       <Button href={intakeUrl}>Submit your first file</Button>

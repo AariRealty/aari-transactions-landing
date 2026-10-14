@@ -170,7 +170,7 @@ Deno.serve(async () => {
         : `Almost there... just one step! &#10024;`;
       const sub = isTcStarted
         ? `${hi}${esc(tcFirst)} opened a file for you. It&rsquo;s ready to go the moment you approve. One quick checkout and she picks it up.`
-        : `${hi}we&rsquo;ve got your file. Complete checkout and a coordinator picks it up right away.`;
+        : `${hi}we&rsquo;ve got your file. Complete checkout and the Aari team assigns a coordinator.`;
       const subject = isTcStarted
         ? `${tcFirst} started a file for ${addr} · approve to release`
         : `Almost there · ${addr} · ${svcLabel}`;
