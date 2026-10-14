@@ -283,3 +283,12 @@ console.log('text consent check passed');
   }
   console.log('decision 419 check passed');
 }
+
+// Decisions 420 and 421: the SA carries the overpayment rule (refund within 10 business days by default) in every copy.
+{
+  for (const f of ['js/aari-sa-text.js', 'index.html', 'register.html', 'public/register.html', 'supabase/functions/aari-sa-pdf-email/index.ts']) {
+    const t = fs.readFileSync(path.join(root, f), 'utf8');
+    if (!/Overpayments\. If Aari receives more than the amount due on any invoice/.test(t) || !/within ten \(10\) business days after Aari confirms the excess/.test(t)) { console.error('Decision 420 check failed: SA overpayment paragraph missing in ' + f); process.exit(1); }
+  }
+  console.log('decisions 420 and 421 check passed');
+}
