@@ -355,7 +355,7 @@
     type: 'description',
     required: true,
     max_chars: 1200,
-    note: 'MLS will not accept names, phone numbers, gate codes, or URLs. Auto-scrubber strips violations before save.',
+    note: 'MLS will not accept names, phone numbers, gate codes, or URLs. The scrubber removes contact info, links, access codes and commission terms before save.',
   };
 
   /* ----- Realtor / confidential remarks.

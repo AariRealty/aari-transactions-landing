@@ -148,7 +148,7 @@
       <!-- PATH 2: Own -->
       <div class="lsd-pane" data-pane="own" hidden>
         <label class="lsd-label">Your property description</label>
-        <textarea class="lsd-textarea" data-own-input rows="7" maxlength="1500" placeholder="Paste your description here. Aari will auto-scrub anything MLS won't allow."></textarea>
+        <textarea class="lsd-textarea" data-own-input rows="7" maxlength="1500" placeholder="Paste your description here. Aari removes phone numbers, emails, links, access codes and commission terms. You are still responsible for MLS rules and fair housing wording."></textarea>
         <div class="lsd-meta">
           <span data-own-count>0 / 1200 used</span>
           <span class="lsd-hint">Auto-scrub runs on continue</span>
