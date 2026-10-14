@@ -19,7 +19,7 @@ export const BrandFooter: React.FC<FooterProps> = ({ category = "transactional",
     <Hr style={hrStyle} />
 
     <Text style={signatureStyle}>
-      <strong style={{ color: "#0f0f0f" }}>Marlenyi Paredes</strong><br />
+      <strong style={{ color: "#0f0f0f" }}>The Aari team</strong><br />
       Aari Transactions LLC
     </Text>
 

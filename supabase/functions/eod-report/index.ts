@@ -95,17 +95,17 @@ function actionHint(dkey: string): string {
     return dkey;
   })();
   const H: Record<string, string> = {
-    loan_approval: "Confirm the loan approval letter is in hand, or file an addendum to extend the period.",
-    inspection_end: "Inspection period ends today. Buyer delivers written objections, requests, or accepts as-is.",
-    appraisal: "Appraisal contingency expires. Confirm the appraised value, or renegotiate under the contract.",
+    loan_approval: "Check the loan approval status with the agent and lender; the agent decides any next step as the contract states.",
+    inspection_end: "Inspection period date per the file. Check with the agent; the agent decides any next step as the contract states.",
+    appraisal: "Check the appraisal status with the agent and lender; the agent decides any next step as the contract states.",
     closing: "Closing date. Confirm the file is clear to close and the CD has been signed.",
     title_commitment: "Title commitment is due from the title company. Chase if not received.",
     estoppel: "Estoppel letter is due from the HOA / Condo association. Chase if not received.",
-    survey: "Survey is due from the seller. Chase if not received.",
+    survey: "Check the survey status with the agent, as the contract states.",
     emd_initial: "Initial EMD is due from the buyer. Confirm receipt with the escrow agent.",
     emd_additional: "Additional EMD is due from the buyer. Confirm receipt with the escrow agent.",
-    compensation: "Compensation agreement is due. Get it signed if it isn't already.",
-    tenant_lease: "Seller must deliver tenant leases today. Chase if not received.",
+    compensation: "Check with the agent on the compensation agreement; the agent handles it.",
+    tenant_lease: "Check with the agent on the lease documents the contract calls for.",
   };
   return H[canonical] || "";
 }

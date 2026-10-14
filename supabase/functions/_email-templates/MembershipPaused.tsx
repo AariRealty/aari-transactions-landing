@@ -39,7 +39,7 @@ export const MembershipPaused: React.FC<Props> = ({ firstName, resumeDate, porta
           billing automatically picks up where it left off.
         </Text>
         <Text style={p}>
-          We'll send a reminder two days before billing resumes so nothing surprises you.
+          We plan to send a reminder before billing resumes.
         </Text>
       </>
     )}

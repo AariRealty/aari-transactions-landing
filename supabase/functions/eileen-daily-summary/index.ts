@@ -11,7 +11,7 @@
 //   1. Query bd_contacts using service_role (bypasses RLS)
 //   2. Filter to rows created OR last-touched today (America/New_York)
 //   3. Compute: DMs sent, Hand Raises, Discovery, Signed
-//   4. Apply targets: 15 DMs, 1 Discovery
+//   4. Report counts only, labeled as her own activity (no quotas, #393)
 //   5. Email via Resend to marlenyi@aarirealty.com
 //
 // Env (set via `supabase secrets set`):
@@ -33,9 +33,6 @@ const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
 const TO_EMAIL = "marlenyi@aarirealty.com";
 const FROM_EMAIL = "onboarding@resend.dev"; // Resend sandbox; upgrade to verified domain later
 const TZ = "America/New_York";
-
-const TARGET_DMS = 15;
-const TARGET_DISCOVERY = 1;
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -159,29 +156,20 @@ Deno.serve(async (req) => {
     ).length;
     const signed = rows.filter((r) => r.stage === "Signed").length;
 
-    const dmShort = Math.max(0, TARGET_DMS - dmsSent);
-    const dcShort = Math.max(0, TARGET_DISCOVERY - discovery);
-    const dmStatus = dmShort === 0 ? "on target" : `short by ${dmShort}`;
-    const dcStatus = dcShort === 0 ? "on target" : `short by ${dcShort}`;
-    const dmCheck = dmShort === 0 ? "[on target]" : `[short by ${dmShort}]`;
-    const dcCheck = dcShort === 0 ? "[on target]" : `[short by ${dcShort}]`;
-
-    const anyMissed = dmShort > 0 || dcShort > 0;
-    const footer = anyMissed
-      ? "Flag: Targets missed today. Pattern check if this continues."
-      : "On target.";
+    // Counts only, labeled as her own activity. No targets or quotas (#393).
+    const footer = "These are counts of Eileen's own activity today. How and when she works is up to her.";
 
     // ------- Subject + Body -------------------------------------------------
     const subject =
-      `Eileen · ${label} · ${dmsSent}/${TARGET_DMS} DMs · ` +
+      `Eileen · ${label} · ${dmsSent} DMs · ` +
       `${handRaises} HR · ${discovery} DC · ${signed} signed`;
 
     const text = [
-      `Eileen's day · ${label}`,
+      `Eileen's own activity · ${label}`,
       ``,
-      `DMs sent: ${dmsSent} of ${TARGET_DMS}  ${dmCheck}`,
+      `DMs sent: ${dmsSent}`,
       `Hand raises: ${handRaises}`,
-      `Discovery booked: ${discovery} of ${TARGET_DISCOVERY}  ${dcCheck}`,
+      `Discovery booked: ${discovery}`,
       `Signed: ${signed}`,
       ``,
       footer,
@@ -190,11 +178,11 @@ Deno.serve(async (req) => {
     const html = `<!doctype html>
 <html>
   <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111; line-height: 1.55;">
-    <h2 style="margin:0 0 14px 0;">Eileen's day &middot; ${label}</h2>
+    <h2 style="margin:0 0 14px 0;">Eileen's own activity &middot; ${label}</h2>
     <table style="border-collapse: collapse; font-size: 15px;">
       <tr>
         <td style="padding:4px 12px 4px 0;"><strong>DMs sent</strong></td>
-        <td style="padding:4px 0;">${dmsSent} of ${TARGET_DMS} &nbsp; <em style="color:${dmShort === 0 ? "#0a7d2c" : "#b00020"};">${dmStatus}</em></td>
+        <td style="padding:4px 0;">${dmsSent}</td>
       </tr>
       <tr>
         <td style="padding:4px 12px 4px 0;"><strong>Hand raises</strong></td>
@@ -202,14 +190,14 @@ Deno.serve(async (req) => {
       </tr>
       <tr>
         <td style="padding:4px 12px 4px 0;"><strong>Discovery booked</strong></td>
-        <td style="padding:4px 0;">${discovery} of ${TARGET_DISCOVERY} &nbsp; <em style="color:${dcShort === 0 ? "#0a7d2c" : "#b00020"};">${dcStatus}</em></td>
+        <td style="padding:4px 0;">${discovery}</td>
       </tr>
       <tr>
         <td style="padding:4px 12px 4px 0;"><strong>Signed</strong></td>
         <td style="padding:4px 0;">${signed}</td>
       </tr>
     </table>
-    <p style="margin-top:18px; font-size:14px; color:${anyMissed ? "#b00020" : "#0a7d2c"};">
+    <p style="margin-top:18px; font-size:14px; color:#555;">
       ${footer}
     </p>
   </body>

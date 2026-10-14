@@ -31,14 +31,14 @@ export const AgentIntroduction: React.FC<Props> = ({
     <Text style={p}>Hi {peerFirstName},</Text>
 
     <Text style={p}>
-      My name is Marlenyi Paredes. I'm a Florida real estate broker and the founder of
-      Aari Transactions, a transaction coordination service for Florida agents.
+      We are the Aari team at Aari Transactions, a transaction coordination service for
+      Florida agents.
     </Text>
 
     <Text style={p}>
       <strong>{referrerFirstName} {referrerLastName}</strong> introduced us through our
-      referral page. Their note was that you might benefit from what we do, so I'm reaching out once
-      to say hello.
+      referral page. Their note was that you might benefit from what we do, so a member of the team
+      is reaching out once to say hello.
     </Text>
 
     {context ? (
@@ -55,8 +55,8 @@ export const AgentIntroduction: React.FC<Props> = ({
 
     <Text style={p}>
       Two ways to take this from here, both no-pressure. Submit a single file and see how the
-      process feels in practice. Or book a 15-minute call so I can answer specific questions about
-      your current setup.
+      process feels in practice. Or book a 15 minute call and a member of the team will reach out
+      to answer specific questions about your current setup.
     </Text>
 
     <div style={{ marginTop: 22, marginBottom: 6, display: "flex", gap: 10, flexWrap: "wrap" }}>

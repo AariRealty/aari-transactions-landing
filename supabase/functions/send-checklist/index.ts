@@ -78,7 +78,7 @@ function buildChecklistHtml(checklistUrl: string): string {
       </p>
 
       <p style="font-size:14px;color:#0f0f0f;margin:26px 0 0;line-height:1.5;">
-        <strong style="color:#0f0f0f;">&mdash; Marlenyi Paredes</strong><br>
+        <strong style="color:#0f0f0f;">The Aari team</strong><br>
         <span style="font-size:11px;color:#888;letter-spacing:0.3px;">Aari Transactions</span>
       </p>
     </div>
@@ -118,7 +118,7 @@ You can also print it as a PDF for closing-day prep — there's a Print button a
 
 If you want a TC team on your next file, hit reply. That's how this whole thing started.
 
-— Marlenyi Paredes
+The Aari team
 Aari Transactions
 
 hello@aaritransactions.com · 239.688.1770 · aaritransactions.com

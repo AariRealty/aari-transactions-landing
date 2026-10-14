@@ -419,13 +419,13 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
         } catch (_) { return ""; }
       };
 
-      // Shared email chrome · cream card, Georgia hero, Marlenyi signoff.
+      // Shared email chrome · cream card, Georgia hero, Aari team signoff (#152, R6).
       const cardOpen = `<!doctype html><html><body style="margin:0;padding:0;background:#f4f1ea"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f1ea;padding:32px 16px"><tr><td align="center"><table role="presentation" width="520" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border:0.5px solid #e6ddca;border-radius:16px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif">`;
       const cardClose = `</table></td></tr></table></body></html>`;
       const kicker = (t: string) => `<tr><td style="padding:20px 26px 6px;border-bottom:0.5px solid #f2eee4;font-size:11.5px;letter-spacing:0.3px;color:#8a8073;text-transform:uppercase">Aari Transactions · ${escapeHtmlSimple(t)}</td></tr>`;
       const hero = (h: string) => `<tr><td align="center" style="padding:28px 26px 4px"><div style="font-family:Georgia,'Times New Roman',serif;font-size:28px;line-height:1.2;color:#0f0f0f;letter-spacing:-0.5px">${h}</div></td></tr>`;
       const bodyBlock = (paragraphs: string[]) => `<tr><td style="padding:14px 26px 22px"><div style="font-size:14px;color:#3a3428;line-height:1.65;max-width:440px;margin:0 auto">${paragraphs.map(p => `<p style="margin:0 0 10px">${p}</p>`).join("")}</div></td></tr>`;
-      const sig = () => `<tr><td style="padding:14px 26px 20px;border-top:0.5px solid #f2eee4;text-align:center"><div style="font-size:13px;color:#0f0f0f;font-weight:500;letter-spacing:0.1px;margin-bottom:2px">Marlenyi</div><div style="font-size:11px;color:#8a8073;letter-spacing:0.3px">Aari Transactions LLC</div></td></tr>`;
+      const sig = () => `<tr><td style="padding:14px 26px 20px;border-top:0.5px solid #f2eee4;text-align:center"><div style="font-size:13px;color:#0f0f0f;font-weight:500;letter-spacing:0.1px;margin-bottom:2px">The Aari team</div><div style="font-size:11px;color:#8a8073;letter-spacing:0.3px">Aari Transactions LLC</div></td></tr>`;
 
       async function sendResend(kind: string, to: string[], cc: string[], subject: string, html: string, delayMinutes = 0): Promise<void> {
         try {
@@ -460,7 +460,7 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
         let heroA: string;
         let paragraphs: string[];
         let receiptHtml = "";
-        let kickerLabel = "A note from Marlenyi";
+        let kickerLabel = "A note from the Aari team";
 
         if (creditCovered) {
           // Free-file variant · no payment language. Marlenyi-approved copy
@@ -552,7 +552,7 @@ async function handleEvent(event: { type?: string; data?: { object?: Record<stri
           ? `Photos + MLS heads-up when you&rsquo;re ready ✨`
           : `Send us your photos + anything else, whenever ✨`;
         const html = cardOpen +
-          kicker("A note from Marlenyi") +
+          kicker("A note from the Aari team") +
           hero(heroB) +
           bodyBlock(paragraphs) +
           sig() + cardClose;
