@@ -640,7 +640,7 @@ body{background:#fff;color:#333;font-family:'Montserrat',sans-serif;-webkit-font
         <div><label>Type</label><select id="cd-type"><option value="">Select</option><option value="Buyer">Buyer</option><option value="Seller">Seller</option></select></div>
         <div><label>Closing Date</label><input type="date" id="cd-closing-date"></div>
       </div>
-      <label>Property Address</label><input type="text" id="cd-address" placeholder="3123 8th St SW, Lehigh Acres, FL 33971">
+      <label>Property Address</label><input type="text" id="cd-address" placeholder="100 Sample St, City, FL">
       <div class="modal-row">
         <div><label>Sale Price</label><input type="text" id="cd-price" placeholder="$300,000"></div>
         <div><label>Lead Source</label><select id="cd-source"><option value="">Select source</option></select></div>
@@ -1378,7 +1378,7 @@ function showLeadPicker(category){
     const staleColor=daysSince>=7?'#b8708a':daysSince>=3?'#967a4a':'#8ac8a8';
     const staleLabel=daysSince===0?'Today':daysSince===1?'Yesterday':daysSince+'d ago';
     const priceVal=parseMoney(l.price_point||'');
-    const commVal=priceVal>0?Math.round(priceVal*0.025):0;
+    const commVal=priceVal>0?Math.round(priceVal*_ownRate()):0;
     const valueLabel=priceVal>0?'$'+priceVal.toLocaleString():'';
     const commLabel=commVal>0?'$'+commVal.toLocaleString()+' GCI':'';
     html+=`<div class="lead-pick-item" data-name="${esc(name.toLowerCase())}" onclick="logConvoWithLead('${category}','${l.id}')" style="padding:8px 10px;border:1px solid #eee;border-radius:4px;margin-bottom:4px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;transition:background 0.1s" onmouseover="this.style.background='#fff8e6'" onmouseout="this.style.background='#fff'">
@@ -3281,7 +3281,7 @@ function renderPriorityList(g,r){
   // Calculate total GCI at stake (used in header)
   const totalGCI=list.reduce((sum,item)=>{
     const pv=parseMoney(item.lead.price_point||'');
-    return sum+(pv>0?Math.round(pv*0.025):0);
+    return sum+(pv>0?Math.round(pv*_ownRate()):0);
   },0);
   const gciChip=totalGCI>0?`<span style="background:#e6f9f0;color:#8ac8a8;border:1px solid #c8ebd4;padding:3px 9px;border-radius:10px;font-size:10px;font-weight:700">$${totalGCI.toLocaleString()} GCI at stake</span>`:'';
 
@@ -3330,7 +3330,7 @@ function renderPriorityList(g,r){
   }else if(focus){
     const fl=focus.lead;
     const priceVal=parseMoney(fl.price_point||'');
-    const gci=priceVal>0?Math.round(priceVal*0.025):0;
+    const gci=priceVal>0?Math.round(priceVal*_ownRate()):0;
     const gciLabel=gci>0?' \u00b7 $'+gci.toLocaleString()+' GCI':'';
     const lastTxt=focus.daysSince===999?'no activity':focus.daysSince+'d ago';
     const skippedNow=skipped.has(focus.leadId);
@@ -4345,6 +4345,8 @@ function resetActivityMix(){
   renderHub();
 }
 
+// Decision 382: the agent's own Commission % only; no default rate.
+function _ownRate(){ try{ const g=loadGoalPlanner(); return (g&&g.comm_pct)?g.comm_pct/100:0; }catch(_){ return 0; } }
 function loadGoalPlanner(){
   try{
     const s=localStorage.getItem('aari_goal_planner');
@@ -6999,7 +7001,10 @@ function buildHubCardsHTML(opts){
   const buyerVol=buyerTx.reduce((s,l)=>s+parseMoney(l.price_point),0);
   const listingVol=listingTx.reduce((s,l)=>s+parseMoney(l.price_point),0);
 
-  const COMMISSION_RATE=0.025;
+  // Use the agent's own Commission % setting; no default rate (decisions 382, 395)
+  const _gpRate=loadGoalPlanner();
+  const COMMISSION_RATE=(_gpRate&&_gpRate.comm_pct)?_gpRate.comm_pct/100:0;
+  const _commTxt=v=>COMMISSION_RATE?'$'+v.toLocaleString(undefined,{maximumFractionDigits:0}):'set your rate';
   const pipelineComm=pipelineVol*COMMISSION_RATE;
 
   const buyerUnderContract=buyerTx.filter(l=>l.pipeline==='Under Contract');
@@ -7043,7 +7048,7 @@ function buildHubCardsHTML(opts){
           </div>
           <div style="display:flex;justify-content:space-between;color:#000;font-weight:500">
             <span>Potential Commission:</span>
-            <span>$${pipelineComm.toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+            <span>${_commTxt(pipelineComm)}</span>
           </div>
         </div>
       </div>
@@ -7077,11 +7082,11 @@ function buildHubCardsHTML(opts){
           </div>
           <div style="display:flex;justify-content:space-between;margin-bottom:6px">
             <span>Actual Commission:</span>
-            <span style="font-weight:600;color:#000">$${buyerActualComm.toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+            <span style="font-weight:600;color:#000">${_commTxt(buyerActualComm)}</span>
           </div>
           <div style="display:flex;justify-content:space-between;color:#000;font-weight:500">
             <span>Potential Commission:</span>
-            <span>$${buyerPotentialComm.toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+            <span>${_commTxt(buyerPotentialComm)}</span>
           </div>
         </div>
       </div>
@@ -7115,11 +7120,11 @@ function buildHubCardsHTML(opts){
           </div>
           <div style="display:flex;justify-content:space-between;margin-bottom:6px">
             <span>Actual Commission:</span>
-            <span style="font-weight:600;color:#000">$${listingActualComm.toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+            <span style="font-weight:600;color:#000">${_commTxt(listingActualComm)}</span>
           </div>
           <div style="display:flex;justify-content:space-between;color:#000;font-weight:500">
             <span>Potential Commission:</span>
-            <span>$${listingPotentialComm.toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+            <span>${_commTxt(listingPotentialComm)}</span>
           </div>
         </div>
       </div>
@@ -7685,7 +7690,7 @@ const CONTRACT_TYPES={
       {key:'initial_deposit',label:'Initial Deposit Due',days:3,from:'effective',ref:'Paragraph 2(a)',toe:true,stage:'Escrow'},
       {key:'loan_app',label:'Loan Application Deadline',days:5,from:'effective',ref:'Paragraph 8(b)',toe:true,stage:'Loan'},
       {key:'inspection',label:'Inspection Period Deadline',days:15,from:'effective',ref:'Paragraph 12',toe:true,stage:'Inspection'},
-      {key:'seller_response',label:'Seller Response to Defects',days:10,from:'inspection',ref:'Standard B/C',toe:true,stage:'Remedy',note:'Repair Limit 1.5% of purchase price'},
+      {key:'seller_response',label:'Seller Response to Defects',days:10,from:'inspection',ref:'Standard B/C',toe:true,stage:'Remedy'},
       {key:'loan_approval',label:'Loan Approval Deadline',days:30,from:'effective',ref:'Paragraph 8(b)',toe:true,stage:'Loan'},
       {key:'title_evidence',label:'Title Evidence Deadline',days:15,from:'closing',direction:'before',ref:'Paragraph 9',toe:true,stage:'Title'},
       {key:'closing',label:'Closing Date',days:0,from:'closing',ref:'Paragraph 2',toe:true,stage:'Closing'}
@@ -7699,7 +7704,7 @@ const CONTRACT_TYPES={
       {key:'initial_deposit',label:'Initial Deposit Due',days:3,from:'effective',ref:'Paragraph 2(a)',toe:true,stage:'Escrow'},
       {key:'loan_app',label:'Loan Application Deadline',days:5,from:'effective',ref:'Paragraph 8(b)',toe:true,stage:'Loan'},
       {key:'inspection',label:'Inspection Period Deadline',days:15,from:'effective',ref:'Paragraph 12',toe:true,stage:'Inspection'},
-      {key:'hoa_review',label:'HOA/Condo Doc Review',days:3,from:'hoa_receipt',ref:'CRSP Addendum',toe:true,stage:'Inspection',note:'3 days after buyer receives HOA/condo docs'},
+      {key:'hoa_review',label:'HOA/Condo Doc Review',days:3,from:'hoa_receipt',ref:'CRSP Addendum',toe:true,stage:'Inspection'},
       {key:'loan_approval',label:'Loan Approval Deadline',days:30,from:'effective',ref:'Paragraph 8(b)',toe:true,stage:'Loan'},
       {key:'title_evidence',label:'Title Evidence Deadline',days:15,from:'closing',direction:'before',ref:'Paragraph 9',toe:true,stage:'Title'},
       {key:'closing',label:'Closing Date',days:0,from:'closing',ref:'Paragraph 2',toe:true,stage:'Closing'}
@@ -7720,6 +7725,10 @@ const CONTRACT_TYPES={
     ]
   }
 };
+
+// Every computed date is an estimate: point to the form, never restate a form term (#395, R4)
+function estNote(ref){return 'Estimate · check your form'+(ref?' (see '+ref+')':'');}
+Object.values(CONTRACT_TYPES).forEach(ct=>ct.deadlines.forEach(d=>{d.note=estNote(d.ref);}));
 
 // Federal / Florida observed holidays (extend as needed)
 const FL_HOLIDAYS=['2026-01-01','2026-01-19','2026-02-16','2026-05-25','2026-06-19','2026-07-03','2026-09-07','2026-10-12','2026-11-11','2026-11-26','2026-12-25','2027-01-01','2027-01-18','2027-02-15','2027-05-31','2027-06-18','2027-07-05','2027-09-06','2027-10-11','2027-11-11','2027-11-25','2027-12-24'];
@@ -8450,10 +8459,10 @@ function renderTxnPanelStage(l,activeStage){
               <input type="checkbox" ${done?'checked':''} onchange="toggleDeadlineComplete('${l.id}','${key}')" style="cursor:pointer;width:14px;height:14px;flex-shrink:0;accent-color:#8ac8a8">
               <span style="${textStyle};font-weight:600">${toe}${esc(dl.label)}${overrideBadge}</span>
             </div>
-            <span style="${textStyle};font-weight:700;white-space:nowrap">${fmtDate(dl.date)}${flag}</span>
+            <span style="${textStyle};font-weight:700;white-space:nowrap">${dl.date?'Est. ':''}${fmtDate(dl.date)}${flag}</span>
             <button onclick="event.stopPropagation();overrideDeadline('${l.id}','${key}','${currentISO}')" style="padding:3px 7px;border:1px solid #ddd;border-radius:3px;background:#fff;color:#666;font-size:9px;cursor:pointer;font-family:Montserrat;white-space:nowrap" title="Override this deadline (extensions, addenda, delays)">Edit</button>
           </div>
-          <div style="font-size:9px;color:#999;margin-top:3px;margin-left:22px">${esc(dl.ref||'')}${dl.note?' · '+esc(dl.note):''}${dl.overridden?' · <span style="color:#967a4a;font-weight:600">Override: '+(esc(dl.overrideReason||'No reason given'))+' (was '+fmtDate(dl.originalDate)+')</span>':''}</div>
+          <div style="font-size:9px;color:#999;margin-top:3px;margin-left:22px">${esc(dl.note||estNote(dl.ref))}${dl.overridden?' · <span style="color:#967a4a;font-weight:600">Override: '+(esc(dl.overrideReason||'No reason given'))+' (was '+fmtDate(dl.originalDate)+')</span>':''}</div>
         </div>`;
       });
     }
@@ -8880,12 +8889,12 @@ function renderCalcResult(key){
     <div style="font-size:10px;color:${ct.color};font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Calculated Deadlines</div>
     <div style="display:flex;flex-direction:column;gap:4px">`;
   state.result.forEach(d=>{
-    const dateStr=d.date?d.date.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}):'Set source date';
+    const dateStr=d.date?'Est. '+d.date.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'}):'Set source date';
     const toeBadge=d.toe?`<span style="font-size:8px;background:#fff0f3;color:#b8708a;padding:1px 5px;border-radius:3px;font-weight:600;border:1px solid #f3d4dd">TOE</span>`:'';
     html+=`<div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:8px 10px;background:${ct.bg}70;border-radius:4px;border-left:3px solid ${ct.color}66;margin-bottom:3px">
       <div style="min-width:0">
         <div style="font-size:11px;font-weight:500;color:#000">${d.label} ${toeBadge}</div>
-        <div style="font-size:9px;color:#999">${d.ref||''}${d.days!==null && d.from==='effective'?' • '+d.days+' days from eff.':''}${d.from==='closing' && d.direction==='before'?' • '+d.days+' days before closing':''}</div>
+        <div style="font-size:9px;color:#999">${esc(estNote(d.ref))}</div>
       </div>
       <div style="font-size:11px;font-weight:600;color:${ct.color};text-align:right;white-space:nowrap">${dateStr}</div>
     </div>`;
@@ -8955,7 +8964,7 @@ function exportCalcICS(){
       const dt=isoDate(d.date).replace(/-/g,'');
       const uid=k.replace(/[^a-z0-9]/gi,'')+'-'+d.key+'-'+dt+'@aari';
       const title=k+' - '+d.label+(d.toe?' [TOE]':'');
-      const desc=(d.ref||'')+(d.note?' | '+d.note:'')+(d.toe?' | Time of essence - no extensions without written agreement':'');
+      const desc=estNote(d.ref)+(d.toe?' | Time of essence: check your form':'');
       ics+='BEGIN:VEVENT\r\nUID:'+uid+'\r\nDTSTAMP:'+stamp+'\r\nDTSTART;VALUE=DATE:'+dt+'\r\nDTEND;VALUE=DATE:'+dt+'\r\nSUMMARY:'+title.replace(/,/g,'\\,')+'\r\nDESCRIPTION:'+desc.replace(/,/g,'\\,').replace(/\n/g,'\\n')+'\r\nEND:VEVENT\r\n';
     });
   });
