@@ -180,3 +180,12 @@ console.log('text consent check passed');
   if (bad.length) { console.error('Decision 388 check failed:'); bad.forEach(b => console.error('  ' + b)); process.exit(1); }
   console.log('decision 388 check passed');
 }
+
+// Decision 389: client review asks go to the agent as a draft until a per file opt in exists.
+{
+  const t = fs.readFileSync(path.join(root, 'files.html'), 'utf8');
+  const i = t.indexOf("id:'sale_closed_client_welcome_referral'");
+  const head = i < 0 ? '' : t.slice(i, t.indexOf('versions:[', i));
+  if (i >= 0 && /buyer_email/.test(head)) { console.error('Decision 389 check failed: welcome home review ask must go to the agent'); process.exit(1); }
+  console.log('decision 389 check passed');
+}
