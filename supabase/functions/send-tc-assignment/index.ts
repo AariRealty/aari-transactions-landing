@@ -44,7 +44,6 @@ Deno.serve(async (req) => {
       fileId: body.file_id.slice(0, 8),
       tcName: tcFullName,
       tcEmail: tc.email,
-      tcPhone: tc.phone,
       portalUrl: `${SITE_URL}/portal.html`,
     }),
     payload: { file_id: body.file_id, tc_id: tc.id },

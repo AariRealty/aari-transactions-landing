@@ -86,7 +86,6 @@ Deno.serve(async (req) => {
         propertyAddress: f.property_address ?? "(property)",
         tcName,
         tcEmail: tc.email ?? "",
-        tcPhone: tc.phone ?? undefined,
         expectedStartAtFormatted: startFormatted,
         portalUrl: PORTAL_URL,
         // Option B invite · nudge the profile only for agents who haven't finished it.

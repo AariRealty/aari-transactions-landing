@@ -100,7 +100,7 @@ function htmlEmail(args: {
 <tr><td style="padding:12px 16px;font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:#8a8073">Service</td><td style="padding:12px 16px;font-size:13px;color:#0f0f0f;text-align:right">${esc(svcLabel)}</td></tr>
 </table></td></tr>
 <tr><td align="center" style="padding:24px 26px 26px"><a href="${esc(ctaUrl)}" style="display:inline-block;background:#0f0f0f;color:#ffffff;text-decoration:none;font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;padding:13px 24px;border-radius:10px;letter-spacing:0.2px">${esc(ctaLabel)} &rarr;</a></td></tr>
-<tr><td style="padding:14px 26px 20px;border-top:0.5px solid #f2eee4;text-align:center;font-size:10.5px;color:#8a8073;letter-spacing:0.3px">Aari Transactions LLC</td></tr>
+<tr><td style="padding:14px 26px 20px;border-top:0.5px solid #f2eee4;text-align:center;font-size:10.5px;color:#8a8073;letter-spacing:0.3px">Aari Transactions LLC · 9160 Forum Corporate Pkwy, Suite 350, Fort Myers, FL 33905<br>Reply unsubscribe and we will not send these reminders again.</td></tr>
 </table></td></tr></table></body></html>`;
 }
 

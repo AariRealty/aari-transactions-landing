@@ -26,11 +26,7 @@ export const TcAssignmentPing: React.FC<Props> = ({ firstName, fileId, tcName, t
     </Text>
     <Text style={p}>
       Email: <a href={`mailto:${tcEmail}`} style={link}>{tcEmail}</a>
-      {tcPhone ? (
-        <>
-          <br />Phone: <a href={`tel:${tcPhone}`} style={link}>{tcPhone}</a>
-        </>
-      ) : null}
+      <br />Aari Transactions team line: <a href="tel:+12396881770" style={link}>239.688.1770</a>
     </Text>
     <Text style={p}>
       Loop them on contract changes, inspection updates, and any deadlines that move. The portal shows the file status.

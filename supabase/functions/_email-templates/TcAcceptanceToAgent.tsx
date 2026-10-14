@@ -39,11 +39,7 @@ export const TcAcceptanceToAgent: React.FC<Props> = ({
     </Text>
     <Text style={p}>
       Email: <a href={`mailto:${tcEmail}`} style={link}>{tcEmail}</a>
-      {tcPhone ? (
-        <>
-          <br />Phone: <a href={`tel:${tcPhone}`} style={link}>{tcPhone}</a>
-        </>
-      ) : null}
+      <br />Aari Transactions team line: <a href="tel:+12396881770" style={link}>239.688.1770</a>
     </Text>
     <div style={{ marginTop: 22, marginBottom: 6 }}>
       <Button href={portalUrl}>See my transaction</Button>
@@ -53,8 +49,7 @@ export const TcAcceptanceToAgent: React.FC<Props> = ({
         <Text style={inviteHd}>One optional thing.</Text>
         <Text style={inviteP}>
           Finish your profile once and your standing terms fill in on every future file for you.
-          It is recommended, not required. Your transaction moves either way, and the portal shows
-          you every step as it happens.
+          It is recommended, not required. The portal shows your file status as the team updates it.
         </Text>
       </div>
     ) : null}

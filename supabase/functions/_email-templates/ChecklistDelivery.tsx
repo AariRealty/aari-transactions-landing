@@ -37,8 +37,7 @@ export const ChecklistDelivery: React.FC<Props> = ({ checklistUrl, unsubscribeUr
 
           <p style={pStyle}>
             Use it the next time you're 72 hours from closing. Run every item. Escalate anything
-            missing by phone, not email. That's the difference between a clean close and a deal
-            that slips three days.
+            missing by phone, not email. A checklist helps flag what is still open.
           </p>
 
           <div style={{ marginTop: "22px", marginBottom: "22px" }}>

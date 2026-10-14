@@ -44,26 +44,26 @@ const TASK_LABELS: Record<string, string> = {
   "insp_decision_followup": "Follow up with buyer&rsquo;s agent — proceeding or canceling?",
   "insp_proceed_notice": "If proceeding — confirm written notice to seller before deadline",
   "insp_cancel_notice": "If canceling — confirm written notice to seller before deadline",
-  "insp_deposit_return": "If canceling — initiate deposit return process with title company",
+  "insp_deposit_return": "If canceling: the agent directs any deposit steps with title",
   "insp_permits": "Follow up on any open permit issues identified during inspection",
   "insp_lender_update": "Follow up with lender — update on loan status",
   "insp_weekly_update": "Send weekly update email to agent — every Friday",
   "rem_asis_accepted": "Confirm buyer has accepted property AS-IS in writing",
-  "rem_addendum_confirmed": "Credit/concession negotiated — confirm addendum executed by ALL parties",
+  "rem_addendum_confirmed": "Credit or concession: confirm the signed addendum is in the file",
   "rem_permits_followup": "Open permit issues — follow up on resolution status",
   "rem_lender_progress": "Follow up with lender — loan progressing + appraisal ordered",
   "rem_title_search": "Follow up with title — confirm title search in progress",
   "rem_weekly_update": "Send weekly update email to agent — every Friday",
   "app_ordered": "Confirm appraisal ordered by lender — get it in writing",
   "app_status_followup": "Follow up with lender — appraisal completed + results received",
-  "app_deadline_watch": "Loan approval deadline — Day 30 from Effective Date",
+  "app_deadline_watch": "Loan approval deadline (per the contract)",
   "app_satisfactory_confirm": "At/above value — confirm with lender appraisal is satisfactory",
   "app_final_approval_followup": "At/above value — follow up on final loan approval status",
   "app_low_notify": "Below value — notify BOTH agents immediately, in writing",
   "app_low_decision": "Below value — document buyer/seller decision in writing",
   "app_low_addendum": "Below value — if price reduction agreed, confirm executed addendum",
   "app_low_deposit_return": "Below value — if cancellation, initiate deposit return with title",
-  "app_loan_approved": "Loan approval received from lender IN WRITING before Day 30",
+  "app_loan_approved": "Loan approval received from lender in writing by the contract deadline",
   "app_no_approval_notice": "No approval by deadline — confirm buyer&rsquo;s written notice to seller TODAY",
   "app_title_commitment": "Follow up with title — commitment on track",
   "app_weekly_update": "Send weekly update email to agent — every Friday",
@@ -72,9 +72,9 @@ const TASK_LABELS: Record<string, string> = {
   "ctc_title_review": "Review title commitment for exceptions or issues",
   "ctc_title_exceptions_notify": "Title exceptions — notify agents and parties IMMEDIATELY",
   "ctc_title_exceptions_resolved": "Confirm ALL title exceptions resolved before closing",
-  "ctc_cd_received": "Closing disclosure received from lender — confirm CFPB 3-day clock",
+  "ctc_cd_received": "Closing Disclosure received: confirm the Closing Disclosure timing with the lender",
   "ctc_closing_confirmed": "Closing date, time, and location confirmed with ALL parties",
-  "ctc_walkthrough": "Walk-through scheduled — day before or day of closing",
+  "ctc_walkthrough": "Walk through scheduled",
   "ctc_estoppels": "Estoppel letters received from all tenants",
   "ctc_fincen": "FinCEN report prepared by closing agent — entity buyer",
   "ctc_firpta": "FIRPTA certification or withholding certificate on file — foreign seller",
@@ -157,8 +157,7 @@ Deno.serve(async (req) => {
       let tc: { first_name: string; last_name: string; email: string; phone: string | null } | null = null;
       const tcId = active.find(f => f.assigned_tc_id)?.assigned_tc_id;
       if(tcId){ const { data } = await supabaseAdmin.from("agents").select("first_name, last_name, email, phone").eq("id", tcId).single(); tc = data ?? null; }
-      const tcName = tc ? (tc.first_name + " " + tc.last_name).trim() : "Your Aari team";
-      const tcPhone = (tc && tc.phone) || "239.688.1770";
+      const tcName = (tc && tc.first_name) ? tc.first_name.trim() : "Your Aari team";
 
       const blocks = active.map(f => {
         const stage = STAGE_LABELS[stageOf(f)] ?? "In progress";
@@ -181,7 +180,7 @@ Deno.serve(async (req) => {
       const html = '<div style="font-family:-apple-system,BlinkMacSystemFont,Arial,sans-serif;max-width:560px;margin:0 auto;color:#0f0f0f">' +
         '<p style="font-size:14px;line-height:1.55;margin:0 0 16px">Hi ' + esc(agent.first_name || "there") + ", here is where everything stands this week:</p>" + blocks +
         '<p style="font-size:12.5px;color:#6b6b6b;line-height:1.55;margin:0 0 6px">Questions? Reply to this email or message your TC directly.</p>' +
-        '<p style="font-size:12.5px;color:#6b6b6b;line-height:1.55;margin:0 0 14px">' + esc(tcName) + " · " + esc(tcPhone) + "</p>" +
+        '<p style="font-size:12.5px;color:#6b6b6b;line-height:1.55;margin:0 0 14px">' + esc(tcName) + ' · Aari Transactions team line <a href="tel:+12396881770" style="color:#6b6b6b">239.688.1770</a></p>' +
         '<p style="font-size:11px;color:#9a9a9a"><a href="' + SITE + '/portal" style="color:#9a9a9a">Manage your preferences</a> · <a href="' + SITE + '/portal" style="color:#9a9a9a">Unsubscribe</a></p></div>';
 
       const ok = await sendResend({ to: agent.email!, subject, html, replyTo: (tc && tc.email) || undefined });
