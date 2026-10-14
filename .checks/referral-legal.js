@@ -196,3 +196,34 @@ console.log('text consent check passed');
   if (!/Aari does not send offers to the other side/.test(t)) { console.error('Decision 390 check failed: offer builder must make an agent draft'); process.exit(1); }
   console.log('decision 390 check passed');
 }
+
+// Decisions 391 to 399 (Oct 14 2026 final review batch). Each check fails loudly if the old wording or figure comes back.
+{
+  const rd = (f) => { try { return fs.readFileSync(path.join(root, f), 'utf8'); } catch (_) { return ''; } };
+  const fail = (n, why) => { console.error('Decision ' + n + ' check failed: ' + why); process.exit(1); };
+  const pipe = rd('pipeline.html');
+  if (/buyers actively looking in your zip|buyer.{0,12}side commission\?/i.test(pipe)) fail(391, 'FSBO opener must not ask the seller to pay a buyer side commission');
+  if (!/may I bring them by\?/.test(pipe)) fail(391, 'approved FSBO opener missing');
+  for (const f of ['prospecting.html', 'tc-portal/eileen.html', 'tc-portal/milennys.html']) {
+    const t = rd(f);
+    if (/What Each Service Pays|per-file rates|\d+% of \$\d+/.test(t)) fail(392, 'coordinator pay table back in ' + f);
+  }
+  const ck = rd('tc-cockpit.html');
+  if (/under 4 hours|within 4 hours|EOD log before|Close 3\+ files|goal: 3\+|Response time SLA/i.test(ck)) fail(393, 'TC cockpit targets must be optional personal goals');
+  if (/\$50 credit/.test(rd('submit.html'))) fail(394, 'credit banner back on submit.html');
+  const blog = rd('blog/florida-effective-date-explained.html');
+  if (/standard \d+ days from Effective Date/i.test(blog)) fail(395, 'blog restates a form day count');
+  const cg = rd('contract-guide.html');
+  if (/sub: ['`][^'`]*\b\d+ (calendar |business )?days?\b/.test(cg) || /Default: \d+ days/.test(cg)) fail(395, 'contract guide restates a form day count');
+  if (!/Est\. \$\{formatDate/.test(cg)) fail(395, 'contract guide dates must show as estimates');
+  if (/note:\([^)]*\)=>[^\n]*\d+ days (after|before|prior)/.test(rd('js/deadline-engine.js'))) fail(395, 'deadline engine note restates a form day count');
+  const fh = rd('files.html');
+  if (/pa_compensation:\s*'default_compensation'|pa_cancellation_fee:\s*'rental_cancellation_fee'/.test(fh)) fail(396, 'staff must not promote compensation or the rental cancellation fee to the agent profile');
+  if (/placeholder="3%"|one month's rent">/.test(rd('portal.html'))) fail(396, 'portal suggests a compensation or fee amount');
+  const crm = rd('aari-crm.html');
+  if (/tcPayout:\s*'\$/.test(crm) || !/crmTcPayout/.test(crm)) fail(397, 'CRM TC payout must come from the pay engine');
+  const red = rd('_redirects');
+  if (!/^\/aari-tc-calculator\.html\s+\/404\.html\s+404!/m.test(red)) fail(398, 'calculator must be on the 404 list');
+  if (/=== 49\.5\)|=== 80\)|=== 179\)/.test(rd('js/pay-engine.test.js'))) fail(399, 'stale pay engine test figures');
+  console.log('decisions 391 to 399 checks passed');
+}
