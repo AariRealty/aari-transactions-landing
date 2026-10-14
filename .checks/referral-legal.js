@@ -266,3 +266,11 @@ console.log('text consent check passed');
   for (const [f, re, why] of checks) { if (re.test(rd(f))) { console.error('Re scan 15 ripple check failed: ' + f + ' (' + why + ')'); process.exit(1); } }
   console.log('re scan 15 public and desk ripples check passed');
 }
+
+// Decision 418: team plans carry no public prices until a signed team agreement sets terms.
+{
+  const ix = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const m = ix.match(/teams:\[[^\n]*\]\]/);
+  if (m && /\$\d/.test(m[0])) { console.error('Decision 418 check failed: team plans show a price without written terms'); process.exit(1); }
+  console.log('decision 418 check passed');
+}
