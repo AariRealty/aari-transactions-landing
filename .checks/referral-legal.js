@@ -306,7 +306,7 @@ console.log('text consent check passed');
   for (const f of ['prospecting.html', 'eileen.html']) {
     const t = fs.readFileSync(path.join(root, f), 'utf8');
     const i = t.indexOf('var EB_RAW=[');
-    const arr = i < 0 ? '' : t.slice(i, t.indexOf('];', i));
+    const arr = (i < 0 ? '' : t.slice(i, t.indexOf('];', i))) + ((t.match(/var ES=\[[^\]]*\]/) || [''])[0]);
     if (/MLS/.test(arr) || /Pull fresh listings from MLS/.test(t)) { console.error('Decision 423 check failed: MLS named as outreach source in ' + f); process.exit(1); }
   }
   console.log('decision 423 check passed');
