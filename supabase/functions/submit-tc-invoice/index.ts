@@ -58,9 +58,9 @@ const AT_TC_PCT: number = PAY.AT_TC_PCT;
 function row2(left: string, right: string, border: boolean){
   return `<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='${border?"border-top:0.5px solid #f0ebe0;":""}'><tr><td valign='top' style='padding:10px 0'>${left}</td><td valign='top' align='right' style='padding:10px 0;white-space:nowrap;font-size:12.5px;font-weight:600;color:#0f0f0f'>${right}</td></tr></table>`;
 }
-// Prior-unpaid banner · Marlenyi 2026-08-07 · Eileen sent a $400 invoice while
-// her earlier $100 invoice (A-1044, July 24-30) was still unpaid. The new email
-// gave no signal that a prior balance was pending, so Marlenyi paid the new one
+// Prior-unpaid banner · 2026-08-07 · a coordinator sent a new invoice while
+// her earlier invoice was still unpaid. The new email
+// gave no signal that a prior balance was pending, so the broker paid the new one
 // blind and had to be told separately about the old one. Broker email now shows
 // a red block listing every outstanding invoice from THIS coordinator so the
 // pending balance is impossible to miss.
@@ -111,8 +111,8 @@ function invoiceEmailHtml(o: any){
     coveredHtml+
     totalRow+
     // ONE invoice design, two audiences. The coordinator used to get a two-line plain note while
-    // the broker got this full invoice. Marlenyi: "make the email send out to Eileen like the one
-    // I get." Same document for both; only the call to action differs, because "Review and mark
+    // the broker got this full invoice. The broker asked that the coordinator get the same
+    // invoice email. Same document for both; only the call to action differs, because "Review and mark
     // paid" is the BROKER's action. A coordinator cannot mark her own invoice paid, so hers points
     // at her invoice screen and states when payment goes out.
     (o.audience === 'tc'
@@ -160,11 +160,9 @@ Deno.serve(async (req) => {
   // ARCHIVED AND TEST FILES ARE NOT BILLABLE, AND THE SERVER SAYS SO TOO.
   //
   // deriveStage() in the cockpit maps 'archived' onto the stage 'closed', and a TC file bills when
-  // it closes. So archiving a mistake INVOICED it. Eileen's first invoice was $1,600 across 8
-  // lines: seven were archived tests and duplicate email imports ("ROUTING TEST - Samantha to
-  // Eileen", "Not Valid", 313 NE 5th Ter twice, 3815 NW 22nd Ter twice, 1130 NW 14th Ter). One was
-  // real. $1,400 of nothing, and THIS function would have accepted every line, because it checked
-  // ownership and double-billing but never whether the file still counts.
+  // it closes. So archiving a mistake INVOICED it. An earlier coordinator invoice mixed archived
+  // tests and duplicate email imports in with one real file, and THIS function would have accepted
+  // every line, because it checked ownership and double-billing but never whether the file still counts.
   //
   // The client now filters them. That is not enough: the client is also what produced this list.
   // A rule this expensive belongs where it cannot be skipped.
@@ -243,8 +241,8 @@ Deno.serve(async (req) => {
   if (upd.error) { await admin.from("tc_invoices").delete().eq("id", inv.id); return j(500,{ ok:false, error:"file marking failed, invoice rolled back: " + upd.error.message }); }
 
   // Co-invoice detection · a file on THIS invoice shares its address with an active
-  // file assigned to a DIFFERENT TC. This is Hibiscus's approved case (Milennys and
-  // Eileen both run File Org on 1219 Hibiscus), but usually a signal the broker
+  // file assigned to a DIFFERENT TC. This can be an approved case (two coordinators
+  // running File Org on one property), but usually a signal the broker
   // should look and archive the dupe. Fires platform-alert (best-effort — a failure
   // here never blocks the invoice; the alert is a heads-up, not a gate).
   try {
@@ -304,7 +302,7 @@ Deno.serve(async (req) => {
   // actually billed — she had to take the total on faith.
   const tcHtml = invoiceEmailHtml({ invoice_number: inv.invoice_number, period, tc_name: tcLabel, items: safeItems, total_cents: total, audience: 'tc' });
   // Subject line carries the running-balance flag too. A skimmed inbox now shows
-  // "New invoice from Eileen · $400 · $100 still unpaid" instead of just $400.
+  // "New invoice from [TC] · [total] · [prior] still unpaid" instead of just the total.
   const brokerSubject = priorSum > 0
     ? `New invoice from ${tcLabel} · ${money(total)} · ${money(priorSum)} still unpaid`
     : `New invoice from ${tcLabel} · ${money(total)}`;
@@ -313,8 +311,8 @@ Deno.serve(async (req) => {
   return j(200,{ ok:true, invoice_id:inv.id, invoice_number:inv.invoice_number, total_cents:total, prior_unpaid_cents: priorSum });
 });
 // Address normalization for co-invoice detection. We match on the first token
-// of the address (street + number), lowercased, so "1219 Hibiscus Ave, Lehigh
-// Acres, FL 33972" and "1219 Hibiscus Ave, Lehigh Acres, Florida 33972" collide.
+// of the address (street + number), lowercased, so "100 Sample St, Fort
+// Myers, FL 33901" and "100 Sample St, Fort Myers, Florida 33901" collide.
 function normAddr(s: string): string {
   const first = String(s || "").split(",")[0] || "";
   return first.toLowerCase().replace(/\s+/g, " ").trim();

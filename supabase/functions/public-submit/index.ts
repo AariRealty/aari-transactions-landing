@@ -349,7 +349,7 @@ Deno.serve(async (req) => {
     insertRow.payment_pending = paymentPending;
     const ins = await admin.from("files").insert(insertRow).select("id").maybeSingle();
     if (ins.error) return j(500, { ok: false, error: "Submit failed: " + ins.error.message });
-    await confirm(confirmTo, "We are drafting your offer.", `Your offer on <b>${esc(property)}</b> is in.`, ob && !paymentPending ? "Your coordinator has it and starts drafting, today when possible." : "Once checkout is complete we draft it and send it back for signature, today when possible.");
+    await confirm(confirmTo, "Your offer request is in. Drafting starts once payment is complete.", `Your offer on <b>${esc(property)}</b> is in.`, ob && !paymentPending ? "Your coordinator has it and starts drafting, today when possible." : "Once checkout is complete we draft it and send it back for signature, today when possible.");
     return j(200, { ok: true, file_id: id, mode: "offer", property, submitted_as: ob ? (raw.agent_name || undefined) : (fullName(authAgent) || undefined) });
   }
 

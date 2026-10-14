@@ -100,10 +100,10 @@ Deno.serve(async (req) => {
         : `Final notice · ${meta.label} for ${addr}`;
 
     const lead = rung === 1
-      ? `Your <strong>${meta.label}</strong> file for <strong>${addr}</strong> is in my system. I cannot start work until the <strong>${meta.price}</strong> payment comes through.`
+      ? `Your <strong>${meta.label}</strong> file for <strong>${addr}</strong> is in the Aari team&rsquo;s system. Work starts once the <strong>${meta.price}</strong> payment comes through.`
       : rung === 2
         ? `It has been a week. Your <strong>${meta.label}</strong> file for <strong>${addr}</strong> is still on hold for the <strong>${meta.price}</strong> payment. Work stays paused until it clears.`
-        : `This is the final reminder on your <strong>${meta.label}</strong> file for <strong>${addr}</strong>. It has been two weeks and the <strong>${meta.price}</strong> payment has not come through. I am flagging this one for review on my end.`;
+        : `This is the final reminder on your <strong>${meta.label}</strong> file for <strong>${addr}</strong>. It has been two weeks and the <strong>${meta.price}</strong> payment has not come through. The Aari team is flagging this one for review.`;
 
     try {
       await resend.emails.send({

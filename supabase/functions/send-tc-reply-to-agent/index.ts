@@ -94,7 +94,7 @@ serve(async (req) => {
     const addr = file.property_address || "your file";
     const portalLink = `https://aaritransactions.com/portal.html#file-${file.id}`;
 
-    // Client-email review-hold gate · beta redirect for Samantha etc.
+    // Client-email review-hold gate · beta redirect for selected agents.
     // On hold, SMS is skipped entirely (no Marlenyi-facing SMS path yet); the
     // email below is redirected to Marlenyi's inbox with a banner + prefix.
     const holdRedirect = await resolveClientEmailRedirect({ agentId: file.agent_id, email: agent?.email ?? null });

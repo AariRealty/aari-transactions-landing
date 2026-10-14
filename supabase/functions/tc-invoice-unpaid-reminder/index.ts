@@ -3,7 +3,7 @@
 // Weekly nudge for the broker (Marlenyi) listing every coordinator invoice
 // that is still status='submitted' more than 7 days after it was submitted.
 // Prevents the "old invoice sat pending, forgot about it, paid the new one"
-// bug Marlenyi ran into with Eileen 2026-08-07.
+// bug the broker ran into on 2026-08-07.
 //
 // Runs on a pg_cron schedule (Fri 9am America/New_York). Sends ONE email to
 // the broker with a grouped-by-coordinator list of every unpaid invoice, plus
@@ -53,7 +53,7 @@ Deno.serve(async (req) => {
 
   // Every coordinator invoice still submitted (not paid) that was created > 7 days ago
   // — plus any invoice with a held line whose snooze has passed (regardless of age),
-  // since a snooze-expiry ping is what makes "Waiting on Samantha payment" actionable.
+  // since a snooze-expiry ping is what makes "Waiting on agent payment" actionable.
   const cutoff = new Date(Date.now() - 7 * 86400000).toISOString();
   const todayIso = new Date().toISOString().slice(0, 10);
   const { data: unpaid, error } = await admin
@@ -118,7 +118,7 @@ Deno.serve(async (req) => {
       const age = daysSince(iv.created_at);
       const ageLbl = age === 1 ? "1 day" : `${age} days`;
       // Held lines rendered as small annotations right under the invoice line so
-      // the broker sees "Waiting on Samantha payment · snoozed to Aug 15" in the
+      // the broker sees "Waiting on agent payment · snoozed to Aug 15" in the
       // reminder itself — no need to open the app to remember why the line is held.
       const heldHtml = (iv.held_lines || []).map((hl: any) => {
         const addr = esc(String(hl.address || "File").split(",")[0]);

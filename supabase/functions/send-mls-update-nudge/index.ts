@@ -107,7 +107,7 @@ Deno.serve(async (req) => {
         `<div style='font-size:13.5px;color:#0f0f0f;line-height:1.55;margin-bottom:18px'>` +
           `Hi ${esc(tcFirst)},` +
           `<br><br>` +
-          `Closing date changed on this listing. Please update the MLS today so the agent client doesn&rsquo;t see a stale date from Zillow before we tell them.` +
+          `Closing date changed on this listing. Ask the listing agent whether they want the MLS updated for the new closing date; update it only at the agent&rsquo;s direction.` +
         `</div>` +
         // CTA
         `<div style='text-align:center;margin-bottom:22px'>` +

@@ -73,7 +73,7 @@ function buildChecklistHtml(checklistUrl: string): string {
       </p>
 
       <p style="font-size:13px;color:#666;line-height:1.55;margin:0 0 12px;">
-        If you ever want a broker-owned TC to run this for you on every file, hit reply.
+        If you want a TC team on your next file, hit reply.
         That's how this whole thing started.
       </p>
 
@@ -116,7 +116,7 @@ Open the checklist: ${checklistUrl}
 
 You can also print it as a PDF for closing-day prep — there's a Print button at the top of the page.
 
-If you ever want a broker-owned TC to run this for you on every file, hit reply. That's how this whole thing started.
+If you want a TC team on your next file, hit reply. That's how this whole thing started.
 
 — Marlenyi Paredes
 Aari Transactions

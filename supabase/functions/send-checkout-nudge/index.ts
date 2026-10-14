@@ -9,7 +9,7 @@
 //            "Almost there... just one step! ✨"
 //
 //   Email 2: 72 h after email 1 if still unpaid.
-//            "Still holding your spot 💫"
+//            "Your file is ready to release 💫"
 //
 //   After email 2: silence (no third reminder, no daily nag).
 //
@@ -193,15 +193,15 @@ Deno.serve(async () => {
         const hi = clientFirst ? `Hi ${esc(clientFirst)} &mdash; ` : "";
         const headline = isTcStarted
           ? `Still holding this one for you`
-          : `Still holding your spot &#128140;`;
+          : `Your file is ready to release`;
         const sub = isTcStarted
-          ? `${hi}${esc(tcFirst)} has the file open, but checkout hasn&rsquo;t come through. Tap below and she&rsquo;s on it.`
+          ? `${hi}${esc(tcFirst)} has the file open, but checkout hasn&rsquo;t come through. Pay below to release it; work starts as the Service Agreement states.`
           : `${hi}your file is ready to go, but checkout hasn&rsquo;t landed yet. If you&rsquo;d still like us on it, tap below &mdash; we&rsquo;re ready.`;
         const subject = isTcStarted
           ? `Still holding ${addr} · ${tcFirst} is ready when you are`
-          : `Still holding your spot · ${addr}`;
+          : `Your file is ready to release · ${addr}`;
         const ctaLabel = isTcStarted ? "Review and pay" : "Complete checkout";
-        const html = htmlEmail({ headline, sub, addr, svcLabel, ctaUrl, ctaLabel, kicker: "Still holding your spot" });
+        const html = htmlEmail({ headline, sub, addr, svcLabel, ctaUrl, ctaLabel, kicker: "Your file is ready to release" });
         const ok = await sendResend(`email-2 file=${f.id}${isTcStarted ? " tc-started" : ""}`, [clientEmail], [BROKER_EMAIL], subject, html);
         if (ok) {
           await admin.from("files").update({ checkout_reminder_2_sent_at: new Date().toISOString() }).eq("id", f.id);

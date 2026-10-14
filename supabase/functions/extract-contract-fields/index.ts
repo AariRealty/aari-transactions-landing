@@ -279,15 +279,15 @@ function parseContract(T: string): Record<string, string> {
 // files.client_type, so imported files stayed untagged forever (the questionnaire asks, but email
 // and SkySlope imports never do). Match OUR agent against the two names and the side falls out.
 //
-// Real values this has to survive, taken from live files:
-//   "Samantha Haringa/P3581615"   · license number appended after a slash
-//   "649 Jenny Dao"               · stray leading column number from the PDF grid
-//   "Thomas Rosen PA"             · suffixes
-//   "CoastalEdge Real Estate LLC" · sometimes the brokerage lands in the agent column (parser
+// Value shapes this has to survive (sample names, not real files):
+//   "Jane Agent/P0000000"         · license number appended after a slash
+//   "649 Jane Agent"              · stray leading column number from the PDF grid
+//   "John Agent PA"               · suffixes
+//   "Example Realty LLC"          · sometimes the brokerage lands in the agent column (parser
 //                                   glitch) — that simply fails to match a person, which is fine
 function normName(s: unknown): string {
   return String(s ?? "")
-    .split("/")[0]              // drop "/P3581615"
+    .split("/")[0]              // drop "/P0000000"
     .replace(/\d+/g, " ")       // drop stray grid numbers
     .replace(/[^A-Za-z\s]/g, " ")
     .replace(/\s+/g, " ")

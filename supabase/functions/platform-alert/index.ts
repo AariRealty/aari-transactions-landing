@@ -223,7 +223,7 @@ function build(body: AlertBody, file: Record<string, unknown> | null, ctx: { add
   if (kind === "email_import_orphan") {
     // An inbound email import just landed in the claim pool. Every TC on the
     // roster can see it until someone claims or reassigns it, which is how a
-    // reply for Eileen's client Samantha ended up on Milennys's board on
+    // reply for one coordinator's client ended up on another coordinator's board on
     // Sep 20 2026. This alert fires immediately so the leak lasts minutes,
     // not weeks.
     const subj = String(extra?.import_subject ?? "");
@@ -313,8 +313,8 @@ function json(data: unknown, status = 200) {
 }
 
 function renderPreview(kind: AlertKind): { subject: string; html: string } | null {
-  const fakeCtx = { address: "1219 Hibiscus Ave, Lehigh Acres, Florida 33972", tcName: "Milennys Re", svcLabel: "File Organization" };
-  const built = build({ kind, extra: { other_tc_name: "Eileen Refl", week: "2026-08-30 – 2026-09-05", approved: false, other_ids: ["fake-id"], new_agent_name: "Alied Machuca", amount_paid: 20000, method: "zelle", fields: ["closing_date","purchase_price_cents"] } }, { raw_form_data: { new_agent_name: "Alied Machuca" }, status: "closed" } as any, fakeCtx);
+  const fakeCtx = { address: "100 Sample St, Fort Myers, Florida 33901", tcName: "Sample TC", svcLabel: "File Organization" };
+  const built = build({ kind, extra: { other_tc_name: "Second TC", week: "2026-08-30 – 2026-09-05", approved: false, other_ids: ["fake-id"], new_agent_name: "Sample Agent", amount_paid: 20000, method: "zelle", fields: ["closing_date","purchase_price_cents"] } }, { raw_form_data: { new_agent_name: "Sample Agent" }, status: "closed" } as any, fakeCtx);
   if (!built) return null;
   return { subject: built.subject, html: renderCard({ title: built.title, headline: built.headline, rows: built.rows, fileUrl: `${SITE_URL}/files.html?open=fake-id`, noteBelow: built.noteBelow, severity: built.severity ?? "review", muteUrl: `${SITE_URL}/#preview-mute`, approveUrl: kind === "co_invoice" ? `${SITE_URL}/#preview-approve` : undefined, address: fakeCtx.address }) };
 }

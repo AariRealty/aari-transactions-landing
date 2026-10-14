@@ -86,7 +86,7 @@ const DUP_ADDRESS_ALLOWLIST = ["1219 HIBISCUS AVE"];
 // have closed uninvoiced files, because they handle it themselves. Add an email here
 // as new TCs sign on with the same arrangement.
 const SELF_INVOICING_TC_EMAILS = new Set<string>([
-  "eileenrefl@gmail.com",  // Oct 7 · Eileen's real email, not her aaritransactions alias.
+  "eileenrefl@gmail.com",  // Oct 7 · coordinator's sign in email.
 ]);
 
 // ---- rendering helpers -------------------------------------------------
@@ -237,7 +237,7 @@ Deno.serve(async (req) => {
     if(!tc) return;
     if(String(tc.role||"").toLowerCase() === "broker") return;
     if(isSelfTx(f, tc)) return;
-    // Skip TCs who invoice themselves (Eileen) — the broker does not need to be
+    // Skip TCs who invoice themselves — the broker does not need to be
     // told they have work to submit, they'll submit it.
     if(SELF_INVOICING_TC_EMAILS.has(String(tc.email||"").toLowerCase())) return;
     const closedAt = f.actual_closing_date || f.closing_date || f.updated_at || f.created_at;

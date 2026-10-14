@@ -51,7 +51,7 @@ export const ChecklistDelivery: React.FC<Props> = ({ checklistUrl, unsubscribeUr
           </p>
 
           <p style={pSmallStyle}>
-            If you ever want a broker-owned TC to run this for you on every file, hit reply.
+            If you want a TC team on your next file, hit reply.
             That's how this whole thing started.
           </p>
 

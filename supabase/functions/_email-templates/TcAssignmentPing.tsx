@@ -33,8 +33,7 @@ export const TcAssignmentPing: React.FC<Props> = ({ firstName, fileId, tcName, t
       ) : null}
     </Text>
     <Text style={p}>
-      Loop them on contract changes, inspection updates, and any deadlines that move. The portal stays in
-      sync so you always have one source of truth.
+      Loop them on contract changes, inspection updates, and any deadlines that move. The portal shows the file status.
     </Text>
     <div style={{ marginTop: 22, marginBottom: 6 }}>
       <Button href={portalUrl}>Open the file</Button>

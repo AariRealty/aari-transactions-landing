@@ -247,8 +247,8 @@ async function filesForTc(admin:any, tcId:string, tc?:any){
     .eq("assigned_tc_id", tcId).not("status","in",'("archived","cancelled")').is("invoice_id", null);
   const rows = data || [];
   // Drop self-transactions · a TC does not invoice herself for her own listing or
-  // sale (Marlenyi Oct 11 · Milennys got a Thursday status email saying 844 Bell
-  // Blvd was ready to invoice; it is her own listing, so there is nothing for her
+  // sale (broker request Oct 11 · a coordinator got a Thursday status email saying
+  // her own listing was ready to invoice, so there was nothing for her
   // to submit). Mirrors the fileIsBillable guard in files.html + the digest helper.
   if(tc){
     // deno-lint-ignore no-explicit-any
@@ -291,8 +291,8 @@ Deno.serve(async (req) => {
   for (const t of list) {
     const files = await filesForTc(admin, t.id, t);
     // Skip the TC status email entirely when the coordinator has nothing worth
-    // showing after self-tx filtering (Marlenyi Oct 11 · Milennys got a "$50 ready
-    // to invoice" for 844 Bell which is her OWN listing, not a real billable).
+    // showing after self-tx filtering (broker request Oct 11 · a coordinator's own
+    // listing showed as ready to invoice, which is not a real billable).
     if(!files.length){ skipped++; continue; }
     const ok = await sendEmail(t.email, SUBJECT, bodyHtml(t.first_name||"there", files, pctById[t.id] ?? 40));
     if (ok) sent++;

@@ -132,7 +132,7 @@
     injectStyles();
 
     /* Option A · Review card. Spell out the ACTIVE default (the agent's saved
-       template if they have one, otherwise the Aari standard), then Keep this
+       template if they have one, otherwise blank remarks per decision 369), then Keep this
        or Change it. Change opens an editable copy with two save choices:
        use for this listing only, or save as the new profile default. The
        submit contract is unchanged — hidden confidential_remarks /
@@ -144,7 +144,7 @@
       '<div class="lcr-wrap">' +
         // REVIEW pane · the default spelled out + Keep / Change
         '<div class="lcr-pane" data-pane="review">' +
-          '<div class="lcr-readonly-block-label" data-active-label>Goes into MLS Confidential Remarks &middot; Aari standard</div>' +
+          '<div class="lcr-readonly-block-label" data-active-label>Goes into MLS Confidential Remarks &middot; your remarks</div>' +
           '<div class="lcr-readonly-block" data-active-display></div>' +
           '<div class="lcr-btnrow">' +
             '<button type="button" class="lcr-btn lcr-btn-pri" data-keep>Keep this</button>' +
@@ -186,7 +186,7 @@
       activeDisplay.textContent = activeText;
       activeLabel.innerHTML = (activeSource === 'agent_saved')
         ? 'Goes into MLS Confidential Remarks &middot; your saved default'
-        : 'Goes into MLS Confidential Remarks &middot; Aari standard';
+        : 'Goes into MLS Confidential Remarks &middot; your remarks';
     }
     function keepActive(){ hText.value = activeText; hSource.value = activeSource; hSaveFlag.value = '0'; }
     // No saved remarks · open a blank edit pane for the agent (decision 369).
@@ -251,7 +251,7 @@
     });
 
     // Async · if the agent already has a saved default, IT becomes the active
-    // default shown in the review pane instead of the Aari standard.
+    // default shown in the review pane instead of blank remarks.
     getAgentSavedTemplate().then(saved => {
       if(!saved) return;
       activeText = saved;
