@@ -91,7 +91,7 @@ Payment Terms.
 
 (c) Listing Coordinator (LC): Fee due in full electronically before any work commences. Non-refundable once work commences, subject to the 24-hour cancellation right described below.
 
-(d) Add-Ons (Offer Prep, Listing Docs Only, MLS Setup Only, File Organization, Standalone Review): Due electronically upfront at the time of order. Non-refundable once work commences, subject to the 24-hour cancellation right described below.
+(d) Add-Ons (Offer Prep, Listing Docs Only, MLS Setup Only, File Organization, Standalone Review, Vendor Coordination, Utility Transfer Assistance, Closing Gift Delivery, Admin Support): Due electronically upfront at the time of order. Non-refundable once work commences, subject to the 24-hour cancellation right described below. Aari performs Utility Transfer Assistance at Agent's direction and contacts Agent's client only with Agent's written okay for that file.
 
 Definition of "Work Commences" and 24-Hour Cancellation Right. For upfront-paid services (Listing Coordinator and all Add-Ons), "work commences" means the earlier of: (i) Aari's coordinator first edits, drafts, or modifies a document on Agent's behalf; or (ii) Aari sends a substantive external communication (e.g., to title, lender, HOA, or buyer's agent) on Agent's behalf in connection with the file. Internal intake review, file routing, and automated acknowledgment messages do not constitute "work commencing." Agent has a one-time written cancellation right within twenty-four (24) hours of payment for a full refund, provided no external communication has been sent and no document editing has begun. Cancellation requests must be sent in writing to hello@aaritransactions.com within the 24-hour window.
 

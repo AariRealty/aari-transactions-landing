@@ -346,3 +346,18 @@ console.log('text consent check passed');
   if (/via CDA|A signed <strong>Commission Disbursement Authorization \(CDA\)<\/strong> (is|must be) delivered/.test(ix)) { console.error('Decision 424 check failed: index.html CDA copy'); process.exit(1); }
   console.log('decision 424 check passed');
 }
+
+// Decision 430: every priced add on sold on the site is listed in SA 2(d); Utility Transfer works at the agent's direction only.
+{
+  const addOns = ['Vendor Coordination', 'Utility Transfer Assistance', 'Closing Gift Delivery', 'Admin Support'];
+  for (const f of ['js/aari-sa-text.js', 'index.html', 'register.html', 'public/register.html', 'supabase/functions/aari-sa-pdf-email/index.ts']) {
+    const t = fs.readFileSync(path.join(root, f), 'utf8');
+    const d = t.match(/\(d\) Add-Ons \(([^)]*)\)/g) || [];
+    if (!d.length || d.some(m => addOns.some(a => !m.includes(a)))) { console.error('Decision 430 check failed: SA 2(d) add on list in ' + f); process.exit(1); }
+  }
+  for (const f of ['services.html', 'index.html']) {
+    const t = fs.readFileSync(path.join(root, f), 'utf8');
+    if (/Utility Transfer[^<\]]{0,120}(for buyer and seller|Transfer guidance and setup)/.test(t)) { console.error('Decision 430 check failed: Utility Transfer copy in ' + f); process.exit(1); }
+  }
+  console.log('decision 430 check passed');
+}
