@@ -379,3 +379,16 @@ console.log('text consent check passed');
   if (/only with your written okay for that file, as the Service Agreement states/.test(fs.readFileSync(path.join(root, 'portal.html'), 'utf8'))) { console.error('Decision 432 check failed: portal email switch note'); process.exit(1); }
   console.log('decision 432 check passed');
 }
+
+// Re scan 17 ripples (#424 CDA or invoice, #395 evergreen form terms, #379 estimates, blog link).
+{
+  const chk = [
+    ['index.html', /including required documents and CDA\.|paid at settlement through your title CDA/],
+    ['thank-you.html', /collected at settlement through the CDA\./],
+    ['pre-close-checklist.html', /controlling event|within 24 hours of closing/],
+    ['blog/florida-effective-date-explained.html', /"Effective Date is \[date\]\. Inspection Period ends/],
+    ['blog/five-florida-closing-delays.html', /href="pre-close-checklist\.html"/],
+  ];
+  for (const [f, re] of chk) if (re.test(fs.readFileSync(path.join(root, f), 'utf8'))) { console.error('Re scan 17 ripple check failed: ' + f); process.exit(1); }
+  console.log('re scan 17 ripples check passed');
+}
