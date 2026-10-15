@@ -392,3 +392,6 @@ console.log('text consent check passed');
   for (const [f, re] of chk) if (re.test(fs.readFileSync(path.join(root, f), 'utf8'))) { console.error('Re scan 17 ripple check failed: ' + f); process.exit(1); }
   console.log('re scan 17 ripples check passed');
 }
+
+// Decision 435: no public fee term the SA does not state (agent fault does not earn the full fee in the SA).
+{ for (const f of ['index.html', 'terms.html', 'services.html']) if (/agent fault, the fee is earned in full/i.test(fs.readFileSync(path.join(root, f), 'utf8'))) { console.error('Decision 435 check failed: ' + f); process.exit(1); } console.log('decision 435 check passed'); }
