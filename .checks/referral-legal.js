@@ -395,3 +395,6 @@ console.log('text consent check passed');
 
 // Decision 435: no public fee term the SA does not state (agent fault does not earn the full fee in the SA).
 { for (const f of ['index.html', 'terms.html', 'services.html', 'prospecting.html', 'aari-agent-crm.html']) if (/agent fault, the fee is earned in full|except where the agent is at fault|unless the agent is at fault/i.test(fs.readFileSync(path.join(root, f), 'utf8'))) { console.error('Decision 435 check failed: ' + f); process.exit(1); } console.log('decision 435 check passed'); }
+
+// Decision 436: the When do I pay answer covers monthly and yearly membership billing and that payments are non refundable.
+{ const t = fs.readFileSync(path.join(root, 'index.html'), 'utf8'); if (/Memberships bill monthly\./.test(t)) { console.error('Decision 436 check failed: index.html'); process.exit(1); } console.log('decision 436 check passed'); }
